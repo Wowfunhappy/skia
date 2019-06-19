@@ -26,7 +26,7 @@ static GrColorType mask_format_to_gr_color_type(GrMaskFormat format) {
         case kA8_GrMaskFormat:
             return GrColorType::kAlpha_8;
         case kA565_GrMaskFormat:
-            return GrColorType::kRGB_565;
+            return GrColorType::kBGR_565;
         case kARGB_GrMaskFormat:
             return GrColorType::kRGBA_8888;
         default:
@@ -68,10 +68,10 @@ void GrAtlasManager::addGlyphToBulkAndSetUseToken(GrDrawOpAtlas::BulkUseTokenUpd
 }
 
 #ifdef SK_DEBUG
-#include "include/private/GrSurfaceProxy.h"
-#include "include/private/GrTextureProxy.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrSurfaceContext.h"
+#include "src/gpu/GrSurfaceProxy.h"
+#include "src/gpu/GrTextureProxy.h"
 
 #include "include/core/SkBitmap.h"
 #include "include/core/SkImageEncoder.h"

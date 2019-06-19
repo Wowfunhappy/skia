@@ -13,7 +13,50 @@
 #include <unordered_map>
 #include <vector>
 
+namespace Xbyak { class CodeGenerator; }
+
 namespace skvm {
+
+    class Assembler {
+    public:
+        Assembler();
+        ~Assembler();
+
+        void*  code() const;
+        size_t size() const;
+
+        // Order matters... GP64, XMM, YMM values match 4-bit register encoding for each.
+        enum GP64 {
+            rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi,
+            r8 , r9,  r10, r11, r12, r13, r14, r15,
+        };
+        enum XMM {
+            xmm0, xmm1, xmm2 , xmm3 , xmm4 , xmm5 , xmm6 , xmm7 ,
+            xmm8, xmm9, xmm10, xmm11, xmm12, xmm13, xmm14, xmm15,
+        };
+        enum YMM {
+            ymm0, ymm1, ymm2 , ymm3 , ymm4 , ymm5 , ymm6 , ymm7 ,
+            ymm8, ymm9, ymm10, ymm11, ymm12, ymm13, ymm14, ymm15,
+        };
+
+        void nop();
+        void align(int mod);
+
+        void vzeroupper();
+        void ret();
+
+        void add(GP64, int imm);
+        void sub(GP64, int imm);
+
+    //private:
+        std::unique_ptr<Xbyak::CodeGenerator> X;
+    private:
+        void byte(const void*, int);
+        void byte(uint8_t);
+        template <typename... Rest> void byte(uint8_t, Rest...);
+
+        void op(int opcode, int opcode_ext, GP64 dst, int imm);
+    };
 
     enum class Op : uint8_t {
         store8, store32,
@@ -26,6 +69,7 @@ namespace skvm {
         shl, shr, sra,
         extract,
         pack,
+        bytes,
         to_f32, to_i32,
     };
 
@@ -63,10 +107,10 @@ namespace skvm {
         std::vector<Instruction> fInstructions;
         int                      fRegs;
         int                      fLoop;
-
     #if defined(SKVM_JIT)
-        struct JIT;
-        mutable std::unique_ptr<JIT> fJIT;
+        // TODO: what a mess, clean up
+        mutable int                        fJITMask = 0;
+        mutable std::unique_ptr<Assembler> fJIT;
     #endif
     };
 
@@ -114,6 +158,28 @@ namespace skvm {
 
         I32 extract(I32 x, int bits, I32 z);   // (x >> bits) & z
         I32 pack   (I32 x, I32 y, int bits);   // x | (y << bits)
+
+        // Shuffle the bytes in x according to each nibble of control, as if
+        //
+        //    uint8_t bytes[] = {
+        //        0,
+        //        ((uint32_t)x      ) & 0xff,
+        //        ((uint32_t)x >>  8) & 0xff,
+        //        ((uint32_t)x >> 16) & 0xff,
+        //        ((uint32_t)x >> 24) & 0xff,
+        //    };
+        //    return (uint32_t)bytes[(control >>  0) & 0xf] <<  0
+        //         | (uint32_t)bytes[(control >>  4) & 0xf] <<  8
+        //         | (uint32_t)bytes[(control >>  8) & 0xf] << 16
+        //         | (uint32_t)bytes[(control >> 12) & 0xf] << 24;
+        //
+        // So, e.g.,
+        //    - bytes(x, 0x1111) splats the low byte of x to all four bytes
+        //    - bytes(x, 0x4321) is x, an identity
+        //    - bytes(x, 0x0000) is 0
+        //    - bytes(x, 0x0404) transforms an RGBA pixel into an A0A0 bit pattern.
+        //
+        I32 bytes(I32 x, int control);
 
         F32 to_f32(I32 x);
         I32 to_i32(F32 x);

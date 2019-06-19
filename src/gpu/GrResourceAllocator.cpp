@@ -7,16 +7,16 @@
 
 #include "src/gpu/GrResourceAllocator.h"
 
-#include "include/private/GrOpList.h"
-#include "include/private/GrRenderTargetProxy.h"
-#include "include/private/GrSurfaceProxy.h"
-#include "include/private/GrTextureProxy.h"
 #include "src/gpu/GrDeinstantiateProxyTracker.h"
 #include "src/gpu/GrGpuResourcePriv.h"
+#include "src/gpu/GrOpList.h"
+#include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrResourceCache.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSurfacePriv.h"
+#include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrSurfaceProxyPriv.h"
+#include "src/gpu/GrTextureProxy.h"
 
 #if GR_TRACK_INTERVAL_CREATION
     #include <atomic>
@@ -44,10 +44,10 @@ void GrResourceAllocator::determineRecyclability() {
             continue;
         }
 
-        if (cur->uses() >= cur->proxy()->priv().getTotalRefs()) {
+        if (cur->uses() >= cur->proxy()->priv().getProxyRefCnt()) {
             // All the refs on the proxy are known to the resource allocator thus no one
             // should be holding onto it outside of Ganesh.
-            SkASSERT(cur->uses() == cur->proxy()->priv().getTotalRefs());
+            SkASSERT(cur->uses() == cur->proxy()->priv().getProxyRefCnt());
             cur->markAsRecyclable();
         }
     }

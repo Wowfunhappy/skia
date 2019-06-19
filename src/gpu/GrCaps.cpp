@@ -8,9 +8,9 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrSurface.h"
-#include "include/private/GrSurfaceProxy.h"
 #include "include/private/GrTypesPriv.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrWindowRectangles.h"
 #include "src/utils/SkJSONWriter.h"
 
@@ -57,6 +57,7 @@ GrCaps::GrCaps(const GrContextOptions& options) {
     fMaxPreferredRenderTargetSize = 1;
     fMaxTextureSize = 1;
     fMaxWindowRectangles = 0;
+    fPreferredInternalSampleCount = 0;
 
     fSuppressPrints = options.fSuppressPrints;
 #if GR_TEST_UTILS
@@ -110,11 +111,15 @@ void GrCaps::applyOptionsOverrides(const GrContextOptions& options) {
         fShaderCaps->fGeometryShaderSupport = false;
     }
 #endif
+
     if (fMaxWindowRectangles > GrWindowRectangles::kMaxWindows) {
         SkDebugf("WARNING: capping window rectangles at %i. HW advertises support for %i.\n",
                  GrWindowRectangles::kMaxWindows, fMaxWindowRectangles);
         fMaxWindowRectangles = GrWindowRectangles::kMaxWindows;
     }
+
+    fPreferredInternalSampleCount = options.fPreferredInternalSampleCount;
+
     fAvoidStencilBuffers = options.fAvoidStencilBuffers;
 
     fDriverBugWorkarounds.applyOverrides(options.fDriverBugWorkarounds);
@@ -148,9 +153,11 @@ static const char* pixel_config_name(GrPixelConfig config) {
         case kRGBA_half_GrPixelConfig: return "RGBAHalf";
         case kRGBA_half_Clamped_GrPixelConfig: return "RGBAHalfClamped";
         case kRGB_ETC1_GrPixelConfig: return "RGBETC1";
-        // Experimental (for P016 and P010)
         case kR_16_GrPixelConfig: return "R16";
         case kRG_1616_GrPixelConfig: return "RG1616";
+        // Experimental (for Y416 and mutant P016/P010)
+        case kRGBA_16161616_GrPixelConfig: return "RGBA16161616";
+        case kRG_half_GrPixelConfig: return "RGHalf";
     }
     SK_ABORT("Invalid pixel config");
     return "<invalid>";
@@ -233,6 +240,8 @@ void GrCaps::dumpJSON(SkJSONWriter* writer) const {
     writer->appendS32("Max Render Target Size", fMaxRenderTargetSize);
     writer->appendS32("Max Preferred Render Target Size", fMaxPreferredRenderTargetSize);
     writer->appendS32("Max Window Rectangles", fMaxWindowRectangles);
+    writer->appendS32("Preferred Sample Count for Internal MSAA and Mixed Samples",
+                      fPreferredInternalSampleCount);
 
     static const char* kBlendEquationSupportNames[] = {
         "Basic",

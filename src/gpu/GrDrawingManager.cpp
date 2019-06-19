@@ -9,18 +9,18 @@
 
 #include "include/gpu/GrBackendSemaphore.h"
 #include "include/gpu/GrTexture.h"
-#include "include/private/GrOpList.h"
 #include "include/private/GrRecordingContext.h"
-#include "include/private/GrRenderTargetProxy.h"
-#include "include/private/GrTextureProxy.h"
 #include "include/private/SkDeferredDisplayList.h"
 #include "src/core/SkTTopoSort.h"
+#include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrOnFlushResourceProvider.h"
+#include "src/gpu/GrOpList.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrResourceAllocator.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSoftwarePathRenderer.h"
@@ -28,6 +28,7 @@
 #include "src/gpu/GrTextureContext.h"
 #include "src/gpu/GrTextureOpList.h"
 #include "src/gpu/GrTexturePriv.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/GrTextureProxyPriv.h"
 #include "src/gpu/GrTracing.h"
 #include "src/gpu/ccpr/GrCoverageCountingPathRenderer.h"
@@ -258,8 +259,7 @@ GrSemaphoresSubmitted GrDrawingManager::flush(GrSurfaceProxy* proxies[], int num
         fCpuBufferCache = GrBufferAllocPool::CpuBufferCache::Make(maxCachedBuffers);
     }
 
-    GrOpFlushState flushState(gpu, resourceProvider, resourceCache, &fTokenTracker,
-                              fCpuBufferCache);
+    GrOpFlushState flushState(gpu, resourceProvider, &fTokenTracker, fCpuBufferCache);
 
     GrOnFlushResourceProvider onFlushProvider(this);
     // TODO: AFAICT the only reason fFlushState is on GrDrawingManager rather than on the

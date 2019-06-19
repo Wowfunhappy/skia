@@ -8,9 +8,6 @@
 #include "include/core/SkDrawable.h"
 #include "include/gpu/GrBackendSemaphore.h"
 #include "include/gpu/GrRenderTarget.h"
-#include "include/private/GrAuditTrail.h"
-#include "include/private/GrColor.h"
-#include "include/private/GrOpList.h"
 #include "include/private/GrRecordingContext.h"
 #include "include/private/SkShadowFlags.h"
 #include "include/utils/SkShadowUtils.h"
@@ -23,13 +20,16 @@
 #include "src/core/SkRRectPriv.h"
 #include "src/core/SkSurfacePriv.h"
 #include "src/gpu/GrAppliedClip.h"
+#include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrBlurUtils.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrColor.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrDrawingManager.h"
 #include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrGpuResourcePriv.h"
 #include "src/gpu/GrMemoryPool.h"
+#include "src/gpu/GrOpList.h"
 #include "src/gpu/GrPathRenderer.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
@@ -1257,7 +1257,16 @@ void GrRenderTargetContext::drawRRect(const GrClip& origClip,
     GrAAType aaType = this->chooseAAType(aa);
 
     std::unique_ptr<GrDrawOp> op;
-    if (style.isSimpleFill()) {
+    if (GrAAType::kCoverage == aaType && rrect.isSimple() &&
+        rrect.getSimpleRadii().fX == rrect.getSimpleRadii().fY &&
+        viewMatrix.rectStaysRect() && viewMatrix.isSimilarity()) {
+        // In coverage mode, we draw axis-aligned circular roundrects with the GrOvalOpFactory
+        // to avoid perf regressions on some platforms.
+        assert_alive(paint);
+        op = GrOvalOpFactory::MakeCircularRRectOp(
+                fContext, std::move(paint), viewMatrix, rrect, stroke, this->caps()->shaderCaps());
+    }
+    if (!op && style.isSimpleFill()) {
         assert_alive(paint);
         op = GrFillRRectOp::Make(
                 fContext, aaType, viewMatrix, rrect, *this->caps(), std::move(paint));
@@ -1266,7 +1275,6 @@ void GrRenderTargetContext::drawRRect(const GrClip& origClip,
         assert_alive(paint);
         op = GrOvalOpFactory::MakeRRectOp(
                 fContext, std::move(paint), viewMatrix, rrect, stroke, this->caps()->shaderCaps());
-
     }
     if (op) {
         this->addDrawOp(*clip, std::move(op));
@@ -1665,20 +1673,23 @@ void GrRenderTargetContext::drawOval(const GrClip& clip,
     GrAAType aaType = this->chooseAAType(aa);
 
     std::unique_ptr<GrDrawOp> op;
-    if (style.isSimpleFill()) {
+    if (GrAAType::kCoverage == aaType && oval.width() == oval.height() &&
+        viewMatrix.isSimilarity()) {
+        // We don't draw true circles as round rects in coverage mode, because it can
+        // cause perf regressions on some platforms as compared to the dedicated circle Op.
+        assert_alive(paint);
+        op = GrOvalOpFactory::MakeCircleOp(fContext, std::move(paint), viewMatrix, oval, style,
+                                           this->caps()->shaderCaps());
+    }
+    if (!op && style.isSimpleFill()) {
         // GrFillRRectOp has special geometry and a fragment-shader branch to conditionally evaluate
         // the arc equation. This same special geometry and fragment branch also turn out to be a
         // substantial optimization for drawing ovals (namely, by not evaluating the arc equation
         // inside the oval's inner diamond). Given these optimizations, it's a clear win to draw
         // ovals the exact same way we do round rects.
-        //
-        // However, we still don't draw true circles as round rects in coverage mode, because it can
-        // cause perf regressions on some platforms as compared to the dedicated circle Op.
-        if (GrAAType::kCoverage != aaType || oval.height() != oval.width()) {
-            assert_alive(paint);
-            op = GrFillRRectOp::Make(fContext, aaType, viewMatrix, SkRRect::MakeOval(oval),
-                                     *this->caps(), std::move(paint));
-        }
+        assert_alive(paint);
+        op = GrFillRRectOp::Make(fContext, aaType, viewMatrix, SkRRect::MakeOval(oval),
+                                 *this->caps(), std::move(paint));
     }
     if (!op && GrAAType::kCoverage == aaType) {
         assert_alive(paint);

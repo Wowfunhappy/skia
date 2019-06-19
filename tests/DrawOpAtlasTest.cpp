@@ -18,7 +18,6 @@
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrContext.h"
-#include "include/private/GrTextureProxy.h"
 #include "include/private/GrTypesPriv.h"
 #include "src/core/SkIPoint16.h"
 #include "src/gpu/GrCaps.h"
@@ -30,6 +29,7 @@
 #include "src/gpu/GrOnFlushResourceProvider.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/GrXferProcessor.h"
 #include "src/gpu/ops/GrDrawOp.h"
 #include "src/gpu/ops/GrOp.h"
@@ -187,7 +187,6 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation, reporter, ctxInfo) 
 
     auto gpu = context->priv().getGpu();
     auto resourceProvider = context->priv().resourceProvider();
-    auto resourceCache = context->priv().getResourceCache();
     auto drawingManager = context->priv().drawingManager();
     auto textContext = drawingManager->getTextContext();
     auto opMemoryPool = context->priv().opMemoryPool();
@@ -215,8 +214,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation, reporter, ctxInfo) 
 
     TestingUploadTarget uploadTarget;
 
-    GrOpFlushState flushState(gpu, resourceProvider, resourceCache,
-                              uploadTarget.writeableTokenTracker());
+    GrOpFlushState flushState(gpu, resourceProvider, uploadTarget.writeableTokenTracker());
     GrOpFlushState::OpArgs opArgs = {
         op.get(),
         rtc->asRenderTargetProxy(),
