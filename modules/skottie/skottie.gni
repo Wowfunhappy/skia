@@ -36,9 +36,11 @@ skia_skottie_sources = [
   "$_src/effects/LevelsEffect.cpp",
   "$_src/effects/LinearWipeEffect.cpp",
   "$_src/effects/MotionTileEffect.cpp",
+  "$_src/effects/RadialWipeEffect.cpp",
   "$_src/effects/TintEffect.cpp",
   "$_src/effects/TransformEffect.cpp",
   "$_src/effects/TritoneEffect.cpp",
+  "$_src/effects/VenetianBlindsEffect.cpp",
 
   "$_src/text/RangeSelector.cpp",
   "$_src/text/RangeSelector.h",

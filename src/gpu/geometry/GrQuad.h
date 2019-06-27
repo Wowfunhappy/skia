@@ -100,6 +100,18 @@ public:
         return {min(x), min(y), max(x), max(y)};
     }
 
+    bool isFinite() const {
+        // If any coordinate is infinity or NaN, then multiplying it with 0 will make accum NaN
+        float accum = 0;
+        for (int i = 0; i < 4; ++i) {
+            accum *= fX[i];
+            accum *= fY[i];
+            accum *= fW[i];
+        }
+        SkASSERT(0 == accum || SkScalarIsNaN(accum));
+        return !SkScalarIsNaN(accum);
+    }
+
     float x(int i) const { return fX[i]; }
     float y(int i) const { return fY[i]; }
     float w(int i) const { return fW[i]; }
@@ -117,6 +129,15 @@ public:
     // True if anti-aliasing affects this quad. Only valid when quadType == kAxisAligned
     bool aaHasEffectOnRect() const;
 
+    // The non-const pointers are provided to support modifying a GrQuad in-place, but care must be
+    // taken to keep its quad type aligned with the geometric nature of the new coordinates. This is
+    // no different than using the constructors that accept a quad type.
+
+    float* xs() { return fX; }
+    float* ys() { return fY; }
+    float* ws() { return fW; }
+
+    void setQuadType(Type newType) { fType = newType; }
 private:
     template<typename T>
     friend class GrQuadListBase; // for access to fX, fY, fW

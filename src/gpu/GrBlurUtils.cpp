@@ -178,10 +178,10 @@ static sk_sp<GrTextureProxy> create_mask_GPU(GrRecordingContext* context,
     GrBackendFormat format =
             context->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
     sk_sp<GrRenderTargetContext> rtContext(
-        context->priv().makeDeferredRenderTargetContextWithFallback(
-            format, SkBackingFit::kApprox, maskRect.width(), maskRect.height(),
-            kAlpha_8_GrPixelConfig, nullptr, sampleCnt, GrMipMapped::kNo,
-            kTopLeft_GrSurfaceOrigin));
+            context->priv().makeDeferredRenderTargetContextWithFallback(
+                    format, SkBackingFit::kApprox, maskRect.width(), maskRect.height(),
+                    kAlpha_8_GrPixelConfig, GrColorType::kAlpha_8, nullptr, sampleCnt,
+                    GrMipMapped::kNo, kTopLeft_GrSurfaceOrigin));
     if (!rtContext) {
         return nullptr;
     }
@@ -402,7 +402,7 @@ static void draw_shape_with_mask_filter(GrRecordingContext* context,
                                                         maskRect,
                                                         viewMatrix,
                                                         *shape,
-                                                        renderTargetContext->numColorSamples()));
+                                                        renderTargetContext->numSamples()));
             if (maskProxy) {
                 filteredMask = maskFilter->filterMaskGPU(context,
                                                          std::move(maskProxy),

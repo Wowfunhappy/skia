@@ -57,7 +57,7 @@ public:
     }
 
     // Used by GrGLProgram to configure OpenGL state.
-    void bindTexture(int unitIdx, GrSamplerState samplerState, GrGLTexture* texture);
+    void bindTexture(int unitIdx, GrSamplerState samplerState, const GrSwizzle&, GrGLTexture*);
 
     // These functions should be used to bind GL objects. They track the GL state and skip redundant
     // bindings. Making the equivalent glBind calls directly will confuse the state tracking.
@@ -139,7 +139,8 @@ public:
     GrBackendTexture createBackendTexture(int w, int h, const GrBackendFormat&,
                                           GrMipMapped, GrRenderable,
                                           const void* pixels, size_t rowBytes,
-                                          const SkColor4f* color) override;
+                                          const SkColor4f* color,
+                                          GrProtected isProtected) override;
     void deleteBackendTexture(const GrBackendTexture&) override;
 
 #if GR_TEST_UTILS

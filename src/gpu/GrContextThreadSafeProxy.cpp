@@ -47,38 +47,32 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
         isMipMapped = false;
     }
 
-    GrPixelConfig config = this->caps()->getConfigFromBackendFormat(backendFormat, ii.colorType());
-    if (config == kUnknown_GrPixelConfig) {
+    if (!SkSurface_Gpu::Valid(this->caps(), backendFormat)) {
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
-    if (!SkSurface_Gpu::Valid(this->caps(), config, ii.colorSpace())) {
-        return SkSurfaceCharacterization(); // return an invalid characterization
-    }
-
-    sampleCnt = this->caps()->getRenderTargetSampleCount(sampleCnt, config);
+    sampleCnt = this->caps()->getRenderTargetSampleCount(sampleCnt, ii.colorType(), backendFormat);
     if (!sampleCnt) {
         return SkSurfaceCharacterization(); // return an invalid characterization
-    }
-
-    GrFSAAType FSAAType = GrFSAAType::kNone;
-    if (sampleCnt > 1) {
-        FSAAType = this->caps()->usesMixedSamples() ? GrFSAAType::kMixedSamples
-                                                    : GrFSAAType::kUnifiedMSAA;
     }
 
     if (willUseGLFBO0 && isTextureable) {
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
-    if (isTextureable && !this->caps()->isConfigTexturable(config)) {
+    if (isTextureable && !this->caps()->isFormatTexturable(ii.colorType(), backendFormat)) {
         // Skia doesn't agree that this is textureable.
+        return SkSurfaceCharacterization(); // return an invalid characterization
+    }
+
+    GrPixelConfig config = this->caps()->getConfigFromBackendFormat(backendFormat, ii.colorType());
+    if (kUnknown_GrPixelConfig == config) {
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
     return SkSurfaceCharacterization(sk_ref_sp<GrContextThreadSafeProxy>(this),
                                      cacheMaxResourceBytes, ii,
-                                     origin, config, FSAAType, sampleCnt,
+                                     origin, config, sampleCnt,
                                      SkSurfaceCharacterization::Textureable(isTextureable),
                                      SkSurfaceCharacterization::MipMapped(isMipMapped),
                                      SkSurfaceCharacterization::UsesGLFBO0(willUseGLFBO0),

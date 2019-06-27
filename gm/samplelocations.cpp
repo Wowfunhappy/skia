@@ -210,8 +210,8 @@ private:
     FixedFunctionFlags fixedFunctionFlags() const override {
         return FixedFunctionFlags::kUsesHWAA | FixedFunctionFlags::kUsesStencil;
     }
-    GrProcessorSet::Analysis finalize(
-            const GrCaps&, const GrAppliedClip*, GrFSAAType, GrClampType) override {
+    GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*,
+                                      bool hasMixedSampledCoverage, GrClampType) override {
         return GrProcessorSet::EmptySetAnalysis();
     }
     void onPrepare(GrOpFlushState*) override {}
@@ -227,6 +227,7 @@ private:
         );
 
         GrPipeline pipeline(GrScissorTest::kDisabled, SkBlendMode::kSrcOver,
+                            flushState->drawOpArgs().fOutputSwizzle,
                             GrPipeline::InputFlags::kHWAntialias, &kStencilWrite);
 
         GrMesh mesh(GrPrimitiveType::kTriangleStrip);
@@ -253,7 +254,8 @@ SkString SampleLocationsGM::onShortName() {
 
 DrawResult SampleLocationsGM::onDraw(
         GrContext* ctx, GrRenderTargetContext* rtc, SkCanvas* canvas, SkString* errorMsg) {
-    if (rtc->numStencilSamples() <= 1) {
+    if (rtc->numSamples() <= 1) {
+        // MIXED SAMPLES TODO: && !ctx->caps()->mixedSamplesSupport()
         *errorMsg = "MSAA only.";
         return DrawResult::kSkip;
     }
@@ -277,10 +279,12 @@ DrawResult SampleLocationsGM::onDraw(
     );
 
     if (auto offscreenRTC = ctx->priv().makeDeferredRenderTargetContext(
-            rtc->asSurfaceProxy()->backendFormat(), SkBackingFit::kExact, 200, 200,
-            rtc->asSurfaceProxy()->config(), nullptr, rtc->numStencilSamples(), GrMipMapped::kNo,
-            fOrigin)) {
+                rtc->asSurfaceProxy()->backendFormat(), SkBackingFit::kExact, 200, 200,
+                rtc->asSurfaceProxy()->config(), rtc->colorSpaceInfo().colorType(), nullptr,
+                rtc->numSamples(), GrMipMapped::kNo, fOrigin)) {
         offscreenRTC->clear(nullptr, {0,1,0,1}, GrRenderTargetContext::CanClearFullscreen::kYes);
+
+        // MIXED SAMPLES TODO: Mixed sampled stencil buffer.
 
         // Stencil.
         offscreenRTC->priv().testingOnly_addDrawOp(
@@ -290,9 +294,8 @@ DrawResult SampleLocationsGM::onDraw(
         GrPaint coverPaint;
         coverPaint.setColor4f({1,0,0,1});
         coverPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrcOver));
-        rtc->priv().drawFilledRect(
-                GrNoClip(), std::move(coverPaint), GrAA::kNo, SkMatrix::I(),
-                SkRect::MakeWH(200, 200), &kStencilCover);
+        rtc->priv().stencilRect(GrNoClip(), &kStencilCover, std::move(coverPaint), GrAA::kNo,
+                                SkMatrix::I(), SkRect::MakeWH(200, 200));
 
         // Copy offscreen texture to canvas.
         rtc->drawTexture(

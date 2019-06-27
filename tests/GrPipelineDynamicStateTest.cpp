@@ -134,13 +134,13 @@ private:
 
     const char* name() const override { return "GrPipelineDynamicStateTestOp"; }
     FixedFunctionFlags fixedFunctionFlags() const override { return FixedFunctionFlags::kNone; }
-    GrProcessorSet::Analysis finalize(
-            const GrCaps&, const GrAppliedClip*, GrFSAAType, GrClampType) override {
+    GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*,
+                                      bool hasMixedSampledCoverage, GrClampType) override {
         return GrProcessorSet::EmptySetAnalysis();
     }
     void onPrepare(GrOpFlushState*) override {}
     void onExecute(GrOpFlushState* state, const SkRect& chainBounds) override {
-        GrPipeline pipeline(fScissorTest, SkBlendMode::kSrc);
+        GrPipeline pipeline(fScissorTest, SkBlendMode::kSrc, state->drawOpArgs().fOutputSwizzle);
         SkSTArray<kNumMeshes, GrMesh> meshes;
         for (int i = 0; i < kNumMeshes; ++i) {
             GrMesh& mesh = meshes.emplace_back(GrPrimitiveType::kTriangleStrip);
@@ -168,8 +168,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrPipelineDynamicStateTest, reporter, ctxInfo
             context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
 
     sk_sp<GrRenderTargetContext> rtc(context->priv().makeDeferredRenderTargetContext(
-                                                 format, SkBackingFit::kExact, kScreenSize,
-                                                 kScreenSize, kRGBA_8888_GrPixelConfig, nullptr));
+            format, SkBackingFit::kExact, kScreenSize, kScreenSize, kRGBA_8888_GrPixelConfig,
+            GrColorType::kRGBA_8888, nullptr));
     if (!rtc) {
         ERRORF(reporter, "could not create render target context.");
         return;

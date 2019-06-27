@@ -38,8 +38,6 @@ declare_args() {
   skia_use_metal = false
   skia_use_libheif = is_skia_dev_build
   skia_use_x11 = is_linux
-  skia_use_xbyak =
-      is_skia_dev_build && target_cpu == "x64" && is_linux && is_clang
   skia_use_xps = true
 
   skia_android_serial = ""
@@ -49,6 +47,7 @@ declare_args() {
   skia_enable_pdf = true
   skia_enable_spirv_validation = is_skia_dev_build && is_debug
   skia_enable_skpicture = true
+  skia_enable_skvm_jit = is_skia_dev_build && target_cpu == "x64" && is_linux
   skia_enable_vulkan_debug_layers = is_skia_dev_build && is_debug
   skia_qt_path = getenv("QT_PATH")
   skia_compile_processors = false
@@ -61,6 +60,7 @@ declare_args() {
   skia_llvm_lib = "LLVM"
 
   skia_tools_require_resources = false
+  skia_include_multiframe_procs = false
 }
 declare_args() {
   skia_use_dng_sdk = !is_fuchsia && skia_use_libjpeg_turbo && skia_use_zlib
@@ -818,12 +818,8 @@ optional("xml") {
 }
 
 optional("skvm_jit") {
-  enabled = skia_use_xbyak
+  enabled = skia_enable_skvm_jit
   public_defines = [ "SKVM_JIT" ]
-
-  public_deps = [
-    "//third_party/xbyak",
-  ]
 }
 
 if (skia_enable_gpu && skia_generate_workarounds) {
@@ -1049,6 +1045,10 @@ component("skia") {
     deps += [ "//third_party/spirv-tools" ]
     defines += [ "SK_ENABLE_SPIRV_VALIDATION" ]
   }
+
+  if (skia_include_multiframe_procs) {
+    sources += [ "tools/SkSharingProc.cpp" ]
+  }
 }
 
 # DebugCanvas used in experimental/wasm-skp-debugger
@@ -1057,6 +1057,7 @@ if (target_cpu == "wasm") {
     public_configs = [ ":skia_public" ]
 
     sources = [
+      "tools/SkSharingProc.cpp",
       "tools/UrlDataManager.cpp",
       "tools/debugger/DebugCanvas.cpp",
       "tools/debugger/DrawCommand.cpp",
@@ -1597,6 +1598,7 @@ if (skia_enable_tools) {
       "tools/LsanSuppressions.cpp",
       "tools/ProcStats.cpp",
       "tools/Resources.cpp",
+      "tools/SkSharingProc.cpp",
       "tools/ToolUtils.cpp",
       "tools/UrlDataManager.cpp",
       "tools/debugger/DebugCanvas.cpp",

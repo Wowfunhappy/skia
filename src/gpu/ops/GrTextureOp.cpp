@@ -223,7 +223,8 @@ public:
 #endif
 
     GrProcessorSet::Analysis finalize(
-            const GrCaps& caps, const GrAppliedClip*, GrFSAAType, GrClampType clampType) override {
+            const GrCaps& caps, const GrAppliedClip*, bool hasMixedSampledCoverage,
+            GrClampType clampType) override {
         fColorType = static_cast<unsigned>(ColorType::kNone);
         for (int q = 0; q < fQuads.count(); ++q) {
             const ColorDomainAndAA& info = fQuads.metadata(q);
@@ -405,6 +406,7 @@ private:
         int numTotalQuads = 0;
         auto textureType = fProxies[0].fProxy->textureType();
         auto config = fProxies[0].fProxy->config();
+        const GrSwizzle& swizzle = fProxies[0].fProxy->textureSwizzle();
         GrAAType aaType = this->aaType();
         for (const auto& op : ChainRange<TextureOp>(this)) {
             if (op.fQuads.quadType() > quadType) {
@@ -428,6 +430,7 @@ private:
                 }
                 SkASSERT(proxy->config() == config);
                 SkASSERT(proxy->textureType() == textureType);
+                SkASSERT(proxy->textureSwizzle() == swizzle);
             }
             if (op.aaType() == GrAAType::kCoverage) {
                 SkASSERT(aaType == GrAAType::kCoverage || aaType == GrAAType::kNone);
@@ -446,7 +449,7 @@ private:
 
         sk_sp<GrGeometryProcessor> gp = GrQuadPerEdgeAA::MakeTexturedProcessor(
                 vertexSpec, *target->caps().shaderCaps(),
-                textureType, config, samplerState, extraSamplerKey,
+                textureType, config, samplerState, swizzle, extraSamplerKey,
                 std::move(fTextureColorSpaceXform));
 
         // We'll use a dynamic state array for the GP textures when there are multiple ops.
@@ -764,7 +767,7 @@ GR_DRAW_OP_TEST_DEFINE(TextureOp) {
     auto texXform = GrTest::TestColorXform(random);
     GrAAType aaType = GrAAType::kNone;
     if (random->nextBool()) {
-        aaType = (fsaaType == GrFSAAType::kUnifiedMSAA) ? GrAAType::kMSAA : GrAAType::kCoverage;
+        aaType = (numSamples > 1) ? GrAAType::kMSAA : GrAAType::kCoverage;
     }
     GrQuadAAFlags aaFlags = GrQuadAAFlags::kNone;
     aaFlags |= random->nextBool() ? GrQuadAAFlags::kLeft : GrQuadAAFlags::kNone;

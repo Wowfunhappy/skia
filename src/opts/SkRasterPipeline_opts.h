@@ -10,6 +10,7 @@
 
 #include "include/core/SkTypes.h"
 #include "src/core/SkUtils.h"  // unaligned_{load,store}
+#include "src/sksl/SkSLByteCode.h"
 
 // Every function in this file should be marked static and inline using SI.
 #if defined(__clang__)
@@ -2552,6 +2553,38 @@ STAGE(callback, SkRasterPipeline_CallbackCtx* c) {
     load4(c->read_from,0, &r,&g,&b,&a);
 }
 
+STAGE(interpreter, SkRasterPipeline_InterpreterCtx* c) {
+    // If N is less than the interpreter's VecWidth, then we are doing more work than necessary in
+    // the interpreter. This is a known issue, and will be addressed at some point.
+    float rr[N];
+    float gg[N];
+    float bb[N];
+    float aa[N];
+    size_t in_count, out_count;
+
+    float* args[] = { rr, gg, bb, aa };
+
+    sk_unaligned_store(rr, r);  // x if we're a shader
+    sk_unaligned_store(gg, g);  // y if we're a shader
+    if (c->shader_convention) {
+        in_count = 2;   // x, y
+        out_count = 4;  // r, g, b, a
+    } else {
+        in_count = 4;   // r, g, b, a (in/out)
+        sk_unaligned_store(bb, b);
+        sk_unaligned_store(aa, a);
+        out_count = 0;
+    }
+
+    c->byteCode->runStriped(c->fn, args, in_count, tail ? tail : N,
+                            (const float*)c->inputs, c->ninputs, args, out_count);
+
+    r = sk_unaligned_load<F>(rr);
+    g = sk_unaligned_load<F>(gg);
+    b = sk_unaligned_load<F>(bb);
+    a = sk_unaligned_load<F>(aa);
+}
+
 STAGE(gauss_a_to_rgba, Ctx::None) {
     // x = 1 - x;
     // exp(-x * x * 4) - 0.018f;
@@ -2624,6 +2657,7 @@ STAGE(swizzle, void* ctx) {
             case 'g': *o[i] = ig;   break;
             case 'b': *o[i] = ib;   break;
             case 'a': *o[i] = ia;   break;
+            case '0': *o[i] = F(0); break;
             case '1': *o[i] = F(1); break;
             default:                break;
         }
@@ -3429,7 +3463,7 @@ SI void store_88_(uint16_t* ptr, size_t tail, U16 r, U16 g) {
 
 STAGE_PP(load_rg88, const SkRasterPipeline_MemoryCtx* ctx) {
     b = 0;
-    a = 1;
+    a = 255;
     load_88_(ptr_at_xy<const uint16_t>(ctx, dx,dy), tail, &r,&g);
 }
 STAGE_PP(store_rg88, const SkRasterPipeline_MemoryCtx* ctx) {
@@ -3820,6 +3854,7 @@ STAGE_PP(swizzle, void* ctx) {
             case 'g': *o[i] = ig;       break;
             case 'b': *o[i] = ib;       break;
             case 'a': *o[i] = ia;       break;
+            case '0': *o[i] = U16(0);   break;
             case '1': *o[i] = U16(255); break;
             default:                    break;
         }
@@ -3830,6 +3865,7 @@ STAGE_PP(swizzle, void* ctx) {
 // If a pipeline uses these stages, it'll boot it out of lowp into highp.
 #define NOT_IMPLEMENTED(st) static void (*st)(void) = nullptr;
     NOT_IMPLEMENTED(callback)
+    NOT_IMPLEMENTED(interpreter)
     NOT_IMPLEMENTED(unbounded_set_rgb)
     NOT_IMPLEMENTED(unbounded_uniform_color)
     NOT_IMPLEMENTED(unpremul)

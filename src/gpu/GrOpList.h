@@ -11,7 +11,6 @@
 #include "include/core/SkRefCnt.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkTDArray.h"
-#include "src/gpu/GrProxyRef.h"
 #include "src/gpu/GrTextureProxy.h"
 
 class GrAuditTrail;
@@ -33,10 +32,7 @@ public:
     GrOpList(sk_sp<GrOpMemoryPool>, sk_sp<GrSurfaceProxy>, GrAuditTrail*);
     ~GrOpList() override;
 
-    // These four methods are invoked at flush time
-    bool instantiate(GrResourceProvider* resourceProvider);
-    // Instantiates any "threaded" texture proxies that are being prepared elsewhere
-    void instantiateDeferredProxies(GrResourceProvider* resourceProvider);
+    // These two methods are only invoked at flush time
     void prepare(GrOpFlushState* flushState);
     bool execute(GrOpFlushState* flushState) { return this->onExecute(flushState); }
 
@@ -75,7 +71,7 @@ public:
     virtual GrTextureOpList* asTextureOpList() { return nullptr; }
 
     /*
-     * Safely case this GrOpList to a GrRenderTargetOpList (if possible).
+     * Safely cast this GrOpList to a GrRenderTargetOpList (if possible).
      */
     virtual GrRenderTargetOpList* asRenderTargetOpList() { return nullptr; }
 
@@ -89,17 +85,17 @@ public:
     SkDEBUGCODE(virtual int numClips() const { return 0; })
 
 protected:
-    bool isInstantiated() const;
-
     // In addition to just the GrSurface being allocated, has the stencil buffer been allocated (if
     // it is required)?
-    bool isFullyInstantiated() const;
+    bool isInstantiated() const;
+
+    SkDEBUGCODE(bool deferredProxiesAreInstantiated() const;)
 
     // This is a backpointer to the GrOpMemoryPool that holds the memory for this opLists' ops.
     // In the DDL case, these back pointers keep the DDL's GrOpMemoryPool alive as long as its
     // constituent opLists survive.
     sk_sp<GrOpMemoryPool> fOpMemoryPool;
-    GrSurfaceProxyRef     fTarget;
+    sk_sp<GrSurfaceProxy> fTarget;
     GrAuditTrail*         fAuditTrail;
 
     GrLoadOp              fColorLoadOp    = GrLoadOp::kLoad;
@@ -107,6 +103,8 @@ protected:
     GrLoadOp              fStencilLoadOp  = GrLoadOp::kLoad;
 
     // List of texture proxies whose contents are being prepared on a worker thread
+    // TODO: this list exists so we can fire off the proper upload when an opList begins
+    // executing. Can this be replaced?
     SkTArray<GrTextureProxy*, true> fDeferredProxies;
 
 private:
@@ -182,7 +180,7 @@ private:
     virtual void onPrepare(GrOpFlushState* flushState) = 0;
     virtual bool onExecute(GrOpFlushState* flushState) = 0;
 
-    uint32_t               fUniqueID;
+    const uint32_t         fUniqueID;
     uint32_t               fFlags;
 
     // 'this' GrOpList relies on the output of the GrOpLists in 'fDependencies'

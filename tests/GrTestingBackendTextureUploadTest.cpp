@@ -37,9 +37,6 @@ void testing_only_texture_test(skiatest::Reporter* reporter, GrContext* context,
         return;
     }
 
-    if (caps->supportedReadPixelsColorType(config, grCT) != grCT) {
-        return;
-    }
 
     GrBackendTexture backendTex;
 
@@ -61,6 +58,12 @@ void testing_only_texture_test(skiatest::Reporter* reporter, GrContext* context,
     if (!backendTex.isValid()) {
         return;
     }
+    // skbug.com/9165
+    auto supportedRead =
+            caps->supportedReadPixelsColorType(config, backendTex.getBackendFormat(), grCT);
+    if (supportedRead.fColorType != grCT || supportedRead.fSwizzle != GrSwizzle("rgba")) {
+        return;
+    }
 
     sk_sp<GrTextureProxy> wrappedProxy;
     if (GrRenderable::kYes == renderable) {
@@ -74,7 +77,8 @@ void testing_only_texture_test(skiatest::Reporter* reporter, GrContext* context,
     }
     REPORTER_ASSERT(reporter, wrappedProxy);
 
-    auto surfaceContext = context->priv().makeWrappedSurfaceContext(std::move(wrappedProxy));
+    auto surfaceContext = context->priv().makeWrappedSurfaceContext(std::move(wrappedProxy), grCT,
+                                                                    kPremul_SkAlphaType);
     REPORTER_ASSERT(reporter, surfaceContext);
 
     bool result = surfaceContext->readPixels(context, 0, 0, kWidth, kHeight, grCT, nullptr,

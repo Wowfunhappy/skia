@@ -8,7 +8,7 @@
 #include "modules/skottie/src/effects/Effects.h"
 
 #include "modules/skottie/src/SkottieJson.h"
-#include "modules/sksg/include/SkSGRenderNode.h"
+#include "modules/sksg/include/SkSGRenderEffect.h"
 #include "src/utils/SkJSON.h"
 
 namespace skottie {
@@ -27,6 +27,7 @@ EffectBuilder::EffectBuilderT EffectBuilder::findBuilder(const skjson::ObjectVal
         kFill_Effect         = 21,
         kTritone_Effect      = 23,
         kDropShadow_Effect   = 25,
+        kRadialWipe_Effect   = 26,
         kGaussianBlur_Effect = 29,
     };
 
@@ -41,6 +42,8 @@ EffectBuilder::EffectBuilderT EffectBuilder::findBuilder(const skjson::ObjectVal
         return &EffectBuilder::attachTritoneEffect;
     case kDropShadow_Effect:
         return &EffectBuilder::attachDropShadowEffect;
+    case kRadialWipe_Effect:
+        return &EffectBuilder::attachRadialWipeEffect;
     case kGaussianBlur_Effect:
         return &EffectBuilder::attachGaussianBlurEffect;
     default:
@@ -54,7 +57,8 @@ EffectBuilder::EffectBuilderT EffectBuilder::findBuilder(const skjson::ObjectVal
                             kLevelsEffectMN[] = "ADBE Easy Levels2",
                         kLinearWipeEffectMN[] = "ADBE Linear Wipe",
                         kMotionTileEffectMN[] = "ADBE Tile",
-                         kTransformEffectMN[] = "ADBE Geometry2";
+                         kTransformEffectMN[] = "ADBE Geometry2",
+                    kVenetianBlindsEffectMN[] = "ADBE Venetian Blinds";
 
     if (const skjson::StringValue* mn = jeffect["mn"]) {
         if (!strcmp(mn->begin(), kGradientEffectMN)) {
@@ -71,6 +75,9 @@ EffectBuilder::EffectBuilderT EffectBuilder::findBuilder(const skjson::ObjectVal
         }
         if (!strcmp(mn->begin(), kTransformEffectMN)) {
             return &EffectBuilder::attachTransformEffect;
+        }
+        if (!strcmp(mn->begin(), kVenetianBlindsEffectMN)) {
+            return &EffectBuilder::attachVenetianBlindsEffect;
         }
     }
 
@@ -118,6 +125,20 @@ const skjson::Value& EffectBuilder::GetPropValue(const skjson::ArrayValue& jprop
     const skjson::ObjectValue* jprop = jprops[prop_index];
 
     return jprop ? (*jprop)["v"] : kNull;
+}
+
+MaskFilterEffectBase::MaskFilterEffectBase(sk_sp<sksg::RenderNode> child, const SkSize& ls)
+    : fMaskNode(sksg::MaskFilter::Make(nullptr))
+    , fMaskEffectNode(sksg::MaskFilterEffect::Make(std::move(child), fMaskNode))
+    , fLayerSize(ls) {}
+
+MaskFilterEffectBase::~MaskFilterEffectBase() = default;
+
+void MaskFilterEffectBase::apply() const {
+    const auto minfo = this->onMakeMask();
+
+    fMaskEffectNode->setVisible(minfo.fVisible);
+    fMaskNode->setMaskFilter(std::move(minfo.fMask));
 }
 
 } // namespace internal

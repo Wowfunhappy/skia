@@ -90,6 +90,8 @@ enum class ByteCodeInstruction : uint16_t {
     VECTOR(kRemainderF),
     VECTOR(kRemainderS),
     VECTOR(kRemainderU),
+    // Followed by a byte indicating the number of slots to reserve on the stack (for later return)
+    kReserve,
     // Followed by a byte indicating the number of slots being returned
     kReturn,
     // Followed by two bytes indicating columns and rows of matrix (2, 3, or 4 each).
@@ -166,6 +168,8 @@ struct ByteCodeFunction {
 };
 
 struct SK_API ByteCode {
+    static constexpr int kVecWidth = 16;
+
     ByteCode() = default;
     ByteCode(const ByteCode&) = delete;
     ByteCode& operator=(const ByteCode&) = delete;
@@ -195,6 +199,13 @@ struct SK_API ByteCode {
      */
     void run(const ByteCodeFunction*, float* args, float* outReturn, int N,
              const float* uniforms, int uniformCount) const;
+
+    // For now, if outArgCount > 0, then we will memcpy VecWidth number of elements into
+    // each slot in outArgs. This may change in the future, as that may be more than is actually
+    // valid (depending on the N that was passed in.
+    void runStriped(const ByteCodeFunction*, float* args[], int nargs, int N,
+                    const float* uniforms, int uniformCount,
+                    float* outArgs[], int outArgCount) const;
 };
 
 }

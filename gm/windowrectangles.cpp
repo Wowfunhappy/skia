@@ -214,7 +214,7 @@ DrawResult WindowRectanglesMaskGM::onCoverClipStack(const SkClipStack& stack, Sk
     const GrReducedClip reducedClip(stack, SkRect::Make(kCoverRect), rtc->caps(), kNumWindows);
 
     GrPaint paint;
-    if (GrFSAAType::kNone == rtc->fsaaType()) {
+    if (rtc->numSamples() <= 1) {
         paint.setColor4f({ 0, 0.25f, 1, 1 });
         this->visualizeAlphaMask(ctx, rtc, reducedClip, std::move(paint));
     } else {
@@ -230,12 +230,10 @@ void WindowRectanglesMaskGM::visualizeAlphaMask(GrContext* ctx, GrRenderTargetCo
     const int padBottom = (kDeviceRect.bottom() - kCoverRect.bottom()) / 2;
     const GrBackendFormat format =
             ctx->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
-    sk_sp<GrRenderTargetContext> maskRTC(
-        ctx->priv().makeDeferredRenderTargetContextWithFallback(
-                                                         format, SkBackingFit::kExact,
-                                                         kCoverRect.width() + padRight,
-                                                         kCoverRect.height() + padBottom,
-                                                         kAlpha_8_GrPixelConfig, nullptr));
+    sk_sp<GrRenderTargetContext> maskRTC(ctx->priv().makeDeferredRenderTargetContextWithFallback(
+            format, SkBackingFit::kExact, kCoverRect.width() + padRight,
+            kCoverRect.height() + padBottom, kAlpha_8_GrPixelConfig, GrColorType::kAlpha_8,
+            nullptr));
     if (!maskRTC) {
         return;
     }
