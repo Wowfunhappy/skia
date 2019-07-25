@@ -8,8 +8,13 @@
 #ifndef GrSurfaceContext_DEFINED
 #define GrSurfaceContext_DEFINED
 
+#include "include/core/SkFilterQuality.h"
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkSurface.h"
 #include "src/gpu/GrColorSpaceInfo.h"
+#include "src/gpu/GrDataUtils.h"
 #include "src/gpu/GrSurfaceProxy.h"
 
 class GrAuditTrail;
@@ -39,60 +44,30 @@ public:
     int width() const { return this->asSurfaceProxy()->width(); }
     int height() const { return this->asSurfaceProxy()->height(); }
 
-   /**
-    * These flags can be used with the read/write pixels functions below.
-    */
-    enum PixelOpsFlags {
-        /** The src for write or dst read is unpremultiplied. This is only respected if both the
-            config src and dst configs are an RGBA/BGRA 8888 format. */
-        kUnpremul_PixelOpsFlag  = 0x4,
-    };
-
     /**
      * Reads a rectangle of pixels from the render target context.
      * @param dstInfo       image info for the destination
-     * @param dstBuffer     destination pixels for the read
-     * @param dstRowBytes   bytes in a row of 'dstBuffer'
-     * @param x             x offset w/in the render target context from which to read
-     * @param y             y offset w/in the render target context from which to read
-     *
-     * @return true if the read succeeded, false if not. The read can fail because of an
-     *              unsupported pixel config.
+     * @param dst           destination pixels for the read
+     * @param rowBytes      bytes in a row of 'dst'
+     * @param srcPt         offset w/in the surface context from which to read
+     * @param direct        The direct context to use. If null will use our GrRecordingContext if it
+     *                      is a GrDirectContext and fail otherwise.
      */
-    bool readPixels(const SkImageInfo& dstInfo, void* dstBuffer, size_t dstRowBytes,
-                    int x, int y, uint32_t flags = 0);
+    bool readPixels(const GrPixelInfo& dstInfo, void* dst, size_t rowBytes, SkIPoint srcPt,
+                    GrContext* direct = nullptr);
 
     /**
      * Writes a rectangle of pixels [srcInfo, srcBuffer, srcRowbytes] into the
      * renderTargetContext at the specified position.
      * @param srcInfo       image info for the source pixels
-     * @param srcBuffer     source for the write
-     * @param srcRowBytes   bytes in a row of 'srcBuffer'
-     * @param x             x offset w/in the render target context at which to write
-     * @param y             y offset w/in the render target context at which to write
-     *
-     * @return true if the write succeeded, false if not. The write can fail because of an
-     *              unsupported pixel config.
+     * @param src           source for the write
+     * @param rowBytes      bytes in a row of 'src'
+     * @param dstPt         offset w/in the surface context at which to write
+     * @param direct        The direct context to use. If null will use our GrRecordingContext if it
+     *                      is a GrDirectContext and fail otherwise.
      */
-    bool writePixels(const SkImageInfo& srcInfo, const void* srcBuffer, size_t srcRowBytes,
-                     int x, int y, uint32_t flags = 0);
-
-#if GR_TEST_UTILS
-    // Accessors for tests to directly call read/writePixelsImpl
-    bool writePixels(GrContext* direct, int left, int top, int width, int height,
-                     GrColorType srcColorType, SkColorSpace* srcColorSpace,
-                     const void* srcBuffer, size_t srcRowBytes = 0, uint32_t pixelOpsFlags = 0) {
-        return writePixelsImpl(direct, left, top, width, height, srcColorType, srcColorSpace,
-                               srcBuffer, srcRowBytes, pixelOpsFlags);
-    }
-
-    bool readPixels(GrContext* direct, int left, int top, int width, int height,
-                    GrColorType dstColorType, SkColorSpace* dstColorSpace, void* buffer,
-                    size_t rowBytes = 0, uint32_t pixelOpsFlags = 0) {
-        return readPixelsImpl(direct, left, top, width, height, dstColorType, dstColorSpace,
-                              buffer, rowBytes, pixelOpsFlags);
-    }
-#endif
+    bool writePixels(const GrPixelInfo& srcInfo, const void* src, size_t rowBytes, SkIPoint dstPt,
+                     GrContext* direct = nullptr);
 
     // TODO: this is virtual b.c. this object doesn't have a pointer to the wrapped GrSurfaceProxy?
     virtual GrSurfaceProxy* asSurfaceProxy() = 0;
@@ -128,11 +103,7 @@ public:
 protected:
     friend class GrSurfaceContextPriv;
 
-    GrSurfaceContext(GrRecordingContext*,
-                     GrColorType,
-                     SkAlphaType,
-                     sk_sp<SkColorSpace>,
-                     GrPixelConfig);
+    GrSurfaceContext(GrRecordingContext*, GrColorType, SkAlphaType, sk_sp<SkColorSpace>);
 
     GrDrawingManager* drawingManager();
     const GrDrawingManager* drawingManager() const;
@@ -143,6 +114,11 @@ protected:
     SkDEBUGCODE(GrSingleOwner* singleOwner();)
 
     GrRecordingContext* fContext;
+
+    // The rescaling step of asyncRescaleAndReadPixels[YUV420]().
+    sk_sp<GrRenderTargetContext> rescale(const SkImageInfo& info, const SkIRect& srcRect,
+                                         SkSurface::RescaleGamma rescaleGamma,
+                                         SkFilterQuality rescaleQuality);
 
 private:
     friend class GrSurfaceProxy; // for copy
@@ -167,15 +143,6 @@ private:
     bool copy(GrSurfaceProxy* src) {
         return this->copy(src, SkIRect::MakeWH(src->width(), src->height()), SkIPoint::Make(0, 0));
     }
-
-    bool writePixelsImpl(GrContext* direct, int left, int top, int width, int height,
-                         GrColorType srcColorType, SkColorSpace* srcColorSpace,
-                         const void* srcBuffer, size_t srcRowBytes, uint32_t pixelOpsFlags);
-
-    bool readPixelsImpl(GrContext* direct, int left, int top, int width,
-                        int height, GrColorType dstColorType,
-                        SkColorSpace* dstColorSpace, void* buffer, size_t rowBytes,
-                        uint32_t pixelOpsFlags);
 
     GrColorSpaceInfo    fColorSpaceInfo;
 

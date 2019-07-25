@@ -169,18 +169,17 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ProcessorRefTest, reporter, ctxInfo) {
     desc.fConfig = kRGBA_8888_GrPixelConfig;
 
     const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
+            context->priv().caps()->getBackendFormatFromColorType(GrColorType::kRGBA_8888);
 
     for (bool makeClone : {false, true}) {
         for (int parentCnt = 0; parentCnt < 2; parentCnt++) {
             sk_sp<GrRenderTargetContext> renderTargetContext(
                     context->priv().makeDeferredRenderTargetContext(
-                            format, SkBackingFit::kApprox, 1, 1, kRGBA_8888_GrPixelConfig,
-                            GrColorType::kRGBA_8888, nullptr));
+                            SkBackingFit::kApprox, 1, 1, GrColorType::kRGBA_8888, nullptr));
             {
                 sk_sp<GrTextureProxy> proxy = proxyProvider->createProxy(
-                        format, desc, kTopLeft_GrSurfaceOrigin, SkBackingFit::kExact,
-                        SkBudgeted::kYes);
+                        format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin,
+                        SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
 
                 {
                     SkTArray<sk_sp<GrTextureProxy>> proxies;
@@ -265,9 +264,8 @@ void render_fp(GrContext* context, GrRenderTargetContext* rtc, GrFragmentProcess
     // test_draw_op needs to take ownership of an FP, so give it a clone that it can own
     test_draw_op(context, rtc, fp->clone(), inputDataProxy);
     memset(buffer, 0x0, sizeof(GrColor) * width * height);
-           rtc->readPixels(SkImageInfo::Make(width, height, kRGBA_8888_SkColorType,
-                                             kPremul_SkAlphaType),
-                           buffer, 0, 0, 0);
+    rtc->readPixels(SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType),
+                    buffer, 0, {0, 0});
 }
 
 /** Initializes the two test texture proxies that are available to the FP test factories. */
@@ -291,8 +289,8 @@ bool init_test_textures(GrResourceProvider* resourceProvider,
                                            kRGBA_8888_SkColorType, kPremul_SkAlphaType);
         SkPixmap pixmap(ii, rgbaData.get(), ii.minRowBytes());
         sk_sp<SkImage> img = SkImage::MakeRasterCopy(pixmap);
-        proxies[0] = proxyProvider->createTextureProxy(img, kNone_GrSurfaceFlags, 1,
-                                                       SkBudgeted::kYes, SkBackingFit::kExact);
+        proxies[0] = proxyProvider->createTextureProxy(img, GrRenderable::kNo, 1, SkBudgeted::kYes,
+                                                       SkBackingFit::kExact);
         proxies[0]->instantiate(resourceProvider);
     }
 
@@ -309,8 +307,8 @@ bool init_test_textures(GrResourceProvider* resourceProvider,
                                            kAlpha_8_SkColorType, kPremul_SkAlphaType);
         SkPixmap pixmap(ii, alphaData.get(), ii.minRowBytes());
         sk_sp<SkImage> img = SkImage::MakeRasterCopy(pixmap);
-        proxies[1] = proxyProvider->createTextureProxy(img, kNone_GrSurfaceFlags, 1,
-                                                       SkBudgeted::kYes, SkBackingFit::kExact);
+        proxies[1] = proxyProvider->createTextureProxy(img, GrRenderable::kNo, 1, SkBudgeted::kYes,
+                                                       SkBackingFit::kExact);
         proxies[1]->instantiate(resourceProvider);
     }
 
@@ -331,8 +329,8 @@ sk_sp<GrTextureProxy> make_input_texture(GrProxyProvider* proxyProvider, int wid
     SkImageInfo ii = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
     SkPixmap pixmap(ii, data.get(), ii.minRowBytes());
     sk_sp<SkImage> img = SkImage::MakeRasterCopy(pixmap);
-    return proxyProvider->createTextureProxy(img, kNone_GrSurfaceFlags, 1,
-                                             SkBudgeted::kYes, SkBackingFit::kExact);
+    return proxyProvider->createTextureProxy(img, GrRenderable::kNo, 1, SkBudgeted::kYes,
+                                             SkBackingFit::kExact);
 }
 
 bool log_surface_context(sk_sp<GrSurfaceContext> src, SkString* dst) {
@@ -340,7 +338,7 @@ bool log_surface_context(sk_sp<GrSurfaceContext> src, SkString* dst) {
                                        kPremul_SkAlphaType);
     SkBitmap bm;
     SkAssertResult(bm.tryAllocPixels(ii));
-    SkAssertResult(src->readPixels(ii, bm.getPixels(), bm.rowBytes(), 0, 0));
+    SkAssertResult(src->readPixels(ii, bm.getPixels(), bm.rowBytes(), {0, 0}));
 
     return bitmap_to_base64_data_uri(bm, dst);
 }
@@ -433,14 +431,10 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorOptimizationValidationTest, repor
     // use --processorSeed <seed> (without --randomProcessorTest) to reproduce.
     SkRandom random(seed);
 
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
-
     // Make the destination context for the test.
     static constexpr int kRenderSize = 256;
     sk_sp<GrRenderTargetContext> rtc = context->priv().makeDeferredRenderTargetContext(
-            format, SkBackingFit::kExact, kRenderSize, kRenderSize, kRGBA_8888_GrPixelConfig,
-            GrColorType::kRGBA_8888, nullptr);
+            SkBackingFit::kExact, kRenderSize, kRenderSize, GrColorType::kRGBA_8888, nullptr);
 
     sk_sp<GrTextureProxy> proxies[2];
     if (!init_test_textures(resourceProvider, proxyProvider, &random, proxies)) {
@@ -671,14 +665,10 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(ProcessorCloneTest, reporter, ctxInfo) {
 
     SkRandom random;
 
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
-
     // Make the destination context for the test.
     static constexpr int kRenderSize = 1024;
     sk_sp<GrRenderTargetContext> rtc = context->priv().makeDeferredRenderTargetContext(
-            format, SkBackingFit::kExact, kRenderSize, kRenderSize, kRGBA_8888_GrPixelConfig,
-            GrColorType::kRGBA_8888, nullptr);
+            SkBackingFit::kExact, kRenderSize, kRenderSize, GrColorType::kRGBA_8888, nullptr);
 
     sk_sp<GrTextureProxy> proxies[2];
     if (!init_test_textures(resourceProvider, proxyProvider, &random, proxies)) {

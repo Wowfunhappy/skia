@@ -99,9 +99,8 @@ public:
     }
 #endif
 
-    GrStencilAttachment* createStencilAttachmentForRenderTarget(const GrRenderTarget*,
-                                                                int width,
-                                                                int height) override;
+    GrStencilAttachment* createStencilAttachmentForRenderTarget(
+            const GrRenderTarget*, int width, int height, int numStencilSamples) override;
 
     GrGpuRTCommandBuffer* getCommandBuffer(
             GrRenderTarget*, GrSurfaceOrigin, const SkRect&,
@@ -192,19 +191,24 @@ private:
 
     void destroyResources();
 
-    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&, SkBudgeted, const GrMipLevel[],
+    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&, GrRenderable, int renderTargetSampleCnt,
+                                     SkBudgeted, GrProtected, const GrMipLevel[],
                                      int mipLevelCount) override;
+    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, SkImage::CompressionType,
+                                               SkBudgeted, const void* data) override;
 
-    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrWrapOwnership, GrWrapCacheable,
-                                          GrIOType) override;
+    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrColorType, GrWrapOwnership,
+                                          GrWrapCacheable, GrIOType) override;
     sk_sp<GrTexture> onWrapRenderableBackendTexture(const GrBackendTexture&,
                                                     int sampleCnt,
+                                                    GrColorType colorType,
                                                     GrWrapOwnership,
                                                     GrWrapCacheable) override;
-    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&) override;
+    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&,
+                                                    GrColorType) override;
 
     sk_sp<GrRenderTarget> onWrapBackendTextureAsRenderTarget(const GrBackendTexture&,
-                                                             int sampleCnt) override;
+                                                             int sampleCnt, GrColorType) override;
 
     sk_sp<GrRenderTarget> onWrapVulkanSecondaryCBAsRenderTarget(const SkImageInfo&,
                                                                 const GrVkDrawableInfo&) override;
@@ -256,15 +260,14 @@ private:
     bool uploadTexDataOptimal(GrVkTexture* tex, int left, int top, int width, int height,
                               GrColorType colorType, const GrMipLevel texels[], int mipLevelCount);
     bool uploadTexDataCompressed(GrVkTexture* tex, int left, int top, int width, int height,
-                                 GrColorType dataColorType, const GrMipLevel texels[],
-                                 int mipLevelCount);
+                                 SkImage::CompressionType, const void* data);
     void resolveImage(GrSurface* dst, GrVkRenderTarget* src, const SkIRect& srcRect,
                       const SkIPoint& dstPoint);
 
-    bool createTestingOnlyVkImage(GrPixelConfig config, int w, int h, bool texturable,
-                                  bool renderable, GrMipMapped mipMapped, const void* srcData,
-                                  size_t srcRowBytes, const SkColor4f* color, GrVkImageInfo* info,
-                                  GrProtected isProtected);
+    bool createVkImageForBackendSurface(VkFormat vkFormat, int w, int h, bool texturable,
+                                        bool renderable, GrMipMapped mipMapped, const void* srcData,
+                                        size_t srcRowBytes, const SkColor4f* color,
+                                        GrVkImageInfo* info, GrProtected isProtected);
 
     sk_sp<const GrVkInterface>                            fInterface;
     sk_sp<GrVkMemoryAllocator>                            fMemoryAllocator;

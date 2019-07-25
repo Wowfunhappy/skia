@@ -1395,7 +1395,7 @@ Error GPUSink::onDraw(const Src& src, SkBitmap* dst, SkWStream*, SkString* log,
         case SkCommandLineConfigGpu::SurfType::kBackendTexture:
             backendTexture = context->createBackendTexture(
                     info.width(), info.height(), info.colorType(), SkColors::kTransparent,
-                    GrMipMapped::kNo, GrRenderable::kYes);
+                    GrMipMapped::kNo, GrRenderable::kYes, GrProtected::kNo);
             surface = SkSurface::MakeFromBackendTexture(context, backendTexture,
                                                         kTopLeft_GrSurfaceOrigin, fSampleCount,
                                                         fColorType, info.refColorSpace(), &props);
@@ -1527,6 +1527,9 @@ Error GPUPersistentCacheTestingSink::draw(const Src& src, SkBitmap* dst, SkWStre
     GrContextOptions contextOptions = this->baseContextOptions();
     contextOptions.fPersistentCache = &memoryCache;
     contextOptions.fDisallowGLSLBinaryCaching = (fCacheType == 2);
+    // anglebug.com/3619
+    contextOptions.fGpuPathRenderers =
+            contextOptions.fGpuPathRenderers & ~GpuPathRenderers::kStencilAndCover;
 
     Error err = this->onDraw(src, dst, wStream, log, contextOptions);
     if (!err.isEmpty() || !dst) {

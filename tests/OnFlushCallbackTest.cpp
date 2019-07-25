@@ -301,13 +301,12 @@ public:
             return fAtlasProxy;
         }
 
-        const GrBackendFormat format = caps->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
+        const GrBackendFormat format = caps->getBackendFormatFromColorType(GrColorType::kRGBA_8888);
 
         fAtlasProxy = GrProxyProvider::MakeFullyLazyProxy(
                 [](GrResourceProvider* resourceProvider)
                         -> GrSurfaceProxy::LazyInstantiationResult {
                     GrSurfaceDesc desc;
-                    desc.fFlags = kRenderTarget_GrSurfaceFlag;
                     // TODO: until partial flushes in MDB lands we're stuck having
                     // all 9 atlas draws occur
                     desc.fWidth = 9 /*this->numOps()*/ * kAtlasTileSize;
@@ -315,11 +314,14 @@ public:
                     desc.fConfig = kRGBA_8888_GrPixelConfig;
 
                     auto texture = resourceProvider->createTexture(
-                            desc, SkBudgeted::kYes, GrResourceProvider::Flags::kNoPendingIO);
+                            desc, GrRenderable::kYes, 1, SkBudgeted::kYes, GrProtected::kNo,
+                            GrResourceProvider::Flags::kNoPendingIO);
                     return std::move(texture);
                 },
                 format,
-                GrProxyProvider::Renderable::kYes,
+                GrRenderable::kYes,
+                1,
+                GrProtected::kNo,
                 kBottomLeft_GrSurfaceOrigin,
                 kRGBA_8888_GrPixelConfig,
                 *proxyProvider->caps());
@@ -433,15 +435,10 @@ private:
 // This creates an off-screen rendertarget whose ops which eventually pull from the atlas.
 static sk_sp<GrTextureProxy> make_upstream_image(GrContext* context, AtlasObject* object, int start,
                                                  sk_sp<GrTextureProxy> atlasProxy) {
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
-
     sk_sp<GrRenderTargetContext> rtc(
-            context->priv().makeDeferredRenderTargetContext(format,
-                                                            SkBackingFit::kApprox,
+            context->priv().makeDeferredRenderTargetContext(SkBackingFit::kApprox,
                                                             3*kDrawnTileSize,
                                                             kDrawnTileSize,
-                                                            kRGBA_8888_GrPixelConfig,
                                                             GrColorType::kRGBA_8888,
                                                             nullptr));
 
@@ -556,15 +553,10 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(OnFlushCallbackTest, reporter, ctxInfo) {
     static const int kFinalWidth = 6*kDrawnTileSize;
     static const int kFinalHeight = kDrawnTileSize;
 
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
-
     sk_sp<GrRenderTargetContext> rtc(
-            context->priv().makeDeferredRenderTargetContext(format,
-                                                            SkBackingFit::kApprox,
+            context->priv().makeDeferredRenderTargetContext(SkBackingFit::kApprox,
                                                             kFinalWidth,
                                                             kFinalHeight,
-                                                            kRGBA_8888_GrPixelConfig,
                                                             GrColorType::kRGBA_8888,
                                                             nullptr));
 
@@ -590,7 +582,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(OnFlushCallbackTest, reporter, ctxInfo) {
     readBack.allocN32Pixels(kFinalWidth, kFinalHeight);
 
     SkDEBUGCODE(bool result =) rtc->readPixels(readBack.info(), readBack.getPixels(),
-                                               readBack.rowBytes(), 0, 0);
+                                               readBack.rowBytes(), {0, 0});
     SkASSERT(result);
 
     context->priv().testingOnly_flushAndRemoveOnFlushCallbackObject(&object);

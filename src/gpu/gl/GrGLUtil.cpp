@@ -594,118 +594,106 @@ GrGLenum GrToGLStencilFunc(GrStencilTest test) {
     return gTable[(int)test];
 }
 
-bool GrGLFormatIsCompressed(GrGLenum glFormat) {
-    switch (glFormat) {
-        case GR_GL_COMPRESSED_RGB8_ETC2: // fall through
-        case GR_GL_COMPRESSED_ETC1_RGB8:
+bool GrGLFormatIsCompressed(GrGLFormat format) {
+    switch (format) {
+        case GrGLFormat::kCOMPRESSED_RGB8_ETC2:
+        case GrGLFormat::kCOMPRESSED_ETC1_RGB8:
             return true;
-        default:
+
+        case GrGLFormat::kRGBA8:
+        case GrGLFormat::kR8:
+        case GrGLFormat::kALPHA8:
+        case GrGLFormat::kLUMINANCE8:
+        case GrGLFormat::kBGRA8:
+        case GrGLFormat::kRGB565:
+        case GrGLFormat::kRGBA16F:
+        case GrGLFormat::kR16F:
+        case GrGLFormat::kLUMINANCE16F:
+        case GrGLFormat::kRGB8:
+        case GrGLFormat::kRG8:
+        case GrGLFormat::kRGB10_A2:
+        case GrGLFormat::kRGBA4:
+        case GrGLFormat::kRGBA32F:
+        case GrGLFormat::kSRGB8_ALPHA8:
+        case GrGLFormat::kR16:
+        case GrGLFormat::kRG16:
+        case GrGLFormat::kRGBA16:
+        case GrGLFormat::kRG16F:
+        case GrGLFormat::kUnknown:
             return false;
     }
-    SK_ABORT("Invalid format");
-    return false;
+    SkUNREACHABLE;
 }
 
-GrCompression GrGLFormat2Compression(GrGLenum glFormat) {
-    switch (glFormat) {
-        case GR_GL_COMPRESSED_RGB8_ETC2: // fall through
-        case GR_GL_COMPRESSED_ETC1_RGB8:
-            return GrCompression::kETC1;
-        default:
-            return GrCompression::kNone;
+bool GrGLFormatToCompressionType(GrGLFormat format, SkImage::CompressionType* compressionType) {
+    switch (format) {
+        case GrGLFormat::kCOMPRESSED_RGB8_ETC2:
+        case GrGLFormat::kCOMPRESSED_ETC1_RGB8:
+            *compressionType = SkImage::kETC1_CompressionType;
+            return true;
+
+        case GrGLFormat::kRGBA8:
+        case GrGLFormat::kR8:
+        case GrGLFormat::kALPHA8:
+        case GrGLFormat::kLUMINANCE8:
+        case GrGLFormat::kBGRA8:
+        case GrGLFormat::kRGB565:
+        case GrGLFormat::kRGBA16F:
+        case GrGLFormat::kR16F:
+        case GrGLFormat::kLUMINANCE16F:
+        case GrGLFormat::kRGB8:
+        case GrGLFormat::kRG8:
+        case GrGLFormat::kRGB10_A2:
+        case GrGLFormat::kRGBA4:
+        case GrGLFormat::kRGBA32F:
+        case GrGLFormat::kSRGB8_ALPHA8:
+        case GrGLFormat::kR16:
+        case GrGLFormat::kRG16:
+        case GrGLFormat::kRGBA16:
+        case GrGLFormat::kRG16F:
+        case GrGLFormat::kUnknown:
+            return false;
     }
-    SK_ABORT("Invalid format");
-    return GrCompression::kNone;
+    SkUNREACHABLE;
 }
 
-size_t GrGLFormatCompressedDataSize(GrGLenum glFormat, int width, int height) {
-    SkASSERT(GrGLFormatIsCompressed(glFormat));
-
+size_t GrGLBytesPerFormat(GrGLFormat glFormat) {
     switch (glFormat) {
-        case GR_GL_COMPRESSED_RGB8_ETC2:  // fall through
-        case GR_GL_COMPRESSED_ETC1_RGB8:
-            return GrETC1CompressedDataSize(width, height);
-        default:
-            SK_ABORT("Unknown compressed format");
-            return 4 * width * height;
-    }
-
-    SK_ABORT("Unknown compressed format");
-    return 4 * width * height;
-}
-
-size_t GrGLBytesPerFormat(GrGLenum glFormat) {
-    switch (glFormat) {
-        case GR_GL_LUMINANCE8:
-        case GR_GL_ALPHA8:
-        case GR_GL_R8:
+        case GrGLFormat::kLUMINANCE8:
+        case GrGLFormat::kALPHA8:
+        case GrGLFormat::kR8:
             return 1;
 
-        case GR_GL_RGB565:
-        case GR_GL_RGBA4:
-        case GR_GL_RG8:
-        case GR_GL_R16F:
-        case GR_GL_R16:
+        case GrGLFormat::kRGB565:
+        case GrGLFormat::kRGBA4:
+        case GrGLFormat::kRG8:
+        case GrGLFormat::kR16F:
+        case GrGLFormat::kLUMINANCE16F:
+        case GrGLFormat::kR16:
             return 2;
 
-        case GR_GL_RGB8:
+        case GrGLFormat::kRGB8:
             return 3;
 
-        case GR_GL_RGBA8:
-        case GR_GL_SRGB8_ALPHA8:
-        case GR_GL_BGRA8:
-        case GR_GL_RGB10_A2:
-        case GR_GL_RG16:
+        case GrGLFormat::kRGBA8:
+        case GrGLFormat::kSRGB8_ALPHA8:
+        case GrGLFormat::kBGRA8:
+        case GrGLFormat::kRGB10_A2:
+        case GrGLFormat::kRG16:
+        case GrGLFormat::kRG16F:
             return 4;
 
-        case GR_GL_RGBA16F:
-        case GR_GL_RG32F:
+        case GrGLFormat::kRGBA16F:
+        case GrGLFormat::kRGBA16:
             return 8;
 
-        case GR_GL_RGBA32F:
+        case GrGLFormat::kRGBA32F:
             return 16;
 
-        case GR_GL_COMPRESSED_RGB8_ETC2: // fall through
-        case GR_GL_COMPRESSED_ETC1_RGB8:
+        case GrGLFormat::kCOMPRESSED_RGB8_ETC2:
+        case GrGLFormat::kCOMPRESSED_ETC1_RGB8:
+        case GrGLFormat::kUnknown:
             return 0;
-
-        // Experimental (for Y416 and mutant P016/P010)
-        case GR_GL_RG16F:
-            return 4;
-        case GR_GL_RGBA16:
-            return 8;
     }
-
-    SK_ABORT("Invalid GL format");
-    return 0;
-}
-
-bool GrGLFormatIsSupported(GrGLenum format) {
-    switch (format) {
-        case GR_GL_LUMINANCE8:
-        case GR_GL_ALPHA8:
-        case GR_GL_R8:
-        case GR_GL_RGB565:
-        case GR_GL_RGBA4:
-        case GR_GL_RG8:
-        case GR_GL_R16F:
-        case GR_GL_R16:
-        case GR_GL_RGB8:
-        case GR_GL_RGBA8:
-        case GR_GL_SRGB8_ALPHA8:
-        case GR_GL_BGRA8:
-        case GR_GL_RGB10_A2:
-        case GR_GL_RG16:
-        case GR_GL_RGBA16F:
-        case GR_GL_RG32F:
-        case GR_GL_RGBA32F:
-        case GR_GL_COMPRESSED_RGB8_ETC2:
-        case GR_GL_COMPRESSED_ETC1_RGB8:
-        // Experimental (for Y416 and mutant P016/P010)
-        case GR_GL_RG16F:
-        case GR_GL_RGBA16:
-            return true;
-        default:
-            return false;
-    }
+    SkUNREACHABLE;
 }

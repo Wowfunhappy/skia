@@ -79,16 +79,18 @@ public:
                                                       sk_sp<SkColorSpace> = nullptr,
                                                       const SkSurfaceProps* = nullptr);
 
-    sk_sp<GrSurfaceContext> makeDeferredSurfaceContext(const GrBackendFormat&,
-                                                       const GrSurfaceDesc&,
-                                                       GrSurfaceOrigin,
-                                                       GrMipMapped,
-                                                       SkBackingFit,
-                                                       SkBudgeted,
-                                                       GrColorType,
-                                                       SkAlphaType,
-                                                       sk_sp<SkColorSpace> colorSpace = nullptr,
-                                                       const SkSurfaceProps* = nullptr);
+    /** Create a new texture context backed by a deferred-style GrTextureProxy. */
+    sk_sp<GrTextureContext> makeDeferredTextureContext(
+            SkBackingFit,
+            int width,
+            int height,
+            GrColorType,
+            SkAlphaType,
+            sk_sp<SkColorSpace>,
+            GrMipMapped = GrMipMapped::kNo,
+            GrSurfaceOrigin = kTopLeft_GrSurfaceOrigin,
+            SkBudgeted = SkBudgeted::kYes,
+            GrProtected = GrProtected::kNo);
 
     /*
      * Create a new render target context backed by a deferred-style
@@ -96,11 +98,9 @@ public:
      * renderTargetContexts created via this entry point.
      */
     sk_sp<GrRenderTargetContext> makeDeferredRenderTargetContext(
-            const GrBackendFormat& format,
             SkBackingFit fit,
             int width,
             int height,
-            GrPixelConfig config,
             GrColorType,
             sk_sp<SkColorSpace> colorSpace,
             int sampleCnt = 1,
@@ -117,11 +117,9 @@ public:
      * SRGB-ness will be preserved.
      */
     sk_sp<GrRenderTargetContext> makeDeferredRenderTargetContextWithFallback(
-            const GrBackendFormat& format,
             SkBackingFit fit,
             int width,
             int height,
-            GrPixelConfig config,
             GrColorType,
             sk_sp<SkColorSpace> colorSpace,
             int sampleCnt = 1,
@@ -273,7 +271,8 @@ public:
     // pixmap(s).
     // If numLevels is 1 a non-mipMapped texture will result. If a mipMapped texture is desired
     // the data for all the mipmap levels must be provided.
-    GrBackendTexture createBackendTexture(const SkPixmap srcData[], int numLevels, GrRenderable);
+    GrBackendTexture createBackendTexture(const SkPixmap srcData[], int numLevels,
+                                          GrRenderable, GrProtected);
 
 private:
     explicit GrContextPriv(GrContext* context) : fContext(context) {}

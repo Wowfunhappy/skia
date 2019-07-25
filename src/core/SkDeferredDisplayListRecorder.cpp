@@ -108,6 +108,7 @@ bool SkDeferredDisplayListRecorder::init() {
                                                     new SkDeferredDisplayList::LazyProxyData);
 
     auto proxyProvider = fContext->priv().proxyProvider();
+    const GrCaps* caps = fContext->priv().caps();
 
     bool usesGLFBO0 = fCharacterization.usesGLFBO0();
     if (usesGLFBO0) {
@@ -129,12 +130,18 @@ bool SkDeferredDisplayListRecorder::init() {
         }
     }
 
+    GrColorType grColorType = SkColorTypeToGrColorType(fCharacterization.colorType());
+
+    GrPixelConfig config = caps->getConfigFromBackendFormat(fCharacterization.backendFormat(),
+                                                            grColorType);
+    if (config == kUnknown_GrPixelConfig) {
+        return false;
+    }
+
     GrSurfaceDesc desc;
-    desc.fFlags = kRenderTarget_GrSurfaceFlag;
     desc.fWidth = fCharacterization.width();
     desc.fHeight = fCharacterization.height();
-    desc.fConfig = fCharacterization.config();
-    desc.fSampleCnt = fCharacterization.sampleCount();
+    desc.fConfig = config;
 
     sk_sp<SkDeferredDisplayList::LazyProxyData> lazyProxyData = fLazyProxyData;
 
@@ -153,9 +160,6 @@ bool SkDeferredDisplayListRecorder::init() {
         optionalTextureInfo = &kTextureInfo;
     }
 
-    const GrBackendFormat format = fContext->priv().caps()->getBackendFormatFromColorType(
-            fCharacterization.colorType());
-
     sk_sp<GrRenderTargetProxy> proxy = proxyProvider->createLazyRenderTargetProxy(
             [lazyProxyData](GrResourceProvider* resourceProvider) {
                 // The proxy backing the destination surface had better have been instantiated
@@ -164,18 +168,24 @@ bool SkDeferredDisplayListRecorder::init() {
                 auto surface = sk_ref_sp<GrSurface>(lazyProxyData->fReplayDest->peekSurface());
                 return GrSurfaceProxy::LazyInstantiationResult(std::move(surface));
             },
-            format,
+            fCharacterization.backendFormat(),
             desc,
+            fCharacterization.sampleCount(),
             fCharacterization.origin(),
             surfaceFlags,
             optionalTextureInfo,
             SkBackingFit::kExact,
             SkBudgeted::kYes,
+            fCharacterization.isProtected(),
             fCharacterization.vulkanSecondaryCBCompatible());
+
+    if (!proxy) {
+        return false;
+    }
 
     sk_sp<GrSurfaceContext> c = fContext->priv().makeWrappedSurfaceContext(
             std::move(proxy),
-            SkColorTypeToGrColorType(fCharacterization.colorType()),
+            grColorType,
             kPremul_SkAlphaType,
             fCharacterization.refColorSpace(),
             &fCharacterization.surfaceProps());

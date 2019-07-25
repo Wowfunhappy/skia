@@ -140,20 +140,20 @@ DEF_TEST(Skottie_Properties, reporter) {
 
     const auto& transforms = observer->transforms();
     REPORTER_ASSERT(reporter, transforms.size() == 2);
-    REPORTER_ASSERT(reporter, transforms[0].node_name.equals("shape_transform_0"));
+    REPORTER_ASSERT(reporter, transforms[0].node_name.equals("layer_0"));
     REPORTER_ASSERT(reporter, transforms[0].transform == skottie::TransformPropertyValue({
         SkPoint::Make(0, 0),
         SkPoint::Make(0, 0),
-        SkVector::Make(50, 50),
+        SkVector::Make(100, 100),
         0,
         0,
         0
     }));
-    REPORTER_ASSERT(reporter, transforms[1].node_name.equals("layer_0"));
+    REPORTER_ASSERT(reporter, transforms[1].node_name.equals("shape_transform_0"));
     REPORTER_ASSERT(reporter, transforms[1].transform == skottie::TransformPropertyValue({
         SkPoint::Make(0, 0),
         SkPoint::Make(0, 0),
-        SkVector::Make(100, 100),
+        SkVector::Make(50, 50),
         0,
         0,
         0
@@ -294,6 +294,7 @@ DEF_TEST(Skottie_Shaper_HAlign, reporter) {
                 typeface,
                 tsize.text_size,
                 tsize.text_size,
+                0,
                 talign.align,
                 skottie::Shaper::VAlign::kTopBaseline,
                 Shaper::Flags::kNone
@@ -342,8 +343,8 @@ DEF_TEST(Skottie_Shaper_VAlign, reporter) {
         skottie::Shaper::VAlign align;
         SkScalar                topFactor;
     } kTestAligns[] = {
-        { skottie::Shaper::VAlign::kTop   , 0.0f },
-        { skottie::Shaper::VAlign::kCenter, 0.5f },
+        { skottie::Shaper::VAlign::kVisualTop   , 0.0f },
+        { skottie::Shaper::VAlign::kVisualCenter, 0.5f },
         // TODO: any way to test kTopBaseline?
     };
 
@@ -357,6 +358,7 @@ DEF_TEST(Skottie_Shaper_VAlign, reporter) {
                 typeface,
                 tsize.text_size,
                 tsize.text_size,
+                0,
                 SkTextUtils::Align::kCenter_Align,
                 talign.align,
                 Shaper::Flags::kNone
@@ -391,6 +393,7 @@ DEF_TEST(Skottie_Shaper_FragmentGlyphs, reporter) {
         SkTypeface::MakeDefault(),
         18,
         18,
+         0,
         SkTextUtils::Align::kCenter_Align,
         Shaper::VAlign::kTop,
         Shaper::Flags::kNone

@@ -79,7 +79,12 @@ public:
             , fOrigin(origin) {}
 
 private:
-    SkString onShortName() override;
+    SkString onShortName() override {
+        return SkStringPrintf("samplelocations%s%s",
+                              (GradType::kHW == fGradType) ? "_hwgrad" : "_swgrad",
+                              (kTopLeft_GrSurfaceOrigin == fOrigin) ? "_topleft" : "_botleft");
+    }
+
     SkISize onISize() override { return SkISize::Make(200, 200); }
     DrawResult onDraw(GrContext*, GrRenderTargetContext*, SkCanvas*, SkString* errorMsg) override;
 
@@ -245,26 +250,31 @@ private:
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Test.
 
-SkString SampleLocationsGM::onShortName() {
-    SkString name("samplelocations");
-    name.append((GradType::kHW == fGradType) ? "_hwgrad" : "_swgrad");
-    name.append((kTopLeft_GrSurfaceOrigin == fOrigin) ? "_topleft" : "_botleft");
-    return name;
-}
-
 DrawResult SampleLocationsGM::onDraw(
         GrContext* ctx, GrRenderTargetContext* rtc, SkCanvas* canvas, SkString* errorMsg) {
-    if (rtc->numSamples() <= 1) {
-        // MIXED SAMPLES TODO: && !ctx->caps()->mixedSamplesSupport()
-        *errorMsg = "MSAA only.";
-        return DrawResult::kSkip;
-    }
     if (!ctx->priv().caps()->sampleLocationsSupport()) {
         *errorMsg = "Requires support for sample locations.";
         return DrawResult::kSkip;
     }
     if (!ctx->priv().caps()->shaderCaps()->sampleVariablesSupport()) {
         *errorMsg = "Requires support for sample variables.";
+        return DrawResult::kSkip;
+    }
+    if (rtc->numSamples() <= 1 && !ctx->priv().caps()->mixedSamplesSupport()) {
+        *errorMsg = "MSAA and mixed samples only.";
+        return DrawResult::kSkip;
+    }
+
+    auto offscreenRTC = ctx->priv().makeDeferredRenderTargetContext(
+            SkBackingFit::kExact, 200, 200, rtc->colorSpaceInfo().colorType(), nullptr,
+            rtc->numSamples(), GrMipMapped::kNo, fOrigin);
+    if (!offscreenRTC) {
+        *errorMsg = "Failed to create offscreen render target.";
+        return DrawResult::kFail;
+    }
+    if (offscreenRTC->numSamples() <= 1 &&
+        !offscreenRTC->proxy()->canUseMixedSamples(*ctx->priv().caps())) {
+        *errorMsg = "MSAA and mixed samples only.";
         return DrawResult::kSkip;
     }
 
@@ -278,32 +288,25 @@ DrawResult SampleLocationsGM::onDraw(
             0xffff>()
     );
 
-    if (auto offscreenRTC = ctx->priv().makeDeferredRenderTargetContext(
-                rtc->asSurfaceProxy()->backendFormat(), SkBackingFit::kExact, 200, 200,
-                rtc->asSurfaceProxy()->config(), rtc->colorSpaceInfo().colorType(), nullptr,
-                rtc->numSamples(), GrMipMapped::kNo, fOrigin)) {
-        offscreenRTC->clear(nullptr, {0,1,0,1}, GrRenderTargetContext::CanClearFullscreen::kYes);
+    offscreenRTC->clear(nullptr, {0,1,0,1}, GrRenderTargetContext::CanClearFullscreen::kYes);
 
-        // MIXED SAMPLES TODO: Mixed sampled stencil buffer.
+    // Stencil.
+    offscreenRTC->priv().testingOnly_addDrawOp(
+            SampleLocationsTestOp::Make(ctx, canvas->getTotalMatrix(), fGradType));
 
-        // Stencil.
-        offscreenRTC->priv().testingOnly_addDrawOp(
-                SampleLocationsTestOp::Make(ctx, canvas->getTotalMatrix(), fGradType));
+    // Cover.
+    GrPaint coverPaint;
+    coverPaint.setColor4f({1,0,0,1});
+    coverPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrcOver));
+    rtc->priv().stencilRect(GrNoClip(), &kStencilCover, std::move(coverPaint), GrAA::kNo,
+                            SkMatrix::I(), SkRect::MakeWH(200, 200));
 
-        // Cover.
-        GrPaint coverPaint;
-        coverPaint.setColor4f({1,0,0,1});
-        coverPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrcOver));
-        rtc->priv().stencilRect(GrNoClip(), &kStencilCover, std::move(coverPaint), GrAA::kNo,
-                                SkMatrix::I(), SkRect::MakeWH(200, 200));
-
-        // Copy offscreen texture to canvas.
-        rtc->drawTexture(
-                GrNoClip(), sk_ref_sp(offscreenRTC->asTextureProxy()),
-                GrSamplerState::Filter::kNearest, SkBlendMode::kSrc, SK_PMColor4fWHITE,
-                {0,0,200,200}, {0,0,200,200}, GrAA::kNo, GrQuadAAFlags::kNone,
-                SkCanvas::SrcRectConstraint::kStrict_SrcRectConstraint, SkMatrix::I(), nullptr);
-    }
+    // Copy offscreen texture to canvas.
+    rtc->drawTexture(
+            GrNoClip(), sk_ref_sp(offscreenRTC->asTextureProxy()),
+            GrSamplerState::Filter::kNearest, SkBlendMode::kSrc, SK_PMColor4fWHITE,
+            {0,0,200,200}, {0,0,200,200}, GrAA::kNo, GrQuadAAFlags::kNone,
+            SkCanvas::SrcRectConstraint::kStrict_SrcRectConstraint, SkMatrix::I(), nullptr);
 
     return skiagm::DrawResult::kOk;
 }

@@ -95,13 +95,13 @@ GrXferBarrierType GrPipeline::xferBarrierType(GrTexture* texture, const GrCaps& 
     return this->getXferProcessor().xferBarrierType(caps);
 }
 
-GrPipeline::GrPipeline(GrScissorTest scissorTest, SkBlendMode blendmode,
+GrPipeline::GrPipeline(GrScissorTest scissorTest, sk_sp<const GrXferProcessor> xp,
                        const GrSwizzle& outputSwizzle, InputFlags inputFlags,
                        const GrUserStencilSettings* userStencil)
         : fWindowRectsState()
         , fUserStencilSettings(userStencil)
         , fFlags((Flags)inputFlags)
-        , fXferProcessor(GrPorterDuffXPFactory::MakeNoCoverageXP(blendmode))
+        , fXferProcessor(std::move(xp))
         , fFragmentProcessors()
         , fNumColorProcessors(0)
         , fOutputSwizzle(outputSwizzle) {
@@ -114,8 +114,7 @@ GrPipeline::GrPipeline(GrScissorTest scissorTest, SkBlendMode blendmode,
 }
 
 uint32_t GrPipeline::getBlendInfoKey() const {
-    GrXferProcessor::BlendInfo blendInfo;
-    this->getXferProcessor().getBlendInfo(&blendInfo);
+    const GrXferProcessor::BlendInfo& blendInfo = this->getXferProcessor().getBlendInfo();
 
     static const uint32_t kBlendWriteShift = 1;
     static const uint32_t kBlendCoeffShift = 5;

@@ -405,14 +405,14 @@ void GrRenderTargetOpList::onPrepare(GrOpFlushState* flushState) {
     SkASSERT(fTarget->peekRenderTarget());
     SkASSERT(this->isClosed());
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-    TRACE_EVENT0("skia", TRACE_FUNC);
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
 #endif
 
     // Loop over the ops that haven't yet been prepared.
     for (const auto& chain : fOpChains) {
         if (chain.head()) {
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-            TRACE_EVENT0("skia", chain.head()->name());
+            TRACE_EVENT0("skia.gpu", chain.head()->name());
 #endif
             GrOpFlushState::OpArgs opArgs = {
                 chain.head(),
@@ -470,7 +470,7 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
     }
 
     SkASSERT(fTarget->peekRenderTarget());
-    TRACE_EVENT0("skia", TRACE_FUNC);
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
 
     // TODO: at the very least, we want the stencil store op to always be discard (at this
     // level). In Vulkan, sub-command buffers would still need to load & store the stencil buffer.
@@ -497,7 +497,7 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
             continue;
         }
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-        TRACE_EVENT0("skia", chain.head()->name());
+        TRACE_EVENT0("skia.gpu", chain.head()->name());
 #endif
 
         GrOpFlushState::OpArgs opArgs {
@@ -536,31 +536,25 @@ void GrRenderTargetOpList::discard() {
     }
 }
 
-void GrRenderTargetOpList::setStencilLoadOp(GrLoadOp op) {
-    fStencilLoadOp = op;
-}
-
 void GrRenderTargetOpList::setColorLoadOp(GrLoadOp op, const SkPMColor4f& color) {
     fColorLoadOp = op;
     fLoadClearColor = color;
 }
 
-bool GrRenderTargetOpList::resetForFullscreenClear() {
+bool GrRenderTargetOpList::resetForFullscreenClear(CanDiscardPreviousOps canDiscardPreviousOps) {
     // Mark the color load op as discard (this may be followed by a clearColorOnLoad call to make
     // the load op kClear, or it may be followed by an explicit op). In the event of an absClear()
     // after a regular clear(), we could end up with a clear load op and a real clear op in the list
     // if the load op were not reset here.
     fColorLoadOp = GrLoadOp::kDiscard;
 
-    // Regardless of how the clear is implemented (native clear or a fullscreen quad), all prior ops
-    // would be overwritten, so discard them entirely. The one exception is if the opList is marked
-    // as needing a stencil buffer then there may be a prior op that writes to the stencil buffer.
-    // Although the clear will ignore the stencil buffer, following draw ops may not so we can't get
-    // rid of all the preceding ops. Beware! If we ever add any ops that have a side effect beyond
-    // modifying the stencil buffer we will need a more elaborate tracking system (skbug.com/7002).
-    // Additionally, if we previously recorded a wait op, we cannot delete the wait op. Until we
-    // track the wait ops separately from normal ops, we have to avoid clearing out any ops.
-    if (this->isEmpty() || (!fTarget->asRenderTargetProxy()->needsStencil() && !fHasWaitOp)) {
+    // If we previously recorded a wait op, we cannot delete the wait op. Until we track the wait
+    // ops separately from normal ops, we have to avoid clearing out any ops in this case as well.
+    if (fHasWaitOp) {
+        canDiscardPreviousOps = CanDiscardPreviousOps::kNo;
+    }
+
+    if (CanDiscardPreviousOps::kYes == canDiscardPreviousOps || this->isEmpty()) {
         this->deleteOps();
         fDeferredProxies.reset();
 

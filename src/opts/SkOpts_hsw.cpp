@@ -11,12 +11,14 @@
 #include "src/opts/SkBlitRow_opts.h"
 #include "src/opts/SkRasterPipeline_opts.h"
 #include "src/opts/SkUtils_opts.h"
-#include "src/opts/SkVM_opts.h"
+#include "src/core/SkCubicSolver.h"
 
 namespace SkOpts {
     void Init_hsw() {
         blit_row_color32     = hsw::blit_row_color32;
         blit_row_s32a_opaque = hsw::blit_row_s32a_opaque;
+
+        cubic_solver = SK_OPTS_NS::cubic_solver;
 
     #define M(st) stages_highp[SkRasterPipeline::st] = (StageFn)SK_OPTS_NS::st;
         SK_RASTER_PIPELINE_STAGES(M)
@@ -29,7 +31,5 @@ namespace SkOpts {
         just_return_lowp = (StageFn)SK_OPTS_NS::lowp::just_return;
         start_pipeline_lowp = SK_OPTS_NS::lowp::start_pipeline;
     #undef M
-
-        eval = hsw::eval;
     }
 }

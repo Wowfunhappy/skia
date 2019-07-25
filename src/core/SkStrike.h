@@ -60,12 +60,10 @@ public:
     SkGlyph* mergeGlyphAndImage(SkPackedGlyphID toID, const SkGlyph& from);
 
     // If the path has never been set, then use the scaler context to add the glyph.
-    const SkPath* preparePath(SkGlyph*) override;
+    const SkPath* preparePath(SkGlyph*);
 
     // If the path has never been set, then add a path to glyph.
     const SkPath* preparePath(SkGlyph* glyph, const SkPath* path);
-
-    SkSpan<SkPoint> getAdvances(SkSpan<const SkGlyphID>, SkPoint[]);
 
     /** Returns the number of glyphs for this strike.
     */
@@ -105,9 +103,23 @@ public:
 
     SkVector rounding() const override;
 
+    SkIPoint subpixelMask() const override {
+        return SkIPoint::Make((!fIsSubpixel || fAxisAlignment == kY_SkAxisAlignment) ? 0 : ~0,
+                              (!fIsSubpixel || fAxisAlignment == kX_SkAxisAlignment) ? 0 : ~0);
+    }
+
     const SkDescriptor& getDescriptor() const override;
 
-    SkSpan<const SkGlyphPos> prepareForDrawing(const SkGlyphID glyphIDs[],
+    SkSpan<const SkGlyph*> metrics(SkSpan<const SkGlyphID> glyphIDs,
+                                   const SkGlyph* results[]);
+
+    SkSpan<const SkGlyph*> preparePaths(SkSpan<const SkGlyphID> glyphIDs,
+                                        const SkGlyph* results[]);
+
+    SkSpan<const SkGlyph*> prepareImages(SkSpan<const SkPackedGlyphID> glyphIDs,
+                                         const SkGlyph* results[]);
+
+    SkSpan<const SkGlyphPos> prepareForDrawing(const SkPackedGlyphID packedGlyphIDs[],
                                                const SkPoint positions[],
                                                size_t n,
                                                int maxDimension,
@@ -162,9 +174,16 @@ private:
 
     SkGlyph* makeGlyph(SkPackedGlyphID);
 
-    // Metrics will hold a mutex while doing its work. This is one of the few places that will
-    // need a mutex.
-    SkSpan<const SkGlyph*> metrics(SkSpan<const SkGlyphID>glyphIDs, const SkGlyph* result[]);
+    enum PathDetail {
+        kMetricsOnly,
+        kMetricsAndPath
+    };
+
+    // internalPrepare will only be called with a mutex already held.
+    SkSpan<const SkGlyph*> internalPrepare(
+            SkSpan<const SkGlyphID> glyphIDs,
+            PathDetail pathDetail,
+            const SkGlyph** results);
 
     const SkAutoDescriptor                 fDesc;
     const std::unique_ptr<SkScalerContext> fScalerContext;

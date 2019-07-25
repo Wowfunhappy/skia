@@ -21,6 +21,7 @@ class GrStrikeCache;
 class GrSurfaceContext;
 class GrSurfaceProxy;
 class GrTextBlobCache;
+class GrTextureContext;
 
 class SK_API GrRecordingContext : public GrImageContext {
 public:
@@ -62,16 +63,18 @@ protected:
                                                       sk_sp<SkColorSpace> = nullptr,
                                                       const SkSurfaceProps* = nullptr);
 
-    sk_sp<GrSurfaceContext> makeDeferredSurfaceContext(const GrBackendFormat&,
-                                                       const GrSurfaceDesc&,
-                                                       GrSurfaceOrigin,
-                                                       GrMipMapped,
-                                                       SkBackingFit,
-                                                       SkBudgeted,
-                                                       GrColorType,
-                                                       SkAlphaType,
-                                                       sk_sp<SkColorSpace> colorSpace = nullptr,
-                                                       const SkSurfaceProps* = nullptr);
+    /** Create a new texture context backed by a deferred-style GrTextureProxy. */
+    sk_sp<GrTextureContext> makeDeferredTextureContext(
+            SkBackingFit,
+            int width,
+            int height,
+            GrColorType,
+            SkAlphaType,
+            sk_sp<SkColorSpace>,
+            GrMipMapped = GrMipMapped::kNo,
+            GrSurfaceOrigin = kTopLeft_GrSurfaceOrigin,
+            SkBudgeted = SkBudgeted::kYes,
+            GrProtected = GrProtected::kNo);
 
     /*
      * Create a new render target context backed by a deferred-style
@@ -79,11 +82,9 @@ protected:
      * renderTargetContexts created via this entry point.
      */
     sk_sp<GrRenderTargetContext> makeDeferredRenderTargetContext(
-            const GrBackendFormat& format,
             SkBackingFit fit,
             int width,
             int height,
-            GrPixelConfig config,
             GrColorType colorType,
             sk_sp<SkColorSpace> colorSpace,
             int sampleCnt = 1,
@@ -100,11 +101,9 @@ protected:
      * SRGB-ness will be preserved.
      */
     sk_sp<GrRenderTargetContext> makeDeferredRenderTargetContextWithFallback(
-            const GrBackendFormat& format,
             SkBackingFit fit,
             int width,
             int height,
-            GrPixelConfig config,
             GrColorType colorType,
             sk_sp<SkColorSpace> colorSpace,
             int sampleCnt = 1,

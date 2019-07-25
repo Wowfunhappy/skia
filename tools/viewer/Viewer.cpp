@@ -268,7 +268,7 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
     gPathRendererNames[GpuPathRenderers::kAll] = "All Path Renderers";
     gPathRendererNames[GpuPathRenderers::kStencilAndCover] = "NV_path_rendering";
     gPathRendererNames[GpuPathRenderers::kSmall] = "Small paths (cached sdf or alpha masks)";
-    gPathRendererNames[GpuPathRenderers::kCoverageCounting] = "Coverage counting";
+    gPathRendererNames[GpuPathRenderers::kCoverageCounting] = "CCPR";
     gPathRendererNames[GpuPathRenderers::kTessellating] = "Tessellating";
     gPathRendererNames[GpuPathRenderers::kNone] = "Software masks";
 
@@ -347,6 +347,10 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
         params.fDisableVsync = !params.fDisableVsync;
         fWindow->setRequestedDisplayParams(params);
         this->updateTitle();
+        fWindow->inval();
+    });
+    fCommands.addCommand('r', "Redraw", "Toggle redraw", [this]() {
+        fRefresh = !fRefresh;
         fWindow->inval();
     });
     fCommands.addCommand('s', "Overlays", "Toggle stats display", [this]() {
@@ -1369,20 +1373,20 @@ SkPoint Viewer::mapEvent(float x, float y) {
     return inv.mapXY(x, y);
 }
 
-bool Viewer::onTouch(intptr_t owner, Window::InputState state, float x, float y) {
+bool Viewer::onTouch(intptr_t owner, InputState state, float x, float y) {
     if (GestureDevice::kMouse == fGestureDevice) {
         return false;
     }
 
     const auto slidePt = this->mapEvent(x, y);
-    if (fSlides[fCurrentSlide]->onMouse(slidePt.x(), slidePt.y(), state, 0)) {
+    if (fSlides[fCurrentSlide]->onMouse(slidePt.x(), slidePt.y(), state, ModifierKey::kNone)) {
         fWindow->inval();
         return true;
     }
 
     void* castedOwner = reinterpret_cast<void*>(owner);
     switch (state) {
-        case Window::kUp_InputState: {
+        case InputState::kUp: {
             fGesture.touchEnd(castedOwner);
 #if defined(SK_BUILD_FOR_IOS)
             // TODO: move IOS swipe detection higher up into the platform code
@@ -1403,11 +1407,11 @@ bool Viewer::onTouch(intptr_t owner, Window::InputState state, float x, float y)
 #endif
             break;
         }
-        case Window::kDown_InputState: {
+        case InputState::kDown: {
             fGesture.touchBegin(castedOwner, x, y);
             break;
         }
-        case Window::kMove_InputState: {
+        case InputState::kMove: {
             fGesture.touchMoved(castedOwner, x, y);
             break;
         }
@@ -1417,7 +1421,7 @@ bool Viewer::onTouch(intptr_t owner, Window::InputState state, float x, float y)
     return true;
 }
 
-bool Viewer::onMouse(int x, int y, Window::InputState state, uint32_t modifiers) {
+bool Viewer::onMouse(int x, int y, InputState state, ModifierKey modifiers) {
     if (GestureDevice::kTouch == fGestureDevice) {
         return false;
     }
@@ -1429,22 +1433,22 @@ bool Viewer::onMouse(int x, int y, Window::InputState state, uint32_t modifiers)
     }
 
     switch (state) {
-        case Window::kUp_InputState: {
+        case InputState::kUp: {
             fGesture.touchEnd(nullptr);
             break;
         }
-        case Window::kDown_InputState: {
+        case InputState::kDown: {
             fGesture.touchBegin(nullptr, x, y);
             break;
         }
-        case Window::kMove_InputState: {
+        case InputState::kMove: {
             fGesture.touchMoved(nullptr, x, y);
             break;
         }
     }
     fGestureDevice = fGesture.isBeingTouched() ? GestureDevice::kMouse : GestureDevice::kNone;
 
-    if (state != Window::kMove_InputState || fGesture.isBeingTouched()) {
+    if (state != InputState::kMove || fGesture.isBeingTouched()) {
         fWindow->inval();
     }
     return true;
@@ -1952,7 +1956,7 @@ void Viewer::drawImGui() {
             }
 
             if (ImGui::CollapsingHeader("Animation")) {
-                bool isPaused = fAnimTimer.isPaused();
+                bool isPaused = AnimTimer::kPaused_State == fAnimTimer.state();
                 if (ImGui::Checkbox("Pause", &isPaused)) {
                     fAnimTimer.togglePauseResume();
                 }
@@ -2154,7 +2158,7 @@ void Viewer::onIdle() {
 
     fStatsLayer.beginTiming(fAnimateTimer);
     fAnimTimer.updateTime();
-    bool animateWantsInval = fSlides[fCurrentSlide]->animate(fAnimTimer);
+    bool animateWantsInval = fSlides[fCurrentSlide]->animate(fAnimTimer.nanos());
     fStatsLayer.endTiming(fAnimateTimer);
 
     ImGuiIO& io = ImGui::GetIO();
@@ -2341,11 +2345,11 @@ void Viewer::onUIStateChanged(const SkString& stateName, const SkString& stateVa
     }
 }
 
-bool Viewer::onKey(sk_app::Window::Key key, sk_app::Window::InputState state, uint32_t modifiers) {
+bool Viewer::onKey(sk_app::Window::Key key, InputState state, ModifierKey modifiers) {
     return fCommands.onKey(key, state, modifiers);
 }
 
-bool Viewer::onChar(SkUnichar c, uint32_t modifiers) {
+bool Viewer::onChar(SkUnichar c, ModifierKey modifiers) {
     if (fSlides[fCurrentSlide]->onChar(c)) {
         fWindow->inval();
         return true;

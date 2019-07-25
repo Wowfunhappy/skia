@@ -26,11 +26,8 @@
 static void test_basic_draw_as_src(skiatest::Reporter* reporter, GrContext* context,
                                    sk_sp<GrTextureProxy> rectProxy, GrColorType colorType,
                                    uint32_t expectedPixelValues[]) {
-    GrBackendFormat format = rectProxy->backendFormat().makeTexture2D();
-    SkASSERT(format.isValid());
     sk_sp<GrRenderTargetContext> rtContext(context->priv().makeDeferredRenderTargetContext(
-            format, SkBackingFit::kExact, rectProxy->width(), rectProxy->height(),
-            rectProxy->config(), colorType, nullptr));
+            SkBackingFit::kExact, rectProxy->width(), rectProxy->height(), colorType, nullptr));
     for (auto filter : {GrSamplerState::Filter::kNearest,
                         GrSamplerState::Filter::kBilerp,
                         GrSamplerState::Filter::kMipMap}) {
@@ -164,7 +161,8 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(RectangleTexture, reporter, ctxInfo) {
         }
 
         sk_sp<GrTextureProxy> rectProxy = proxyProvider->wrapBackendTexture(
-                rectangleTex, origin, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, kRW_GrIOType);
+                rectangleTex, GrColorType::kRGBA_8888, origin,
+                kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, kRW_GrIOType);
 
         if (!rectProxy) {
             ERRORF(reporter, "Error creating proxy for rectangle texture.");

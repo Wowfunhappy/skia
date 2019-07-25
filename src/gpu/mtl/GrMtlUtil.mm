@@ -81,9 +81,6 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
         case kRGBA_float_GrPixelConfig:
             *format = MTLPixelFormatRGBA32Float;
             return true;
-        case kRG_float_GrPixelConfig:
-            *format = MTLPixelFormatRG32Float;
-            return true;
         case kRGBA_half_GrPixelConfig:
             *format = MTLPixelFormatRGBA16Float;
             return true;
@@ -94,6 +91,8 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
         case kAlpha_half_as_Red_GrPixelConfig:
             *format = MTLPixelFormatR16Float;
             return true;
+        case kAlpha_half_as_Lum_GrPixelConfig:
+            return false;
         case kRGB_ETC1_GrPixelConfig:
 #ifdef SK_BUILD_FOR_IOS
             *format = MTLPixelFormatETC2_RGB8;
@@ -159,6 +158,7 @@ id<MTLLibrary> GrCompileMtlShaderLibrary(const GrMtlGpu* gpu,
     if (!program) {
         SkDebugf("SkSL error:\n%s\n", gpu->shaderCompiler()->errorText().c_str());
         SkASSERT(false);
+        return nil;
     }
 
     *outInputs = program->fInputs;
@@ -175,7 +175,7 @@ id<MTLLibrary> GrCompileMtlShaderLibrary(const GrMtlGpu* gpu,
 #endif
 
     MTLCompileOptions* defaultOptions = [[MTLCompileOptions alloc] init];
-#ifdef SK_BUILD_FOR_MAC
+#if defined(SK_BUILD_FOR_MAC) && defined(GR_USE_COMPLETION_HANDLER)
     bool timedout;
     id<MTLLibrary> compiledLibrary = GrMtlNewLibraryWithSource(gpu->device(), mtlCode,
                                                                defaultOptions, &timedout);
@@ -257,19 +257,18 @@ id<MTLRenderPipelineState> GrMtlNewRenderPipelineStateWithDescriptor(
     return pipelineState;
 }
 
-id<MTLTexture> GrGetMTLTextureFromSurface(GrSurface* surface, bool doResolve) {
+id<MTLTexture> GrGetMTLTextureFromSurface(GrSurface* surface) {
     id<MTLTexture> mtlTexture = nil;
 
     GrMtlRenderTarget* renderTarget = static_cast<GrMtlRenderTarget*>(surface->asRenderTarget());
     GrMtlTexture* texture;
     if (renderTarget) {
-        if (doResolve) {
-            // TODO: do resolve and set mtlTexture to resolved texture. As of now, we shouldn't
-            // have any multisampled render targets.
+        // We should not be using this for multisampled rendertargets
+        if (renderTarget->numSamples() > 1) {
             SkASSERT(false);
-        } else {
-            mtlTexture = renderTarget->mtlRenderTexture();
+            return nil;
         }
+        mtlTexture = renderTarget->mtlColorTexture();
     } else {
         texture = static_cast<GrMtlTexture*>(surface->asTexture());
         if (texture) {

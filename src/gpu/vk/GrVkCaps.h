@@ -34,27 +34,29 @@ public:
 
     bool isFormatSRGB(const GrBackendFormat& format) const override;
 
-    bool isFormatTexturable(SkColorType, const GrBackendFormat&) const override;
-    bool isFormatTexturable(VkFormat) const;
+    bool isFormatTexturable(GrColorType, const GrBackendFormat&) const override;
+    bool isVkFormatTexturable(VkFormat) const;
     bool isConfigTexturable(GrPixelConfig config) const override;
 
-    bool isFormatCopyable(SkColorType, const GrBackendFormat&) const override { return true; }
+    bool isFormatCopyable(GrColorType, const GrBackendFormat&) const override { return true; }
     bool isConfigCopyable(GrPixelConfig config) const override { return true; }
 
     bool isFormatRenderable(VkFormat) const;
 
     int getRenderTargetSampleCount(int requestedCount,
-                                   SkColorType, const GrBackendFormat&) const override;
+                                   GrColorType, const GrBackendFormat&) const override;
     int getRenderTargetSampleCount(int requestedCount, GrPixelConfig config) const override;
     int getRenderTargetSampleCount(int requestedCount, VkFormat) const;
 
-    int maxRenderTargetSampleCount(SkColorType, const GrBackendFormat&) const override;
+    int maxRenderTargetSampleCount(GrColorType, const GrBackendFormat&) const override;
     int maxRenderTargetSampleCount(GrPixelConfig config) const override;
     int maxRenderTargetSampleCount(VkFormat format) const;
 
-    ReadFlags surfaceSupportsReadPixels(const GrSurface*) const override;
+    SurfaceReadPixelsSupport surfaceSupportsReadPixels(const GrSurface*) const override;
+    SupportedRead supportedReadPixelsColorType(GrColorType, const GrBackendFormat&,
+                                               GrColorType) const override;
 
-    bool isFormatTexturableLinearly(VkFormat format) const {
+    bool isVkFormatTexturableLinearly(VkFormat format) const {
         return SkToBool(FormatInfo::kTextureable_Flag & this->getFormatInfo(format).fLinearFlags);
     }
 
@@ -158,17 +160,16 @@ public:
     bool canCopyAsResolve(GrPixelConfig dstConfig, int dstSampleCnt, bool dstHasYcbcr,
                           GrPixelConfig srcConfig, int srcSamplecnt, bool srcHasYcbcr) const;
 
-    bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc,
-                            bool* rectsMustMatch, bool* disallowSubrect) const override;
-
     GrPixelConfig validateBackendRenderTarget(const GrBackendRenderTarget&,
-                                              SkColorType) const override;
+                                              GrColorType) const override;
 
-    GrPixelConfig getConfigFromBackendFormat(const GrBackendFormat&, SkColorType) const override;
     GrPixelConfig getYUVAConfigFromBackendFormat(const GrBackendFormat&) const override;
+    GrColorType getYUVAColorTypeFromBackendFormat(const GrBackendFormat&) const override;
 
-    GrBackendFormat getBackendFormatFromGrColorType(GrColorType ct,
-                                                    GrSRGBEncoded srgbEncoded) const override;
+    GrBackendFormat getBackendFormatFromColorType(GrColorType ct) const override;
+    GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const override;
+
+    bool canClearTextureOnCreation() const override;
 
     GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const override;
     GrSwizzle getOutputSwizzle(const GrBackendFormat&, GrColorType) const override;
@@ -206,6 +207,9 @@ private:
                           const SkIRect& srcRect, const SkIPoint& dstPoint) const override;
     size_t onTransferFromOffsetAlignment(GrColorType bufferColorType) const override;
 
+    GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat&, GrColorType) const override;
+    bool onAreColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const override;
+
     struct FormatInfo {
         FormatInfo() : fOptimalFlags(0), fLinearFlags(0) {}
 
@@ -227,7 +231,7 @@ private:
 
         SkTDArray<int> fColorSampleCounts;
     };
-    static const size_t kNumVkFormats = 20;
+    static const size_t kNumVkFormats = 18;
     FormatInfo fFormatTable[kNumVkFormats];
 
     const FormatInfo& getFormatInfo(VkFormat) const;

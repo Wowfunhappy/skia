@@ -38,9 +38,9 @@ bool GrVkFormatIsSupported(VkFormat);
 
 #ifdef SK_DEBUG
 /**
- * Returns true if the passed in VkFormat and GrPixelConfig are compatible with each other.
+ * Returns true if the passed in VkFormat and GrColorType are compatible with each other.
  */
-bool GrVkFormatPixelConfigPairIsValid(VkFormat, GrPixelConfig);
+bool GrVkFormatColorTypePairIsValid(VkFormat, GrColorType);
 #endif
 
 bool GrSampleCountToVkSampleCount(uint32_t samples, VkSampleCountFlagBits* vkSamples);
@@ -68,13 +68,8 @@ size_t GrVkBytesPerFormat(VkFormat);
 bool GrVkFormatIsCompressed(VkFormat);
 
 /**
- * Returns the data size for the given compressed format
+ * Maps a vk format into the CompressionType enum if applicable.
  */
-size_t GrVkFormatCompressedDataSize(VkFormat, int width, int height);
-
-/**
- * Maps a vk format into the GrCompressed enum.
- */
-GrCompression GrVkFormat2Compression(VkFormat);
+bool GrVkFormatToCompressionType(VkFormat vkFormat, SkImage::CompressionType* compressionType);
 
 #endif

@@ -125,6 +125,7 @@ bool GrClipStackClip::PathNeedsSWRenderer(GrRecordingContext* context,
         GrShape shape(path, GrStyle::SimpleFill());
         GrPathRenderer::CanDrawPathArgs canDrawArgs;
         canDrawArgs.fCaps = context->priv().caps();
+        canDrawArgs.fProxy = renderTargetContext->proxy();
         canDrawArgs.fClipConservativeBounds = &scissorRect;
         canDrawArgs.fViewMatrix = &viewMatrix;
         canDrawArgs.fShape = &shape;
@@ -247,8 +248,7 @@ bool GrClipStackClip::apply(GrRecordingContext* context, GrRenderTargetContext* 
     // The opList ID must not be looked up until AFTER producing the clip mask (if any). That step
     // can cause a flush or otherwise change which opList our draw is going into.
     uint32_t opListID = renderTargetContext->getOpList()->uniqueID();
-    int rtWidth = renderTargetContext->width(), rtHeight = renderTargetContext->height();
-    if (auto clipFPs = reducedClip.finishAndDetachAnalyticFPs(ccpr, opListID, rtWidth, rtHeight)) {
+    if (auto clipFPs = reducedClip.finishAndDetachAnalyticFPs(ccpr, opListID)) {
         out->addCoverageFP(std::move(clipFPs));
     }
 
@@ -296,8 +296,6 @@ bool GrClipStackClip::applyClipMask(GrRecordingContext* context,
             return false;
         }
     }
-
-    renderTargetContext->setNeedsStencil();
 
     // This relies on the property that a reduced sub-rect of the last clip will contain all the
     // relevant window rectangles that were in the last clip. This subtle requirement will go away
@@ -357,15 +355,11 @@ sk_sp<GrTextureProxy> GrClipStackClip::createAlphaClipMask(GrRecordingContext* c
         return proxy;
     }
 
-    GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
     auto isProtected = proxy->isProtected() ? GrProtected::kYes : GrProtected::kNo;
     sk_sp<GrRenderTargetContext> rtc(
-            context->priv().makeDeferredRenderTargetContextWithFallback(format,
-                                                                        SkBackingFit::kApprox,
+            context->priv().makeDeferredRenderTargetContextWithFallback(SkBackingFit::kApprox,
                                                                         reducedClip.width(),
                                                                         reducedClip.height(),
-                                                                        kAlpha_8_GrPixelConfig,
                                                                         GrColorType::kAlpha_8,
                                                                         nullptr,
                                                                         1,
@@ -500,17 +494,18 @@ sk_sp<GrTextureProxy> GrClipStackClip::createSoftwareClipMask(
         desc.fConfig = kAlpha_8_GrPixelConfig;
 
         GrBackendFormat format =
-                context->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
+                context->priv().caps()->getBackendFormatFromColorType(GrColorType::kAlpha_8);
 
         // MDB TODO: We're going to fill this proxy with an ASAP upload (which is out of order wrt
         // to ops), so it can't have any pending IO.
-        proxy = proxyProvider->createProxy(format, desc, kTopLeft_GrSurfaceOrigin,
-                                           SkBackingFit::kApprox, SkBudgeted::kYes);
+        proxy = proxyProvider->createProxy(format, desc, GrRenderable::kNo, 1,
+                                           kTopLeft_GrSurfaceOrigin, SkBackingFit::kApprox,
+                                           SkBudgeted::kYes, GrProtected::kNo);
 
         auto uploader = skstd::make_unique<GrTDeferredProxyUploader<ClipMaskData>>(reducedClip);
         GrTDeferredProxyUploader<ClipMaskData>* uploaderRaw = uploader.get();
         auto drawAndUploadMask = [uploaderRaw, maskSpaceIBounds] {
-            TRACE_EVENT0("skia", "Threaded SW Clip Mask Render");
+            TRACE_EVENT0("skia.gpu", "Threaded SW Clip Mask Render");
             GrSWMaskHelper helper(uploaderRaw->getPixels());
             if (helper.init(maskSpaceIBounds)) {
                 draw_clip_elements_to_mask_helper(helper, uploaderRaw->data().elements(),

@@ -133,9 +133,8 @@ public:
         fHWBoundRenderTargetUniqueID.makeInvalid();
     }
 
-    GrStencilAttachment* createStencilAttachmentForRenderTarget(const GrRenderTarget* rt,
-                                                                int width,
-                                                                int height) override;
+    GrStencilAttachment* createStencilAttachmentForRenderTarget(
+            const GrRenderTarget* rt, int width, int height, int numStencilSamples) override;
     GrBackendTexture createBackendTexture(int w, int h, const GrBackendFormat&,
                                           GrMipMapped, GrRenderable,
                                           const void* pixels, size_t rowBytes,
@@ -192,23 +191,29 @@ private:
 
     void xferBarrier(GrRenderTarget*, GrXferBarrierType) override;
 
-    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc& desc, SkBudgeted budgeted,
-                                     const GrMipLevel texels[], int mipLevelCount) override;
+    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&, GrRenderable, int renderTargetSampleCnt,
+                                     SkBudgeted, GrProtected, const GrMipLevel[],
+                                     int mipLevelCount) override;
+    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height,
+                                               SkImage::CompressionType compression, SkBudgeted,
+                                               const void* data) override;
 
     sk_sp<GrGpuBuffer> onCreateBuffer(size_t size, GrGpuBufferType intendedType, GrAccessPattern,
                                       const void* data) override;
 
-    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrWrapOwnership, GrWrapCacheable,
-                                          GrIOType) override;
+    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrColorType, GrWrapOwnership,
+                                          GrWrapCacheable, GrIOType) override;
     sk_sp<GrTexture> onWrapRenderableBackendTexture(const GrBackendTexture&, int sampleCnt,
-                                                    GrWrapOwnership, GrWrapCacheable) override;
-    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&) override;
+                                                    GrColorType, GrWrapOwnership,
+                                                    GrWrapCacheable) override;
+    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&,
+                                                    GrColorType) override;
     sk_sp<GrRenderTarget> onWrapBackendTextureAsRenderTarget(const GrBackendTexture&,
-                                                             int sampleCnt) override;
+                                                             int sampleCnt, GrColorType) override;
 
-    // Given a GrPixelConfig return the index into the stencil format array on GrGLCaps to a
+    // Given a GL format return the index into the stencil format array on GrGLCaps to a
     // compatible stencil format, or negative if there is no compatible stencil format.
-    int getCompatibleStencilIndex(GrPixelConfig config);
+    int getCompatibleStencilIndex(GrGLFormat format);
 
     void onFBOChanged();
 
@@ -221,19 +226,10 @@ private:
                            const GrMipLevel texels[], int mipLevelCount,
                            GrMipMapsStatus* mipMapsStatus);
 
-    // Checks whether glReadPixels can be called to get pixel values in readConfig from the
-    // render target.
-    bool readPixelsSupported(GrRenderTarget* target, GrPixelConfig readConfig);
-
-    // Checks whether glReadPixels can be called to get pixel values in readConfig from a
-    // render target that has renderTargetConfig. This may have to create a temporary
-    // render target and thus is less preferable than the variant that takes a render target.
-    bool readPixelsSupported(GrPixelConfig renderTargetConfig, GrPixelConfig readConfig);
-
-    // Checks whether glReadPixels can be called to get pixel values in readConfig from a
-    // render target that has the same config as surfaceForConfig. Calls one of the the two
-    // variations above, depending on whether the surface is a render target or not.
-    bool readPixelsSupported(GrSurface* surfaceForConfig, GrPixelConfig readConfig);
+    bool createCompressedTextureImpl(GrGLTextureInfo* info, int width, int height,
+                                     SkImage::CompressionType compression,
+                                     GrGLTextureParameters::SamplerOverriddenState* initialState,
+                                     const void* data);
 
     bool onReadPixels(GrSurface*, int left, int top, int width, int height, GrColorType,
                       void* buffer, size_t rowBytes) override;
@@ -293,7 +289,7 @@ private:
                        int baseInstance,
                        GrPrimitiveRestart);
 
-    void flushBlend(const GrXferProcessor::BlendInfo& blendInfo, const GrSwizzle&);
+    void flushBlendAndColorWrite(const GrXferProcessor::BlendInfo& blendInfo, const GrSwizzle&);
 
     void onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
                        const GrFlushInfo&, const GrPrepareForExternalIORequests&) override;
@@ -398,15 +394,14 @@ private:
                        GrPixelConfig dataConfig, const GrMipLevel texels[], int mipLevelCount,
                        GrMipMapsStatus* mipMapsStatus = nullptr);
 
-    // helper for onCreateCompressedTexture. Compressed textures are read-only so we
-    // only use this to populate a new texture.
-    bool uploadCompressedTexData(GrPixelConfig texConfig, int texWidth, int texHeight,
-                                 GrGLenum target,
-                                 const GrMipLevel texels[], int mipLevelCount,
-                                 GrMipMapsStatus* mipMapsStatus = nullptr);
+    // Helper for onCreateCompressedTexture. Compressed textures are read-only so we
+    // only use this to populate a new texture. Returns the internal format of the texture
+    // or 0 on failure.
+    GrGLenum uploadCompressedTexData(SkImage::CompressionType, int width, int height,
+                                     GrGLenum target, const void* data);
 
-    bool createRenderTargetObjects(const GrSurfaceDesc&, const GrGLTextureInfo& texInfo,
-                                   GrGLRenderTarget::IDDesc*);
+    bool createRenderTargetObjects(const GrSurfaceDesc&, int sampleCount,
+                                   const GrGLTextureInfo& texInfo, GrGLRenderTarget::IDDesc*);
 
     enum TempFBOTarget {
         kSrc_TempFBOTarget,

@@ -182,10 +182,10 @@ static sk_sp<GrTextureProxy> make_deferred_mask_texture_proxy(GrRecordingContext
     desc.fConfig = kAlpha_8_GrPixelConfig;
 
     const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kAlpha_8_SkColorType);
+            context->priv().caps()->getBackendFormatFromColorType(GrColorType::kAlpha_8);
 
-    return proxyProvider->createProxy(format, desc, kTopLeft_GrSurfaceOrigin, fit,
-                                      SkBudgeted::kYes);
+    return proxyProvider->createProxy(format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin,
+                                      fit, SkBudgeted::kYes, GrProtected::kNo);
 }
 
 namespace {
@@ -347,7 +347,7 @@ bool GrSoftwarePathRenderer::onDrawPath(const DrawPathArgs& args) {
             GrTDeferredProxyUploader<SoftwarePathData>* uploaderRaw = uploader.get();
 
             auto drawAndUploadMask = [uploaderRaw] {
-                TRACE_EVENT0("skia", "Threaded SW Mask Render");
+                TRACE_EVENT0("skia.gpu", "Threaded SW Mask Render");
                 GrSWMaskHelper helper(uploaderRaw->getPixels());
                 if (helper.init(uploaderRaw->data().getMaskBounds())) {
                     helper.drawShape(uploaderRaw->data().getShape(),

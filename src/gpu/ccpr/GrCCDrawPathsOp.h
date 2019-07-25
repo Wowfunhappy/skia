@@ -84,7 +84,8 @@ private:
                     const SkIRect& shapeConservativeIBounds, const SkIRect& maskDevIBounds,
                     const SkRect& conservativeDevBounds, GrPaint&&);
 
-    void recordInstance(GrTextureProxy* atlasProxy, int instanceIdx);
+    void recordInstance(
+            GrCCPathProcessor::CoverageMode, GrTextureProxy* atlasProxy, int instanceIdx);
 
     const SkMatrix fViewMatrixIfUsingLocalCoords;
 
@@ -117,6 +118,7 @@ private:
         SkIVector fCachedMaskShift;
         bool fDoCopyToA8Coverage = false;
         bool fDoCachePathMask = false;
+        SkDEBUGCODE(bool fWasCountedAsRender = false);
 
         SingleDraw* fNext = nullptr;
 
@@ -133,6 +135,7 @@ private:
     GrProcessorSet fProcessors;
 
     struct InstanceRange {
+        GrCCPathProcessor::CoverageMode fCoverageMode;
         GrTextureProxy* fAtlasProxy;
         int fEndInstanceIdx;
     };

@@ -58,7 +58,7 @@
 class GrAppliedClip;
 class GrGLSLProgramDataManager;
 
-namespace skiagm {
+namespace {
 
 static constexpr GrGeometryProcessor::Attribute gVertex =
         {"position", kFloat2_GrVertexAttribType, kFloat2_GrSLType};
@@ -68,10 +68,9 @@ static constexpr GrGeometryProcessor::Attribute gVertex =
  * triangles (sk_Clockwise), in terms of to Skia device space, in all backends and with all render
  * target origins. We draw clockwise triangles green and counter-clockwise red.
  */
-class ClockwiseGM : public GpuGM {
-private:
-    SkString onShortName() final { return SkString("clockwise"); }
-    SkISize onISize() override { return SkISize::Make(300, 200); }
+class ClockwiseGM : public skiagm::GpuGM {
+    SkString onShortName() override { return SkString("clockwise"); }
+    SkISize onISize() override { return {300, 200}; }
     void onDraw(GrContext*, GrRenderTargetContext*, SkCanvas*) override;
 };
 
@@ -187,8 +186,7 @@ void ClockwiseGM::onDraw(GrContext* ctx, GrRenderTargetContext* rtc, SkCanvas* c
 
     // Draw the test to an off-screen, top-down render target.
     if (auto topLeftRTC = ctx->priv().makeDeferredRenderTargetContext(
-                rtc->asSurfaceProxy()->backendFormat(), SkBackingFit::kExact, 100, 200,
-                rtc->asSurfaceProxy()->config(), rtc->colorSpaceInfo().colorType(), nullptr, 1,
+                SkBackingFit::kExact, 100, 200, rtc->colorSpaceInfo().colorType(), nullptr, 1,
                 GrMipMapped::kNo, kTopLeft_GrSurfaceOrigin, nullptr, SkBudgeted::kYes)) {
         topLeftRTC->clear(nullptr, SK_PMColor4fTRANSPARENT,
                           GrRenderTargetContext::CanClearFullscreen::kYes);
@@ -204,8 +202,7 @@ void ClockwiseGM::onDraw(GrContext* ctx, GrRenderTargetContext* rtc, SkCanvas* c
 
     // Draw the test to an off-screen, bottom-up render target.
     if (auto topLeftRTC = ctx->priv().makeDeferredRenderTargetContext(
-                rtc->asSurfaceProxy()->backendFormat(), SkBackingFit::kExact, 100, 200,
-                rtc->asSurfaceProxy()->config(), rtc->colorSpaceInfo().colorType(), nullptr, 1,
+                SkBackingFit::kExact, 100, 200, rtc->colorSpaceInfo().colorType(), nullptr, 1,
                 GrMipMapped::kNo, kBottomLeft_GrSurfaceOrigin, nullptr, SkBudgeted::kYes)) {
         topLeftRTC->clear(nullptr, SK_PMColor4fTRANSPARENT,
                           GrRenderTargetContext::CanClearFullscreen::kYes);

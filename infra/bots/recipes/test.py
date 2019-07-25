@@ -127,7 +127,9 @@ def dm_flags(api, bot):
       if 'NVIDIA_Shield' not in bot:
         gl_prefix = 'gles'
     elif 'Intel' in bot:
-      sample_count = ''
+      # We don't want to test MSAA on older Intel chipsets. These are all newer (Gen9).
+      if 'Iris655' not in bot and 'Iris640' not in bot and 'Iris540' not in bot:
+        sample_count = ''
     elif 'ChromeOS' in bot:
       gl_prefix = 'gles'
 
@@ -213,6 +215,10 @@ def dm_flags(api, bot):
       blacklist('_ test _ GLPrograms')
       blacklist('_ test _ ProcessorOptimizationValidationTest')
 
+    if 'CommandBuffer' in bot and 'MacBook10.1-' in bot:
+      # skbug.com/9235
+      blacklist('_ test _ GLPrograms')
+
     # skbug.com/9033 - these devices run out of memory on this test
     # when opList splitting reduction is enabled
     if 'GPU' in bot and ('Nexus7' in bot or
@@ -240,7 +246,7 @@ def dm_flags(api, bot):
 
     if 'Vulkan' in bot:
       configs = ['vk']
-      if 'Android' in bot or 'iOS' in bot:
+      if 'Android' in bot:
         configs.append('vkmsaa4')
       else:
         # skbug.com/9023
@@ -249,6 +255,12 @@ def dm_flags(api, bot):
 
     if 'Metal' in bot:
       configs = ['mtl']
+      if 'iOS' in bot:
+        configs.append('mtlmsaa4')
+      else:
+        # We don't want to test MSAA on older (pre-Gen9) Intel chipsets.
+        if 'IntelHD6000' not in bot:
+          configs.append('mtlmsaa8')
 
     # Test 1010102 on our Linux/NVIDIA bots and the persistent cache config
     # on the GL bots.
@@ -696,6 +708,9 @@ def dm_flags(api, bot):
   if api.vars.is_linux and 'IntelIris640' in bot:
     match.extend(['~GLPrograms']) # skia:7849
 
+  if 'IntelIris640' in bot or 'IntelHD615' in bot or 'IntelHDGraphics615' in bot:
+    match.append('~^SRGBReadWritePixels$') # skia:9225
+
   if 'Vulkan' in bot and api.vars.is_linux and 'IntelHD405' in bot:
     # skia:7322
     blacklist(['vk', 'gm', '_', 'skbug_257'])
@@ -718,6 +733,10 @@ def dm_flags(api, bot):
     # skbug.com/8047
     match.append('~FloatingPointTextureTest$')
 
+  if 'Metal' in bot and 'HD8870M' in bot and 'Mac' in bot:
+    # skia:9255
+    match.append('~WritePixelsNonTextureMSAA_Gpu')
+
   if 'MoltenVK' in bot:
     # skbug.com/7959
     blacklist(['_', 'gm', '_', 'vertices_scaled_shader'])
@@ -729,6 +748,9 @@ def dm_flags(api, bot):
     match.append('~^TextureStripAtlasManagerColorFilterTest$')
     match.append('~^WritePixelsNonTextureMSAA_Gpu$')
     match.append('~^AsyncReadPixels$')
+    match.append('~^VkBackendAllocationTest$')
+    match.append('~^ColorTypeBackendAllocationTest$')
+    match.append('~^GrTestingBackendTextureUploadTest$')
 
   if 'ANGLE' in bot:
     # skia:7835
@@ -761,12 +783,6 @@ def dm_flags(api, bot):
   if 'Mac' in bot and 'IntelHD615' in bot:
     # skia:7603
     match.append('~^GrMeshTest$')
-
-  if 'Wuffs' in api.vars.extra_tokens:
-    # skia:8750
-    blacklist(['_', 'tests', '_', 'Codec_partial'])
-    # skia:8762
-    blacklist(['_', 'tests', '_', 'Codec_gif'])
 
   if 'LenovoYogaC630' in bot and 'ANGLE' in api.vars.extra_tokens:
     # skia:8976
@@ -1013,7 +1029,6 @@ TEST_BUILDERS = [
   'Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Debug-All-MSAN',
   ('Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Debug-All'
    '-SK_USE_DISCARDABLE_SCALEDIMAGECACHE'),
-  'Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Debug-All-Wuffs',
   'Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Release-All-Lottie',
   ('Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Release-All'
    '-SK_FORCE_RASTER_PIPELINE_BLITTER'),
@@ -1021,6 +1036,7 @@ TEST_BUILDERS = [
   'Test-Debian9-Clang-GCE-GPU-SwiftShader-x86_64-Release-All-SwiftShader',
   'Test-Debian9-Clang-NUC5PPYH-GPU-IntelHD405-x86_64-Release-All-Vulkan',
   'Test-Debian9-Clang-NUC7i5BNK-GPU-IntelIris640-x86_64-Debug-All-Vulkan',
+  'Test-iOS-Clang-iPhone6-GPU-PowerVRGX6450-arm64-Release-All-Metal',
   ('Test-Mac10.13-Clang-MacBook10.1-GPU-IntelHD615-x86_64-Release-All'
    '-NativeFonts'),
   'Test-Mac10.13-Clang-MacBookPro11.5-CPU-AVX2-x86_64-Release-All',
@@ -1053,6 +1069,7 @@ TEST_BUILDERS = [
   'Test-Win2016-MSVC-GCE-CPU-AVX2-x86_64-Debug-All-MSRTC',
   'Test-iOS-Clang-iPadPro-GPU-PowerVRGT7800-arm64-Release-All',
   'Test-Android-Clang-Nexus5x-GPU-Adreno418-arm-Release-All-Android_Vulkan',
+  'Test-Mac10.13-Clang-MacBook10.1-GPU-IntelHD615-x86_64-Debug-All-CommandBuffer',
 ]
 
 

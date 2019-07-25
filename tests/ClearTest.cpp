@@ -40,7 +40,7 @@ static bool check_rect(GrRenderTargetContext* rtc, const SkIRect& rect, uint32_t
 
     SkImageInfo dstInfo = SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
 
-    if (!rtc->readPixels(dstInfo, pixels.get(), 0, rect.fLeft, rect.fTop)) {
+    if (!rtc->readPixels(dstInfo, pixels.get(), 0, {rect.fLeft, rect.fTop})) {
         return false;
     }
 
@@ -59,10 +59,7 @@ static bool check_rect(GrRenderTargetContext* rtc, const SkIRect& rect, uint32_t
 }
 
 sk_sp<GrRenderTargetContext> newRTC(GrContext* context, int w, int h) {
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(kRGBA_8888_SkColorType);
-    return context->priv().makeDeferredRenderTargetContext(format, SkBackingFit::kExact, w, h,
-                                                           kRGBA_8888_GrPixelConfig,
+    return context->priv().makeDeferredRenderTargetContext(SkBackingFit::kExact, w, h,
                                                            GrColorType::kRGBA_8888, nullptr);
 }
 

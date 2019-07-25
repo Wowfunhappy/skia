@@ -86,11 +86,9 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(SkTraceMemoryDump_ownedGLTexture, reporter
     GrGLGpu* gpu = static_cast<GrGLGpu*>(context->priv().getGpu());
 
     GrSurfaceDesc desc;
-    desc.fFlags = kNone_GrSurfaceFlags;
     desc.fWidth = 64;
     desc.fHeight = 64;
     desc.fConfig = kRGBA_8888_GrPixelConfig;
-    desc.fSampleCnt = 1;
 
     GrGLTextureInfo glInfo;
     glInfo.fTarget = GR_GL_TEXTURE_2D;
@@ -112,11 +110,9 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(SkTraceMemoryDump_unownedGLTexture, report
     GrGLGpu* gpu = static_cast<GrGLGpu*>(context->priv().getGpu());
 
     GrSurfaceDesc desc;
-    desc.fFlags = kNone_GrSurfaceFlags;
     desc.fWidth = 64;
     desc.fHeight = 64;
     desc.fConfig = kRGBA_8888_GrPixelConfig;
-    desc.fSampleCnt = 1;
 
     GrGLTextureInfo glInfo;
     glInfo.fTarget = GR_GL_TEXTURE_2D;
@@ -141,7 +137,6 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(SkTraceMemoryDump_ownedGLRenderTarget, rep
     GrGLGpu* gpu = static_cast<GrGLGpu*>(context->priv().getGpu());
 
     GrSurfaceDesc sd;
-    sd.fFlags = kRenderTarget_GrSurfaceFlag;
     sd.fWidth = 64;
     sd.fHeight = 64;
     sd.fConfig = kRGBA_8888_GrPixelConfig;
@@ -152,7 +147,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(SkTraceMemoryDump_ownedGLRenderTarget, rep
     iddesc.fTexFBOID = GrGLRenderTarget::kUnresolvableFBOID;
     iddesc.fMSColorRenderbufferID = 22;
 
-    sk_sp<GrGLRenderTarget> rt = GrGLRenderTarget::MakeWrapped(gpu, sd, GR_GL_RGBA8, iddesc, 0);
+    sk_sp<GrGLRenderTarget> rt = GrGLRenderTarget::MakeWrapped(gpu, sd, 1, GR_GL_RGBA8, iddesc, 0);
 
     ValidateMemoryDumps(reporter, context, rt->gpuMemorySize(), true /* isOwned */);
 }
@@ -162,7 +157,6 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(SkTraceMemoryDump_unownedGLRenderTarget, r
     GrGLGpu* gpu = static_cast<GrGLGpu*>(context->priv().getGpu());
 
     GrSurfaceDesc sd;
-    sd.fFlags = kRenderTarget_GrSurfaceFlag;
     sd.fWidth = 64;
     sd.fHeight = 64;
     sd.fConfig = kRGBA_8888_GrPixelConfig;
@@ -173,7 +167,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(SkTraceMemoryDump_unownedGLRenderTarget, r
     iddesc.fTexFBOID = GrGLRenderTarget::kUnresolvableFBOID;
     iddesc.fMSColorRenderbufferID = 22;
 
-    sk_sp<GrGLRenderTarget> rt = GrGLRenderTarget::MakeWrapped(gpu, sd, GR_GL_RGBA8, iddesc, 0);
+    sk_sp<GrGLRenderTarget> rt = GrGLRenderTarget::MakeWrapped(gpu, sd, 1, GR_GL_RGBA8, iddesc, 0);
 
     ValidateMemoryDumps(reporter, context, rt->gpuMemorySize(), false /* isOwned */);
 }

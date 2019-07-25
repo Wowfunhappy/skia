@@ -180,6 +180,8 @@ void GrContext::purgeUnlockedResources(bool scratchResourcesOnly) {
 }
 
 void GrContext::performDeferredCleanup(std::chrono::milliseconds msNotUsed) {
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
+
     ASSERT_SINGLE_OWNER
 
     auto purgeTime = GrStdSteadyClock::now() - msNotUsed;
@@ -353,7 +355,8 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
         return GrBackendTexture();
     }
 
-    GrBackendFormat format = this->caps()->getBackendFormatFromColorType(colorType);
+    GrBackendFormat format =
+            this->caps()->getBackendFormatFromColorType(SkColorTypeToGrColorType(colorType));
     if (!format.isValid()) {
         return GrBackendTexture();
     }
@@ -361,11 +364,89 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
     return this->createBackendTexture(width, height, format, mipMapped, renderable, isProtected);
 }
 
+GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization& c) {
+    const GrCaps* caps = this->caps();
+
+    if (!this->asDirectContext() || !c.isValid()) {
+        return GrBackendTexture();
+    }
+
+    if (this->abandoned()) {
+        return GrBackendTexture();
+    }
+
+    if (c.usesGLFBO0()) {
+        // If we are making the surface we will never use FBO0.
+        return GrBackendTexture();
+    }
+
+    if (c.vulkanSecondaryCBCompatible()) {
+        return {};
+    }
+
+    const GrBackendFormat format =
+            caps->getBackendFormatFromColorType(SkColorTypeToGrColorType(c.colorType()));
+    if (!format.isValid()) {
+        return GrBackendTexture();
+    }
+
+    if (!SkSurface_Gpu::Valid(caps, format)) {
+        return GrBackendTexture();
+    }
+
+    GrBackendTexture result = this->createBackendTexture(c.width(), c.height(), format,
+                                                         GrMipMapped(c.isMipMapped()),
+                                                         GrRenderable::kYes,
+                                                         c.isProtected());
+    SkASSERT(c.isCompatible(result));
+    return result;
+}
+
+GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization& c,
+                                                 const SkColor4f& color) {
+    const GrCaps* caps = this->caps();
+
+    if (!this->asDirectContext() || !c.isValid()) {
+        return GrBackendTexture();
+    }
+
+    if (this->abandoned()) {
+        return GrBackendTexture();
+    }
+
+    if (c.usesGLFBO0()) {
+        // If we are making the surface we will never use FBO0.
+        return GrBackendTexture();
+    }
+
+    if (c.vulkanSecondaryCBCompatible()) {
+        return {};
+    }
+
+    const GrBackendFormat format =
+            caps->getBackendFormatFromColorType(SkColorTypeToGrColorType(c.colorType()));
+    if (!format.isValid()) {
+        return GrBackendTexture();
+    }
+
+    if (!SkSurface_Gpu::Valid(caps, format)) {
+        return GrBackendTexture();
+    }
+
+    GrBackendTexture result = this->createBackendTexture(c.width(), c.height(), format, color,
+                                                         GrMipMapped(c.isMipMapped()),
+                                                         GrRenderable::kYes,
+                                                         c.isProtected());
+    SkASSERT(c.isCompatible(result));
+    return result;
+}
+
 GrBackendTexture GrContext::createBackendTexture(int width, int height,
                                                  const GrBackendFormat& backendFormat,
                                                  const SkColor4f& color,
                                                  GrMipMapped mipMapped,
-                                                 GrRenderable renderable) {
+                                                 GrRenderable renderable,
+                                                 GrProtected isProtected) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
     if (!this->asDirectContext()) {
         return GrBackendTexture();
@@ -381,14 +462,15 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
 
     return fGpu->createBackendTexture(width, height, backendFormat,
                                       mipMapped, renderable,
-                                      nullptr, 0, &color, GrProtected::kNo);
+                                      nullptr, 0, &color, isProtected);
 }
 
 GrBackendTexture GrContext::createBackendTexture(int width, int height,
                                                  SkColorType colorType,
                                                  const SkColor4f& color,
                                                  GrMipMapped mipMapped,
-                                                 GrRenderable renderable) {
+                                                 GrRenderable renderable,
+                                                 GrProtected isProtected) {
     if (!this->asDirectContext()) {
         return GrBackendTexture();
     }
@@ -397,12 +479,15 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
         return GrBackendTexture();
     }
 
-    GrBackendFormat format = this->caps()->getBackendFormatFromColorType(colorType);
+    GrColorType ct = SkColorTypeToGrColorType(colorType);
+    GrBackendFormat format = this->caps()->getBackendFormatFromColorType(ct);
     if (!format.isValid()) {
         return GrBackendTexture();
     }
+    SkColor4f swizzledColor = this->caps()->getOutputSwizzle(format, ct).applyTo(color);
 
-    return this->createBackendTexture(width, height, format, color, mipMapped, renderable);
+    return this->createBackendTexture(width, height, format, swizzledColor, mipMapped, renderable,
+                                      isProtected);
 }
 
 void GrContext::deleteBackendTexture(GrBackendTexture backendTex) {
