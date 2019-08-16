@@ -13,6 +13,7 @@
 
 class GrPipeline;
 class GrDawnGpuRTCommandBuffer;
+class GrDawnGpuTextureCommandBuffer;
 
 namespace SkSL {
     class Compiler;
@@ -86,40 +87,47 @@ private:
 
     virtual void querySampleLocations(GrRenderTarget*, SkTArray<SkPoint>*) override {}
 
-    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc& desc, GrRenderable, SkBudgeted budgeted,
-                                     GrProtected, const GrMipLevel texels[], int mipLevelCount)
-                                     override;
+    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc& desc,
+                                     const GrBackendFormat&,
+                                     GrRenderable,
+                                     int renderTargetSampleCnt,
+                                     SkBudgeted,
+                                     GrProtected,
+                                     const GrMipLevel texels[],
+                                     int mipLevelCount) override;
 
     sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, SkImage::CompressionType,
                                                SkBudgeted, const void* data) override;
 
-    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrWrapOwnership,
+    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrColorType, GrWrapOwnership,
                                           GrWrapCacheable, GrIOType) override;
     sk_sp<GrTexture> onWrapRenderableBackendTexture(const GrBackendTexture&, int sampleCnt,
                                                     GrColorType, GrWrapOwnership,
                                                     GrWrapCacheable) override;
-    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&) override;
+    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&,
+                                                    GrColorType) override;
 
-    sk_sp<GrRenderTarget> onWrapBackendTextureAsRenderTarget(const GrBackendTexture&,
-                                                             int sampleCnt) override;
+    sk_sp<GrRenderTarget> onWrapBackendTextureAsRenderTarget(const GrBackendTexture&, int sampleCnt,
+                                                             GrColorType) override;
 
     sk_sp<GrGpuBuffer> onCreateBuffer(size_t size, GrGpuBufferType type, GrAccessPattern,
                                       const void* data) override;
 
-    bool onReadPixels(GrSurface* surface,
-                      int left, int top, int width, int height,
-                      GrColorType, void* buffer, size_t rowBytes) override;
+    bool onReadPixels(GrSurface* surface, int left, int top, int width, int height,
+                      GrColorType surfaceColorType, GrColorType dstColorType, void* buffer,
+                      size_t rowBytes) override;
 
-    bool onWritePixels(GrSurface* surface,
-                       int left, int top, int width, int height,
-                       GrColorType, const GrMipLevel texels[], int mipLevelCount) override;
+    bool onWritePixels(GrSurface* surface, int left, int top, int width, int height,
+                       GrColorType surfaceColorType, GrColorType dstColorType,
+                       const GrMipLevel texels[], int mipLevelCount) override;
 
     bool onTransferPixelsTo(GrTexture*, int left, int top, int width, int height,
-                            GrColorType colorType, GrGpuBuffer* transferBuffer,
-                            size_t offset, size_t rowBytes) override;
+                            GrColorType textureColorType, GrColorType bufferColorType,
+                            GrGpuBuffer* transferBuffer, size_t offset, size_t rowBytes) override;
 
     bool onTransferPixelsFrom(GrSurface* surface, int left, int top, int width, int height,
-                              GrColorType, GrGpuBuffer* transferBuffer, size_t offset) override;
+                              GrColorType surfaceColorType, GrColorType bufferColorType,
+                              GrGpuBuffer* transferBuffer, size_t offset) override;
 
     void onResolveRenderTarget(GrRenderTarget* target) override {
     }
@@ -133,14 +141,11 @@ private:
     void onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
                        const GrFlushInfo& info, const GrPrepareForExternalIORequests&) override;
 
-    dawn::Device                                 fDevice;
-    dawn::Queue                                  fQueue;    // Must be Graphics queue
-
-    // Compiler used for compiling sksl into spirv. We only want to create the compiler once since
-    // there is significant overhead to the first compile of any compiler.
-    std::unique_ptr<SkSL::Compiler> fCompiler;
-
-    std::unique_ptr<GrDawnGpuRTCommandBuffer> fCachedRTCommandBuffer;
+    dawn::Device                                    fDevice;
+    dawn::Queue                                     fQueue;
+    std::unique_ptr<SkSL::Compiler>                 fCompiler;
+    std::unique_ptr<GrDawnGpuRTCommandBuffer>       fRTCommandBuffer;
+    std::unique_ptr<GrDawnGpuTextureCommandBuffer>  fTextureCommandBuffer;
 
     typedef GrGpu INHERITED;
 };

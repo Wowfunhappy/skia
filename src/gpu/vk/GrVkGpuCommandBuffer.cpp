@@ -66,23 +66,25 @@ private:
 
 class TransferFrom : public GrVkPrimaryCommandBufferTask {
 public:
-    TransferFrom(const SkIRect& srcRect, GrColorType bufferColorType, GrGpuBuffer* transferBuffer,
-                 size_t offset)
+    TransferFrom(const SkIRect& srcRect, GrColorType surfaceColorType, GrColorType bufferColorType,
+                 GrGpuBuffer* transferBuffer, size_t offset)
             : fTransferBuffer(sk_ref_sp(transferBuffer))
             , fOffset(offset)
             , fSrcRect(srcRect)
+            , fSurfaceColorType(surfaceColorType)
             , fBufferColorType(bufferColorType) {}
 
     void execute(const Args& args) override {
         args.fGpu->transferPixelsFrom(args.fSurface, fSrcRect.fLeft, fSrcRect.fTop,
-                                      fSrcRect.width(), fSrcRect.height(), fBufferColorType,
-                                      fTransferBuffer.get(), fOffset);
+                                      fSrcRect.width(), fSrcRect.height(), fSurfaceColorType,
+                                      fBufferColorType, fTransferBuffer.get(), fOffset);
     }
 
 private:
     sk_sp<GrGpuBuffer> fTransferBuffer;
     size_t fOffset;
     SkIRect fSrcRect;
+    GrColorType fSurfaceColorType;
     GrColorType fBufferColorType;
 };
 
@@ -96,9 +98,11 @@ void GrVkGpuTextureCommandBuffer::copy(GrSurface* src, const SkIRect& srcRect,
     fTasks.emplace<Copy>(src, srcRect, dstPoint, false);
 }
 
-void GrVkGpuTextureCommandBuffer::transferFrom(const SkIRect& srcRect, GrColorType bufferColorType,
+void GrVkGpuTextureCommandBuffer::transferFrom(const SkIRect& srcRect, GrColorType surfaceColorType,
+                                               GrColorType bufferColorType,
                                                GrGpuBuffer* transferBuffer, size_t offset) {
-    fTasks.emplace<TransferFrom>(srcRect, bufferColorType, transferBuffer, offset);
+    fTasks.emplace<TransferFrom>(srcRect, surfaceColorType, bufferColorType, transferBuffer,
+                                 offset);
 }
 
 void GrVkGpuTextureCommandBuffer::insertEventMarker(const char* msg) {
@@ -186,7 +190,7 @@ void GrVkGpuRTCommandBuffer::init() {
         cbInfo.fLoadStoreState = LoadStoreState::kStartsWithDiscard;
     }
 
-    cbInfo.fCommandBuffers.push_back(fGpu->cmdPool()->findOrCreateSecondaryCommandBuffer(fGpu));
+    cbInfo.fCommandBuffer = fGpu->cmdPool()->findOrCreateSecondaryCommandBuffer(fGpu);
     cbInfo.currentCmdBuf()->begin(fGpu, vkRT->framebuffer(), cbInfo.fRenderPass);
 }
 
@@ -201,8 +205,8 @@ void GrVkGpuRTCommandBuffer::initWrapped() {
     cbInfo.fRenderPass->ref();
 
     cbInfo.fBounds.setEmpty();
-    cbInfo.fCommandBuffers.push_back(vkRT->getExternalSecondaryCommandBuffer());
-    cbInfo.fCommandBuffers[0]->ref();
+    cbInfo.fCommandBuffer.reset(
+            GrVkSecondaryCommandBuffer::Create(vkRT->getExternalSecondaryCommandBuffer()));
     cbInfo.currentCmdBuf()->begin(fGpu, nullptr, cbInfo.fRenderPass);
 }
 
@@ -312,7 +316,7 @@ void GrVkGpuRTCommandBuffer::submit() {
             SkIRect iBounds;
             cbInfo.fBounds.roundOut(&iBounds);
 
-            fGpu->submitSecondaryCommandBuffer(cbInfo.fCommandBuffers, cbInfo.fRenderPass,
+            fGpu->submitSecondaryCommandBuffer(std::move(cbInfo.fCommandBuffer), cbInfo.fRenderPass,
                                                &cbInfo.fColorClearValue, vkRT, fOrigin, iBounds);
         }
     }
@@ -353,8 +357,8 @@ void GrVkGpuRTCommandBuffer::set(GrRenderTarget* rt, GrSurfaceOrigin origin,
 void GrVkGpuRTCommandBuffer::reset() {
     for (int i = 0; i < fCommandBufferInfos.count(); ++i) {
         CommandBufferInfo& cbInfo = fCommandBufferInfos[i];
-        for (int j = 0; j < cbInfo.fCommandBuffers.count(); ++j) {
-            cbInfo.fCommandBuffers[j]->unref(fGpu);
+        if (cbInfo.fCommandBuffer) {
+            cbInfo.fCommandBuffer.release()->recycle(fGpu);
         }
         cbInfo.fRenderPass->unref(fGpu);
     }
@@ -523,15 +527,6 @@ void GrVkGpuRTCommandBuffer::onClear(const GrFixedClip& clip, const SkPMColor4f&
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void GrVkGpuRTCommandBuffer::addAdditionalCommandBuffer() {
-    GrVkRenderTarget* vkRT = static_cast<GrVkRenderTarget*>(fRenderTarget);
-
-    CommandBufferInfo& cbInfo = fCommandBufferInfos[fCurrentCmdInfo];
-    cbInfo.currentCmdBuf()->end(fGpu);
-    cbInfo.fCommandBuffers.push_back(fGpu->cmdPool()->findOrCreateSecondaryCommandBuffer(fGpu));
-    cbInfo.currentCmdBuf()->begin(fGpu, vkRT->framebuffer(), cbInfo.fRenderPass);
-}
-
 void GrVkGpuRTCommandBuffer::addAdditionalRenderPass() {
     GrVkRenderTarget* vkRT = static_cast<GrVkRenderTarget*>(fRenderTarget);
 
@@ -558,7 +553,7 @@ void GrVkGpuRTCommandBuffer::addAdditionalRenderPass() {
     }
     cbInfo.fLoadStoreState = LoadStoreState::kLoadAndStore;
 
-    cbInfo.fCommandBuffers.push_back(fGpu->cmdPool()->findOrCreateSecondaryCommandBuffer(fGpu));
+    cbInfo.fCommandBuffer = fGpu->cmdPool()->findOrCreateSecondaryCommandBuffer(fGpu);
     // It shouldn't matter what we set the clear color to here since we will assume loading of the
     // attachment.
     memset(&cbInfo.fColorClearValue, 0, sizeof(VkClearValue));
@@ -618,13 +613,15 @@ void GrVkGpuRTCommandBuffer::copy(GrSurface* src, const SkIRect& srcRect,
     }
 }
 
-void GrVkGpuRTCommandBuffer::transferFrom(const SkIRect& srcRect, GrColorType bufferColorType,
-                                          GrGpuBuffer* transferBuffer, size_t offset) {
+void GrVkGpuRTCommandBuffer::transferFrom(const SkIRect& srcRect, GrColorType surfaceColorType,
+                                          GrColorType bufferColorType, GrGpuBuffer* transferBuffer,
+                                          size_t offset) {
     CommandBufferInfo& cbInfo = fCommandBufferInfos[fCurrentCmdInfo];
     if (!cbInfo.fIsEmpty) {
         this->addAdditionalRenderPass();
     }
-    fPreCommandBufferTasks.emplace<TransferFrom>(srcRect, bufferColorType, transferBuffer, offset);
+    fPreCommandBufferTasks.emplace<TransferFrom>(srcRect, surfaceColorType, bufferColorType,
+                                                 transferBuffer, offset);
     ++fCommandBufferInfos[fCurrentCmdInfo].fNumPreCmds;
 }
 
@@ -697,11 +694,6 @@ GrVkPipelineState* GrVkGpuRTCommandBuffer::prepareDrawState(
         return pipelineState;
     }
 
-    if (!cbInfo.fIsEmpty &&
-        fLastPipelineState && fLastPipelineState != pipelineState &&
-        fGpu->vkCaps().newCBOnPipelineChange()) {
-        this->addAdditionalCommandBuffer();
-    }
     fLastPipelineState = pipelineState;
 
     pipelineState->bindPipeline(fGpu, cbInfo.currentCmdBuf());
@@ -752,17 +744,23 @@ void GrVkGpuRTCommandBuffer::onDraw(const GrPrimitiveProcessor& primProc,
         GrVkTexture* vkTexture = static_cast<GrVkTexture*>(texture);
         // We may need to resolve the texture first if it is also a render target
         GrVkRenderTarget* texRT = static_cast<GrVkRenderTarget*>(vkTexture->asRenderTarget());
-        if (texRT) {
+        if (texRT && texRT->needsResolve()) {
             fGpu->resolveRenderTargetNoFlush(texRT);
+            // TEMPORARY: MSAA resolve will have dirtied mipmaps. This goes away once we switch
+            // to resolving MSAA from the opList as well.
+            if (GrSamplerState::Filter::kMipMap == filter &&
+                (vkTexture->width() != 1 || vkTexture->height() != 1)) {
+                SkASSERT(vkTexture->texturePriv().mipMapped() == GrMipMapped::kYes);
+                SkASSERT(vkTexture->texturePriv().mipMapsAreDirty());
+                fGpu->regenerateMipMapLevels(vkTexture);
+            }
         }
 
-        // Check if we need to regenerate any mip maps
+        // Ensure mip maps were all resolved ahead of time by the opList.
         if (GrSamplerState::Filter::kMipMap == filter &&
             (vkTexture->width() != 1 || vkTexture->height() != 1)) {
             SkASSERT(vkTexture->texturePriv().mipMapped() == GrMipMapped::kYes);
-            if (vkTexture->texturePriv().mipMapsAreDirty()) {
-                fGpu->regenerateMipMapLevels(vkTexture);
-            }
+            SkASSERT(!vkTexture->texturePriv().mipMapsAreDirty());
         }
         cbInfo.fSampledTextures.push_back(vkTexture);
 

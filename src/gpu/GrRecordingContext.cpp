@@ -176,7 +176,7 @@ sk_sp<GrTextureContext> GrRecordingContext::makeDeferredTextureContext(
         GrSurfaceOrigin origin,
         SkBudgeted budgeted,
         GrProtected isProtected) {
-    auto format = this->caps()->getBackendFormatFromColorType(colorType);
+    auto format = this->caps()->getDefaultBackendFormat(colorType, GrRenderable::kNo);
     if (!format.isValid()) {
         return nullptr;
     }
@@ -225,7 +225,7 @@ sk_sp<GrRenderTargetContext> GrRecordingContext::makeDeferredRenderTargetContext
         return nullptr;
     }
 
-    auto format = this->caps()->getBackendFormatFromColorType(colorType);
+    auto format = this->caps()->getDefaultBackendFormat(colorType, GrRenderable::kYes);
     if (!format.isValid()) {
         return nullptr;
     }
@@ -396,3 +396,4 @@ sk_sp<GrRenderTargetContext> GrRecordingContextPriv::makeDeferredRenderTargetCon
 GrContext* GrRecordingContextPriv::backdoor() {
     return (GrContext*) fContext;
 }
+

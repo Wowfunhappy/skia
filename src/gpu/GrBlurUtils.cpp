@@ -80,7 +80,8 @@ static bool sw_draw_with_mask_filter(GrRecordingContext* context,
 
     if (key.isValid()) {
         // TODO: this cache look up is duplicated in draw_shape_with_mask_filter for gpu
-        filteredMask = proxyProvider->findOrCreateProxyByUniqueKey(key, kTopLeft_GrSurfaceOrigin);
+        filteredMask = proxyProvider->findOrCreateProxyByUniqueKey(key, GrColorType::kAlpha_8,
+                                                                   kTopLeft_GrSurfaceOrigin);
     }
 
     SkIRect drawRect;
@@ -148,8 +149,8 @@ static bool sw_draw_with_mask_filter(GrRecordingContext* context,
             return false;
         }
 
-        filteredMask = proxyProvider->createTextureProxy(std::move(image), GrRenderable::kNo, 1,
-                                                         SkBudgeted::kYes, SkBackingFit::kApprox);
+        filteredMask = proxyProvider->createTextureProxy(std::move(image), 1, SkBudgeted::kYes,
+                                                         SkBackingFit::kApprox);
         if (!filteredMask) {
             return false;
         }
@@ -389,7 +390,7 @@ static void draw_shape_with_mask_filter(GrRecordingContext* context,
         if (maskKey.isValid()) {
             // TODO: this cache look up is duplicated in sw_draw_with_mask_filter for raster
             filteredMask = proxyProvider->findOrCreateProxyByUniqueKey(
-                                                maskKey, kTopLeft_GrSurfaceOrigin);
+                    maskKey, GrColorType::kAlpha_8, kTopLeft_GrSurfaceOrigin);
         }
 
         if (!filteredMask) {

@@ -10,6 +10,7 @@
 
 #import <Metal/Metal.h>
 
+#include "include/gpu/GrBackendSurface.h"
 #include "include/private/GrTypesPriv.h"
 #include "src/sksl/ir/SkSLProgram.h"
 
@@ -93,5 +94,11 @@ id<MTLRenderPipelineState> GrMtlNewRenderPipelineStateWithDescriptor(
  * Returns a MTLTexture corresponding to the GrSurface.
  */
 id<MTLTexture> GrGetMTLTextureFromSurface(GrSurface* surface);
+
+size_t GrMtlBytesPerFormat(MTLPixelFormat);
+
+static inline MTLPixelFormat GrBackendFormatAsMTLPixelFormat(const GrBackendFormat& format) {
+    return static_cast<MTLPixelFormat>(format.asMtlFormat());
+}
 
 #endif

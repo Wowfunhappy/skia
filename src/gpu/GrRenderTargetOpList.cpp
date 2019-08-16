@@ -5,6 +5,8 @@
  * found in the LICENSE file.
  */
 
+#include "src/gpu/GrRenderTargetOpList.h"
+
 #include "include/private/GrRecordingContext.h"
 #include "src/core/SkExchange.h"
 #include "src/core/SkRectPriv.h"
@@ -16,11 +18,12 @@
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrRenderTargetOpList.h"
 #include "src/gpu/GrResourceAllocator.h"
+#include "src/gpu/GrTexturePriv.h"
 #include "src/gpu/geometry/GrRect.h"
 #include "src/gpu/ops/GrClearOp.h"
 #include "src/gpu/ops/GrCopySurfaceOp.h"
+#include "src/gpu/ops/GrTransferFromOp.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -353,6 +356,12 @@ GrRenderTargetOpList::GrRenderTargetOpList(sk_sp<GrOpMemoryPool> opMemoryPool,
         : INHERITED(std::move(opMemoryPool), std::move(proxy), auditTrail)
         , fLastClipStackGenID(SK_InvalidUniqueID)
         SkDEBUGCODE(, fNumClips(0)) {
+    if (GrTextureProxy* textureProxy = fTarget->asTextureProxy()) {
+        if (GrMipMapped::kYes == textureProxy->mipMapped()) {
+            textureProxy->markMipMapsDirty();
+        }
+    }
+    fTarget->setLastRenderTask(this);
 }
 
 void GrRenderTargetOpList::deleteOps() {
@@ -466,6 +475,15 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
     // no ops just to do a discard.
     if (fOpChains.empty() && GrLoadOp::kClear != fColorLoadOp &&
         GrLoadOp::kDiscard != fColorLoadOp) {
+        // TEMPORARY: We are in the process of moving GrMipMapsStatus from the texture to the proxy.
+        // During this time we want to assert that the proxy resolves mipmaps at the exact same
+        // times the old code would have. A null opList is very exceptional, and the proxy will have
+        // assumed mipmaps are dirty in this scenario. We mark them dirty here on the texture as
+        // well, in order to keep the assert passing.
+        GrTexture* tex = fTarget->peekTexture();
+        if (tex && GrMipMapped::kYes == tex->texturePriv().mipMapped()) {
+            tex->texturePriv().markMipMapsDirty();
+        }
         return false;
     }
 
@@ -573,21 +591,33 @@ bool GrRenderTargetOpList::resetForFullscreenClear(CanDiscardPreviousOps canDisc
 // This closely parallels GrTextureOpList::copySurface but renderTargetOpLists
 // also store the applied clip and dest proxy with the op
 bool GrRenderTargetOpList::copySurface(GrRecordingContext* context,
-                                       GrSurfaceProxy* dst,
                                        GrSurfaceProxy* src,
                                        const SkIRect& srcRect,
                                        const SkIPoint& dstPoint) {
-    SkASSERT(dst->asRenderTargetProxy() == fTarget.get());
-    std::unique_ptr<GrOp> op = GrCopySurfaceOp::Make(context, dst, src, srcRect, dstPoint);
+    std::unique_ptr<GrOp> op = GrCopySurfaceOp::Make(
+            context, fTarget.get(), src, srcRect, dstPoint);
     if (!op) {
         return false;
     }
 
-    this->addOp(std::move(op), *context->priv().caps());
+    this->addOp(std::move(op), GrTextureResolveManager(context->priv().drawingManager()),
+                *context->priv().caps());
     return true;
 }
 
-void GrRenderTargetOpList::purgeOpsWithUninstantiatedProxies() {
+void GrRenderTargetOpList::transferFrom(GrRecordingContext* context,
+                                        const SkIRect& srcRect,
+                                        GrColorType surfaceColorType,
+                                        GrColorType dstColorType,
+                                        sk_sp<GrGpuBuffer> dst,
+                                        size_t dstOffset) {
+    auto op = GrTransferFromOp::Make(context, srcRect, surfaceColorType, dstColorType,
+                                     std::move(dst), dstOffset);
+    this->addOp(std::move(op), GrTextureResolveManager(context->priv().drawingManager()),
+                *context->priv().caps());
+}
+
+void GrRenderTargetOpList::handleInternalAllocationFailure() {
     bool hasUninstantiatedProxy = false;
     auto checkInstantiation = [&hasUninstantiatedProxy](GrSurfaceProxy* p, GrMipMapped) {
         if (!p->isInstantiated()) {

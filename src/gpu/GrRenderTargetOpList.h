@@ -61,9 +61,11 @@ public:
     void onPrepare(GrOpFlushState* flushState) override;
     bool onExecute(GrOpFlushState* flushState) override;
 
-    void addOp(std::unique_ptr<GrOp> op, const GrCaps& caps) {
-        auto addDependency = [ &caps, this ] (GrSurfaceProxy* p, GrMipMapped) {
-            this->addDependency(p, caps);
+    void addOp(std::unique_ptr<GrOp> op, GrTextureResolveManager textureResolveManager,
+               const GrCaps& caps) {
+        auto addDependency = [ textureResolveManager, &caps, this ] (
+                GrSurfaceProxy* p, GrMipMapped mipmapped) {
+            this->addDependency(p, mipmapped, textureResolveManager, caps);
         };
 
         op->visitProxies(addDependency);
@@ -71,15 +73,18 @@ public:
         this->recordOp(std::move(op), GrProcessorSet::EmptySetAnalysis(), nullptr, nullptr, caps);
     }
 
-    void addWaitOp(std::unique_ptr<GrOp> op, const GrCaps& caps) {
-        fHasWaitOp= true;
-        this->addOp(std::move(op), caps);
+    void addWaitOp(std::unique_ptr<GrOp> op, GrTextureResolveManager textureResolveManager,
+                   const GrCaps& caps) {
+        fHasWaitOp = true;
+        this->addOp(std::move(op), textureResolveManager, caps);
     }
 
     void addDrawOp(std::unique_ptr<GrDrawOp> op, const GrProcessorSet::Analysis& processorAnalysis,
-                   GrAppliedClip&& clip, const DstProxy& dstProxy, const GrCaps& caps) {
-        auto addDependency = [ &caps, this ] (GrSurfaceProxy* p, GrMipMapped) {
-            this->addDependency(p, caps);
+                   GrAppliedClip&& clip, const DstProxy& dstProxy,
+                   GrTextureResolveManager textureResolveManager, const GrCaps& caps) {
+        auto addDependency = [ textureResolveManager, &caps, this ] (
+                GrSurfaceProxy* p, GrMipMapped mipmapped) {
+            this->addDependency(p, mipmapped, textureResolveManager, caps);
         };
 
         op->visitProxies(addDependency);
@@ -94,21 +99,17 @@ public:
 
     void discard();
 
-    /**
-     * Copies a pixel rectangle from one surface to another. This call may finalize
-     * reserved vertex/index data (as though a draw call was made). The src pixels
-     * copied are specified by srcRect. They are copied to a rect of the same
-     * size in dst with top left at dstPoint. If the src rect is clipped by the
-     * src bounds then  pixel values in the dst rect corresponding to area clipped
-     * by the src rect are not overwritten. This method is not guaranteed to succeed
-     * depending on the type of surface, configs, etc, and the backend-specific
-     * limitations.
-     */
     bool copySurface(GrRecordingContext*,
-                     GrSurfaceProxy* dst,
                      GrSurfaceProxy* src,
                      const SkIRect& srcRect,
                      const SkIPoint& dstPoint) override;
+
+    void transferFrom(GrRecordingContext*,
+                      const SkIRect& srcRect,
+                      GrColorType surfaceColorType,
+                      GrColorType dstColorType,
+                      sk_sp<GrGpuBuffer> dst,
+                      size_t dstOffset) override;
 
     GrRenderTargetOpList* asRenderTargetOpList() override { return this; }
 
@@ -220,7 +221,7 @@ private:
         SkRect fBounds;
     };
 
-    void purgeOpsWithUninstantiatedProxies() override;
+    void handleInternalAllocationFailure() override;
 
     void gatherProxyIntervals(GrResourceAllocator*) const override;
 

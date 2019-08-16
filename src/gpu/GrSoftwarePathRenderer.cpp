@@ -175,14 +175,15 @@ static sk_sp<GrTextureProxy> make_deferred_mask_texture_proxy(GrRecordingContext
                                                               SkBackingFit fit,
                                                               int width, int height) {
     GrProxyProvider* proxyProvider = context->priv().proxyProvider();
+    const GrCaps* caps = context->priv().caps();
 
     GrSurfaceDesc desc;
     desc.fWidth = width;
     desc.fHeight = height;
     desc.fConfig = kAlpha_8_GrPixelConfig;
 
-    const GrBackendFormat format =
-            context->priv().caps()->getBackendFormatFromColorType(GrColorType::kAlpha_8);
+    const GrBackendFormat format = caps->getDefaultBackendFormat(GrColorType::kAlpha_8,
+                                                                 GrRenderable::kNo);
 
     return proxyProvider->createProxy(format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin,
                                       fit, SkBudgeted::kYes, GrProtected::kNo);
@@ -323,7 +324,8 @@ bool GrSoftwarePathRenderer::onDrawPath(const DrawPathArgs& args) {
 
     sk_sp<GrTextureProxy> proxy;
     if (useCache) {
-        proxy = fProxyProvider->findOrCreateProxyByUniqueKey(maskKey, kTopLeft_GrSurfaceOrigin);
+        proxy = fProxyProvider->findOrCreateProxyByUniqueKey(maskKey, GrColorType::kAlpha_8,
+                                                             kTopLeft_GrSurfaceOrigin);
     }
     if (!proxy) {
         SkBackingFit fit = useCache ? SkBackingFit::kExact : SkBackingFit::kApprox;

@@ -301,10 +301,11 @@ public:
             return fAtlasProxy;
         }
 
-        const GrBackendFormat format = caps->getBackendFormatFromColorType(GrColorType::kRGBA_8888);
+        const GrBackendFormat format = caps->getDefaultBackendFormat(GrColorType::kRGBA_8888,
+                                                                     GrRenderable::kYes);
 
         fAtlasProxy = GrProxyProvider::MakeFullyLazyProxy(
-                [](GrResourceProvider* resourceProvider)
+                [format](GrResourceProvider* resourceProvider)
                         -> GrSurfaceProxy::LazyInstantiationResult {
                     GrSurfaceDesc desc;
                     // TODO: until partial flushes in MDB lands we're stuck having
@@ -313,10 +314,9 @@ public:
                     desc.fHeight = kAtlasTileSize;
                     desc.fConfig = kRGBA_8888_GrPixelConfig;
 
-                    auto texture = resourceProvider->createTexture(
-                            desc, GrRenderable::kYes, 1, SkBudgeted::kYes, GrProtected::kNo,
+                    return resourceProvider->createTexture(
+                            desc, format, GrRenderable::kYes, 1, SkBudgeted::kYes, GrProtected::kNo,
                             GrResourceProvider::Flags::kNoPendingIO);
-                    return std::move(texture);
                 },
                 format,
                 GrRenderable::kYes,

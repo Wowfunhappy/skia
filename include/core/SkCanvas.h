@@ -2203,6 +2203,8 @@ public:
         Optional cullRect is a conservative bounds of all transformed sprites.
         If cullRect is outside of clip, canvas can skip drawing.
 
+        If atlas is nullptr, this draws nothing.
+
         @param atlas     SkImage containing sprites
         @param xform     SkRSXform mappings for sprites in atlas
         @param tex       SkRect locations of sprites in atlas
@@ -2601,7 +2603,7 @@ private:
     friend class SkAndroidFrameworkUtils;
     friend class SkCanvasPriv;      // needs kDontClipToLayer_PrivateSaveLayerFlag
     friend class SkDrawIter;        // needs setupDrawForLayerDevice()
-    friend class AutoDrawLooper;
+    friend class AutoLayerForImageFilter;
     friend class DebugCanvas;       // needs experimental fAllowSimplifyClip
     friend class SkSurface_Raster;  // needs getDevice()
     friend class SkNoDrawCanvas;    // needs resetForNextPicture()

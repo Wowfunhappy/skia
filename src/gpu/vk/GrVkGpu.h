@@ -138,7 +138,7 @@ public:
         this->internalResolveRenderTarget(target, true);
     }
 
-    void submitSecondaryCommandBuffer(const SkTArray<GrVkSecondaryCommandBuffer*>&,
+    void submitSecondaryCommandBuffer(std::unique_ptr<GrVkSecondaryCommandBuffer>,
                                       const GrVkRenderPass*,
                                       const VkClearValue* colorClear,
                                       GrVkRenderTarget*, GrSurfaceOrigin,
@@ -191,11 +191,17 @@ private:
 
     void destroyResources();
 
-    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&, GrRenderable, int renderTargetSampleCnt,
-                                     SkBudgeted, GrProtected, const GrMipLevel[],
+    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&,
+                                     const GrBackendFormat& format,
+                                     GrRenderable,
+                                     int renderTargetSampleCnt,
+                                     SkBudgeted,
+                                     GrProtected,
+                                     const GrMipLevel[],
                                      int mipLevelCount) override;
-    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, SkImage::CompressionType,
-                                               SkBudgeted, const void* data) override;
+    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, const GrBackendFormat&,
+                                               SkImage::CompressionType, SkBudgeted,
+                                               const void* data) override;
 
     sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrColorType, GrWrapOwnership,
                                           GrWrapCacheable, GrIOType) override;
@@ -216,16 +222,20 @@ private:
     sk_sp<GrGpuBuffer> onCreateBuffer(size_t size, GrGpuBufferType type, GrAccessPattern,
                                       const void* data) override;
 
-    bool onReadPixels(GrSurface* surface, int left, int top, int width, int height, GrColorType,
-                      void* buffer, size_t rowBytes) override;
+    bool onReadPixels(GrSurface* surface, int left, int top, int width, int height,
+                      GrColorType surfaceColorType, GrColorType dstColorType, void* buffer,
+                      size_t rowBytes) override;
 
-    bool onWritePixels(GrSurface* surface, int left, int top, int width, int height, GrColorType,
+    bool onWritePixels(GrSurface* surface, int left, int top, int width, int height,
+                       GrColorType surfaceColorType, GrColorType srcColorType,
                        const GrMipLevel texels[], int mipLevelCount) override;
 
-    bool onTransferPixelsTo(GrTexture*, int left, int top, int width, int height, GrColorType,
+    bool onTransferPixelsTo(GrTexture*, int left, int top, int width, int height,
+                            GrColorType textureColorType, GrColorType bufferColorType,
                             GrGpuBuffer* transferBuffer, size_t offset, size_t rowBytes) override;
     bool onTransferPixelsFrom(GrSurface* surface, int left, int top, int width, int height,
-                              GrColorType, GrGpuBuffer* transferBuffer, size_t offset) override;
+                              GrColorType surfaceColorType, GrColorType bufferColorType,
+                              GrGpuBuffer* transferBuffer, size_t offset) override;
 
     bool onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
                        const SkIPoint& dstPoint, bool canDiscardOutsideDstRect) override;

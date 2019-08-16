@@ -8,10 +8,10 @@
 #ifndef GrMockGpu_DEFINED
 #define GrMockGpu_DEFINED
 
-#include "include/gpu/GrRenderTarget.h"
 #include "include/gpu/GrTexture.h"
 #include "include/private/SkTHash.h"
 #include "src/gpu/GrGpu.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrSemaphore.h"
 
 class GrMockGpuRTCommandBuffer;
@@ -60,12 +60,18 @@ private:
 
     void xferBarrier(GrRenderTarget*, GrXferBarrierType) override {}
 
-    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&, GrRenderable, int renderTargetSampleCnt,
-                                     SkBudgeted, GrProtected, const GrMipLevel[],
+    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&,
+                                     const GrBackendFormat&,
+                                     GrRenderable,
+                                     int renderTargetSampleCnt,
+                                     SkBudgeted,
+                                     GrProtected,
+                                     const GrMipLevel[],
                                      int mipLevelCount) override;
 
-    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, SkImage::CompressionType,
-                                               SkBudgeted, const void* data) override;
+    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, const GrBackendFormat&,
+                                               SkImage::CompressionType, SkBudgeted,
+                                               const void* data) override;
 
     sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrColorType, GrWrapOwnership,
                                           GrWrapCacheable, GrIOType) override;
@@ -85,23 +91,26 @@ private:
     sk_sp<GrGpuBuffer> onCreateBuffer(size_t sizeInBytes, GrGpuBufferType, GrAccessPattern,
                                       const void*) override;
 
-    bool onReadPixels(GrSurface* surface, int left, int top, int width, int height, GrColorType,
-                      void* buffer, size_t rowBytes) override {
+    bool onReadPixels(GrSurface* surface, int left, int top, int width, int height,
+                      GrColorType surfaceColorType, GrColorType dstColorType, void* buffer,
+                      size_t rowBytes) override {
         return true;
     }
 
-    bool onWritePixels(GrSurface* surface, int left, int top, int width, int height, GrColorType,
+    bool onWritePixels(GrSurface* surface, int left, int top, int width, int height,
+                       GrColorType surfaceColorType, GrColorType srcColorType,
                        const GrMipLevel texels[], int mipLevelCount) override {
         return true;
     }
 
     bool onTransferPixelsTo(GrTexture* texture, int left, int top, int width, int height,
-                            GrColorType, GrGpuBuffer* transferBuffer, size_t offset,
-                            size_t rowBytes) override {
+                            GrColorType surfaceColorType, GrColorType bufferColorType,
+                            GrGpuBuffer* transferBuffer, size_t offset, size_t rowBytes) override {
         return true;
     }
     bool onTransferPixelsFrom(GrSurface* surface, int left, int top, int width, int height,
-                              GrColorType, GrGpuBuffer* transferBuffer, size_t offset) override {
+                              GrColorType surfaceColorType, GrColorType bufferColorType,
+                              GrGpuBuffer* transferBuffer, size_t offset) override {
         return true;
     }
     bool onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,

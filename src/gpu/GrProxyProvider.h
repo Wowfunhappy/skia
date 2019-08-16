@@ -52,9 +52,12 @@ public:
 
     /*
      * Finds a proxy by unique key or creates a new one that wraps a resource matching the unique
-     * key.
+     * key. GrColorType is required to set the proxy's texture swizzle on creation. For any key,
+     * each call that might result in a cache hit must provide the same colorType as the call that
+     * caused a cache miss and created the proxy.
      */
-    sk_sp<GrTextureProxy> findOrCreateProxyByUniqueKey(const GrUniqueKey&, GrSurfaceOrigin);
+    sk_sp<GrTextureProxy> findOrCreateProxyByUniqueKey(const GrUniqueKey&, GrColorType colorType,
+                                                       GrSurfaceOrigin);
 
     /*
      * Create an un-mipmapped texture proxy with data. The SkImage must be a raster backend image.
@@ -62,7 +65,7 @@ public:
      * actually upload the data to the gpu.
      */
     sk_sp<GrTextureProxy> createTextureProxy(
-            sk_sp<SkImage> srcImage, GrRenderable, int sampleCnt, SkBudgeted, SkBackingFit,
+            sk_sp<SkImage> srcImage, int sampleCnt, SkBudgeted, SkBackingFit,
             GrInternalSurfaceFlags = GrInternalSurfaceFlags::kNone);
 
     /*
@@ -166,20 +169,21 @@ public:
      */
     sk_sp<GrTextureProxy> createLazyProxy(LazyInstantiateCallback&&, const GrBackendFormat&,
                                           const GrSurfaceDesc&, GrRenderable,
-                                          int renderTargetSampleCnt, GrSurfaceOrigin, GrMipMapped,
-                                          GrInternalSurfaceFlags, SkBackingFit, SkBudgeted,
-                                          GrProtected, LazyInstantiationType);
+                                          int renderTargetSampleCnt, GrSurfaceOrigin,
+                                          GrMipMapped, GrMipMapsStatus, GrInternalSurfaceFlags,
+                                          SkBackingFit, SkBudgeted, GrProtected,
+                                          LazyInstantiationType);
 
     sk_sp<GrTextureProxy> createLazyProxy(LazyInstantiateCallback&&, const GrBackendFormat&,
                                           const GrSurfaceDesc&, GrRenderable,
                                           int renderTargetSampleCnt, GrSurfaceOrigin, GrMipMapped,
-                                          GrInternalSurfaceFlags, SkBackingFit, SkBudgeted,
-                                          GrProtected);
+                                          GrMipMapsStatus, GrInternalSurfaceFlags, SkBackingFit,
+                                          SkBudgeted, GrProtected);
 
     sk_sp<GrTextureProxy> createLazyProxy(LazyInstantiateCallback&&, const GrBackendFormat&,
                                           const GrSurfaceDesc&, GrRenderable,
                                           int renderTargetSampleCnt, GrSurfaceOrigin, GrMipMapped,
-                                          SkBackingFit, SkBudgeted, GrProtected);
+                                          GrMipMapsStatus, SkBackingFit, SkBudgeted, GrProtected);
 
     /** A null TextureInfo indicates a non-textureable render target. */
     sk_sp<GrRenderTargetProxy> createLazyRenderTargetProxy(LazyInstantiateCallback&&,
@@ -188,10 +192,8 @@ public:
                                                            int renderTargetSampleCnt,
                                                            GrSurfaceOrigin origin,
                                                            GrInternalSurfaceFlags,
-                                                           const TextureInfo*,
-                                                           SkBackingFit,
-                                                           SkBudgeted,
-                                                           GrProtected,
+                                                           const TextureInfo*, GrMipMapsStatus,
+                                                           SkBackingFit, SkBudgeted, GrProtected,
                                                            bool wrapsVkSecondaryCB);
 
     /**
@@ -247,12 +249,29 @@ public:
 #if GR_TEST_UTILS
     /*
      * Create a texture proxy that is backed by an instantiated GrSurface.
+     * TODO: Remove GrColorType. Currently used to infer a GrPixelConfig.
      */
-    sk_sp<GrTextureProxy> testingOnly_createInstantiatedProxy(const GrSurfaceDesc&, GrRenderable,
+    sk_sp<GrTextureProxy> testingOnly_createInstantiatedProxy(const SkISize& size,
+                                                              GrColorType colorType,
+                                                              const GrBackendFormat& format,
+                                                              GrRenderable renderable,
                                                               int renderTargetSampleCnt,
-                                                              GrSurfaceOrigin, SkBackingFit,
-                                                              SkBudgeted, GrProtected);
-    sk_sp<GrTextureProxy> testingOnly_createWrapped(sk_sp<GrTexture>, GrSurfaceOrigin);
+                                                              GrSurfaceOrigin origin,
+                                                              SkBackingFit fit,
+                                                              SkBudgeted budgeted,
+                                                              GrProtected isProtected);
+
+    /** Version of above that picks the default format for the color type. */
+    sk_sp<GrTextureProxy> testingOnly_createInstantiatedProxy(const SkISize& size,
+                                                              GrColorType colorType,
+                                                              GrRenderable renderable,
+                                                              int renderTargetSampleCnt,
+                                                              GrSurfaceOrigin origin,
+                                                              SkBackingFit fit,
+                                                              SkBudgeted budgeted,
+                                                              GrProtected isProtected);
+
+    sk_sp<GrTextureProxy> testingOnly_createWrapped(sk_sp<GrTexture>, GrColorType, GrSurfaceOrigin);
 #endif
 
 private:
@@ -261,7 +280,8 @@ private:
 
     bool isAbandoned() const;
 
-    sk_sp<GrTextureProxy> createWrapped(sk_sp<GrTexture> tex, GrSurfaceOrigin origin);
+    // GrColorType is used to determine the proxy's texture swizzle.
+    sk_sp<GrTextureProxy> createWrapped(sk_sp<GrTexture> tex, GrColorType, GrSurfaceOrigin origin);
 
     struct UniquelyKeyedProxyHashTraits {
         static const GrUniqueKey& GetKey(const GrTextureProxy& p) { return p.getUniqueKey(); }

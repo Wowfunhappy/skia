@@ -6,7 +6,7 @@
  */
 
 
-#include "include/gpu/GrRenderTarget.h"
+#include "src/gpu/GrRenderTarget.h"
 
 #include "include/gpu/GrContext.h"
 #include "src/core/SkRectPriv.h"
@@ -19,9 +19,10 @@
 #include "src/gpu/GrStencilAttachment.h"
 #include "src/gpu/GrStencilSettings.h"
 
-GrRenderTarget::GrRenderTarget(GrGpu* gpu, const GrSurfaceDesc& desc, int sampleCount,
-                               GrProtected isProtected, GrStencilAttachment* stencil)
-        : INHERITED(gpu, desc, isProtected)
+GrRenderTarget::GrRenderTarget(GrGpu* gpu, const SkISize& size, GrPixelConfig config,
+                               int sampleCount, GrProtected isProtected,
+                               GrStencilAttachment* stencil)
+        : INHERITED(gpu, size, config, isProtected)
         , fSampleCnt(sampleCount)
         , fSamplePatternKey(GrSamplePatternDictionary::kInvalidSamplePatternKey)
         , fStencilAttachment(stencil) {

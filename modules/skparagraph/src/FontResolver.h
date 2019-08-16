@@ -4,12 +4,12 @@
 
 #include <memory>
 #include <set>
-#include "modules/skparagraph/src/TextLine.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkRefCnt.h"
 #include "include/private/SkTHash.h"
 #include "modules/skparagraph/include/FontCollection.h"
 #include "modules/skparagraph/include/TextStyle.h"
+#include "modules/skparagraph/src/TextLine.h"
 #include "src/core/SkSpan.h"
 
 namespace skia {
@@ -33,12 +33,10 @@ public:
     FontResolver() = default;
     ~FontResolver() = default;
 
-    void findAllFontsForAllStyledBlocks(SkSpan<const char> utf8,
-                                        SkSpan<Block> styles,
-                                        sk_sp<FontCollection> fontCollection);
+    void findAllFontsForAllStyledBlocks(ParagraphImpl* master);
     bool findNext(const char* codepoint, SkFont* font, SkScalar* height);
 
-    SkTArray<FontDescr>& switches() { return fFontSwitches; }
+    const SkTArray<FontDescr>& switches() const { return fFontSwitches; }
 
 private:
     void findAllFontsForStyledBlock(const TextStyle& style, TextRange textRange);

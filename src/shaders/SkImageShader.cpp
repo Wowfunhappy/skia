@@ -7,7 +7,6 @@
 
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkBitmapController.h"
-#include "src/core/SkBitmapProvider.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkColorSpaceXformSteps.h"
 #include "src/core/SkRasterPipeline.h"
@@ -135,7 +134,7 @@ SkShaderBase::Context* SkImageShader::onMakeContext(const ContextRec& rec,
     }
 
     return SkBitmapProcLegacyShader::MakeContext(*this, fTileModeX, fTileModeY,
-                                                 SkBitmapProvider(fImage.get()), rec, alloc);
+                                                 as_IB(fImage.get()), rec, alloc);
 }
 #endif
 
@@ -184,7 +183,6 @@ static GrSamplerState::WrapMode tile_mode_to_wrap_mode(const SkTileMode tileMode
             return GrSamplerState::WrapMode::kClampToBorder;
     }
     SK_ABORT("Unknown tile mode.");
-    return GrSamplerState::WrapMode::kClamp;
 }
 
 std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
@@ -220,7 +218,7 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
     // are provided by the caller.
     bool doBicubic;
     GrSamplerState::Filter textureFilterMode = GrSkFilterQualityToGrFilterMode(
-            args.fFilterQuality, *args.fViewMatrix, *lm,
+            fImage->width(), fImage->height(), args.fFilterQuality, *args.fViewMatrix, *lm,
             args.fContext->priv().options().fSharpenMipmappedTextures, &doBicubic);
     GrSamplerState samplerState(wrapModes, textureFilterMode);
     SkScalar scaleAdjust[2] = { 1.0f, 1.0f };
@@ -303,8 +301,8 @@ bool SkImageShader::onAppendStages(const SkStageRec& rec) const {
     }
     auto quality = rec.fPaint.getFilterQuality();
 
-    SkBitmapProvider provider(fImage.get());
-    const auto* state = SkBitmapController::RequestBitmap(provider, matrix, quality, alloc);
+    const auto* state = SkBitmapController::RequestBitmap(as_IB(fImage.get()),
+                                                          matrix, quality, alloc);
     if (!state) {
         return false;
     }
@@ -452,6 +450,49 @@ bool SkImageShader::onAppendStages(const SkStageRec& rec) const {
         if (ct == kBGRA_8888_SkColorType) {
             p->append(SkRasterPipeline::swap_rb);
         }
+        return append_misc();
+    }
+    if (true
+        && (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType) // TODO: all formats
+        && quality == kLow_SkFilterQuality
+        && fTileModeX != SkTileMode::kDecal // TODO decal too?
+        && fTileModeY != SkTileMode::kDecal) {
+
+        auto ctx = alloc->make<SkRasterPipeline_SamplerCtx2>();
+        *(SkRasterPipeline_GatherCtx*)(ctx) = *gather;
+        ctx->ct = ct;
+        ctx->tileX = fTileModeX;
+        ctx->tileY = fTileModeY;
+        ctx->invWidth  = 1.0f / ctx->width;
+        ctx->invHeight = 1.0f / ctx->height;
+        p->append(SkRasterPipeline::bilinear, ctx);
+        return append_misc();
+    }
+    if (true
+        && (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType)
+        && quality == kHigh_SkFilterQuality
+        && fTileModeX == SkTileMode::kClamp && fTileModeY == SkTileMode::kClamp) {
+
+        p->append(SkRasterPipeline::bicubic_clamp_8888, gather);
+        if (ct == kBGRA_8888_SkColorType) {
+            p->append(SkRasterPipeline::swap_rb);
+        }
+        return append_misc();
+    }
+    if (true
+        && (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType) // TODO: all formats
+        && quality == kHigh_SkFilterQuality
+        && fTileModeX != SkTileMode::kDecal // TODO decal too?
+        && fTileModeY != SkTileMode::kDecal) {
+
+        auto ctx = alloc->make<SkRasterPipeline_SamplerCtx2>();
+        *(SkRasterPipeline_GatherCtx*)(ctx) = *gather;
+        ctx->ct = ct;
+        ctx->tileX = fTileModeX;
+        ctx->tileY = fTileModeY;
+        ctx->invWidth  = 1.0f / ctx->width;
+        ctx->invHeight = 1.0f / ctx->height;
+        p->append(SkRasterPipeline::bicubic, ctx);
         return append_misc();
     }
 

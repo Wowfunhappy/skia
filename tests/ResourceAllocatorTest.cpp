@@ -41,7 +41,7 @@ static sk_sp<GrSurfaceProxy> make_deferred(GrProxyProvider* proxyProvider, const
     desc.fHeight = p.fSize;
     desc.fConfig = config;
 
-    const GrBackendFormat format = caps->getBackendFormatFromColorType(p.fColorType);
+    const GrBackendFormat format = caps->getDefaultBackendFormat(p.fColorType, p.fRenderable);
 
     return proxyProvider->createProxy(format, desc, p.fRenderable, p.fSampleCnt, p.fOrigin, p.fFit,
                                       p.fBudgeted, GrProtected::kNo);
@@ -176,10 +176,9 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceAllocatorTest, reporter, ctxInfo) {
         overlap_test(reporter, resourceProvider, std::move(p1), std::move(p2), test.fExpectation);
     }
 
-    int k2 = ctxInfo.grContext()->priv().caps()->getRenderTargetSampleCount(
-                                                                    2, kRGBA_8888_GrPixelConfig);
-    int k4 = ctxInfo.grContext()->priv().caps()->getRenderTargetSampleCount(
-                                                                    4, kRGBA_8888_GrPixelConfig);
+    auto beFormat = caps->getDefaultBackendFormat(GrColorType::kRGBA_8888, GrRenderable::kYes);
+    int k2 = ctxInfo.grContext()->priv().caps()->getRenderTargetSampleCount(2, beFormat);
+    int k4 = ctxInfo.grContext()->priv().caps()->getRenderTargetSampleCount(4, beFormat);
 
     //--------------------------------------------------------------------------------------------
     TestCase gNonOverlappingTests[] = {
@@ -272,6 +271,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceAllocatorStressTest, reporter, ctxInf
 sk_sp<GrSurfaceProxy> make_lazy(GrProxyProvider* proxyProvider, const GrCaps* caps,
                                 const ProxyParams& p, bool deinstantiate) {
     GrPixelConfig config = GrColorTypeToPixelConfig(p.fColorType);
+    const auto format = caps->getDefaultBackendFormat(p.fColorType, p.fRenderable);
 
     GrSurfaceDesc desc;
     desc.fWidth = p.fSize;
@@ -279,26 +279,25 @@ sk_sp<GrSurfaceProxy> make_lazy(GrProxyProvider* proxyProvider, const GrCaps* ca
     desc.fConfig = config;
 
     SkBackingFit fit = p.fFit;
-    auto callback = [fit, desc, p](GrResourceProvider* resourceProvider) {
+    auto callback = [fit, desc, format, p](GrResourceProvider* resourceProvider) {
         sk_sp<GrTexture> texture;
         if (fit == SkBackingFit::kApprox) {
             texture = resourceProvider->createApproxTexture(
-                    desc, p.fRenderable, p.fSampleCnt, GrProtected::kNo,
+                    desc, format, p.fRenderable, p.fSampleCnt, GrProtected::kNo,
                     GrResourceProvider::Flags::kNoPendingIO);
         } else {
-            texture = resourceProvider->createTexture(desc, p.fRenderable, p.fSampleCnt,
+            texture = resourceProvider->createTexture(desc, format, p.fRenderable, p.fSampleCnt,
                                                       SkBudgeted::kNo, GrProtected::kNo,
                                                       GrResourceProvider::Flags::kNoPendingIO);
         }
         return GrSurfaceProxy::LazyInstantiationResult(std::move(texture));
     };
-    const GrBackendFormat format = caps->getBackendFormatFromColorType(p.fColorType);
     auto lazyType = deinstantiate ? GrSurfaceProxy::LazyInstantiationType ::kDeinstantiate
                                   : GrSurfaceProxy::LazyInstantiationType ::kSingleUse;
     GrInternalSurfaceFlags flags = GrInternalSurfaceFlags::kNone;
-    return proxyProvider->createLazyProxy(callback, format, desc, p.fRenderable, p.fSampleCnt,
-                                          p.fOrigin, GrMipMapped::kNo, flags, p.fFit, p.fBudgeted,
-                                          GrProtected::kNo, lazyType);
+    return proxyProvider->createLazyProxy(
+            callback, format, desc, p.fRenderable, p.fSampleCnt, p.fOrigin, GrMipMapped::kNo,
+            GrMipMapsStatus::kNotAllocated, flags, p.fFit, p.fBudgeted, GrProtected::kNo, lazyType);
 }
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(LazyDeinstantiation, reporter, ctxInfo) {

@@ -1,7 +1,7 @@
 // Copyright 2019 Google LLC.
-#include "modules/skparagraph/include/TextStyle.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkFontStyle.h"
+#include "modules/skparagraph/include/TextStyle.h"
 
 namespace skia {
 namespace textlayout {
@@ -21,6 +21,7 @@ TextStyle::TextStyle() : fFontStyle() {
     fLetterSpacing = 0.0;
     fWordSpacing = 0.0;
     fHeight = 1.0;
+    fHeightOverride = false;
     fHasBackground = false;
     fHasForeground = false;
     fTextBaseline = TextBaseline::kAlphabetic;
@@ -118,6 +119,21 @@ bool TextStyle::matchOneAttribute(StyleType styleType, const TextStyle& other) c
         default:
             SkASSERT(false);
             return false;
+    }
+}
+
+void TextStyle::getFontMetrics(SkFontMetrics* metrics) const {
+    SkFont font(fTypeface, fFontSize);
+    font.getMetrics(metrics);
+    if (fHeightOverride) {
+        auto multiplier = fHeight * fFontSize;
+        auto height = metrics->fDescent - metrics->fAscent + metrics->fLeading;
+        metrics->fAscent = (metrics->fAscent - metrics->fLeading / 2) * multiplier / height;
+        metrics->fDescent = (metrics->fDescent + metrics->fLeading / 2) * multiplier / height;
+
+    } else {
+        metrics->fAscent = (metrics->fAscent - metrics->fLeading / 2);
+        metrics->fDescent = (metrics->fDescent + metrics->fLeading / 2);
     }
 }
 

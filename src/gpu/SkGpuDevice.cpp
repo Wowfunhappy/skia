@@ -20,6 +20,7 @@
 #include "src/core/SkClipStack.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkImageFilterCache.h"
+#include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkLatticeIter.h"
 #include "src/core/SkMakeUnique.h"
 #include "src/core/SkPictureData.h"
@@ -176,11 +177,10 @@ sk_sp<SkSpecialImage> SkGpuDevice::filterTexture(SkSpecialImage* srcImg,
     if (colorType == kUnknown_SkColorType) {
         colorType = kRGBA_8888_SkColorType;
     }
-    SkImageFilter::OutputProperties outputProperties(
-            colorType, fRenderTargetContext->colorSpaceInfo().colorSpace());
-    SkImageFilter::Context ctx(matrix, clipBounds, cache.get(), outputProperties);
+    SkImageFilter_Base::Context ctx(matrix, clipBounds, cache.get(), colorType,
+                                    fRenderTargetContext->colorSpaceInfo().colorSpace(), srcImg);
 
-    return filter->filterImage(srcImg, ctx, offset);
+    return as_IFB(filter)->filterImage(ctx, offset);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -290,7 +290,6 @@ static inline GrPrimitiveType point_mode_to_primitive_type(SkCanvas::PointMode m
             return GrPrimitiveType::kLineStrip;
     }
     SK_ABORT("Unexpected mode");
-    return GrPrimitiveType::kPoints;
 }
 
 void SkGpuDevice::drawPoints(SkCanvas::PointMode mode,
@@ -769,7 +768,7 @@ bool SkGpuDevice::shouldTileImage(const SkImage* image, const SkRect* srcRectPtr
     GrSamplerState samplerState;
     bool doBicubic;
     GrSamplerState::Filter textureFilterMode = GrSkFilterQualityToGrFilterMode(
-            quality, viewMatrix, srcToDstRect,
+            image->width(), image->height(), quality, viewMatrix, srcToDstRect,
             fContext->priv().options().fSharpenMipmappedTextures, &doBicubic);
 
     int tileFilterPad;
@@ -1171,8 +1170,8 @@ void SkGpuDevice::drawBitmapRect(const SkBitmap& bitmap,
         GrSamplerState sampleState;
         bool doBicubic;
         GrSamplerState::Filter textureFilterMode = GrSkFilterQualityToGrFilterMode(
-                paint.getFilterQuality(), this->ctm(), srcToDstMatrix,
-                fContext->priv().options().fSharpenMipmappedTextures, &doBicubic);
+                bitmap.width(), bitmap.height(), paint.getFilterQuality(), this->ctm(),
+                srcToDstMatrix, fContext->priv().options().fSharpenMipmappedTextures, &doBicubic);
 
         int tileFilterPad;
 

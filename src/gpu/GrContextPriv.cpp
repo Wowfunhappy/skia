@@ -213,56 +213,16 @@ void GrContextPriv::flushSurface(GrSurfaceProxy* proxy) {
     this->flushSurfaces(proxy ? &proxy : nullptr, proxy ? 1 : 0, {});
 }
 
-void GrContextPriv::moveOpListsToDDL(SkDeferredDisplayList* ddl) {
-    fContext->drawingManager()->moveOpListsToDDL(ddl);
+void GrContextPriv::moveRenderTasksToDDL(SkDeferredDisplayList* ddl) {
+    fContext->drawingManager()->moveRenderTasksToDDL(ddl);
 }
 
-void GrContextPriv::copyOpListsFromDDL(const SkDeferredDisplayList* ddl,
-                                       GrRenderTargetProxy* newDest) {
-    fContext->drawingManager()->copyOpListsFromDDL(ddl, newDest);
+void GrContextPriv::copyRenderTasksFromDDL(const SkDeferredDisplayList* ddl,
+                                           GrRenderTargetProxy* newDest) {
+    fContext->drawingManager()->copyRenderTasksFromDDL(ddl, newDest);
 }
 
 //////////////////////////////////////////////////////////////////////////////
-#ifdef SK_ENABLE_DUMP_GPU
-#include "src/utils/SkJSONWriter.h"
-SkString GrContextPriv::dump() const {
-    SkDynamicMemoryWStream stream;
-    SkJSONWriter writer(&stream, SkJSONWriter::Mode::kPretty);
-    writer.beginObject();
-
-    static const char* kBackendStr[] = {
-        "Metal",
-        "Dawn",
-        "OpenGL",
-        "Vulkan",
-        "Mock",
-    };
-    GR_STATIC_ASSERT(0 == (unsigned)GrBackendApi::kMetal);
-    GR_STATIC_ASSERT(1 == (unsigned)GrBackendApi::kDawn);
-    GR_STATIC_ASSERT(2 == (unsigned)GrBackendApi::kOpenGL);
-    GR_STATIC_ASSERT(3 == (unsigned)GrBackendApi::kVulkan);
-    GR_STATIC_ASSERT(4 == (unsigned)GrBackendApi::kMock);
-    writer.appendString("backend", kBackendStr[(unsigned)fContext->backend()]);
-
-    writer.appendName("caps");
-    fContext->caps()->dumpJSON(&writer);
-
-    writer.appendName("gpu");
-    fContext->fGpu->dumpJSON(&writer);
-
-    // Flush JSON to the memory stream
-    writer.endObject();
-    writer.flush();
-
-    // Null terminate the JSON data in the memory stream
-    stream.write8(0);
-
-    // Allocate a string big enough to hold all the data, then copy out of the stream
-    SkString result(stream.bytesWritten());
-    stream.copyToAndReset(result.writable_str());
-    return result;
-}
-#endif
 
 #if GR_TEST_UTILS
 void GrContextPriv::resetGpuStats() const {
@@ -419,8 +379,7 @@ GrBackendTexture GrContextPriv::createBackendTexture(const SkPixmap srcData[], i
         }
     }
 
-    GrBackendFormat backendFormat =
-            this->caps()->getBackendFormatFromColorType(SkColorTypeToGrColorType(colorType));
+    GrBackendFormat backendFormat = fContext->defaultBackendFormat(colorType, renderable);
     if (!backendFormat.isValid()) {
         return {};
     }

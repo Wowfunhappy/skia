@@ -191,10 +191,15 @@ private:
 
     void xferBarrier(GrRenderTarget*, GrXferBarrierType) override;
 
-    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&, GrRenderable, int renderTargetSampleCnt,
-                                     SkBudgeted, GrProtected, const GrMipLevel[],
+    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc&,
+                                     const GrBackendFormat&,
+                                     GrRenderable,
+                                     int renderTargetSampleCnt,
+                                     SkBudgeted,
+                                     GrProtected,
+                                     const GrMipLevel[],
                                      int mipLevelCount) override;
-    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height,
+    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, const GrBackendFormat&,
                                                SkImage::CompressionType compression, SkBudgeted,
                                                const void* data) override;
 
@@ -217,31 +222,41 @@ private:
 
     void onFBOChanged();
 
-    // Returns whether the texture is successfully created. On success, the
-    // result is stored in |info|.
-    // The texture is populated with |texels|, if it exists.
+    // Returns whether the texture is successfully created. On success, a non-zero texture ID is
+    // returned. On failure, zero is returned.
+    // The texture is populated with |texels|, if it is non-null.
     // The texture parameters are cached in |initialTexParams|.
-    bool createTextureImpl(const GrSurfaceDesc& desc, GrGLTextureInfo* info, GrRenderable,
-                           GrGLTextureParameters::SamplerOverriddenState* initialState,
-                           const GrMipLevel texels[], int mipLevelCount,
-                           GrMipMapsStatus* mipMapsStatus);
+    GrGLuint createTexture2D(const SkISize& size,
+                             GrGLFormat format,
+                             GrRenderable,
+                             GrGLTextureParameters::SamplerOverriddenState* initialState,
+                             GrColorType textureColorType,
+                             GrColorType srcColorType,
+                             const GrMipLevel texels[],
+                             int mipLevelCount,
+                             GrMipMapsStatus* mipMapsStatus);
 
-    bool createCompressedTextureImpl(GrGLTextureInfo* info, int width, int height,
-                                     SkImage::CompressionType compression,
-                                     GrGLTextureParameters::SamplerOverriddenState* initialState,
-                                     const void* data);
+    GrGLuint createCompressedTexture2D(const SkISize& size, GrGLFormat format,
+                                       SkImage::CompressionType compression,
+                                       GrGLTextureParameters::SamplerOverriddenState* initialState,
+                                       const void* data);
 
-    bool onReadPixels(GrSurface*, int left, int top, int width, int height, GrColorType,
-                      void* buffer, size_t rowBytes) override;
+    bool onReadPixels(GrSurface*, int left, int top, int width, int height,
+                      GrColorType surfaceColorType, GrColorType dstColorType, void* buffer,
+                      size_t rowBytes) override;
 
-    bool onWritePixels(GrSurface*, int left, int top, int width, int height, GrColorType,
+    bool onWritePixels(GrSurface*, int left, int top, int width, int height,
+                       GrColorType surfaceColorType, GrColorType srcColorType,
                        const GrMipLevel texels[], int mipLevelCount) override;
 
-    bool onTransferPixelsTo(GrTexture*, int left, int top, int width, int height, GrColorType,
+    bool onTransferPixelsTo(GrTexture*, int left, int top, int width, int height,
+                            GrColorType textureColorType, GrColorType bufferColorType,
                             GrGpuBuffer* transferBuffer, size_t offset, size_t rowBytes) override;
-    bool onTransferPixelsFrom(GrSurface*, int left, int top, int width, int height, GrColorType,
+    bool onTransferPixelsFrom(GrSurface*, int left, int top, int width, int height,
+                              GrColorType surfaceColorType, GrColorType bufferColorType,
                               GrGpuBuffer* transferBuffer, size_t offset) override;
-    bool readOrTransferPixelsFrom(GrSurface*, int left, int top, int width, int height, GrColorType,
+    bool readOrTransferPixelsFrom(GrSurface*, int left, int top, int width, int height,
+                                  GrColorType surfaceColorType, GrColorType dstColorType,
                                   void* offsetOrPtr, int rowWidthInPixels);
 
     // Before calling any variation of TexImage, TexSubImage, etc..., call this to ensure that the
@@ -389,19 +404,23 @@ private:
         kNewTexture_UploadType,   // we are creating a new texture
         kWrite_UploadType,        // we are using TexSubImage2D to copy data to an existing texture
     };
-    bool uploadTexData(GrPixelConfig texConfig, int texWidth, int texHeight, GrGLenum target,
-                       UploadType uploadType, int left, int top, int width, int height,
-                       GrPixelConfig dataConfig, const GrMipLevel texels[], int mipLevelCount,
+    bool uploadTexData(GrGLFormat textureFormat, GrColorType textureColorType,
+                       int texWidth, int texHeight, GrGLenum target, UploadType uploadType,
+                       int left, int top, int width, int height, GrColorType srcColorType,
+                       const GrMipLevel texels[], int mipLevelCount,
                        GrMipMapsStatus* mipMapsStatus = nullptr);
 
-    // Helper for onCreateCompressedTexture. Compressed textures are read-only so we
-    // only use this to populate a new texture. Returns the internal format of the texture
-    // or 0 on failure.
-    GrGLenum uploadCompressedTexData(SkImage::CompressionType, int width, int height,
-                                     GrGLenum target, const void* data);
+    // Helper for onCreateCompressedTexture. Compressed textures are read-only so we only use this
+    // to populate a new texture. Returns false if we failed to create and upload the texture.
+    bool uploadCompressedTexData(GrGLFormat,
+                                 SkImage::CompressionType,
+                                 const SkISize& size,
+                                 GrGLenum target,
+                                 const void* data);
 
-    bool createRenderTargetObjects(const GrSurfaceDesc&, int sampleCount,
-                                   const GrGLTextureInfo& texInfo, GrGLRenderTarget::IDDesc*);
+    bool createRenderTargetObjects(const GrGLTexture::Desc&,
+                                   int sampleCount,
+                                   GrGLRenderTarget::IDs*);
 
     enum TempFBOTarget {
         kSrc_TempFBOTarget,

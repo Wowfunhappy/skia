@@ -10,7 +10,6 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkImage.h"
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrRenderTarget.h"
 #include "include/gpu/GrTexture.h"
 #include "include/private/GrImageContext.h"
 #include "include/private/GrResourceKey.h"
@@ -23,6 +22,7 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrImageContextPriv.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrSurfaceProxyPriv.h"
@@ -115,44 +115,87 @@ sk_sp<GrTextureProxy> GrProxyProvider::findProxyByUniqueKey(const GrUniqueKey& k
 
 #if GR_TEST_UTILS
 sk_sp<GrTextureProxy> GrProxyProvider::testingOnly_createInstantiatedProxy(
-        const GrSurfaceDesc& desc, GrRenderable renderable, int renderTargetSampleCnt,
-        GrSurfaceOrigin origin, SkBackingFit fit, SkBudgeted budgeted, GrProtected isProtected) {
+        const SkISize& size,
+        GrColorType colorType,
+        const GrBackendFormat& format,
+        GrRenderable renderable,
+        int renderTargetSampleCnt,
+        GrSurfaceOrigin origin,
+        SkBackingFit fit,
+        SkBudgeted budgeted,
+        GrProtected isProtected) {
     GrContext* direct = fImageContext->priv().asDirectContext();
     if (!direct) {
         return nullptr;
     }
 
+    if (this->caps()->isFormatCompressed(format)) {
+        // TODO: Allow this to go to GrResourceProvider::createCompressedTexture() once we no longer
+        // rely on GrColorType to get to GrPixelConfig. Currently this will cause
+        // makeConfigSpecific() to assert because GrColorTypeToPixelConfig() never returns a
+        // compressed GrPixelConfig.
+        return nullptr;
+    }
+    GrSurfaceDesc desc;
+    desc.fConfig = GrColorTypeToPixelConfig(colorType);
+    desc.fConfig = this->caps()->makeConfigSpecific(desc.fConfig, format);
+    desc.fWidth = size.width();
+    desc.fHeight = size.height();
+
     GrResourceProvider* resourceProvider = direct->priv().resourceProvider();
     sk_sp<GrTexture> tex;
 
     if (SkBackingFit::kApprox == fit) {
-        tex = resourceProvider->createApproxTexture(desc, renderable, renderTargetSampleCnt,
+        tex = resourceProvider->createApproxTexture(desc, format, renderable, renderTargetSampleCnt,
                                                     isProtected,
                                                     GrResourceProvider::Flags::kNoPendingIO);
     } else {
-        tex = resourceProvider->createTexture(desc, renderable, renderTargetSampleCnt, budgeted,
-                                              isProtected, GrResourceProvider::Flags::kNoPendingIO);
+        tex = resourceProvider->createTexture(desc, format, renderable, renderTargetSampleCnt,
+                                              budgeted, isProtected,
+                                              GrResourceProvider::Flags::kNoPendingIO);
     }
     if (!tex) {
         return nullptr;
     }
 
-    return this->createWrapped(std::move(tex), origin);
+    return this->createWrapped(std::move(tex), colorType, origin);
+}
+
+sk_sp<GrTextureProxy> GrProxyProvider::testingOnly_createInstantiatedProxy(
+        const SkISize& size,
+        GrColorType colorType,
+        GrRenderable renderable,
+        int renderTargetSampleCnt,
+        GrSurfaceOrigin origin,
+        SkBackingFit fit,
+        SkBudgeted budgeted,
+        GrProtected isProtected) {
+    auto format = this->caps()->getDefaultBackendFormat(colorType, renderable);
+    return this->testingOnly_createInstantiatedProxy(size,
+                                                     colorType,
+                                                     format,
+                                                     renderable,
+                                                     renderTargetSampleCnt,
+                                                     origin,
+                                                     fit,
+                                                     budgeted,
+                                                     isProtected);
 }
 
 sk_sp<GrTextureProxy> GrProxyProvider::testingOnly_createWrapped(sk_sp<GrTexture> tex,
+                                                                 GrColorType colorType,
                                                                  GrSurfaceOrigin origin) {
-    return this->createWrapped(std::move(tex), origin);
+    return this->createWrapped(std::move(tex), colorType, origin);
 }
 #endif
 
-sk_sp<GrTextureProxy> GrProxyProvider::createWrapped(sk_sp<GrTexture> tex, GrSurfaceOrigin origin) {
+sk_sp<GrTextureProxy> GrProxyProvider::createWrapped(sk_sp<GrTexture> tex, GrColorType colorType,
+                                                     GrSurfaceOrigin origin) {
 #ifdef SK_DEBUG
     if (tex->getUniqueKey().isValid()) {
         SkASSERT(!this->findProxyByUniqueKey(tex->getUniqueKey(), origin));
     }
 #endif
-    GrColorType colorType = GrPixelConfigToColorType(tex->config());
     GrSwizzle texSwizzle = this->caps()->getTextureSwizzle(tex->backendFormat(), colorType);
 
     if (tex->asRenderTarget()) {
@@ -165,6 +208,7 @@ sk_sp<GrTextureProxy> GrProxyProvider::createWrapped(sk_sp<GrTexture> tex, GrSur
 }
 
 sk_sp<GrTextureProxy> GrProxyProvider::findOrCreateProxyByUniqueKey(const GrUniqueKey& key,
+                                                                    GrColorType colorType,
                                                                     GrSurfaceOrigin origin) {
     ASSERT_SINGLE_OWNER
 
@@ -192,15 +236,16 @@ sk_sp<GrTextureProxy> GrProxyProvider::findOrCreateProxyByUniqueKey(const GrUniq
     sk_sp<GrTexture> texture(static_cast<GrSurface*>(resource)->asTexture());
     SkASSERT(texture);
 
-    result = this->createWrapped(std::move(texture), origin);
+    result = this->createWrapped(std::move(texture), colorType, origin);
     SkASSERT(result->getUniqueKey() == key);
     // createWrapped should've added this for us
     SkASSERT(fUniquelyKeyedProxies.find(key));
+    SkASSERT(result->textureSwizzle() ==
+             this->caps()->getTextureSwizzle(result->backendFormat(), colorType));
     return result;
 }
 
 sk_sp<GrTextureProxy> GrProxyProvider::createTextureProxy(sk_sp<SkImage> srcImage,
-                                                          GrRenderable renderable,
                                                           int sampleCnt,
                                                           SkBudgeted budgeted,
                                                           SkBackingFit fit,
@@ -213,12 +258,11 @@ sk_sp<GrTextureProxy> GrProxyProvider::createTextureProxy(sk_sp<SkImage> srcImag
     }
 
     const SkImageInfo& info = srcImage->imageInfo();
-    SkColorType ct = info.colorType();
-    GrColorType grCT = SkColorTypeToGrColorType(ct);
+    GrColorType ct = SkColorTypeToGrColorType(info.colorType());
 
-    GrBackendFormat format = this->caps()->getBackendFormatFromColorType(grCT);
+    GrBackendFormat format = this->caps()->getDefaultBackendFormat(ct, GrRenderable::kNo);
 
-    if (!format.isValid() || !this->caps()->isFormatTexturable(grCT, format)) {
+    if (!format.isValid()) {
         SkBitmap copy8888;
         if (!copy8888.tryAllocPixels(info.makeColorType(kRGBA_8888_SkColorType)) ||
             !srcImage->readPixels(copy8888.pixmap(), 0, 0)) {
@@ -226,22 +270,14 @@ sk_sp<GrTextureProxy> GrProxyProvider::createTextureProxy(sk_sp<SkImage> srcImag
         }
         copy8888.setImmutable();
         srcImage = SkMakeImageFromRasterBitmap(copy8888, kNever_SkCopyPixelsMode);
-        ct = kRGBA_8888_SkColorType;
-        grCT = GrColorType::kRGBA_8888;
-        format = this->caps()->getBackendFormatFromColorType(grCT);
+        ct = GrColorType::kRGBA_8888;
+        format = this->caps()->getDefaultBackendFormat(ct, GrRenderable::kNo);
         if (!format.isValid()) {
             return nullptr;
         }
     }
 
-    if (renderable == GrRenderable::kYes) {
-        sampleCnt = this->caps()->getRenderTargetSampleCount(sampleCnt, grCT, format);
-        if (!sampleCnt) {
-            return nullptr;
-        }
-    }
-
-    GrPixelConfig config = SkColorType2GrPixelConfig(ct);
+    GrPixelConfig config = GrColorTypeToPixelConfig(ct);
     if (kUnknown_GrPixelConfig == config) {
         return nullptr;
     }
@@ -252,18 +288,18 @@ sk_sp<GrTextureProxy> GrProxyProvider::createTextureProxy(sk_sp<SkImage> srcImag
     desc.fConfig = config;
 
     sk_sp<GrTextureProxy> proxy = this->createLazyProxy(
-            [desc, renderable, sampleCnt, budgeted, srcImage,
-             fit](GrResourceProvider* resourceProvider) {
+            [desc, format, sampleCnt, budgeted, srcImage, fit,
+             ct](GrResourceProvider* resourceProvider) {
                 SkPixmap pixMap;
                 SkAssertResult(srcImage->peekPixels(&pixMap));
                 GrMipLevel mipLevel = { pixMap.addr(), pixMap.rowBytes() };
 
                 return LazyInstantiationResult(resourceProvider->createTexture(
-                        desc, renderable, sampleCnt, budgeted, fit, GrProtected::kNo, mipLevel,
-                        GrResourceProvider::Flags::kNoPendingIO));
+                        desc, format, GrRenderable::kNo, sampleCnt, budgeted, fit, GrProtected::kNo,
+                        ct, mipLevel, GrResourceProvider::Flags::kNoPendingIO));
             },
-            format, desc, renderable, sampleCnt, kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo,
-            surfaceFlags, fit, budgeted, GrProtected::kNo);
+            format, desc, GrRenderable::kNo, sampleCnt, kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo,
+            GrMipMapsStatus::kNotAllocated, surfaceFlags, fit, budgeted, GrProtected::kNo);
 
     if (!proxy) {
         return nullptr;
@@ -333,18 +369,15 @@ sk_sp<GrTextureProxy> GrProxyProvider::createProxyFromBitmap(const SkBitmap& bit
     // If mips weren't requested (or this was too small to have any), then take the fast path
     if (GrMipMapped::kNo == mipMapped ||
         0 == SkMipMap::ComputeLevelCount(baseLevel->width(), baseLevel->height())) {
-        return this->createTextureProxy(std::move(baseLevel), GrRenderable::kNo, 1,
-                                        SkBudgeted::kYes, SkBackingFit::kExact);
+        return this->createTextureProxy(std::move(baseLevel), 1, SkBudgeted::kYes,
+                                        SkBackingFit::kExact);
     }
 
-    GrColorType grColorType = SkColorTypeToGrColorType(bitmap.info().colorType());
-    GrBackendFormat format = this->caps()->getBackendFormatFromColorType(grColorType);
-    if (!format.isValid()) {
-        return nullptr;
-    }
     GrSurfaceDesc desc = GrImageInfoToSurfaceDesc(bitmap.info());
 
-    if (!this->caps()->isFormatTexturable(grColorType, format)) {
+    GrColorType grColorType = SkColorTypeToGrColorType(bitmap.info().colorType());
+    GrBackendFormat format = this->caps()->getDefaultBackendFormat(grColorType, GrRenderable::kNo);
+    if (!format.isValid()) {
         SkBitmap copy8888;
         if (!copy8888.tryAllocPixels(bitmap.info().makeColorType(kRGBA_8888_SkColorType)) ||
             !bitmap.readPixels(copy8888.pixmap())) {
@@ -354,12 +387,11 @@ sk_sp<GrTextureProxy> GrProxyProvider::createProxyFromBitmap(const SkBitmap& bit
         baseLevel = SkMakeImageFromRasterBitmap(copy8888, kNever_SkCopyPixelsMode);
         desc.fConfig = kRGBA_8888_GrPixelConfig;
         grColorType = GrColorType::kRGBA_8888;
-        format = this->caps()->getBackendFormatFromColorType(grColorType);
+        format = this->caps()->getDefaultBackendFormat(grColorType, GrRenderable::kNo);
         if (!format.isValid()) {
             return nullptr;
         }
     }
-
 
     SkPixmap pixmap;
     SkAssertResult(baseLevel->peekPixels(&pixmap));
@@ -369,7 +401,7 @@ sk_sp<GrTextureProxy> GrProxyProvider::createProxyFromBitmap(const SkBitmap& bit
     }
 
     sk_sp<GrTextureProxy> proxy = this->createLazyProxy(
-            [desc, baseLevel, mipmaps](GrResourceProvider* resourceProvider) {
+            [desc, format, baseLevel, mipmaps](GrResourceProvider* resourceProvider) {
                 const int mipLevelCount = mipmaps->countLevels() + 1;
                 std::unique_ptr<GrMipLevel[]> texels(new GrMipLevel[mipLevelCount]);
 
@@ -390,11 +422,11 @@ sk_sp<GrTextureProxy> GrProxyProvider::createProxyFromBitmap(const SkBitmap& bit
                 }
 
                 return LazyInstantiationResult(resourceProvider->createTexture(
-                        desc, GrRenderable::kNo, 1, SkBudgeted::kYes, GrProtected::kNo,
+                        desc, format, GrRenderable::kNo, 1, SkBudgeted::kYes, GrProtected::kNo,
                         texels.get(), mipLevelCount));
             },
             format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin, GrMipMapped::kYes,
-            SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
+            GrMipMapsStatus::kValid, SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
 
     if (!proxy) {
         return nullptr;
@@ -428,12 +460,6 @@ static bool validate_backend_format_and_config(const GrCaps* caps,
 
     return caps->areColorTypeAndFormatCompatible(grCT, format);
 }
-
-static bool validate_backend_format_and_colortype(const GrCaps* caps,
-                                                  GrColorType colorType,
-                                                  const GrBackendFormat& format) {
-    return caps->areColorTypeAndFormatCompatible(colorType, format);
-}
 #endif
 
 sk_sp<GrTextureProxy> GrProxyProvider::createProxy(const GrBackendFormat& format,
@@ -446,17 +472,19 @@ sk_sp<GrTextureProxy> GrProxyProvider::createProxy(const GrBackendFormat& format
                                                    SkBudgeted budgeted,
                                                    GrProtected isProtected,
                                                    GrInternalSurfaceFlags surfaceFlags) {
-    if (GrPixelConfigIsCompressed(desc.fConfig)) {
+    const GrCaps* caps = this->caps();
+
+    if (caps->isFormatCompressed(format)) {
         // Deferred proxies for compressed textures are not supported.
         return nullptr;
     }
 
-    const GrCaps* caps = this->caps();
     GrColorType colorType = GrPixelConfigToColorType(desc.fConfig);
 
     SkASSERT(GrCaps::AreConfigsCompatible(desc.fConfig,
                                           caps->getConfigFromBackendFormat(format, colorType)));
-    SkASSERT(validate_backend_format_and_colortype(caps, colorType, format));
+    SkASSERT(caps->areColorTypeAndFormatCompatible(colorType, format));
+
     if (GrMipMapped::kYes == mipMapped) {
         // SkMipMap doesn't include the base level in the level count so we have to add 1
         int mipCount = SkMipMap::ComputeLevelCount(desc.fWidth, desc.fHeight) + 1;
@@ -465,47 +493,56 @@ sk_sp<GrTextureProxy> GrProxyProvider::createProxy(const GrBackendFormat& format
         }
     }
 
-    if (!caps->validateSurfaceDesc(desc, renderable, renderTargetSampleCnt, mipMapped)) {
+    if (!caps->validateSurfaceParams({desc.fWidth, desc.fHeight}, format, desc.fConfig, renderable,
+                                     renderTargetSampleCnt, mipMapped)) {
         return nullptr;
     }
     GrSurfaceDesc copyDesc = desc;
+    GrMipMapsStatus mipMapsStatus = (GrMipMapped::kYes == mipMapped)
+            ? GrMipMapsStatus::kDirty
+            : GrMipMapsStatus::kNotAllocated;
     GrSwizzle texSwizzle = caps->getTextureSwizzle(format, colorType);
     if (renderable == GrRenderable::kYes) {
         renderTargetSampleCnt =
-                caps->getRenderTargetSampleCount(renderTargetSampleCnt, colorType, format);
+                caps->getRenderTargetSampleCount(renderTargetSampleCnt, format);
+        SkASSERT(renderTargetSampleCnt);
         // We know anything we instantiate later from this deferred path will be
         // both texturable and renderable
         GrSwizzle outSwizzle = caps->getOutputSwizzle(format, colorType);
         return sk_sp<GrTextureProxy>(new GrTextureRenderTargetProxy(
-                *caps, format, copyDesc, renderTargetSampleCnt, origin, mipMapped, texSwizzle,
-                outSwizzle, fit, budgeted, isProtected, surfaceFlags));
+                *caps, format, copyDesc, renderTargetSampleCnt, origin, mipMapped, mipMapsStatus,
+                texSwizzle, outSwizzle, fit, budgeted, isProtected, surfaceFlags));
     }
 
-    return sk_sp<GrTextureProxy>(new GrTextureProxy(format, copyDesc, origin, mipMapped, texSwizzle,
-                                                    fit, budgeted, isProtected, surfaceFlags));
+    return sk_sp<GrTextureProxy>(new GrTextureProxy(
+            format, copyDesc, origin, mipMapped, mipMapsStatus, texSwizzle, fit, budgeted,
+            isProtected, surfaceFlags));
 }
 
 sk_sp<GrTextureProxy> GrProxyProvider::createCompressedTextureProxy(
         int width, int height, SkBudgeted budgeted, SkImage::CompressionType compressionType,
         sk_sp<SkData> data) {
-    GrBackendFormat format = this->caps()->getBackendFormatFromCompressionType(compressionType);
 
     GrSurfaceDesc desc;
     desc.fConfig = GrCompressionTypePixelConfig(compressionType);
     desc.fWidth = width;
     desc.fHeight = height;
 
-    if (!this->caps()->isConfigTexturable(desc.fConfig)) {
+    GrBackendFormat format = this->caps()->getBackendFormatFromCompressionType(compressionType);
+
+    if (!this->caps()->isFormatTexturable(format)) {
         return nullptr;
     }
 
     sk_sp<GrTextureProxy> proxy = this->createLazyProxy(
-            [width, height, compressionType, budgeted, data](GrResourceProvider* resourceProvider) {
+            [width, height, format, compressionType, budgeted, data]
+            (GrResourceProvider* resourceProvider) {
                 return LazyInstantiationResult(resourceProvider->createCompressedTexture(
-                        width, height, compressionType, budgeted, data.get()));
+                        width, height, format, compressionType, budgeted, data.get()));
             },
             format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin, GrMipMapped::kNo,
-            SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
+            GrMipMapsStatus::kNotAllocated, SkBackingFit::kExact, SkBudgeted::kYes,
+            GrProtected::kNo);
 
     if (!proxy) {
         return nullptr;
@@ -544,13 +581,7 @@ sk_sp<GrTextureProxy> GrProxyProvider::wrapBackendTexture(const GrBackendTexture
 
     const GrCaps* caps = this->caps();
 
-    SkASSERT(GrCaps::AreConfigsCompatible(backendTex.config(),
-                                          caps->getConfigFromBackendFormat(
-                                                                     backendTex.getBackendFormat(),
-                                                                     grColorType)));
-
-    SkASSERT(validate_backend_format_and_colortype(caps, grColorType,
-                                                   backendTex.getBackendFormat()));
+    SkASSERT(caps->areColorTypeAndFormatCompatible(grColorType, backendTex.getBackendFormat()));
 
     GrResourceProvider* resourceProvider = direct->priv().resourceProvider();
 
@@ -590,19 +621,17 @@ sk_sp<GrTextureProxy> GrProxyProvider::wrapRenderableBackendTexture(
 
     const GrCaps* caps = this->caps();
 
-    SkASSERT(GrCaps::AreConfigsCompatible(backendTex.config(),
-                                          caps->getConfigFromBackendFormat(
-                                                                     backendTex.getBackendFormat(),
-                                                                     colorType)));
-    SkASSERT(validate_backend_format_and_colortype(caps, colorType, backendTex.getBackendFormat()));
+    SkASSERT(caps->areColorTypeAndFormatCompatible(colorType, backendTex.getBackendFormat()));
 
     GrResourceProvider* resourceProvider = direct->priv().resourceProvider();
 
-    sampleCnt = caps->getRenderTargetSampleCount(sampleCnt, colorType,
-                                                 backendTex.getBackendFormat());
-    if (!sampleCnt) {
+    // TODO: This should have been checked and validated before getting into GrProxyProvider.
+    if (!caps->isFormatAsColorTypeRenderable(colorType, backendTex.getBackendFormat(), sampleCnt)) {
         return nullptr;
     }
+
+    sampleCnt = caps->getRenderTargetSampleCount(sampleCnt, backendTex.getBackendFormat());
+    SkASSERT(sampleCnt);
 
     sk_sp<GrTexture> tex = resourceProvider->wrapRenderableBackendTexture(backendTex, sampleCnt,
                                                                           colorType, ownership,
@@ -639,11 +668,9 @@ sk_sp<GrSurfaceProxy> GrProxyProvider::wrapBackendRenderTarget(
         return nullptr;
     }
 
-#ifdef SK_DEBUG
-    GrPixelConfig testConfig =
-            this->caps()->validateBackendRenderTarget(backendRT, grColorType);
-    SkASSERT(testConfig != kUnknown_GrPixelConfig);
-#endif
+    const GrCaps* caps = this->caps();
+
+    SkASSERT(caps->areColorTypeAndFormatCompatible(grColorType, backendRT.getBackendFormat()));
 
     GrResourceProvider* resourceProvider = direct->priv().resourceProvider();
 
@@ -661,8 +688,8 @@ sk_sp<GrSurfaceProxy> GrProxyProvider::wrapBackendRenderTarget(
     // Make sure we match how we created the proxy with SkBudgeted::kNo
     SkASSERT(GrBudgetedType::kBudgeted != rt->resourcePriv().budgetedType());
 
-    GrSwizzle texSwizzle = this->caps()->getTextureSwizzle(rt->backendFormat(), grColorType);
-    GrSwizzle outSwizzle = this->caps()->getOutputSwizzle(rt->backendFormat(), grColorType);
+    GrSwizzle texSwizzle = caps->getTextureSwizzle(rt->backendFormat(), grColorType);
+    GrSwizzle outSwizzle = caps->getOutputSwizzle(rt->backendFormat(), grColorType);
 
     return sk_sp<GrRenderTargetProxy>(new GrRenderTargetProxy(std::move(rt), origin, texSwizzle,
                                                               outSwizzle));
@@ -683,13 +710,7 @@ sk_sp<GrSurfaceProxy> GrProxyProvider::wrapBackendTextureAsRenderTarget(
 
     const GrCaps* caps = this->caps();
 
-    SkASSERT(GrCaps::AreConfigsCompatible(backendTex.config(),
-                                          caps->getConfigFromBackendFormat(
-                                                                     backendTex.getBackendFormat(),
-                                                                     grColorType)));
-
-    SkASSERT(validate_backend_format_and_colortype(caps, grColorType,
-                                                   backendTex.getBackendFormat()));
+    SkASSERT(caps->areColorTypeAndFormatCompatible(grColorType, backendTex.getBackendFormat()));
 
     GrResourceProvider* resourceProvider = direct->priv().resourceProvider();
 
@@ -735,9 +756,14 @@ sk_sp<GrRenderTargetProxy> GrProxyProvider::wrapVulkanSecondaryCBAsRenderTarget(
     // This proxy should be unbudgeted because we're just wrapping an external resource
     SkASSERT(GrBudgetedType::kBudgeted != rt->resourcePriv().budgetedType());
 
-    GrColorType colorType = GrPixelConfigToColorType(rt->config());
+    GrColorType colorType = SkColorTypeToGrColorType(imageInfo.colorType());
     GrSwizzle texSwizzle = this->caps()->getTextureSwizzle(rt->backendFormat(), colorType);
     GrSwizzle outSwizzle = this->caps()->getOutputSwizzle(rt->backendFormat(), colorType);
+
+    if (!this->caps()->isFormatAsColorTypeRenderable(colorType, rt->backendFormat(),
+                                                     rt->numSamples())) {
+        return nullptr;
+    }
 
     // All Vulkan surfaces uses top left origins.
     return sk_sp<GrRenderTargetProxy>(
@@ -753,11 +779,12 @@ sk_sp<GrTextureProxy> GrProxyProvider::createLazyProxy(LazyInstantiateCallback&&
                                                        int renderTargetSampleCnt,
                                                        GrSurfaceOrigin origin,
                                                        GrMipMapped mipMapped,
+                                                       GrMipMapsStatus mipMapsStatus,
                                                        SkBackingFit fit,
                                                        SkBudgeted budgeted,
                                                        GrProtected isProtected) {
     return this->createLazyProxy(std::move(callback), format, desc, renderable,
-                                 renderTargetSampleCnt, origin, mipMapped,
+                                 renderTargetSampleCnt, origin, mipMapped, mipMapsStatus,
                                  GrInternalSurfaceFlags::kNone, fit, budgeted, isProtected);
 }
 
@@ -768,6 +795,7 @@ sk_sp<GrTextureProxy> GrProxyProvider::createLazyProxy(LazyInstantiateCallback&&
                                                        int renderTargetSampleCnt,
                                                        GrSurfaceOrigin origin,
                                                        GrMipMapped mipMapped,
+                                                       GrMipMapsStatus mipMapsStatus,
                                                        GrInternalSurfaceFlags surfaceFlags,
                                                        SkBackingFit fit,
                                                        SkBudgeted budgeted,
@@ -776,8 +804,8 @@ sk_sp<GrTextureProxy> GrProxyProvider::createLazyProxy(LazyInstantiateCallback&&
     LazyInstantiationType lazyType = this->renderingDirectly() ? LazyInstantiationType::kSingleUse
                                                                : LazyInstantiationType::kMultipleUse;
     return this->createLazyProxy(std::move(callback), format, desc, renderable,
-                                 renderTargetSampleCnt, origin, mipMapped, surfaceFlags, fit,
-                                 budgeted, isProtected, lazyType);
+                                 renderTargetSampleCnt, origin, mipMapped, mipMapsStatus,
+                                 surfaceFlags, fit, budgeted, isProtected, lazyType);
 }
 
 sk_sp<GrTextureProxy> GrProxyProvider::createLazyProxy(LazyInstantiateCallback&& callback,
@@ -787,6 +815,7 @@ sk_sp<GrTextureProxy> GrProxyProvider::createLazyProxy(LazyInstantiateCallback&&
                                                        int renderTargetSampleCnt,
                                                        GrSurfaceOrigin origin,
                                                        GrMipMapped mipMapped,
+                                                       GrMipMapsStatus mipMapsStatus,
                                                        GrInternalSurfaceFlags surfaceFlags,
                                                        SkBackingFit fit,
                                                        SkBudgeted budgeted,
@@ -794,6 +823,10 @@ sk_sp<GrTextureProxy> GrProxyProvider::createLazyProxy(LazyInstantiateCallback&&
                                                        LazyInstantiationType lazyType) {
     SkASSERT((desc.fWidth <= 0 && desc.fHeight <= 0) ||
              (desc.fWidth > 0 && desc.fHeight > 0));
+
+    if (!format.isValid()) {
+        return nullptr;
+    }
 
     if (desc.fWidth > this->caps()->maxTextureSize() ||
         desc.fHeight > this->caps()->maxTextureSize()) {
@@ -806,22 +839,22 @@ sk_sp<GrTextureProxy> GrProxyProvider::createLazyProxy(LazyInstantiateCallback&&
     GrSwizzle texSwizzle = this->caps()->getTextureSwizzle(format, colorType);
     GrSwizzle outSwizzle = this->caps()->getOutputSwizzle(format, colorType);
 
-    return sk_sp<GrTextureProxy>(
-            renderable == GrRenderable::kYes
-                    ? new GrTextureRenderTargetProxy(std::move(callback), lazyType, format, desc,
-                                                     renderTargetSampleCnt, origin, mipMapped,
-                                                     texSwizzle, outSwizzle, fit, budgeted,
-                                                     isProtected, surfaceFlags)
-                    : new GrTextureProxy(std::move(callback), lazyType, format, desc, origin,
-                                         mipMapped, texSwizzle, fit, budgeted, isProtected,
-                                         surfaceFlags));
+    return sk_sp<GrTextureProxy>((renderable == GrRenderable::kYes)
+            ? new GrTextureRenderTargetProxy(
+                    std::move(callback), lazyType, format, desc, renderTargetSampleCnt, origin,
+                    mipMapped, mipMapsStatus, texSwizzle, outSwizzle, fit, budgeted, isProtected,
+                    surfaceFlags)
+            : new GrTextureProxy(
+                    std::move(callback), lazyType, format, desc, origin, mipMapped, mipMapsStatus,
+                    texSwizzle, fit, budgeted, isProtected, surfaceFlags));
 }
 
 sk_sp<GrRenderTargetProxy> GrProxyProvider::createLazyRenderTargetProxy(
         LazyInstantiateCallback&& callback, const GrBackendFormat& format,
         const GrSurfaceDesc& desc, int sampleCnt, GrSurfaceOrigin origin,
-        GrInternalSurfaceFlags surfaceFlags, const TextureInfo* textureInfo, SkBackingFit fit,
-        SkBudgeted budgeted, GrProtected isProtected, bool wrapsVkSecondaryCB) {
+        GrInternalSurfaceFlags surfaceFlags, const TextureInfo* textureInfo,
+        GrMipMapsStatus mipMapsStatus, SkBackingFit fit, SkBudgeted budgeted,
+        GrProtected isProtected, bool wrapsVkSecondaryCB) {
     SkASSERT((desc.fWidth <= 0 && desc.fHeight <= 0) ||
              (desc.fWidth > 0 && desc.fHeight > 0));
 
@@ -847,8 +880,8 @@ sk_sp<GrRenderTargetProxy> GrProxyProvider::createLazyRenderTargetProxy(
         SkASSERT(!wrapsVkSecondaryCB);
         return sk_sp<GrRenderTargetProxy>(new GrTextureRenderTargetProxy(
                 std::move(callback), lazyType, format, desc, sampleCnt, origin,
-                textureInfo->fMipMapped, texSwizzle, outSwizzle, fit, budgeted, isProtected,
-                surfaceFlags));
+                textureInfo->fMipMapped, mipMapsStatus, texSwizzle, outSwizzle, fit, budgeted,
+                isProtected, surfaceFlags));
     }
 
     GrRenderTargetProxy::WrapsVkSecondaryCB vkSCB =
@@ -864,6 +897,10 @@ sk_sp<GrTextureProxy> GrProxyProvider::MakeFullyLazyProxy(
         LazyInstantiateCallback&& callback, const GrBackendFormat& format, GrRenderable renderable,
         int renderTargetSampleCnt, GrProtected isProtected, GrSurfaceOrigin origin,
         GrPixelConfig config, const GrCaps& caps) {
+    if (!format.isValid()) {
+        return nullptr;
+    }
+
     SkASSERT(renderTargetSampleCnt == 1 || renderable == GrRenderable::kYes);
     SkASSERT(validate_backend_format_and_config(&caps, format, config));
     GrSurfaceDesc desc;
@@ -876,17 +913,16 @@ sk_sp<GrTextureProxy> GrProxyProvider::MakeFullyLazyProxy(
     GrSwizzle texSwizzle = caps.getTextureSwizzle(format, colorType);
     GrSwizzle outSwizzle = caps.getOutputSwizzle(format, colorType);
 
-    return sk_sp<GrTextureProxy>(
-            (GrRenderable::kYes == renderable)
-                    ? new GrTextureRenderTargetProxy(
-                              std::move(callback), LazyInstantiationType::kSingleUse, format, desc,
-                              renderTargetSampleCnt, origin, GrMipMapped::kNo, texSwizzle,
-                              outSwizzle, SkBackingFit::kApprox, SkBudgeted::kYes, isProtected,
-                              surfaceFlags)
-                    : new GrTextureProxy(std::move(callback), LazyInstantiationType::kSingleUse,
-                                         format, desc, origin, GrMipMapped::kNo, texSwizzle,
-                                         SkBackingFit::kApprox, SkBudgeted::kYes, isProtected,
-                                         surfaceFlags));
+    return sk_sp<GrTextureProxy>((GrRenderable::kYes == renderable)
+            ? new GrTextureRenderTargetProxy(
+                    std::move(callback), LazyInstantiationType::kSingleUse, format, desc,
+                    renderTargetSampleCnt, origin, GrMipMapped::kNo, GrMipMapsStatus::kNotAllocated,
+                    texSwizzle, outSwizzle, SkBackingFit::kApprox, SkBudgeted::kYes, isProtected,
+                    surfaceFlags)
+            : new GrTextureProxy(
+                    std::move(callback), LazyInstantiationType::kSingleUse, format, desc, origin,
+                    GrMipMapped::kNo, GrMipMapsStatus::kNotAllocated, texSwizzle,
+                    SkBackingFit::kApprox, SkBudgeted::kYes, isProtected, surfaceFlags));
 }
 
 bool GrProxyProvider::IsFunctionallyExact(GrSurfaceProxy* proxy) {

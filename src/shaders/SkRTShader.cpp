@@ -6,11 +6,11 @@
  */
 
 #include "include/core/SkData.h"
-#include "src/shaders/SkRTShader.h"
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
+#include "src/shaders/SkRTShader.h"
 
 #include "src/sksl/SkSLByteCode.h"
 #include "src/sksl/SkSLCompiler.h"
@@ -23,8 +23,8 @@
 #include "src/gpu/SkGr.h"
 
 #include "src/gpu/GrFragmentProcessor.h"
-#include "src/gpu/effects/generated/GrMixerEffect.h"
 #include "src/gpu/effects/GrSkSLFP.h"
+#include "src/gpu/effects/generated/GrMixerEffect.h"
 
 static inline uint32_t new_sksl_unique_id() {
     return GrSkSLFP::NewIndex();
@@ -45,6 +45,11 @@ SkRTShader::SkRTShader(SkString sksl, sk_sp<SkData> inputs, const SkMatrix* loca
 {}
 
 bool SkRTShader::onAppendStages(const SkStageRec& rec) const {
+    SkMatrix inverse;
+    if (!this->computeTotalInverse(rec.fCTM, rec.fLocalM, &inverse)) {
+        return false;
+    }
+
     auto ctx = rec.fAlloc->make<SkRasterPipeline_InterpreterCtx>();
     ctx->paintColor = rec.fPaint.getColor4f();
     ctx->inputs = fInputs->data();
@@ -75,6 +80,7 @@ bool SkRTShader::onAppendStages(const SkStageRec& rec) const {
     ctx->fn = ctx->byteCode->getFunction("main");
 
     rec.fPipeline->append(SkRasterPipeline::seed_shader);
+    rec.fPipeline->append_matrix(rec.fAlloc, inverse);
     rec.fPipeline->append(SkRasterPipeline::interpreter, ctx);
     return true;
 }
@@ -130,8 +136,12 @@ sk_sp<SkShader> SkRuntimeShaderMaker(SkString sksl, sk_sp<SkData> inputs,
 
 #if SK_SUPPORT_GPU
 std::unique_ptr<GrFragmentProcessor> SkRTShader::asFragmentProcessor(const GrFPArgs& args) const {
+    SkMatrix matrix;
+    if (!this->totalLocalMatrix(args.fPreLocalMatrix, args.fPostLocalMatrix)->invert(&matrix)) {
+        return nullptr;
+    }
     return GrSkSLFP::Make(args.fContext, fUniqueID, "runtime-shader", fSkSL,
-                          fInputs->data(), fInputs->size());
+                          fInputs->data(), fInputs->size(), SkSL::Program::kPipelineStage_Kind,
+                          &matrix);
 }
 #endif
-

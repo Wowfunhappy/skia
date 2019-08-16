@@ -15,7 +15,6 @@
 #include <vector>
 
 #include "include/core/SkData.h"
-#include "include/core/SkDrawLooper.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSerialProcs.h"
 #include "include/core/SkTypeface.h"
@@ -52,7 +51,7 @@ using SkDescriptorSet =
         std::unordered_set<const SkDescriptor*, SkDescriptorMapOperators, SkDescriptorMapOperators>;
 
 // A SkTextBlobCacheDiffCanvas is used to populate the SkStrikeServer with ops
-// which will be serialized and renderered using the SkStrikeClient.
+// which will be serialized and rendered using the SkStrikeClient.
 class SK_API SkTextBlobCacheDiffCanvas : public SkNoDrawCanvas {
 public:
     struct SK_API Settings {
@@ -82,8 +81,6 @@ protected:
 
 private:
     class TrackLayerDevice;
-
-    static SkScalar SetupForPath(SkPaint* paint, SkFont* font);
 };
 
 using SkDiscardableHandleId = uint32_t;
@@ -118,7 +115,7 @@ public:
     explicit SkStrikeServer(DiscardableHandleManager* discardableHandleManager);
     ~SkStrikeServer() override;
 
-    // Serializes the typeface to be remoted using this server.
+    // Serializes the typeface to be transmitted using this server.
     sk_sp<SkData> serializeTypeface(SkTypeface*);
 
     // Serializes the strike data captured using a SkTextBlobCacheDiffCanvas. Any
@@ -126,7 +123,7 @@ public:
     // unlocked after this call.
     void writeStrikeData(std::vector<uint8_t>* memory);
 
-    // Methods used internally in skia ------------------------------------------
+    // Methods used internally in Skia ------------------------------------------
     class SkGlyphCacheState;
 
     SkGlyphCacheState* getOrCreateCache(const SkPaint&,
@@ -139,6 +136,9 @@ public:
     SkScopedStrike findOrCreateScopedStrike(const SkDescriptor& desc,
                                             const SkScalerContextEffects& effects,
                                             const SkTypeface& typeface) override;
+
+    static void AddGlyphForTesting(
+            SkGlyphCacheState* cache, SkPackedGlyphID glyphID, bool asPath);
 
     void setMaxEntriesInDescriptorMapForTesting(size_t count) {
         fMaxEntriesInDescriptorMap = count;
@@ -188,7 +188,7 @@ public:
     // An interface to delete handles that may be pinned by the remote server.
     class DiscardableHandleManager : public SkRefCnt {
     public:
-        virtual ~DiscardableHandleManager() = default;
+        ~DiscardableHandleManager() override = default;
 
         // Returns true if the handle was unlocked and can be safely deleted. Once
         // successful, subsequent attempts to delete the same handle are invalid.

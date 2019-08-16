@@ -8,9 +8,9 @@
 #ifndef GrMtlGpu_DEFINED
 #define GrMtlGpu_DEFINED
 
-#include "include/gpu/GrRenderTarget.h"
 #include "include/gpu/GrTexture.h"
 #include "src/gpu/GrGpu.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrSemaphore.h"
 
 #include "src/gpu/mtl/GrMtlCaps.h"
@@ -135,12 +135,17 @@ private:
 
     void xferBarrier(GrRenderTarget*, GrXferBarrierType) override {}
 
-    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc& desc, GrRenderable,
-                                     int renderTargetSampleCnt, SkBudgeted budgeted,
-                                     GrProtected, const GrMipLevel texels[],
+    sk_sp<GrTexture> onCreateTexture(const GrSurfaceDesc& desc,
+                                     const GrBackendFormat& format,
+                                     GrRenderable,
+                                     int renderTargetSampleCnt,
+                                     SkBudgeted budgeted,
+                                     GrProtected,
+                                     const GrMipLevel texels[],
                                      int mipLevelCount) override;
-    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, SkImage::CompressionType,
-                                               SkBudgeted, const void* data) override {
+    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, const GrBackendFormat&,
+                                               SkImage::CompressionType, SkBudgeted,
+                                               const void* data) override {
         return nullptr;
     }
 
@@ -161,20 +166,22 @@ private:
     sk_sp<GrGpuBuffer> onCreateBuffer(size_t, GrGpuBufferType, GrAccessPattern,
                                       const void*) override;
 
-    bool onReadPixels(GrSurface* surface, int left, int top, int width, int height, GrColorType,
-                      void* buffer, size_t rowBytes) override;
+    bool onReadPixels(GrSurface* surface, int left, int top, int width, int height,
+                      GrColorType surfaceColorType, GrColorType bufferColorType, void* buffer,
+                      size_t rowBytes) override;
 
-    bool onWritePixels(GrSurface*, int left, int top, int width, int height, GrColorType,
+    bool onWritePixels(GrSurface*, int left, int top, int width, int height,
+                       GrColorType surfaceColorType, GrColorType bufferColorType,
                        const GrMipLevel[], int mipLevelCount) override;
 
-    bool onTransferPixelsTo(GrTexture*,
-                            int left, int top, int width, int height,
-                            GrColorType, GrGpuBuffer*,
+    bool onTransferPixelsTo(GrTexture*, int left, int top, int width, int height,
+                            GrColorType textureColorType, GrColorType bufferColorType, GrGpuBuffer*,
                             size_t offset, size_t rowBytes) override {
         // TODO: not sure this is worth the work since nobody uses it
         return false;
     }
-    bool onTransferPixelsFrom(GrSurface*, int left, int top, int width, int height, GrColorType,
+    bool onTransferPixelsFrom(GrSurface*, int left, int top, int width, int height,
+                              GrColorType surfaceColorType, GrColorType bufferColorType,
                               GrGpuBuffer*, size_t offset) override {
         // TODO: Will need to implement this to support async read backs.
         return false;
@@ -218,11 +225,11 @@ private:
     GrStencilAttachment* createStencilAttachmentForRenderTarget(
             const GrRenderTarget*, int width, int height, int numStencilSamples) override;
 
-    bool createTestingOnlyMtlTextureInfo(GrPixelConfig, MTLPixelFormat,
+    bool createTestingOnlyMtlTextureInfo(MTLPixelFormat,
                                          int w, int h, bool texturable,
                                          bool renderable, GrMipMapped mipMapped,
-                                         const void* srcData, size_t rowBytes,
-                                         GrMtlTextureInfo* info);
+                                         const void* srcData, size_t srcRowBytes,
+                                         const SkColor4f* color, GrMtlTextureInfo* info);
 
     sk_sp<GrMtlCaps> fMtlCaps;
 

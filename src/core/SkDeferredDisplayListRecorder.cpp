@@ -153,6 +153,7 @@ bool SkDeferredDisplayListRecorder::init() {
     if (usesGLFBO0) {
         surfaceFlags |= GrInternalSurfaceFlags::kGLRTFBOIDIs0;
     }
+    // FIXME: Why do we use GrMipMapped::kNo instead of SkSurfaceCharacterization::fIsMipMapped?
     static constexpr GrProxyProvider::TextureInfo kTextureInfo{GrMipMapped::kNo,
                                                                GrTextureType::k2D};
     const GrProxyProvider::TextureInfo* optionalTextureInfo = nullptr;
@@ -174,6 +175,7 @@ bool SkDeferredDisplayListRecorder::init() {
             fCharacterization.origin(),
             surfaceFlags,
             optionalTextureInfo,
+            GrMipMapsStatus::kNotAllocated,
             SkBackingFit::kExact,
             SkBudgeted::kYes,
             fCharacterization.isProtected(),
@@ -220,7 +222,7 @@ std::unique_ptr<SkDeferredDisplayList> SkDeferredDisplayListRecorder::detach() {
     auto ddl = std::unique_ptr<SkDeferredDisplayList>(
                            new SkDeferredDisplayList(fCharacterization, std::move(fLazyProxyData)));
 
-    fContext->priv().moveOpListsToDDL(ddl.get());
+    fContext->priv().moveRenderTasksToDDL(ddl.get());
 
     // We want a new lazy proxy target for each recorded DDL so force the (lazy proxy-backed)
     // SkSurface to be regenerated for each DDL.

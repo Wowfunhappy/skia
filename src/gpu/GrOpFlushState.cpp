@@ -45,7 +45,9 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
     pipelineArgs.fCaps = &this->caps();
     pipelineArgs.fUserStencil = stencilSettings;
     pipelineArgs.fOutputSwizzle = this->drawOpArgs().fOutputSwizzle;
-    GrPipeline pipeline(pipelineArgs, std::move(processorSet), this->detachAppliedClip());
+    GrPipeline* pipeline = this->allocator()->make<GrPipeline>(pipelineArgs,
+                                                               std::move(processorSet),
+                                                               this->detachAppliedClip());
 
     while (fCurrDraw != fDraws.end() && fCurrDraw->fOp == op) {
         GrDeferredUploadToken drawToken = fTokenTracker->nextTokenToFlush();
@@ -55,7 +57,7 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
             ++fCurrUpload;
         }
         this->rtCommandBuffer()->draw(
-                *fCurrDraw->fGeometryProcessor, pipeline, fCurrDraw->fFixedDynamicState,
+                *fCurrDraw->fGeometryProcessor, *pipeline, fCurrDraw->fFixedDynamicState,
                 fCurrDraw->fDynamicStateArrays, fCurrDraw->fMeshes, fCurrDraw->fMeshCnt,
                 chainBounds);
         fTokenTracker->flushToken();
@@ -88,24 +90,33 @@ void GrOpFlushState::reset() {
 
 void GrOpFlushState::doUpload(GrDeferredTextureUploadFn& upload) {
     GrDeferredTextureUploadWritePixelsFn wp = [this](GrTextureProxy* dstProxy, int left, int top,
-                                                     int width, int height,
-                                                     GrColorType srcColorType, const void* buffer,
-                                                     size_t rowBytes) {
+                                                     int width, int height, GrColorType colorType,
+                                                     const void* buffer, size_t rowBytes) {
         GrSurface* dstSurface = dstProxy->peekSurface();
-        if (!fGpu->caps()->surfaceSupportsWritePixels(dstSurface) &&
-            fGpu->caps()->supportedWritePixelsColorType(dstSurface->config(), srcColorType) != srcColorType) {
+        if (!fGpu->caps()->surfaceSupportsWritePixels(dstSurface)) {
             return false;
         }
-        size_t tightRB = width * GrColorTypeToSkColorType(srcColorType);
+        GrCaps::SupportedWrite supportedWrite = fGpu->caps()->supportedWritePixelsColorType(
+                colorType, dstSurface->backendFormat(), colorType);
+        size_t tightRB = width * GrColorTypeBytesPerPixel(supportedWrite.fColorType);
+        SkASSERT(rowBytes >= tightRB);
         std::unique_ptr<char[]> tmpPixels;
-        if (!fGpu->caps()->writePixelsRowBytesSupport() && rowBytes > tightRB) {
-            tmpPixels.reset(new char[tightRB * height]);
-            SkRectMemcpy(tmpPixels.get(), tightRB, buffer, rowBytes, tightRB, height);
-            buffer = tmpPixels.get();
+        if (supportedWrite.fColorType != colorType ||
+            (!fGpu->caps()->writePixelsRowBytesSupport() && rowBytes != tightRB)) {
+            tmpPixels.reset(new char[height * tightRB]);
+            // Use kUnpremul to ensure no alpha type conversions or clamping occur.
+            static constexpr auto kAT = kUnpremul_SkAlphaType;
+            GrPixelInfo srcInfo(colorType, kAT, nullptr, width, height);
+            GrPixelInfo tmpInfo(supportedWrite.fColorType, kAT, nullptr, width,
+                                height);
+            if (!GrConvertPixels(tmpInfo, tmpPixels.get(), tightRB, srcInfo, buffer, rowBytes)) {
+                return false;
+            }
             rowBytes = tightRB;
+            buffer = tmpPixels.get();
         }
-        return this->fGpu->writePixels(dstSurface, left, top, width, height, srcColorType, buffer,
-                                       rowBytes);
+        return this->fGpu->writePixels(dstSurface, left, top, width, height, colorType,
+                                       supportedWrite.fColorType, buffer, rowBytes);
     };
     upload(wp);
 }

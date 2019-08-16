@@ -27,6 +27,10 @@ class SK_API GrRecordingContext : public GrImageContext {
 public:
     ~GrRecordingContext() override;
 
+    GrBackendFormat defaultBackendFormat(SkColorType ct, GrRenderable renderable) const {
+        return INHERITED::defaultBackendFormat(ct, renderable);
+    }
+
     // Provides access to functions that aren't part of the public API.
     GrRecordingContextPriv priv();
     const GrRecordingContextPriv priv() const;

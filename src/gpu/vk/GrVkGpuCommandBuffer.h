@@ -46,8 +46,9 @@ public:
     GrVkGpuTextureCommandBuffer(GrVkGpu* gpu) : fGpu(gpu) {}
 
     void copy(GrSurface* src, const SkIRect& srcRect, const SkIPoint& dstPoint) override;
-    void transferFrom(const SkIRect& srcRect, GrColorType bufferColorType,
-                      GrGpuBuffer* transferBuffer, size_t offset) override;
+    void transferFrom(const SkIRect& srcRect, GrColorType surfaceColorType,
+                      GrColorType bufferColorType, GrGpuBuffer* transferBuffer,
+                      size_t offset) override;
 
     void insertEventMarker(const char*) override;
 
@@ -103,8 +104,9 @@ public:
     void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override;
 
     void copy(GrSurface* src, const SkIRect& srcRect, const SkIPoint& dstPoint) override;
-    void transferFrom(const SkIRect& srcRect, GrColorType bufferColorType,
-                      GrGpuBuffer* transferBuffer, size_t offset) override;
+    void transferFrom(const SkIRect& srcRect, GrColorType surfaceColorType,
+                      GrColorType bufferColorType, GrGpuBuffer* transferBuffer,
+                      size_t offset) override;
 
     void executeDrawable(std::unique_ptr<SkDrawable::GpuDrawHandler>) override;
 
@@ -180,7 +182,6 @@ private:
 
     void onClearStencilClip(const GrFixedClip&, bool insideStencilMask) override;
 
-    void addAdditionalCommandBuffer();
     void addAdditionalRenderPass();
 
     enum class LoadStoreState {
@@ -192,20 +193,20 @@ private:
 
     struct CommandBufferInfo {
         using SampledTexture = GrPendingIOResource<GrVkTexture, kRead_GrIOType>;
-        const GrVkRenderPass*                  fRenderPass;
-        SkTArray<GrVkSecondaryCommandBuffer*>  fCommandBuffers;
-        int                                    fNumPreCmds = 0;
-        VkClearValue                           fColorClearValue;
-        SkRect                                 fBounds;
-        bool                                   fIsEmpty = true;
-        LoadStoreState                         fLoadStoreState = LoadStoreState::kUnknown;
+        const GrVkRenderPass* fRenderPass;
+        std::unique_ptr<GrVkSecondaryCommandBuffer> fCommandBuffer;
+        int fNumPreCmds = 0;
+        VkClearValue fColorClearValue;
+        SkRect fBounds;
+        bool fIsEmpty = true;
+        LoadStoreState fLoadStoreState = LoadStoreState::kUnknown;
         // Array of images that will be sampled and thus need to be transferred to sampled layout
         // before submitting the secondary command buffers. This must happen after we do any predraw
         // uploads or copies.
-        SkTArray<SampledTexture>               fSampledTextures;
+        SkTArray<SampledTexture> fSampledTextures;
 
         GrVkSecondaryCommandBuffer* currentCmdBuf() {
-            return fCommandBuffers.back();
+            return fCommandBuffer.get();
         }
     };
 

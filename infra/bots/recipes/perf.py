@@ -89,9 +89,8 @@ def nanobench_flags(api, bot):
           'Nexus7'      in bot):
         sample_count = ''
     elif 'Intel' in bot:
-      # We don't want to test MSAA on older Intel chipsets. These are all newer (Gen9).
-      if 'Iris655' not in bot and 'Iris640' not in bot and 'Iris540' not in bot:
-        sample_count = ''
+      # MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926
+      sample_count = ''
     elif 'ChromeOS' in bot:
       gl_prefix = 'gles'
 
@@ -110,10 +109,12 @@ def nanobench_flags(api, bot):
     if 'Vulkan' in bot:
       configs = ['vk']
       if 'Android' in bot:
-        configs.append('vkmsaa4')
+        # skbug.com/9274
+        if 'Pixel2XL' not in bot:
+          configs.append('vkmsaa4')
       else:
-        # skbug.com/9023
-        if 'IntelHD405' not in bot:
+        # MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926, skia:9023
+        if 'Intel' not in bot:
           configs.append('vkmsaa8')
 
     if 'Metal' in bot:
@@ -215,6 +216,9 @@ def nanobench_flags(api, bot):
   if ('ASAN' in bot or 'UBSAN' in bot) and 'CPU' in bot:
     # floor2int_undef benches undefined behavior, so ASAN correctly complains.
     match.append('~^floor2int_undef$')
+  if 'AcerChromebook13_CB5_311-GPU-TegraK1' in bot:
+    # skia:7551
+    match.append('~^shapes_rrect_inner_rrect_50_500x500$')
 
   # We do not need or want to benchmark the decodes of incomplete images.
   # In fact, in nanobench we assert that the full image decode succeeds.
@@ -370,6 +374,7 @@ TEST_BUILDERS = [
   'Perf-Android-Clang-NVIDIA_Shield-GPU-TegraX1-arm64-Release-All-Android',
   'Perf-Android-Clang-P30-GPU-MaliG76-arm64-Release-All-Android_Vulkan',
   'Perf-ChromeOS-Clang-ASUSChromebookFlipC100-GPU-MaliT764-arm-Release-All',
+  'Perf-ChromeOS-Clang-AcerChromebook13_CB5_311-GPU-TegraK1-arm-Release-All',
   'Perf-Chromecast-Clang-Chorizo-CPU-Cortex_A7-arm-Debug-All',
   'Perf-Chromecast-Clang-Chorizo-GPU-Cortex_A7-arm-Release-All',
   'Perf-Debian9-Clang-GCE-CPU-AVX2-x86_64-Debug-All',

@@ -51,7 +51,7 @@ uniform half blurRadius;
         GrProxyProvider* proxyProvider = context->priv().proxyProvider();
 
         sk_sp<GrTextureProxy> mask(proxyProvider->findOrCreateProxyByUniqueKey(
-                                                                 key, kBottomLeft_GrSurfaceOrigin));
+                key, GrColorType::kAlpha_8, kBottomLeft_GrSurfaceOrigin));
         if (!mask) {
             // TODO: this could be approx but the texture coords will need to be updated
             sk_sp<GrRenderTargetContext> rtc(
@@ -192,7 +192,7 @@ void main() {
     half2 proxyDims = half2(2.0 * threshold + 1.0);
     half2 texCoord = translatedFragPos / proxyDims;
 
-    sk_OutColor = sk_InColor * texture(ninePatchSampler, texCoord);
+    sk_OutColor = sk_InColor * sample(ninePatchSampler, texCoord);
 }
 
 @setData(pdman) {
