@@ -227,7 +227,8 @@ protected:
     // only when all edge flags are set. If there's a clip region, it draws that using drawPath,
     // or uses clipPath().
     virtual void drawEdgeAAQuad(const SkRect& rect, const SkPoint clip[4],
-                                SkCanvas::QuadAAFlags aaFlags, SkColor color, SkBlendMode mode);
+                                SkCanvas::QuadAAFlags aaFlags, const SkColor4f& color,
+                                SkBlendMode mode);
     // Default impl uses drawImageRect per entry, being anti-aliased only when an entry's edge flags
     // are all set. If there's a clip region, it will be applied using clipPath().
     virtual void drawEdgeAAImageSet(const SkCanvas::ImageSetEntry[], int count,
@@ -380,11 +381,14 @@ public:
     {
         // this fails if we enable this assert: DiscardableImageMapTest.GetDiscardableImagesInRectMaxImage
         //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);
+
+        this->setOrigin(SkMatrix::I(), bounds.left(), bounds.top());
     }
 
     void resetForNextPicture(const SkIRect& bounds) {
         //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);
         this->privateResize(bounds.width(), bounds.height());
+        this->setOrigin(SkMatrix::I(), bounds.left(), bounds.top());
     }
 
 protected:

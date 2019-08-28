@@ -19,11 +19,14 @@
 #include "src/gpu/GrTexturePriv.h"
 #include "src/gpu/dawn/GrDawnBuffer.h"
 #include "src/gpu/dawn/GrDawnCaps.h"
-#include "src/gpu/dawn/GrDawnGpuCommandBuffer.h"
+#include "src/gpu/dawn/GrDawnOpsRenderPass.h"
 #include "src/gpu/dawn/GrDawnRenderTarget.h"
 #include "src/gpu/dawn/GrDawnStencilAttachment.h"
 #include "src/gpu/dawn/GrDawnTexture.h"
+#include "src/gpu/dawn/GrDawnUtil.h"
 
+#include "src/core/SkAutoMalloc.h"
+#include "src/core/SkMipMap.h"
 #include "src/sksl/SkSLCompiler.h"
 
 #if !defined(SK_BUILD_FOR_WIN)
@@ -46,7 +49,8 @@ GrDawnGpu::GrDawnGpu(GrContext* context, const GrContextOptions& options,
         : INHERITED(context)
         , fDevice(device)
         , fQueue(device.CreateQueue())
-        , fCompiler(new SkSL::Compiler()) {
+        , fCompiler(new SkSL::Compiler())
+        , fUniformRingBuffer(this, dawn::BufferUsageBit::Uniform) {
     fCaps.reset(new GrDawnCaps(options));
 }
 
@@ -60,18 +64,12 @@ void GrDawnGpu::disconnect(DisconnectType type) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-GrGpuRTCommandBuffer* GrDawnGpu::getCommandBuffer(
+GrOpsRenderPass* GrDawnGpu::getOpsRenderPass(
             GrRenderTarget* rt, GrSurfaceOrigin origin, const SkRect& bounds,
-            const GrGpuRTCommandBuffer::LoadAndStoreInfo& colorInfo,
-            const GrGpuRTCommandBuffer::StencilLoadAndStoreInfo& stencilInfo) {
-    fRTCommandBuffer.reset(new GrDawnGpuRTCommandBuffer(this, rt, origin, colorInfo, stencilInfo));
-    return fRTCommandBuffer.get();
-}
-
-GrGpuTextureCommandBuffer* GrDawnGpu::getCommandBuffer(GrTexture* texture,
-                                                       GrSurfaceOrigin origin) {
-    fTextureCommandBuffer.reset(new GrDawnGpuTextureCommandBuffer(this, texture, origin));
-    return fTextureCommandBuffer.get();
+            const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
+            const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo) {
+    fOpsRenderPass.reset(new GrDawnOpsRenderPass(this, rt, origin, colorInfo, stencilInfo));
+    return fOpsRenderPass.get();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -148,7 +146,7 @@ sk_sp<GrTexture> GrDawnGpu::onCreateTexture(const GrSurfaceDesc& desc,
     return tex;
 }
 
-sk_sp<GrTexture> GrDawnGpu::onCreateCompressedTexture(int width, int height,
+sk_sp<GrTexture> GrDawnGpu::onCreateCompressedTexture(int width, int height, const GrBackendFormat&,
                                                       SkImage::CompressionType, SkBudgeted,
                                                       const void* data) {
     SkASSERT(!"unimplemented");
@@ -169,35 +167,54 @@ sk_sp<GrTexture> GrDawnGpu::onWrapBackendTexture(const GrBackendTexture& backend
     GrPixelConfig config = this->caps()->getConfigFromBackendFormat(backendTex.getBackendFormat(),
                                                                     colorType);
     GrMipMapsStatus status = GrMipMapsStatus::kNotAllocated;
-    return GrDawnTexture::MakeWrapped(this, size, config, status, cacheable, info);
+    return GrDawnTexture::MakeWrapped(this, size, config, GrRenderable::kNo, 1, status, cacheable,
+                                      info);
 }
 
 sk_sp<GrTexture> GrDawnGpu::onWrapRenderableBackendTexture(const GrBackendTexture& tex,
-                                                           int sampleCnt, GrColorType,
+                                                           int sampleCnt, GrColorType colorType,
                                                            GrWrapOwnership,
                                                            GrWrapCacheable cacheable) {
-    SkASSERT(!"unimplemented");
-    return nullptr;
+    GrDawnImageInfo info;
+    if (!tex.getDawnImageInfo(&info) || !info.fTexture) {
+        return nullptr;
+    }
+
+    SkISize size = { tex.width(), tex.height() };
+    GrPixelConfig config = this->caps()->getConfigFromBackendFormat(tex.getBackendFormat(),
+                                                                    colorType);
+    sampleCnt = this->caps()->getRenderTargetSampleCount(sampleCnt, tex.getBackendFormat());
+    if (sampleCnt < 1) {
+        return nullptr;
+    }
+
+    GrMipMapsStatus status = GrMipMapsStatus::kNotAllocated;
+    return GrDawnTexture::MakeWrapped(this, size, config, GrRenderable::kYes, sampleCnt, status,
+                                      cacheable, info);
 }
 
-sk_sp<GrRenderTarget> GrDawnGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget&,
+sk_sp<GrRenderTarget> GrDawnGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& rt,
                                                            GrColorType colorType) {
-    SkASSERT(!"unimplemented");
-    return nullptr;
+    GrDawnImageInfo info;
+    if (!rt.getDawnImageInfo(&info) && !info.fTexture) {
+        return nullptr;
+    }
+
+    SkISize size = { rt.width(), rt.height() };
+    GrPixelConfig config = this->caps()->getConfigFromBackendFormat(rt.getBackendFormat(),
+                                                                    colorType);
+    int sampleCnt = 1;
+    return GrDawnRenderTarget::MakeWrapped(this, size, config, sampleCnt, info);
 }
 
 sk_sp<GrRenderTarget> GrDawnGpu::onWrapBackendTextureAsRenderTarget(const GrBackendTexture& tex,
                                                                     int sampleCnt,
                                                                     GrColorType colorType) {
     GrDawnImageInfo info;
-    if (!tex.getDawnImageInfo(&info)) {
-        return nullptr;
-    }
-    if (!info.fTexture) {
+    if (!tex.getDawnImageInfo(&info) || !info.fTexture) {
         return nullptr;
     }
 
-    GrSurfaceDesc desc;
     SkISize size = { tex.width(), tex.height() };
     GrPixelConfig config = this->caps()->getConfigFromBackendFormat(tex.getBackendFormat(),
                                                                     colorType);
@@ -222,34 +239,158 @@ GrStencilAttachment* GrDawnGpu::createStencilAttachmentForRenderTarget(const GrR
 }
 
 GrBackendTexture GrDawnGpu::createBackendTexture(int width, int height,
-                                                 const GrBackendFormat& format,
+                                                 const GrBackendFormat& backendFormat,
                                                  GrMipMapped mipMapped,
                                                  GrRenderable renderable,
                                                  const void* pixels,
                                                  size_t rowBytes,
                                                  const SkColor4f* color,
                                                  GrProtected isProtected) {
-    SkASSERT(!"unimplemented");
-    return GrBackendTexture();
+    dawn::TextureFormat format;
+    if (!backendFormat.asDawnFormat(&format)) {
+        return GrBackendTexture();
+    }
+
+    GrPixelConfig config = GrDawnFormatToPixelConfig(format);
+
+    if (width > this->caps()->maxTextureSize() || height > this->caps()->maxTextureSize()) {
+        return GrBackendTexture();
+    }
+
+    // FIXME: Dawn doesn't support mipmapped render targets (yet).
+    if (GrMipMapped::kYes == mipMapped && GrRenderable::kYes == renderable) {
+        return GrBackendTexture();
+    }
+
+    dawn::TextureDescriptor desc;
+    desc.usage =
+        dawn::TextureUsageBit::Sampled |
+        dawn::TextureUsageBit::CopySrc |
+        dawn::TextureUsageBit::CopyDst;
+
+    if (GrRenderable::kYes == renderable) {
+        desc.usage |= dawn::TextureUsageBit::OutputAttachment;
+    }
+
+    desc.size.width = width;
+    desc.size.height = height;
+    desc.size.depth = 1;
+    desc.format = format;
+
+    // Figure out the number of mip levels.
+    if (GrMipMapped::kYes == mipMapped) {
+        desc.mipLevelCount = SkMipMap::ComputeLevelCount(width, height) + 1;
+    }
+
+    dawn::Texture tex = this->device().CreateTexture(&desc);
+
+    size_t bpp = GrBytesPerPixel(config);
+    size_t baseLayerSize = bpp * width * height;
+    SkAutoMalloc defaultStorage(baseLayerSize);
+    if (!pixels) {
+        // Fill in the texture with all zeros so we don't have random garbage
+        pixels = defaultStorage.get();
+        memset(defaultStorage.get(), 0, baseLayerSize);
+    }
+    dawn::Device device = this->device();
+    dawn::CommandEncoder copyEncoder = fDevice.CreateCommandEncoder();
+    int w = width, h = height;
+    for (uint32_t i = 0; i < desc.mipLevelCount; i++) {
+        size_t origRowBytes = bpp * w;
+        size_t rowBytes = GrDawnRoundRowBytes(origRowBytes);
+        size_t size = rowBytes * h;
+        dawn::BufferDescriptor bufferDesc;
+        bufferDesc.size = size;
+        bufferDesc.usage = dawn::BufferUsageBit::CopySrc | dawn::BufferUsageBit::CopyDst;
+        dawn::Buffer buffer = this->device().CreateBuffer(&bufferDesc);
+        const uint8_t* src = static_cast<const uint8_t*>(pixels);
+        if (rowBytes == origRowBytes) {
+            buffer.SetSubData(0, size, src);
+        } else {
+            uint32_t offset = 0;
+            for (int row = 0; row < h; row++) {
+                buffer.SetSubData(offset, origRowBytes, src);
+                offset += rowBytes;
+                src += origRowBytes;
+            }
+        }
+        dawn::BufferCopyView srcBuffer;
+        srcBuffer.buffer = buffer;
+        srcBuffer.offset = 0;
+        srcBuffer.rowPitch = rowBytes;
+        srcBuffer.imageHeight = h;
+        dawn::TextureCopyView dstTexture;
+        dstTexture.texture = tex;
+        dstTexture.mipLevel = i;
+        dstTexture.origin = {0, 0, 0};
+        dawn::Extent3D copySize = {(uint32_t) w, (uint32_t) h, 1};
+        copyEncoder.CopyBufferToTexture(&srcBuffer, &dstTexture, &copySize);
+        w = SkTMax(1, w / 2);
+        h = SkTMax(1, h / 2);
+    }
+    dawn::CommandBuffer cmdBuf = copyEncoder.Finish();
+    fQueue.Submit(1, &cmdBuf);
+    GrDawnImageInfo info;
+    info.fTexture = tex;
+    info.fFormat = desc.format;
+    info.fLevelCount = desc.mipLevelCount;
+    return GrBackendTexture(width, height, info);
 }
 
 void GrDawnGpu::deleteBackendTexture(const GrBackendTexture& tex) {
-    SkASSERT(!"unimplemented");
+    GrDawnImageInfo info;
+    if (tex.getDawnImageInfo(&info)) {
+        info.fTexture = nullptr;
+    }
 }
 
 #if GR_TEST_UTILS
 bool GrDawnGpu::isTestingOnlyBackendTexture(const GrBackendTexture& tex) const {
-    SkASSERT(!"unimplemented");
-    return false;
+    GrDawnImageInfo info;
+    if (!tex.getDawnImageInfo(&info)) {
+        return false;
+    }
+
+    return info.fTexture.Get();
 }
 
-GrBackendRenderTarget GrDawnGpu::createTestingOnlyBackendRenderTarget(int w, int h, GrColorType) {
-    SkASSERT(!"unimplemented");
-    return GrBackendRenderTarget();
+GrBackendRenderTarget GrDawnGpu::createTestingOnlyBackendRenderTarget(int width, int height,
+                                                                      GrColorType colorType) {
+    GrPixelConfig config = GrColorTypeToPixelConfig(colorType);
+
+    if (width > this->caps()->maxTextureSize() || height > this->caps()->maxTextureSize()) {
+        return GrBackendRenderTarget();
+    }
+
+    dawn::TextureFormat format;
+    if (!GrPixelConfigToDawnFormat(config, &format)) {
+        return GrBackendRenderTarget();
+    }
+
+    dawn::TextureDescriptor desc;
+    desc.usage =
+        dawn::TextureUsageBit::CopySrc |
+        dawn::TextureUsageBit::OutputAttachment;
+
+    desc.size.width = width;
+    desc.size.height = height;
+    desc.size.depth = 1;
+    desc.format = format;
+
+    dawn::Texture tex = this->device().CreateTexture(&desc);
+
+    GrDawnImageInfo info;
+    info.fTexture = tex;
+    info.fFormat = desc.format;
+    info.fLevelCount = desc.mipLevelCount;
+    return GrBackendRenderTarget(width, height, 1, 0, info);
 }
 
-void GrDawnGpu::deleteTestingOnlyBackendRenderTarget(const GrBackendRenderTarget&) {
-    SkASSERT(!"unimplemented");
+void GrDawnGpu::deleteTestingOnlyBackendRenderTarget(const GrBackendRenderTarget& rt) {
+    GrDawnImageInfo info;
+    if (rt.getDawnImageInfo(&info)) {
+        info.fTexture = nullptr;
+    }
 }
 
 void GrDawnGpu::testingOnly_flushGpuAndSync() {
@@ -263,13 +404,40 @@ void GrDawnGpu::onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfac
     SkASSERT(!"unimplemented");
 }
 
+static dawn::Texture get_dawn_texture_from_surface(GrSurface* src) {
+    if (auto rt = static_cast<GrDawnRenderTarget*>(src->asRenderTarget())) {
+        return rt->texture();
+    } else if (auto t = static_cast<GrDawnTexture*>(src->asTexture())) {
+        return t->texture();
+    } else {
+        return nullptr;
+    }
+}
+
 bool GrDawnGpu::onCopySurface(GrSurface* dst,
                               GrSurface* src,
                               const SkIRect& srcRect,
-                              const SkIPoint& dstPoint,
-                              bool canDiscardOutsideDstRect) {
-    SkASSERT(!"unimplemented");
-    return false;
+                              const SkIPoint& dstPoint) {
+    dawn::Texture srcTexture = get_dawn_texture_from_surface(src);
+    dawn::Texture dstTexture = get_dawn_texture_from_surface(dst);
+    if (!srcTexture || !dstTexture) {
+        return false;
+    }
+
+    uint32_t width = srcRect.width(), height = srcRect.height();
+
+    dawn::TextureCopyView srcTextureView, dstTextureView;
+    srcTextureView.texture = srcTexture;
+    srcTextureView.origin = {(uint32_t) srcRect.x(), (uint32_t) srcRect.y(), 0};
+    dstTextureView.texture = dstTexture;
+    dstTextureView.origin = {(uint32_t) dstPoint.x(), (uint32_t) dstPoint.y(), 0};
+
+    dawn::Extent3D copySize = {width, height, 1};
+    auto encoder = device().CreateCommandEncoder();
+    encoder.CopyTextureToTexture(&srcTextureView, &dstTextureView, &copySize);
+    auto commandBuffer = encoder.Finish();
+    this->queue().Submit(1, &commandBuffer);
+    return true;
 }
 
 static void callback(DawnBufferMapAsyncStatus status, const void* data, uint64_t dataLength,
@@ -280,8 +448,11 @@ static void callback(DawnBufferMapAsyncStatus status, const void* data, uint64_t
 bool GrDawnGpu::onReadPixels(GrSurface* surface, int left, int top, int width, int height,
                              GrColorType surfaceColorType, GrColorType dstColorType, void* buffer,
                              size_t rowBytes) {
-    dawn::Texture tex = static_cast<GrDawnTexture*>(surface->asTexture())->texture();
+    dawn::Texture tex = get_dawn_texture_from_surface(surface);
 
+    if (0 == rowBytes) {
+        return false;
+    }
     size_t origRowBytes = rowBytes;
     int origSizeInBytes = origRowBytes * height;
     rowBytes = GrDawnRoundRowBytes(rowBytes);
@@ -335,14 +506,8 @@ bool GrDawnGpu::onRegenerateMipMapLevels(GrTexture*) {
     return false;
 }
 
-void GrDawnGpu::submit(GrGpuCommandBuffer* buffer) {
-    if (buffer->asRTCommandBuffer()) {
-        SkASSERT(fRTCommandBuffer.get() == buffer);
-        fRTCommandBuffer->submit();
-    } else {
-        SkASSERT(fTextureCommandBuffer.get() == buffer);
-        fTextureCommandBuffer->submit();
-    }
+void GrDawnGpu::submit(GrOpsRenderPass* renderPass) {
+    static_cast<GrDawnOpsRenderPass*>(renderPass)->submit();
 }
 
 GrFence SK_WARN_UNUSED_RESULT GrDawnGpu::insertFence() {
@@ -386,4 +551,8 @@ void GrDawnGpu::checkFinishProcs() {
 sk_sp<GrSemaphore> GrDawnGpu::prepareTextureForCrossContextUsage(GrTexture* texture) {
     SkASSERT(!"unimplemented");
     return nullptr;
+}
+
+GrDawnRingBuffer::Slice GrDawnGpu::allocateUniformRingBufferSlice(int size) {
+    return fUniformRingBuffer.allocate(size);
 }

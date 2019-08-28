@@ -18,14 +18,13 @@
 
 class GrCaps;
 class GrContext_Base;
+class GrOpsTask;
 class GrRecordingContext;
-class GrRenderTargetOpList;
 class GrRenderTargetProxy;
 class GrRenderTask;
 class GrResourceProvider;
 class GrSurfaceContext;
 class GrSurfaceProxyPriv;
-class GrTextureOpList;
 class GrTextureProxy;
 
 // This is basically SkRefCntBase except Ganesh uses internalGetProxyRefCnt for more than asserts.
@@ -269,11 +268,20 @@ public:
      */
     bool readOnly() const { return fSurfaceFlags & GrInternalSurfaceFlags::kReadOnly; }
 
+    /**
+     * This means surface is a multisampled render target, and internally holds a non-msaa texture
+     * for resolving into. The render target resolves itself by blitting into this internal texture.
+     * (asTexture() might or might not return the internal texture, but if it does, we always
+     * resolve the render target before accessing this texture's data.)
+     */
+    bool requiresManualMSAAResolve() const {
+        return fSurfaceFlags & GrInternalSurfaceFlags::kRequiresManualMSAAResolve;
+    }
+
     void setLastRenderTask(GrRenderTask*);
     GrRenderTask* getLastRenderTask() { return fLastRenderTask; }
 
-    GrRenderTargetOpList* getLastRenderTargetOpList();
-    GrTextureOpList* getLastTextureOpList();
+    GrOpsTask* getLastOpsTask();
 
     /**
      * Retrieves the amount of GPU memory that will be or currently is used by this resource
@@ -431,12 +439,12 @@ private:
     // the instantiation method.
     mutable size_t         fGpuMemorySize;
 
-    // The last opList that wrote to or is currently going to write to this surface
-    // The opList can be closed (e.g., no surface context is currently bound
+    // The last GrRenderTask that wrote to or is currently going to write to this surface
+    // The GrRenderTask can be closed (e.g., no surface context is currently bound
     // to this proxy).
     // This back-pointer is required so that we can add a dependancy between
-    // the opList used to create the current contents of this surface
-    // and the opList of a destination surface to which this one is being drawn or copied.
+    // the GrRenderTask used to create the current contents of this surface
+    // and the GrRenderTask of a destination surface to which this one is being drawn or copied.
     // This pointer is unreffed. GrRenderTasks own a ref on their surface proxies.
     GrRenderTask*          fLastRenderTask;
 

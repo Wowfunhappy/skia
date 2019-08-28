@@ -42,13 +42,12 @@ public:
         REPORTER_ASSERT(fReporter, fHasClipTexture);
     }
 
-    void preFlush(GrOnFlushResourceProvider*, const uint32_t*, int,
-                  SkTArray<sk_sp<GrRenderTargetContext>>*) override {
+    void preFlush(GrOnFlushResourceProvider*, const uint32_t*, int) override {
         REPORTER_ASSERT(fReporter, !fHasOpTexture);
         REPORTER_ASSERT(fReporter, !fHasClipTexture);
     }
 
-    void postFlush(GrDeferredUploadToken, const uint32_t* opListIDs, int numOpListIDs) override {
+    void postFlush(GrDeferredUploadToken, const uint32_t* opsTaskIDs, int numOpsTaskIDs) override {
         REPORTER_ASSERT(fReporter, fHasOpTexture);
         REPORTER_ASSERT(fReporter, fHasClipTexture);
     }
@@ -183,7 +182,7 @@ public:
         bool quickContains(const SkRect&) const final { return false; }
         bool isRRect(const SkRect& rtBounds, SkRRect* rr, GrAA*) const final { return false; }
         void getConservativeBounds(int width, int height, SkIRect* rect, bool* iior) const final {
-            rect->set(0, 0, width, height);
+            rect->setLTRB(0, 0, width, height);
             if (iior) {
                 *iior = false;
             }
@@ -209,10 +208,10 @@ DEF_GPUTEST(LazyProxyTest, reporter, /* options */) {
     for (bool nullTexture : {false, true}) {
         LazyProxyTest test(reporter);
         ctx->priv().addOnFlushCallbackObject(&test);
-        sk_sp<GrRenderTargetContext> rtc = ctx->priv().makeDeferredRenderTargetContext(
-                SkBackingFit::kExact, 100, 100, GrColorType::kRGBA_8888, nullptr);
+        auto rtc = ctx->priv().makeDeferredRenderTargetContext(SkBackingFit::kExact, 100, 100,
+                                                               GrColorType::kRGBA_8888, nullptr);
         REPORTER_ASSERT(reporter, rtc);
-        sk_sp<GrRenderTargetContext> mockAtlas = ctx->priv().makeDeferredRenderTargetContext(
+        auto mockAtlas = ctx->priv().makeDeferredRenderTargetContext(
                 SkBackingFit::kExact, 10, 10, GrColorType::kAlpha_F16, nullptr);
         REPORTER_ASSERT(reporter, mockAtlas);
         rtc->priv().testingOnly_addDrawOp(LazyProxyTest::Clip(&test, mockAtlas->asTextureProxy()),
@@ -363,7 +362,7 @@ private:
     }
 
     int* fTestExecuteValue;
-    sk_sp<GrSurfaceProxy> fLazyProxy;
+    sk_sp<GrTextureProxy> fLazyProxy;
 
     typedef GrDrawOp INHERITED;
 };
@@ -375,8 +374,8 @@ DEF_GPUTEST(LazyProxyFailedInstantiationTest, reporter, /* options */) {
     sk_sp<GrContext> ctx = GrContext::MakeMock(&mockOptions, GrContextOptions());
     GrProxyProvider* proxyProvider = ctx->priv().proxyProvider();
     for (bool failInstantiation : {false, true}) {
-        sk_sp<GrRenderTargetContext> rtc = ctx->priv().makeDeferredRenderTargetContext(
-                SkBackingFit::kExact, 100, 100, GrColorType::kRGBA_8888, nullptr);
+        auto rtc = ctx->priv().makeDeferredRenderTargetContext(SkBackingFit::kExact, 100, 100,
+                                                               GrColorType::kRGBA_8888, nullptr);
         REPORTER_ASSERT(reporter, rtc);
 
         rtc->clear(nullptr, SkPMColor4f::FromBytes_RGBA(0xbaaaaaad),
@@ -426,7 +425,7 @@ private:
     void onPrepare(GrOpFlushState*) override {}
     void onExecute(GrOpFlushState* state, const SkRect& chainBounds) override {}
 
-    sk_sp<GrSurfaceProxy> fLazyProxy;
+    sk_sp<GrTextureProxy> fLazyProxy;
 
     typedef GrDrawOp INHERITED;
 };
@@ -446,8 +445,8 @@ DEF_GPUTEST(LazyProxyDeinstantiateTest, reporter, /* options */) {
 
     using LazyType = GrSurfaceProxy::LazyInstantiationType;
     for (auto lazyType : {LazyType::kSingleUse, LazyType::kMultipleUse, LazyType::kDeinstantiate}) {
-        sk_sp<GrRenderTargetContext> rtc = ctx->priv().makeDeferredRenderTargetContext(
-                SkBackingFit::kExact, 100, 100, GrColorType::kRGBA_8888, nullptr);
+        auto rtc = ctx->priv().makeDeferredRenderTargetContext(SkBackingFit::kExact, 100, 100,
+                                                               GrColorType::kRGBA_8888, nullptr);
         REPORTER_ASSERT(reporter, rtc);
 
         rtc->clear(nullptr, SkPMColor4f::FromBytes_RGBA(0xbaaaaaad),

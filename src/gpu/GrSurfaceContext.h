@@ -19,7 +19,6 @@
 
 class GrAuditTrail;
 class GrDrawingManager;
-class GrOpList;
 class GrRecordingContext;
 class GrRenderTargetContext;
 class GrRenderTargetProxy;
@@ -34,9 +33,9 @@ struct SkIRect;
 /**
  * A helper object to orchestrate commands for a particular surface
  */
-class SK_API GrSurfaceContext : public SkRefCnt {
+class GrSurfaceContext {
 public:
-    ~GrSurfaceContext() override {}
+    virtual ~GrSurfaceContext() = default;
 
     const GrColorSpaceInfo& colorSpaceInfo() const { return fColorSpaceInfo; }
 
@@ -110,7 +109,6 @@ protected:
     GrDrawingManager* drawingManager();
     const GrDrawingManager* drawingManager() const;
 
-    virtual GrOpList* getOpList() = 0;
     SkDEBUGCODE(virtual void validate() const = 0;)
 
     SkDEBUGCODE(GrSingleOwner* singleOwner();)
@@ -118,9 +116,9 @@ protected:
     GrRecordingContext* fContext;
 
     // The rescaling step of asyncRescaleAndReadPixels[YUV420]().
-    sk_sp<GrRenderTargetContext> rescale(const SkImageInfo& info, const SkIRect& srcRect,
-                                         SkSurface::RescaleGamma rescaleGamma,
-                                         SkFilterQuality rescaleQuality);
+    std::unique_ptr<GrRenderTargetContext> rescale(const SkImageInfo& info, const SkIRect& srcRect,
+                                                   SkSurface::RescaleGamma rescaleGamma,
+                                                   SkFilterQuality rescaleQuality);
 
     // Inserts a transfer, part of the implementation of asyncReadPixels and
     // asyncRescaleAndReadPixelsYUV420().

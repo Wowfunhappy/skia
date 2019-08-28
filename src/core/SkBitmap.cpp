@@ -194,17 +194,12 @@ void SkBitmap::setPixelRef(sk_sp<SkPixelRef> pr, int dx, int dy) {
 }
 
 void SkBitmap::setPixels(void* p) {
-    if (nullptr == p) {
-        this->setPixelRef(nullptr, 0, 0);
-        return;
-    }
-
     if (kUnknown_SkColorType == this->colorType()) {
-        this->setPixelRef(nullptr, 0, 0);
-        return;
+        p = nullptr;
     }
-    this->setPixelRef(
-            sk_make_sp<SkPixelRef>(this->width(), this->height(), p, this->rowBytes()), 0, 0);
+    size_t rb = this->rowBytes();
+    SkPixmapPriv::ResetPixmapKeepInfo(&fPixmap, p, rb);
+    fPixelRef = p ? sk_make_sp<SkPixelRef>(this->width(), this->height(), p, rb) : nullptr;
     SkDEBUGCODE(this->validate();)
 }
 
@@ -445,7 +440,7 @@ bool SkBitmap::extractSubset(SkBitmap* result, const SkIRect& subset) const {
     }
 
     SkIRect srcRect, r;
-    srcRect.set(0, 0, this->width(), this->height());
+    srcRect.setWH(this->width(), this->height());
     if (!r.intersect(srcRect, subset)) {
         return false;   // r is empty (i.e. no intersection)
     }
@@ -537,7 +532,7 @@ bool SkBitmap::extractAlpha(SkBitmap* dst, const SkPaint* paint,
     if (this->width() == 0 || this->height() == 0) {
         return false;
     }
-    srcM.fBounds.set(0, 0, this->width(), this->height());
+    srcM.fBounds.setWH(this->width(), this->height());
     srcM.fRowBytes = SkAlign4(this->width());
     srcM.fFormat = SkMask::kA8_Format;
 

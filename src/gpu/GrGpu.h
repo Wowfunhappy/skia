@@ -14,7 +14,7 @@
 #include "include/private/SkTArray.h"
 #include "src/gpu/GrAllocator.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrGpuCommandBuffer.h"
+#include "src/gpu/GrOpsRenderPass.h"
 #include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrSamplePatternDictionary.h"
 #include "src/gpu/GrSwizzle.h"
@@ -289,13 +289,13 @@ public:
                             GrGpuBuffer* transferBuffer, size_t offset);
 
     // Called to perform a surface to surface copy. Fallbacks to issuing a draw from the src to dst
-    // take place at the GrOpList level and this function implement faster copy paths. The rect
+    // take place at higher levels and this function implement faster copy paths. The rect
     // and point are pre-clipped. The src rect and implied dst rect are guaranteed to be within the
     // src/dst bounds and non-empty. They must also be in their exact device space coords, including
     // already being transformed for origin if need be. If canDiscardOutsideDstRect is set to true
     // then we don't need to preserve any data on the dst surface outside of the copy.
     bool copySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
-                     const SkIPoint& dstPoint, bool canDiscardOutsideDstRect = false);
+                     const SkIPoint& dstPoint);
 
     // Queries the per-pixel HW sample locations for the given render target, and then finds or
     // assigns a key that uniquely identifies the sample pattern. The actual sample locations can be
@@ -310,16 +310,12 @@ public:
         return fSamplePatternDictionary.retrieveSampleLocations(samplePatternKey);
     }
 
-    // Returns a GrGpuRTCommandBuffer which GrOpLists send draw commands to instead of directly
-    // to the Gpu object. The 'bounds' rect is the content rect of the destination.
-    virtual GrGpuRTCommandBuffer* getCommandBuffer(
-            GrRenderTarget*, GrSurfaceOrigin, const SkRect& bounds,
-            const GrGpuRTCommandBuffer::LoadAndStoreInfo&,
-            const GrGpuRTCommandBuffer::StencilLoadAndStoreInfo&) = 0;
-
-    // Returns a GrGpuTextureCommandBuffer which GrOpLists send texture commands to instead of
-    // directly to the Gpu object.
-    virtual GrGpuTextureCommandBuffer* getCommandBuffer(GrTexture*, GrSurfaceOrigin) = 0;
+    // Returns a GrOpsRenderPass which GrOpsTasks send draw commands to instead of directly
+    // to the Gpu object. The 'bounds' rect is the content rect of the renderTarget.
+    virtual GrOpsRenderPass* getOpsRenderPass(
+            GrRenderTarget* renderTarget, GrSurfaceOrigin, const SkRect& bounds,
+            const GrOpsRenderPass::LoadAndStoreInfo&,
+            const GrOpsRenderPass::StencilLoadAndStoreInfo&) = 0;
 
     // Called by GrDrawingManager when flushing.
     // Provides a hook for post-flush actions (e.g. Vulkan command buffer submits). This will also
@@ -329,7 +325,7 @@ public:
                                       SkSurface::BackendSurfaceAccess access, const GrFlushInfo&,
                                       const GrPrepareForExternalIORequests&);
 
-    virtual void submit(GrGpuCommandBuffer*) = 0;
+    virtual void submit(GrOpsRenderPass*) = 0;
 
     virtual GrFence SK_WARN_UNUSED_RESULT insertFence() = 0;
     virtual bool waitFence(GrFence, uint64_t timeout = 1000) = 0;
@@ -597,7 +593,7 @@ private:
 
     // overridden by backend specific derived class to perform the copy surface
     virtual bool onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
-                               const SkIPoint& dstPoint, bool canDiscardOutsideDstRect) = 0;
+                               const SkIPoint& dstPoint) = 0;
 
     virtual void onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
                                const GrFlushInfo&, const GrPrepareForExternalIORequests&) = 0;

@@ -672,7 +672,7 @@ bool SkCanvas::writePixels(const SkImageInfo& srcInfo, const void* pixels, size_
     // This check gives us an early out and prevents generation ID churn on the surface.
     // This is purely optional: it is a subset of the checks performed by SkWritePixelsRec.
     SkIRect srcRect = SkIRect::MakeXYWH(x, y, srcInfo.width(), srcInfo.height());
-    if (!srcRect.intersect(0, 0, device->width(), device->height())) {
+    if (!srcRect.intersect({0, 0, device->width(), device->height()})) {
         return false;
     }
 
@@ -1979,7 +1979,8 @@ void SkCanvas::onDrawShadowRec(const SkPath& path, const SkDrawShadowRec& rec) {
 }
 
 void SkCanvas::experimental_DrawEdgeAAQuad(const SkRect& rect, const SkPoint clip[4],
-                                           QuadAAFlags aaFlags, SkColor color, SkBlendMode mode) {
+                                           QuadAAFlags aaFlags, const SkColor4f& color,
+                                           SkBlendMode mode) {
     TRACE_EVENT0("skia", TRACE_FUNC);
     // Make sure the rect is sorted before passing it along
     this->onDrawEdgeAAQuad(rect.makeSorted(), clip, aaFlags, color, mode);
@@ -2031,7 +2032,7 @@ void SkCanvas::onDrawPoints(PointMode mode, size_t count, const SkPoint pts[],
         if (2 == count) {
             r.set(pts[0], pts[1]);
         } else {
-            r.set(pts, SkToInt(count));
+            r.setBounds(pts, SkToInt(count));
         }
         if (!r.isFinite()) {
             return;
@@ -2606,7 +2607,7 @@ void SkCanvas::onDrawPatch(const SkPoint cubics[12], const SkColor colors[4],
     // Since a patch is always within the convex hull of the control points, we discard it when its
     // bounding rectangle is completely outside the current clip.
     SkRect bounds;
-    bounds.set(cubics, SkPatchUtils::kNumCtrlPts);
+    bounds.setBounds(cubics, SkPatchUtils::kNumCtrlPts);
     if (this->quickReject(bounds)) {
         return;
     }
@@ -2680,8 +2681,8 @@ void SkCanvas::onDrawAnnotation(const SkRect& rect, const char key[], SkData* va
     DRAW_END
 }
 
-void SkCanvas::onDrawEdgeAAQuad(const SkRect& r, const SkPoint clip[4],  QuadAAFlags edgeAA,
-                                SkColor color, SkBlendMode mode) {
+void SkCanvas::onDrawEdgeAAQuad(const SkRect& r, const SkPoint clip[4], QuadAAFlags edgeAA,
+                                const SkColor4f& color, SkBlendMode mode) {
     SkASSERT(r.isSorted());
 
     // If this used a paint, it would be a filled color with blend mode, which does not
@@ -2743,7 +2744,7 @@ void SkCanvas::drawCircle(SkScalar cx, SkScalar cy, SkScalar radius, const SkPai
     }
 
     SkRect  r;
-    r.set(cx - radius, cy - radius, cx + radius, cy + radius);
+    r.setLTRB(cx - radius, cy - radius, cx + radius, cy + radius);
     this->drawOval(r, paint);
 }
 
@@ -2948,7 +2949,7 @@ SkRasterHandleAllocator::Handle SkCanvas::accessTopRasterHandle() const {
 
         SkIRect clip = fMCRec->fRasterClip.getBounds();
         clip.offset(-origin.x(), -origin.y());
-        if (!clip.intersect(0, 0, dev->width(), dev->height())) {
+        if (!clip.intersect({0, 0, dev->width(), dev->height()})) {
             clip.setEmpty();
         }
 

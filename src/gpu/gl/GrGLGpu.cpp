@@ -32,7 +32,7 @@
 #include "src/gpu/GrTexturePriv.h"
 #include "src/gpu/gl/GrGLBuffer.h"
 #include "src/gpu/gl/GrGLGpu.h"
-#include "src/gpu/gl/GrGLGpuCommandBuffer.h"
+#include "src/gpu/gl/GrGLOpsRenderPass.h"
 #include "src/gpu/gl/GrGLSemaphore.h"
 #include "src/gpu/gl/GrGLStencilAttachment.h"
 #include "src/gpu/gl/GrGLTextureRenderTarget.h"
@@ -1879,7 +1879,7 @@ void GrGLGpu::resolveAndGenerateMipMapsForProcessorTextures(
         if (rt && rt->needsResolve()) {
             this->resolveRenderTarget(rt);
             // TEMPORARY: MSAA resolve will have dirtied mipmaps. This goes away once we switch
-            // to resolving MSAA from the opList as well.
+            // to resolving MSAA from the opsTask as well.
             if (GrSamplerState::Filter::kMipMap == sampler.filter() &&
                 (tex->width() != 1 || tex->height() != 1)) {
                 SkASSERT(tex->texturePriv().mipMapped() == GrMipMapped::kYes);
@@ -1887,7 +1887,7 @@ void GrGLGpu::resolveAndGenerateMipMapsForProcessorTextures(
                 this->regenerateMipMapLevels(tex);
             }
         }
-        // Ensure mipmaps were all resolved ahead of time by the opList.
+        // Ensure mipmaps were all resolved ahead of time by the opsTask.
         if (GrSamplerState::Filter::kMipMap == sampler.filter() &&
             (tex->width() != 1 || tex->height() != 1)) {
             // There are some cases where we might be given a non-mipmapped texture with a mipmap
@@ -2165,7 +2165,7 @@ void GrGLGpu::clearStencilClip(const GrFixedClip& clip,
 #else
     // we could just clear the clip bit but when we go through
     // ANGLE a partial stencil mask will cause clears to be
-    // turned into draws. Our contract on GrOpList says that
+    // turned into draws. Our contract on GrOpsTask says that
     // changing the clip between stencil passes may or may not
     // zero the client's clip bits. So we just clear the whole thing.
     static const GrGLint clipStencilMask  = ~0;
@@ -2294,25 +2294,16 @@ bool GrGLGpu::onReadPixels(GrSurface* surface, int left, int top, int width, int
                                           dstColorType, buffer, rowPixelWidth);
 }
 
-GrGpuRTCommandBuffer* GrGLGpu::getCommandBuffer(
+GrOpsRenderPass* GrGLGpu::getOpsRenderPass(
         GrRenderTarget* rt, GrSurfaceOrigin origin, const SkRect& bounds,
-        const GrGpuRTCommandBuffer::LoadAndStoreInfo& colorInfo,
-        const GrGpuRTCommandBuffer::StencilLoadAndStoreInfo& stencilInfo) {
-    if (!fCachedRTCommandBuffer) {
-        fCachedRTCommandBuffer.reset(new GrGLGpuRTCommandBuffer(this));
+        const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
+        const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo) {
+    if (!fCachedOpsRenderPass) {
+        fCachedOpsRenderPass.reset(new GrGLOpsRenderPass(this));
     }
 
-    fCachedRTCommandBuffer->set(rt, origin, colorInfo, stencilInfo);
-    return fCachedRTCommandBuffer.get();
-}
-
-GrGpuTextureCommandBuffer* GrGLGpu::getCommandBuffer(GrTexture* texture, GrSurfaceOrigin origin) {
-    if (!fCachedTexCommandBuffer) {
-        fCachedTexCommandBuffer.reset(new GrGLGpuTextureCommandBuffer(this));
-    }
-
-    fCachedTexCommandBuffer->set(texture, origin);
-    return fCachedTexCommandBuffer.get();
+    fCachedOpsRenderPass->set(rt, origin, colorInfo, stencilInfo);
+    return fCachedOpsRenderPass.get();
 }
 
 void GrGLGpu::flushRenderTarget(GrGLRenderTarget* target, GrSurfaceOrigin origin,
@@ -3178,7 +3169,7 @@ void GrGLGpu::deleteFramebuffer(GrGLuint fboid) {
 }
 
 bool GrGLGpu::onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
-                            const SkIPoint& dstPoint, bool canDiscardOutsideDstRect) {
+                            const SkIPoint& dstPoint) {
     // Don't prefer copying as a draw if the dst doesn't already have a FBO object.
     // This implicitly handles this->glCaps().useDrawInsteadOfAllRenderTargetWrites().
     bool preferCopy = SkToBool(dst->asRenderTarget());
@@ -3576,7 +3567,7 @@ bool GrGLGpu::copySurfaceAsBlitFramebuffer(GrSurface* dst, GrSurface* src, const
     SkIRect dstRect = SkIRect::MakeXYWH(dstPoint.fX, dstPoint.fY,
                                         srcRect.width(), srcRect.height());
     if (dst == src) {
-        if (SkIRect::IntersectsNoEmptyCheck(dstRect, srcRect)) {
+        if (SkIRect::Intersects(dstRect, srcRect)) {
             return false;
         }
     }
@@ -4145,14 +4136,10 @@ void GrGLGpu::onFinishFlush(GrSurfaceProxy*[], int, SkSurface::BackendSurfaceAcc
     }
 }
 
-void GrGLGpu::submit(GrGpuCommandBuffer* buffer) {
-    if (buffer->asRTCommandBuffer()) {
-        SkASSERT(fCachedRTCommandBuffer.get() == buffer);
-        fCachedRTCommandBuffer->reset();
-    } else {
-        SkASSERT(fCachedTexCommandBuffer.get() == buffer);
-        fCachedTexCommandBuffer->reset();
-    }
+void GrGLGpu::submit(GrOpsRenderPass* renderPass) {
+    // The GrGLOpsRenderPass doesn't buffer ops so there is nothing to do here
+    SkASSERT(fCachedOpsRenderPass.get() == renderPass);
+    fCachedOpsRenderPass->reset();
 }
 
 GrFence SK_WARN_UNUSED_RESULT GrGLGpu::insertFence() {

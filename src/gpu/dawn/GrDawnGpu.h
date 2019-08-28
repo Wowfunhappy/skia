@@ -10,10 +10,10 @@
 
 #include "src/gpu/GrGpu.h"
 #include "dawn/dawncpp.h"
+#include "src/gpu/dawn/GrDawnRingBuffer.h"
 
+class GrDawnOpsRenderPass;
 class GrPipeline;
-class GrDawnGpuRTCommandBuffer;
-class GrDawnGpuTextureCommandBuffer;
 
 namespace SkSL {
     class Compiler;
@@ -56,18 +56,17 @@ public:
                                                                 int height,
                                                                 int numStencilSamples) override;
 
-    GrGpuRTCommandBuffer* getCommandBuffer(
+    GrOpsRenderPass* getOpsRenderPass(
             GrRenderTarget*, GrSurfaceOrigin, const SkRect& bounds,
-            const GrGpuRTCommandBuffer::LoadAndStoreInfo&,
-            const GrGpuRTCommandBuffer::StencilLoadAndStoreInfo&) override;
-
-    GrGpuTextureCommandBuffer* getCommandBuffer(GrTexture*, GrSurfaceOrigin) override;
+            const GrOpsRenderPass::LoadAndStoreInfo&,
+            const GrOpsRenderPass::StencilLoadAndStoreInfo&) override;
 
     SkSL::Compiler* shaderCompiler() const {
         return fCompiler.get();
     }
 
-    void submit(GrGpuCommandBuffer* cb) override;
+    void submit(GrOpsRenderPass*) override;
+
     GrFence SK_WARN_UNUSED_RESULT insertFence() override;
     bool waitFence(GrFence, uint64_t timeout) override;
     void deleteFence(GrFence) const override;
@@ -81,6 +80,8 @@ public:
     void checkFinishProcs() override;
 
     sk_sp<GrSemaphore> prepareTextureForCrossContextUsage(GrTexture*) override;
+
+    GrDawnRingBuffer::Slice allocateUniformRingBufferSlice(int size);
 
 private:
     void onResetContext(uint32_t resetBits) override {}
@@ -96,8 +97,9 @@ private:
                                      const GrMipLevel texels[],
                                      int mipLevelCount) override;
 
-    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, SkImage::CompressionType,
-                                               SkBudgeted, const void* data) override;
+    sk_sp<GrTexture> onCreateCompressedTexture(int width, int height, const GrBackendFormat&,
+                                               SkImage::CompressionType, SkBudgeted,
+                                               const void* data) override;
 
     sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrColorType, GrWrapOwnership,
                                           GrWrapCacheable, GrIOType) override;
@@ -135,8 +137,7 @@ private:
     bool onRegenerateMipMapLevels(GrTexture*) override;
 
     bool onCopySurface(GrSurface* dst, GrSurface* src,
-                       const SkIRect& srcRect, const SkIPoint& dstPoint,
-                       bool canDiscardOutsideDstRect) override;
+                       const SkIRect& srcRect, const SkIPoint& dstPoint) override;
 
     void onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
                        const GrFlushInfo& info, const GrPrepareForExternalIORequests&) override;
@@ -144,8 +145,8 @@ private:
     dawn::Device                                    fDevice;
     dawn::Queue                                     fQueue;
     std::unique_ptr<SkSL::Compiler>                 fCompiler;
-    std::unique_ptr<GrDawnGpuRTCommandBuffer>       fRTCommandBuffer;
-    std::unique_ptr<GrDawnGpuTextureCommandBuffer>  fTextureCommandBuffer;
+    std::unique_ptr<GrDawnOpsRenderPass>            fOpsRenderPass;
+    GrDawnRingBuffer                                fUniformRingBuffer;
 
     typedef GrGpu INHERITED;
 };

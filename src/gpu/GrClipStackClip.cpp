@@ -245,10 +245,10 @@ bool GrClipStackClip::apply(GrRecordingContext* context, GrRenderTargetContext* 
         }
     }
 
-    // The opList ID must not be looked up until AFTER producing the clip mask (if any). That step
-    // can cause a flush or otherwise change which opList our draw is going into.
-    uint32_t opListID = renderTargetContext->getOpList()->uniqueID();
-    if (auto clipFPs = reducedClip.finishAndDetachAnalyticFPs(ccpr, opListID)) {
+    // The opsTask ID must not be looked up until AFTER producing the clip mask (if any). That step
+    // can cause a flush or otherwise change which opstask our draw is going into.
+    uint32_t opsTaskID = renderTargetContext->getOpsTask()->uniqueID();
+    if (auto clipFPs = reducedClip.finishAndDetachAnalyticFPs(ccpr, opsTaskID)) {
         out->addCoverageFP(std::move(clipFPs));
     }
 
@@ -356,18 +356,17 @@ sk_sp<GrTextureProxy> GrClipStackClip::createAlphaClipMask(GrRecordingContext* c
     }
 
     auto isProtected = proxy->isProtected() ? GrProtected::kYes : GrProtected::kNo;
-    sk_sp<GrRenderTargetContext> rtc(
-            context->priv().makeDeferredRenderTargetContextWithFallback(SkBackingFit::kApprox,
-                                                                        reducedClip.width(),
-                                                                        reducedClip.height(),
-                                                                        GrColorType::kAlpha_8,
-                                                                        nullptr,
-                                                                        1,
-                                                                        GrMipMapped::kNo,
-                                                                        kTopLeft_GrSurfaceOrigin,
-                                                                        nullptr,
-                                                                        SkBudgeted::kYes,
-                                                                        isProtected));
+    auto rtc = context->priv().makeDeferredRenderTargetContextWithFallback(SkBackingFit::kApprox,
+                                                                           reducedClip.width(),
+                                                                           reducedClip.height(),
+                                                                           GrColorType::kAlpha_8,
+                                                                           nullptr,
+                                                                           1,
+                                                                           GrMipMapped::kNo,
+                                                                           kTopLeft_GrSurfaceOrigin,
+                                                                           nullptr,
+                                                                           SkBudgeted::kYes,
+                                                                           isProtected);
     if (!rtc) {
         return nullptr;
     }

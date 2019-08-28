@@ -16,7 +16,7 @@
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpuResourcePriv.h"
-#include "src/gpu/GrOpList.h"
+#include "src/gpu/GrOpsTask.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrStencilAttachment.h"
@@ -107,7 +107,7 @@ GrSurfaceProxy::GrSurfaceProxy(sk_sp<GrSurface> surface, GrSurfaceOrigin origin,
 }
 
 GrSurfaceProxy::~GrSurfaceProxy() {
-    // For this to be deleted the opList that held a ref on it (if there was one) must have been
+    // For this to be deleted the opsTask that held a ref on it (if there was one) must have been
     // deleted. Which would have cleared out this back pointer.
     SkASSERT(!fLastRenderTask);
 }
@@ -302,12 +302,8 @@ void GrSurfaceProxy::setLastRenderTask(GrRenderTask* renderTask) {
     fLastRenderTask = renderTask;
 }
 
-GrRenderTargetOpList* GrSurfaceProxy::getLastRenderTargetOpList() {
-    return fLastRenderTask ? fLastRenderTask->asRenderTargetOpList() : nullptr;
-}
-
-GrTextureOpList* GrSurfaceProxy::getLastTextureOpList() {
-    return fLastRenderTask ? fLastRenderTask->asTextureOpList() : nullptr;
+GrOpsTask* GrSurfaceProxy::getLastOpsTask() {
+    return fLastRenderTask ? fLastRenderTask->asOpsTask() : nullptr;
 }
 
 int GrSurfaceProxy::worstCaseWidth() const {
@@ -370,9 +366,9 @@ sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context,
     }
     auto colorType = GrPixelConfigToColorType(src->config());
     if (src->backendFormat().textureType() != GrTextureType::kExternal) {
-        sk_sp<GrTextureContext> dstContext(context->priv().makeDeferredTextureContext(
+        auto dstContext = context->priv().makeDeferredTextureContext(
                 fit, width, height, colorType, kUnknown_SkAlphaType, nullptr, mipMapped,
-                src->origin(), budgeted, isProtected));
+                src->origin(), budgeted, isProtected);
         if (!dstContext) {
             return nullptr;
         }
@@ -381,7 +377,7 @@ sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context,
         }
     }
     if (src->asTextureProxy()) {
-        sk_sp<GrRenderTargetContext> dstContext = context->priv().makeDeferredRenderTargetContext(
+        auto dstContext = context->priv().makeDeferredRenderTargetContext(
                 fit, width, height, colorType, nullptr, 1, mipMapped, src->origin(), nullptr,
                 budgeted);
 

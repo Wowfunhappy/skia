@@ -12,7 +12,6 @@
 #include "include/gpu/GrSurface.h"
 
 class GrCaps;
-class GrRenderTargetOpList;
 class GrRenderTargetPriv;
 class GrStencilAttachment;
 class GrBackendRenderTarget;
@@ -26,6 +25,9 @@ class GrBackendRenderTarget;
  */
 class GrRenderTarget : virtual public GrSurface {
 public:
+    // Make setRequiresManualMSAAResolve publicly accessible from GrRenderTarget.
+    using GrSurface::setRequiresManualMSAAResolve;
+
     virtual bool alwaysClearStencil() const { return false; }
 
     // GrSurface overrides

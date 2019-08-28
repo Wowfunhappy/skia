@@ -202,6 +202,11 @@ sk_sp<GrTexture> GrGpu::createTexture(const GrSurfaceDesc& desc,
             }
         }
         SkASSERT(tex->backendFormat() == format);
+        SkASSERT(!tex || GrRenderable::kNo == renderable || tex->asRenderTarget());
+        if (renderTargetSampleCnt > 1 && !this->caps()->msaaResolvesAutomatically()) {
+            SkASSERT(GrRenderable::kYes == renderable);
+            tex->asRenderTarget()->setRequiresManualMSAAResolve();
+        }
     }
     return tex;
 }
@@ -285,6 +290,9 @@ sk_sp<GrTexture> GrGpu::wrapRenderableBackendTexture(const GrBackendTexture& bac
     sk_sp<GrTexture> tex = this->onWrapRenderableBackendTexture(backendTex, sampleCnt, colorType,
                                                                 ownership, cacheable);
     SkASSERT(!tex || tex->asRenderTarget());
+    if (tex && sampleCnt > 1 && !caps->msaaResolvesAutomatically()) {
+        tex->asRenderTarget()->setRequiresManualMSAAResolve();
+    }
     return tex;
 }
 
@@ -317,7 +325,11 @@ sk_sp<GrRenderTarget> GrGpu::wrapBackendTextureAsRenderTarget(const GrBackendTex
         return nullptr;
     }
 
-    return this->onWrapBackendTextureAsRenderTarget(backendTex, sampleCnt, colorType);
+    auto rt = this->onWrapBackendTextureAsRenderTarget(backendTex, sampleCnt, colorType);
+    if (rt && sampleCnt > 1 && !this->caps()->msaaResolvesAutomatically()) {
+        rt->setRequiresManualMSAAResolve();
+    }
+    return rt;
 }
 
 sk_sp<GrRenderTarget> GrGpu::wrapVulkanSecondaryCBAsRenderTarget(const SkImageInfo& imageInfo,
@@ -343,7 +355,7 @@ sk_sp<GrGpuBuffer> GrGpu::createBuffer(size_t size, GrGpuBufferType intendedType
 }
 
 bool GrGpu::copySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
-                        const SkIPoint& dstPoint, bool canDiscardOutsideDstRect) {
+                        const SkIPoint& dstPoint) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
     SkASSERT(dst && src);
 
@@ -353,7 +365,7 @@ bool GrGpu::copySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
 
     this->handleDirtyContext();
 
-    return this->onCopySurface(dst, src, srcRect, dstPoint, canDiscardOutsideDstRect);
+    return this->onCopySurface(dst, src, srcRect, dstPoint);
 }
 
 bool GrGpu::readPixels(GrSurface* surface, int left, int top, int width, int height,

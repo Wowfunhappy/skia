@@ -49,7 +49,6 @@ declare_args() {
   skia_enable_discrete_gpu = true
   skia_enable_pdf = true
   skia_enable_spirv_validation = is_skia_dev_build && is_debug && !skia_use_dawn
-  skia_enable_skpicture = true
   skia_enable_sksl_interpreter = is_skia_dev_build
   skia_enable_skvm_jit =
       is_skia_dev_build && ((target_cpu == "x64" && (is_linux || is_mac)) ||
@@ -516,7 +515,7 @@ if (skia_compile_processors) {
     include_dirs = [ "." ]
     deps = [
       ":run_sksllex",
-      "//third_party/spirv-tools",
+      "//third_party/spirv-tools:spvtools",
     ]
   }
 
@@ -981,14 +980,6 @@ component("skia") {
   ]
 
   defines = []
-  if (!skia_enable_skpicture) {
-    defines = [ "SK_DISABLE_SKPICTURE" ]
-    public -= skia_skpicture_public
-    sources -= skia_skpicture_sources
-    sources -= [ "//src/effects/imagefilters/SkPictureImageFilter.cpp" ]
-    sources += [ "src/core/SkPicture_none.cpp" ]
-  }
-
   libs = []
 
   if (is_win) {
@@ -1078,7 +1069,7 @@ component("skia") {
   }
 
   if (skia_enable_spirv_validation) {
-    deps += [ "//third_party/spirv-tools" ]
+    deps += [ "//third_party/spirv-tools:spvtools_val" ]
     defines += [ "SK_ENABLE_SPIRV_VALIDATION" ]
   }
 
@@ -2625,7 +2616,7 @@ if (skia_enable_tools) {
     test_app("editor") {
       is_shared_library = is_android
       deps = [
-        "experimental/editor:editor_app",
+        "modules/skplaintexteditor:editor_app",
       ]
     }
   }

@@ -21,14 +21,12 @@
 class GrCoverageCountingPathRenderer;
 class GrOnFlushCallbackObject;
 class GrOpFlushState;
-class GrOpList;
+class GrOpsTask;
 class GrRecordingContext;
 class GrRenderTargetContext;
 class GrRenderTargetProxy;
-class GrRenderTargetOpList;
 class GrSoftwarePathRenderer;
 class GrTextureContext;
-class GrTextureOpList;
 class SkDeferredDisplayList;
 
 class GrDrawingManager {
@@ -37,20 +35,19 @@ public:
 
     void freeGpuResources();
 
-    sk_sp<GrRenderTargetContext> makeRenderTargetContext(sk_sp<GrSurfaceProxy>,
+    std::unique_ptr<GrRenderTargetContext> makeRenderTargetContext(sk_sp<GrSurfaceProxy>,
+                                                                   GrColorType,
+                                                                   sk_sp<SkColorSpace>,
+                                                                   const SkSurfaceProps*,
+                                                                   bool managedOpsTask = true);
+    std::unique_ptr<GrTextureContext> makeTextureContext(sk_sp<GrSurfaceProxy>,
                                                          GrColorType,
-                                                         sk_sp<SkColorSpace>,
-                                                         const SkSurfaceProps*,
-                                                         bool managedOpList = true);
-    sk_sp<GrTextureContext> makeTextureContext(sk_sp<GrSurfaceProxy>,
-                                               GrColorType,
-                                               SkAlphaType,
-                                               sk_sp<SkColorSpace>);
+                                                         SkAlphaType,
+                                                         sk_sp<SkColorSpace>);
 
-    // A managed opList is controlled by the drawing manager (i.e., sorted & flushed with the
+    // A managed opsTask is controlled by the drawing manager (i.e., sorted & flushed with the
     // others). An unmanaged one is created and used by the onFlushCallback.
-    sk_sp<GrRenderTargetOpList> newRTOpList(sk_sp<GrRenderTargetProxy>, bool managedOpList);
-    sk_sp<GrTextureOpList> newTextureOpList(sk_sp<GrTextureProxy>);
+    sk_sp<GrOpsTask> newOpsTask(sk_sp<GrRenderTargetProxy>, bool managedOpsTask);
 
     // Create a new, specialized, render task that will regenerate mipmap levels and/or resolve
     // MSAA (depending on GrTextureResolveFlags). This method will add the new render task to the
@@ -58,6 +55,24 @@ public:
     // to add any dependencies on the new render task.
     GrRenderTask* newTextureResolveRenderTask(
             sk_sp<GrTextureProxy>, GrTextureResolveFlags, const GrCaps&);
+
+    // Create a new render task which copies the pixels from the srcProxy into the dstBuffer. This
+    // is used to support the asynchronous readback API. The srcRect is the region of the srcProxy
+    // to be copied. The surfaceColorType says how we should interpret the data when reading back
+    // from the source. DstColorType describes how the data should be stored in the dstBuffer.
+    // DstOffset is the offset into the dstBuffer where we will start writing data.
+    void newTransferFromRenderTask(sk_sp<GrSurfaceProxy> srcProxy, const SkIRect& srcRect,
+                                   GrColorType surfaceColorType, GrColorType dstColorType,
+                                   sk_sp<GrGpuBuffer> dstBuffer, size_t dstOffset);
+
+    // Creates a new render task which copies a pixel rectangle from srcProxy into dstProxy. The src
+    // pixels copied are specified by srcRect. They are copied to a rect of the same size in
+    // dstProxy with top left at dstPoint. If the src rect is clipped by the src bounds then  pixel
+    // values in the dst rect corresponding to the area clipped by the src rect are not overwritten.
+    // This method is not guaranteed to succeed depending on the type of surface, formats, etc, and
+    // the backend-specific limitations.
+    bool newCopyRenderTask(sk_sp<GrSurfaceProxy> srcProxy, const SkIRect& srcRect,
+                           sk_sp<GrSurfaceProxy> dstProxy, const SkIPoint& dstPoint);
 
     GrRecordingContext* getContext() { return fContext; }
 
@@ -106,8 +121,8 @@ private:
         ~RenderTaskDAG();
 
         // Currently, when explicitly allocating resources, this call will topologically sort the
-        // opLists.
-        // MDB TODO: remove once incremental opList sorting is enabled
+        // GrRenderTasks.
+        // MDB TODO: remove once incremental GrRenderTask sorting is enabled
         void prepForFlush();
 
         void closeAll(const GrCaps* caps);
@@ -119,10 +134,10 @@ private:
 
         void reset();
 
-        // These calls forceably remove an opList from the DAG. They are problematic bc they just
-        // remove the opList but don't cleanup any refering pointers (i.e., dependency pointers
-        // in the DAG). They work right now bc they are only called at flush time, after the
-        // topological sort is complete (so the dangling pointers aren't used).
+        // These calls forceably remove a GrRenderTask from the DAG. They are problematic bc they
+        // just remove the GrRenderTask but don't cleanup any refering pointers (i.e., dependency
+        // pointers in the DAG). They work right now bc they are only called at flush time, after
+        // the topological sort is complete (so the dangling pointers aren't used).
         void removeRenderTask(int index);
         void removeRenderTasks(int startIndex, int stopIndex);
 
@@ -153,18 +168,18 @@ private:
     GrDrawingManager(GrRecordingContext*, const GrPathRendererChain::Options&,
                      const GrTextContext::Options&,
                      bool sortRenderTasks,
-                     bool reduceOpListSplitting);
+                     bool reduceOpsTaskSplitting);
 
     bool wasAbandoned() const;
 
     void cleanup();
 
-    // Closes the target's dependent render tasks (or, if not in sorting/opList-splitting-reduction
-    // mode, closes fActiveOpList) in preparation for us opening a new opList that will write to
+    // Closes the target's dependent render tasks (or, if not in sorting/opsTask-splitting-reduction
+    // mode, closes fActiveOpsTask) in preparation for us opening a new opsTask that will write to
     // 'target'.
-    void closeRenderTasksForNewOpList(GrSurfaceProxy* target);
+    void closeRenderTasksForNewRenderTask(GrSurfaceProxy* target);
 
-    // return true if any opLists were actually executed; false otherwise
+    // return true if any GrRenderTasks were actually executed; false otherwise
     bool executeRenderTasks(int startIndex, int stopIndex, GrOpFlushState*,
                             int* numRenderTasksExecuted);
 
@@ -193,11 +208,11 @@ private:
     sk_sp<GrBufferAllocPool::CpuBufferCache> fCpuBufferCache;
 
     RenderTaskDAG                     fDAG;
-    GrOpList*                         fActiveOpList = nullptr;
-    // These are the IDs of the opLists currently being flushed (in internalFlush)
+    GrOpsTask*                        fActiveOpsTask = nullptr;
+    // These are the IDs of the opsTask currently being flushed (in internalFlush)
     SkSTArray<8, uint32_t, true>      fFlushingRenderTaskIDs;
-    // These are the new opLists generated by the onFlush CBs
-    SkSTArray<8, sk_sp<GrOpList>>     fOnFlushCBOpLists;
+    // These are the new renderTasks generated by the onFlush CBs
+    SkSTArray<4, sk_sp<GrRenderTask>> fOnFlushRenderTasks;
 
     std::unique_ptr<GrTextContext>    fTextContext;
 
@@ -206,7 +221,7 @@ private:
 
     GrTokenTracker                    fTokenTracker;
     bool                              fFlushing;
-    bool                              fReduceOpListSplitting;
+    bool                              fReduceOpsTaskSplitting;
 
     SkTArray<GrOnFlushCallbackObject*> fOnFlushCBObjects;
 

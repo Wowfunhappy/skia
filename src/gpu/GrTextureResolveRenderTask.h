@@ -12,16 +12,15 @@
 
 class GrTextureResolveRenderTask final : public GrRenderTask {
 public:
-    static sk_sp<GrRenderTask> Make(
-            sk_sp<GrTextureProxy>, GrTextureResolveFlags, const GrCaps&);
-
-private:
     GrTextureResolveRenderTask(sk_sp<GrTextureProxy> textureProxy, GrTextureResolveFlags flags)
             : GrRenderTask(std::move(textureProxy))
             , fResolveFlags(flags) {
         SkASSERT(GrTextureResolveFlags::kNone != fResolveFlags);
     }
 
+    void init(const GrCaps&);
+
+private:
     void onPrepare(GrOpFlushState*) override {}
     bool onIsUsed(GrSurfaceProxy* proxy) const override {
         SkASSERT(proxy != fTarget.get());  // This case should be handled by GrRenderTask.
@@ -29,7 +28,17 @@ private:
     }
     void handleInternalAllocationFailure() override {}
     void gatherProxyIntervals(GrResourceAllocator*) const override;
+
+    ExpectedOutcome onMakeClosed(const GrCaps&) override {
+        return ExpectedOutcome::kTargetUnchanged;
+    }
+
     bool onExecute(GrOpFlushState*) override;
+
+#ifdef SK_DEBUG
+    // No non-dst proxies.
+    void visitProxies_debugOnly(const VisitSurfaceProxyFunc& fn) const override {}
+#endif
 
     const GrTextureResolveFlags fResolveFlags;
 };

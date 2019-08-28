@@ -11,7 +11,6 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrRenderTargetOpList.h"
 #include "src/gpu/GrXferProcessor.h"
 
 #include "src/gpu/ops/GrOp.h"
@@ -42,7 +41,7 @@ GrPipeline::GrPipeline(const InitArgs& args,
     if (args.fDstProxy.proxy()) {
         SkASSERT(args.fDstProxy.proxy()->isInstantiated());
 
-        fDstTextureProxy.reset(args.fDstProxy.proxy());
+        fDstTextureProxy = args.fDstProxy.refProxy();
         fDstTextureOffset = args.fDstProxy.offset();
     }
 
@@ -75,7 +74,7 @@ GrPipeline::GrPipeline(const InitArgs& args,
 }
 
 GrXferBarrierType GrPipeline::xferBarrierType(GrTexture* texture, const GrCaps& caps) const {
-    if (fDstTextureProxy.get() && fDstTextureProxy.get()->peekTexture() == texture) {
+    if (fDstTextureProxy && fDstTextureProxy->peekTexture() == texture) {
         return kTexture_GrXferBarrierType;
     }
     return this->getXferProcessor().xferBarrierType(caps);
