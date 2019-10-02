@@ -118,7 +118,7 @@ GrCCDrawPathsOp::GrCCDrawPathsOp(const SkMatrix& m, const GrShape& shape, float 
     }
     // We always have AA bloat, even in MSAA atlas mode. This is because by the time this Op comes
     // along and draws to the main canvas, the atlas has been resolved to analytic coverage.
-    this->setBounds(clippedDrawBounds, GrOp::HasAABloat::kYes, GrOp::IsZeroArea::kNo);
+    this->setBounds(clippedDrawBounds, GrOp::HasAABloat::kYes, GrOp::IsHairline::kNo);
 }
 
 GrCCDrawPathsOp::~GrCCDrawPathsOp() {
@@ -412,6 +412,15 @@ inline void GrCCDrawPathsOp::recordInstance(
     }
     SkASSERT(fInstanceRanges.back().fCoverageMode == coverageMode);
     SkASSERT(fInstanceRanges.back().fAtlasProxy == atlasProxy);
+}
+
+void GrCCDrawPathsOp::onPrepare(GrOpFlushState* flushState) {
+    // The CCPR ops don't know their atlas textures until after the preFlush calls have been
+    // executed at the start GrDrawingManger::flush. Thus the proxies are not added during the
+    // normal visitProxies calls doing addDrawOp. Therefore, the atlas proxies are added now.
+    for (const InstanceRange& range : fInstanceRanges) {
+        flushState->sampledProxyArray()->push_back(range.fAtlasProxy);
+    }
 }
 
 void GrCCDrawPathsOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) {

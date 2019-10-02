@@ -165,7 +165,7 @@ public:
         patch.fDst = dst;
 
         // setup bounds
-        this->setTransformedBounds(patch.fDst, viewMatrix, HasAABloat::kNo, IsZeroArea::kNo);
+        this->setTransformedBounds(patch.fDst, viewMatrix, HasAABloat::kNo, IsHairline::kNo);
     }
 
     const char* name() const override { return "NonAALatticeOp"; }
@@ -409,9 +409,15 @@ GR_DRAW_OP_TEST_DEFINE(NonAALatticeOp) {
     const GrBackendFormat format =
             context->priv().caps()->getDefaultBackendFormat(GrColorType::kRGBA_8888,
                                                             GrRenderable::kNo);
-    auto proxy = context->priv().proxyProvider()->createProxy(format, desc, GrRenderable::kNo, 1,
-                                                              origin, SkBackingFit::kExact,
-                                                              SkBudgeted::kYes, GrProtected::kNo);
+    auto proxy = context->priv().proxyProvider()->createProxy(format,
+                                                              desc,
+                                                              GrRenderable::kNo,
+                                                              1,
+                                                              origin,
+                                                              GrMipMapped::kNo,
+                                                              SkBackingFit::kExact,
+                                                              SkBudgeted::kYes,
+                                                              GrProtected::kNo);
 
     do {
         if (random->nextBool()) {

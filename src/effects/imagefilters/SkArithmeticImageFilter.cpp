@@ -32,14 +32,14 @@
 #include "src/gpu/glsl/GrGLSLUniformHandler.h"
 
 GR_FP_SRC_STRING SKSL_ARITHMETIC_SRC = R"(
-in uniform float4 k;
-layout(key) const in bool enforcePMColor;
+uniform float4 k;
+in bool enforcePMColor;
 in fragmentProcessor child;
 
 void main(inout half4 color) {
     half4 dst = sample(child);
     color = saturate(half(k.x) * color * dst + half(k.y) * color + half(k.z) * dst + half(k.w));
-    if (enforcePMColor) {
+    @if (enforcePMColor) {
         color.rgb = min(color.rgb, color.a);
     }
 }
@@ -422,12 +422,12 @@ sk_sp<SkSpecialImage> ArithmeticImageFilterImpl::filterImageGPU(
     renderTargetContext->drawRect(GrNoClip(), std::move(paint), GrAA::kNo, matrix,
                                   SkRect::Make(bounds));
 
-    return SkSpecialImage::MakeDeferredFromGpu(
-            context,
-            SkIRect::MakeWH(bounds.width(), bounds.height()),
-            kNeedNewImageUniqueID_SpecialImage,
-            renderTargetContext->asTextureProxyRef(),
-            renderTargetContext->colorSpaceInfo().refColorSpace());
+    return SkSpecialImage::MakeDeferredFromGpu(context,
+                                               SkIRect::MakeWH(bounds.width(), bounds.height()),
+                                               kNeedNewImageUniqueID_SpecialImage,
+                                               renderTargetContext->asTextureProxyRef(),
+                                               renderTargetContext->colorInfo().colorType(),
+                                               renderTargetContext->colorInfo().refColorSpace());
 }
 #endif
 

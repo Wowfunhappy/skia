@@ -110,7 +110,7 @@ void GrAtlasTextOp::init() {
                                    fNeedsGlyphTransform);
     // We don't have tight bounds on the glyph paths in device space. For the purposes of bounds
     // we treat this as a set of non-AA rects rendered with a texture.
-    this->setBounds(bounds, HasAABloat::kNo, IsZeroArea::kNo);
+    this->setBounds(bounds, HasAABloat::kNo, IsHairline::kNo);
 }
 
 void GrAtlasTextOp::visitProxies(const VisitProxyFunc& func) const {
@@ -305,6 +305,9 @@ void GrAtlasTextOp::onPrepareDraws(Target* target) {
     auto fixedDynamicState = target->makeFixedDynamicState(kMaxTextures);
     for (unsigned i = 0; i < numActiveProxies; ++i) {
         fixedDynamicState->fPrimitiveProcessorTextures[i] = proxies[i].get();
+        // This op does not know its atlas proxies when it is added to a GrOpsTasks, so the proxies
+        // don't get added during the visitProxies call. Thus we add them here.
+        target->sampledProxyArray()->push_back(proxies[i].get());
     }
 
     FlushInfo flushInfo;
@@ -413,6 +416,9 @@ void GrAtlasTextOp::flush(GrMeshDrawOp::Target* target, FlushInfo* flushInfo) co
         // Update the proxies used in the GP to match.
         for (unsigned i = gp->numTextureSamplers(); i < numActiveProxies; ++i) {
             flushInfo->fFixedDynamicState->fPrimitiveProcessorTextures[i] = proxies[i].get();
+            // This op does not know its atlas proxies when it is added to a GrOpsTasks, so the
+            // proxies don't get added during the visitProxies call. Thus we add them here.
+            target->sampledProxyArray()->push_back(proxies[i].get());
         }
         if (this->usesDistanceFields()) {
             if (this->isLCD()) {

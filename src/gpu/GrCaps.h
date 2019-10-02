@@ -41,15 +41,6 @@ public:
         only for POT textures) */
     bool mipMapSupport() const { return fMipMapSupport; }
 
-    /**
-     * Skia convention is that a device only has sRGB support if it supports sRGB formats for both
-     * textures and framebuffers.
-     */
-    bool srgbSupport() const { return fSRGBSupport; }
-    /**
-     * Is there support for enabling/disabling sRGB writes for sRGB-capable color buffers?
-     */
-    bool srgbWriteControl() const { return fSRGBWriteControl; }
     bool gpuTracingSupport() const { return fGpuTracingSupport; }
     bool oversizedStencilSupport() const { return fOversizedStencilSupport; }
     bool textureBarrierSupport() const { return fTextureBarrierSupport; }
@@ -72,6 +63,14 @@ public:
     // On tilers, an initial fullscreen clear is an OPTIMIZATION. It allows the hardware to
     // initialize each tile with a constant value rather than loading each pixel from memory.
     bool preferFullscreenClears() const { return fPreferFullscreenClears; }
+
+    // Should we discard stencil values after a render pass? (Tilers get better performance if we
+    // always load stencil buffers with a "clear" op, and then discard the content when finished.)
+    bool discardStencilValuesAfterRenderPass() const {
+        // This method is actually just a duplicate of preferFullscreenClears(), with a descriptive
+        // name for the sake of readability.
+        return this->preferFullscreenClears();
+    }
 
     bool preferVRAMUseOverFlushes() const { return fPreferVRAMUseOverFlushes; }
 
@@ -289,17 +288,6 @@ public:
      */
     bool shouldInitializeTextures() const { return fShouldInitializeTextures; }
 
-    /**
-     * When this is true it is required that all textures are initially cleared. However, the
-     * clearing must be implemented by passing level data to GrGpu::createTexture() rather than
-     * be implemeted by GrGpu::createTexture().
-     *
-     * TODO: Make this take GrBacknedFormat when canClearTextureOnCreation() does as well.
-     */
-    bool createTextureMustSpecifyAllLevels() const {
-        return this->shouldInitializeTextures() && !this->canClearTextureOnCreation();
-    }
-
     /** Returns true if the given backend supports importing AHardwareBuffers via the
      * GrAHardwarebufferImageGenerator. This will only ever be supported on Android devices with API
      * level >= 26.
@@ -404,17 +392,6 @@ public:
     virtual GrBackendFormat getBackendFormatFromCompressionType(SkImage::CompressionType) const = 0;
 
     /**
-     * Used by implementation of shouldInitializeTextures(). Indicates whether GrGpu implements the
-     * clear in GrGpu::createTexture() or if false then the caller must provide cleared MIP level
-     * data or GrGpu::createTexture() will fail.
-     *
-     * TODO: Make this take a GrBackendFormat so that GL can make this faster for cases
-     * when the format is renderable and glTexClearImage is not available. Doing this
-     * is overly complicated until the GrPixelConfig/format mess is straightened out..
-     */
-    virtual bool canClearTextureOnCreation() const = 0;
-
-    /**
      * The CLAMP_TO_BORDER wrap mode for texture coordinates was added to desktop GL in 1.3, and
      * GLES 3.2, but is also available in extensions. Vulkan and Metal always have support.
      */
@@ -471,8 +448,6 @@ protected:
 
     bool fNPOTTextureTileSupport                     : 1;
     bool fMipMapSupport                              : 1;
-    bool fSRGBSupport                                : 1;
-    bool fSRGBWriteControl                           : 1;
     bool fReuseScratchTextures                       : 1;
     bool fReuseScratchBuffers                        : 1;
     bool fGpuTracingSupport                          : 1;

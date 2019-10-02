@@ -47,7 +47,7 @@ class CCPRGeometryView : public Sample {
     void onOnceBeforeDraw() override { this->updateGpuData(); }
     void onDrawContent(SkCanvas*) override;
 
-    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) override;
+    Sample::Click* onFindClickHandler(SkScalar x, SkScalar y, skui::ModifierKey) override;
     bool onClick(Sample::Click*) override;
     bool onChar(SkUnichar) override;
     SkString name() override { return SkString("CCPRGeometry"); }
@@ -82,7 +82,7 @@ class CCPRGeometryView::DrawCoverageCountOp : public GrDrawOp {
 public:
     DrawCoverageCountOp(CCPRGeometryView* view) : INHERITED(ClassID()), fView(view) {
         this->setBounds(SkRect::MakeIWH(fView->width(), fView->height()), GrOp::HasAABloat::kNo,
-                        GrOp::IsZeroArea::kNo);
+                        GrOp::IsHairline::kNo);
     }
 
     const char* name() const override {
@@ -417,7 +417,7 @@ private:
     int fPtIdx;
 };
 
-Sample::Click* CCPRGeometryView::onFindClickHandler(SkScalar x, SkScalar y, ModifierKey) {
+Sample::Click* CCPRGeometryView::onFindClickHandler(SkScalar x, SkScalar y, skui::ModifierKey) {
     for (int i = 0; i < 4; ++i) {
         if (PrimitiveType::kCubics != fPrimitiveType && 2 == i) {
             continue;

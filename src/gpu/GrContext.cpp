@@ -298,20 +298,29 @@ bool GrContext::supportsDistanceFieldText() const {
 
 //////////////////////////////////////////////////////////////////////////////
 
-// DDL TODO: remove 'maxResources'
 void GrContext::getResourceCacheLimits(int* maxResources, size_t* maxResourceBytes) const {
     ASSERT_SINGLE_OWNER
     if (maxResources) {
-        *maxResources = fResourceCache->getMaxResourceCount();
+        *maxResources = -1;
     }
     if (maxResourceBytes) {
-        *maxResourceBytes = fResourceCache->getMaxResourceBytes();
+        *maxResourceBytes = this->getResourceCacheLimit();
     }
 }
 
-void GrContext::setResourceCacheLimits(int maxResources, size_t maxResourceBytes) {
+size_t GrContext::getResourceCacheLimit() const {
     ASSERT_SINGLE_OWNER
-    fResourceCache->setLimits(maxResources, maxResourceBytes);
+    return fResourceCache->getMaxResourceBytes();
+}
+
+void GrContext::setResourceCacheLimits(int unused, size_t maxResourceBytes) {
+    ASSERT_SINGLE_OWNER
+    this->setResourceCacheLimit(maxResourceBytes);
+}
+
+void GrContext::setResourceCacheLimit(size_t maxResourceBytes) {
+    ASSERT_SINGLE_OWNER
+    fResourceCache->setLimit(maxResourceBytes);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -337,10 +346,6 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
         return GrBackendTexture();
     }
 
-    if (!backendFormat.isValid()) {
-        return GrBackendTexture();
-    }
-
     return fGpu->createBackendTexture(width, height, backendFormat,
                                       mipMapped, renderable,
                                       nullptr, 0, nullptr, isProtected);
@@ -360,16 +365,11 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
     }
 
     const GrBackendFormat format = this->defaultBackendFormat(skColorType, renderable);
-    if (!format.isValid()) {
-        return GrBackendTexture();
-    }
 
     return this->createBackendTexture(width, height, format, mipMapped, renderable, isProtected);
 }
 
 GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization& c) {
-    const GrCaps* caps = this->caps();
-
     if (!this->asDirectContext() || !c.isValid()) {
         return GrBackendTexture();
     }
@@ -389,10 +389,6 @@ GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization
 
     const GrBackendFormat format = this->defaultBackendFormat(c.colorType(), GrRenderable::kYes);
     if (!format.isValid()) {
-        return GrBackendTexture();
-    }
-
-    if (!SkSurface_Gpu::Valid(caps, format)) {
         return GrBackendTexture();
     }
 
@@ -428,10 +424,6 @@ GrBackendTexture GrContext::createBackendTexture(const SkSurfaceCharacterization
         return GrBackendTexture();
     }
 
-    if (!SkSurface_Gpu::Valid(this->caps(), format)) {
-        return GrBackendTexture();
-    }
-
     GrBackendTexture result = this->createBackendTexture(c.width(), c.height(), format, color,
                                                          GrMipMapped(c.isMipMapped()),
                                                          GrRenderable::kYes,
@@ -452,10 +444,6 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
     }
 
     if (this->abandoned()) {
-        return GrBackendTexture();
-    }
-
-    if (!backendFormat.isValid()) {
         return GrBackendTexture();
     }
 
@@ -490,6 +478,33 @@ GrBackendTexture GrContext::createBackendTexture(int width, int height,
                                       isProtected);
 }
 
+GrBackendTexture GrContext::createBackendTexture(const SkPixmap srcData[], int numLevels,
+                                                 GrRenderable renderable, GrProtected isProtected) {
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
+
+    if (!this->asDirectContext()) {
+        return {};
+    }
+
+    if (this->abandoned()) {
+        return {};
+    }
+
+    if (!srcData || !numLevels) {
+        return {};
+    }
+
+    int baseWidth = srcData[0].width();
+    int baseHeight = srcData[0].height();
+    SkColorType colorType = srcData[0].colorType();
+
+    GrBackendFormat backendFormat = this->defaultBackendFormat(colorType, renderable);
+
+    return fGpu->createBackendTexture(baseWidth, baseHeight, backendFormat,
+                                      numLevels > 1 ? GrMipMapped::kYes : GrMipMapped::kNo,
+                                      renderable, srcData, numLevels, nullptr, isProtected);
+}
+
 void GrContext::deleteBackendTexture(GrBackendTexture backendTex) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
     if (this->abandoned() || !backendTex.isValid()) {
@@ -497,6 +512,10 @@ void GrContext::deleteBackendTexture(GrBackendTexture backendTex) {
     }
 
     fGpu->deleteBackendTexture(backendTex);
+}
+
+bool GrContext::precompileShader(const SkData& key, const SkData& data) {
+    return fGpu->precompileShader(key, data);
 }
 
 #ifdef SK_ENABLE_DUMP_GPU

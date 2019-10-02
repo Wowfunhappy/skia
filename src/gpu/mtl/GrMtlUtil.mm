@@ -79,9 +79,6 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
             return true;
         case kGray_8_as_Lum_GrPixelConfig:
             return false;
-        case kRGBA_float_GrPixelConfig:
-            *format = MTLPixelFormatRGBA32Float;
-            return true;
         case kRGBA_half_GrPixelConfig:
             *format = MTLPixelFormatRGBA16Float;
             return true;
@@ -101,14 +98,12 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
 #else
             return false;
 #endif
-        case kR_16_GrPixelConfig:
+        case kAlpha_16_GrPixelConfig:
             *format = MTLPixelFormatR16Unorm;
             return true;
         case kRG_1616_GrPixelConfig:
             *format = MTLPixelFormatRG16Unorm;
             return true;
-
-        // Experimental (for Y416 and mutant P016/P010)
         case kRGBA_16161616_GrPixelConfig:
             *format = MTLPixelFormatRGBA16Unorm;
             return true;
@@ -316,9 +311,6 @@ size_t GrMtlBytesPerFormat(MTLPixelFormat format) {
         case MTLPixelFormatRGBA16Unorm:
             return 8;
 
-        case MTLPixelFormatRGBA32Float:
-            return 16;
-
 #ifdef SK_BUILD_FOR_IOS
         case  MTLPixelFormatETC2_RGB8:
             return 0;
@@ -330,7 +322,35 @@ size_t GrMtlBytesPerFormat(MTLPixelFormat format) {
     SK_ABORT("Invalid Mtl format");
 }
 
+bool GrMtlFormatIsCompressed(MTLPixelFormat mtlFormat) {
+    switch (mtlFormat) {
+#ifdef SK_BUILD_FOR_IOS
+        case MTLPixelFormatETC2_RGB8:
+            return true;
+#endif
+        default:
+            return false;
+    }
+}
+
+bool GrMtlFormatToCompressionType(MTLPixelFormat mtlFormat,
+                                  SkImage::CompressionType* compressionType) {
+    switch (mtlFormat) {
+#ifdef SK_BUILD_FOR_IOS
+        case MTLPixelFormatETC2_RGB8:
+            *compressionType = SkImage::kETC1_CompressionType;
+            return true;
+#endif
+        default:
+            return false;
+    }
+}
+
 #if GR_TEST_UTILS
+bool GrMtlFormatIsBGRA(GrMTLPixelFormat mtlFormat) {
+    return mtlFormat == MTLPixelFormatBGRA8Unorm;
+}
+
 const char* GrMtlFormatToStr(GrMTLPixelFormat mtlFormat) {
     switch (mtlFormat) {
         case MTLPixelFormatInvalid:         return "Invalid";
@@ -348,7 +368,6 @@ const char* GrMtlFormatToStr(GrMTLPixelFormat mtlFormat) {
 #ifdef SK_BUILD_FOR_IOS
         case MTLPixelFormatABGR4Unorm:      return "ABGR4Unorm";
 #endif
-        case MTLPixelFormatRGBA32Float:     return "RGBA32Float";
         case MTLPixelFormatRGBA8Unorm_sRGB: return "RGBA8Unorm_sRGB";
         case MTLPixelFormatR16Unorm:        return "R16Unorm";
         case MTLPixelFormatRG16Unorm:       return "RG16Unorm";

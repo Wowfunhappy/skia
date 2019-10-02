@@ -57,6 +57,10 @@ public:
     void onPrepare(GrOpFlushState* flushState) override;
     bool onExecute(GrOpFlushState* flushState) override;
 
+    void addSampledTexture(GrTextureProxy* proxy) {
+        fSampledProxies.push_back(proxy);
+    }
+
     void addOp(std::unique_ptr<GrOp> op, GrTextureResolveManager textureResolveManager,
                const GrCaps& caps) {
         auto addDependency = [ textureResolveManager, &caps, this ] (
@@ -80,12 +84,14 @@ public:
                    GrTextureResolveManager textureResolveManager, const GrCaps& caps) {
         auto addDependency = [ textureResolveManager, &caps, this ] (
                 GrTextureProxy* p, GrMipMapped mipmapped) {
+            this->addSampledTexture(p);
             this->addDependency(p, mipmapped, textureResolveManager, caps);
         };
 
         op->visitProxies(addDependency);
         clip.visitProxies(addDependency);
         if (dstProxy.proxy()) {
+            this->addSampledTexture(dstProxy.proxy());
             addDependency(dstProxy.proxy(), GrMipMapped::kNo);
         }
 
@@ -101,23 +107,40 @@ public:
 
 private:
     bool isNoOp() const {
-        // TODO: GrLoadOp::kDiscard -> [empty OpsTask] -> GrStoreOp::kStore should also be a no-op.
-        // We don't count it as a no-op right now because of Vulkan. There are real cases where we
-        // store a discard, and if we skip that render pass, then the next time we load the render
-        // target, Vulkan detects loading of uninitialized memory and complains. If we don't skip
-        // storing the discard, then we trick Vulkan and it doesn't notice us doing anything wrong.
-        // We should definitely address this issue properly.
+        // TODO: GrLoadOp::kDiscard (i.e., storing a discard) should also be grounds for skipping
+        // execution. We currently don't because of Vulkan. See http://skbug.com/9373.
         //
         // TODO: We should also consider stencil load/store here. We get away with it for now
         // because we never discard stencil buffers.
-        return fOpChains.empty() && GrLoadOp::kClear != fColorLoadOp &&
-               GrLoadOp::kDiscard != fColorLoadOp;
+        return fOpChains.empty() && GrLoadOp::kLoad == fColorLoadOp;
     }
 
     void deleteOps();
 
-    // Must only be called if native stencil buffer clearing is enabled
-    void setStencilLoadOp(GrLoadOp op) { fStencilLoadOp = op; }
+    enum class StencilContent {
+        kDontCare,
+        kUserBitsCleared,  // User bits: cleared
+                           // Clip bit: don't care (Ganesh always pre-clears the clip bit.)
+        kPreserved
+    };
+
+    // Lets the caller specify what the content of the stencil buffer should be at the beginning
+    // of the render pass.
+    //
+    // When requesting kClear: Tilers will load the stencil buffer with a "clear" op; non-tilers
+    // will clear the stencil on first load, and then preserve it on subsequent loads. (Preserving
+    // works because renderTargetContexts are required to leave the user bits in a cleared state
+    // once finished.)
+    //
+    // NOTE: initialContent must not be kClear if caps.performStencilClearsAsDraws() is true.
+    void setInitialStencilContent(StencilContent initialContent) {
+        fInitialStencilContent = initialContent;
+    }
+
+    // If a renderTargetContext splits its opsTask, it uses this method to guarantee stencil values
+    // get preserved across its split tasks.
+    void setMustPreserveStencil() { fMustPreserveStencil = true; }
+
     // Must only be called if native color buffer clearing is enabled.
     void setColorLoadOp(GrLoadOp op, const SkPMColor4f& color);
     // Sets the clear color to transparent black
@@ -170,6 +193,11 @@ private:
                                        const DstProxy*, const GrAppliedClip*, const GrCaps&,
                                        GrOpMemoryPool*, GrAuditTrail*);
 
+        void setSkipExecuteFlag() { fSkipExecute = true; }
+        bool shouldExecute() const {
+            return SkToBool(this->head()) && !fSkipExecute;
+        }
+
     private:
         class List {
         public:
@@ -205,6 +233,10 @@ private:
         DstProxy fDstProxy;
         GrAppliedClip* fAppliedClip;
         SkRect fBounds;
+
+        // We set this flag to true if any of the ops' proxies fail to instantiate so that we know
+        // not to try and draw the op.
+        bool fSkipExecute = false;
     };
 
 
@@ -219,10 +251,7 @@ private:
 
     void forwardCombine(const GrCaps&);
 
-    ExpectedOutcome onMakeClosed(const GrCaps& caps) override {
-        this->forwardCombine(caps);
-        return (this->isNoOp()) ? ExpectedOutcome::kTargetUnchanged : ExpectedOutcome::kTargetDirty;
-    }
+    ExpectedOutcome onMakeClosed(const GrCaps& caps, SkIRect* targetUpdateBounds) override;
 
     friend class GrRenderTargetContextPriv; // for stencil clip state. TODO: this is invasive
 
@@ -240,7 +269,8 @@ private:
 
     GrLoadOp fColorLoadOp = GrLoadOp::kLoad;
     SkPMColor4f fLoadClearColor = SK_PMColor4fTRANSPARENT;
-    GrLoadOp fStencilLoadOp = GrLoadOp::kLoad;
+    StencilContent fInitialStencilContent = StencilContent::kDontCare;
+    bool fMustPreserveStencil = false;
 
     uint32_t fLastClipStackGenID;
     SkIRect fLastDevClipBounds;
@@ -257,6 +287,12 @@ private:
     SkArenaAlloc fClipAllocator{4096};
     SkDEBUGCODE(int fNumClips;)
 
+    // TODO: We could look into this being a set if we find we're adding a lot of duplicates that is
+    // causing slow downs.
+    SkTArray<GrTextureProxy*, true> fSampledProxies;
+
+    SkRect fTotalBounds = SkRect::MakeEmpty();
+    SkIRect fClippedContentBounds = SkIRect::MakeEmpty();
 };
 
 #endif

@@ -14,6 +14,7 @@
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrDefaultGeoProcFactory.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrOnFlushResourceProvider.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTargetContextPriv.h"
@@ -60,7 +61,7 @@ public:
             fLocalQuad = GrQuad(*localRect);
         }
         // Choose some conservative values for aa bloat and zero area.
-        this->setBounds(r, HasAABloat::kYes, IsZeroArea::kYes);
+        this->setBounds(r, HasAABloat::kYes, IsHairline::kYes);
     }
 
     const char* name() const override { return "NonAARectOp"; }
@@ -306,7 +307,7 @@ public:
 
         fAtlasProxy = GrProxyProvider::MakeFullyLazyProxy(
                 [format](GrResourceProvider* resourceProvider)
-                        -> GrSurfaceProxy::LazyInstantiationResult {
+                        -> GrSurfaceProxy::LazyCallbackResult {
                     GrSurfaceDesc desc;
                     // TODO: until partial flushes in MDB lands we're stuck having
                     // all 9 atlas draws occur
@@ -314,9 +315,9 @@ public:
                     desc.fHeight = kAtlasTileSize;
                     desc.fConfig = kRGBA_8888_GrPixelConfig;
 
-                    return resourceProvider->createTexture(
-                            desc, format, GrRenderable::kYes, 1, SkBudgeted::kYes, GrProtected::kNo,
-                            GrResourceProvider::Flags::kNoPendingIO);
+                    return resourceProvider->createTexture(desc, format, GrRenderable::kYes, 1,
+                                                           GrMipMapped::kNo, SkBudgeted::kYes,
+                                                           GrProtected::kNo);
                 },
                 format,
                 GrRenderable::kYes,
@@ -324,9 +325,9 @@ public:
                 GrProtected::kNo,
                 kBottomLeft_GrSurfaceOrigin,
                 kRGBA_8888_GrPixelConfig,
-                *proxyProvider->caps());
+                *proxyProvider->caps(),
+                GrSurfaceProxy::UseAllocator::kNo);
 
-        fAtlasProxy->priv().setIgnoredByResourceAllocator();
         return fAtlasProxy;
     }
 
@@ -355,7 +356,7 @@ public:
         // At this point 'fAtlasProxy' should be instantiated and have:
         //    1 ref from the 'fAtlasProxy' sk_sp
         //    9 refs from the 9 AtlasedRectOps
-        SkASSERT(10 == fAtlasProxy->priv().getProxyRefCnt());
+        SkASSERT(10 == fAtlasProxy->refCnt());
         // The backing GrSurface should have only 1 though bc there is only one proxy
         SkASSERT(1 == fAtlasProxy->testingOnly_getBackingRefCnt());
         auto rtc = resourceProvider->makeRenderTargetContext(fAtlasProxy, GrColorType::kRGBA_8888,

@@ -76,7 +76,6 @@ static inline VkFormat attrib_type_to_vkformat(GrVertexAttribType type) {
             return VK_FORMAT_R32_UINT;
         case kUShort_norm_GrVertexAttribType:
             return VK_FORMAT_R16_UNORM;
-        // Experimental (for Y416)
         case kUShort4_norm_GrVertexAttribType:
             return VK_FORMAT_R16G16B16A16_UNORM;
     }
@@ -587,10 +586,9 @@ void GrVkPipeline::SetDynamicScissorRectState(GrVkGpu* gpu,
                                               GrVkCommandBuffer* cmdBuffer,
                                               const GrRenderTarget* renderTarget,
                                               GrSurfaceOrigin rtOrigin,
-                                              SkIRect scissorRect) {
-    if (!scissorRect.intersect(SkIRect::MakeWH(renderTarget->width(), renderTarget->height()))) {
-        scissorRect.setEmpty();
-    }
+                                              const SkIRect& scissorRect) {
+    SkASSERT(scissorRect.isEmpty() ||
+             SkIRect::MakeWH(renderTarget->width(), renderTarget->height()).contains(scissorRect));
 
     VkRect2D scissor;
     scissor.offset.x = scissorRect.fLeft;

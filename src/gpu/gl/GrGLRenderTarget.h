@@ -12,7 +12,6 @@
 #include "include/core/SkScalar.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "src/gpu/GrRenderTarget.h"
-#include "src/gpu/gl/GrGLIRect.h"
 
 class GrGLCaps;
 class GrGLGpu;
@@ -47,20 +46,6 @@ public:
     GrGLuint renderFBOID() const { return fRTFBOID; }
     // FBO ID that has texture ID attached.
     GrGLuint textureFBOID() const { return fTexFBOID; }
-
-    // override of GrRenderTarget
-    ResolveType getResolveType() const override {
-        if (this->numSamples() <= 1 || fRTFBOID == fTexFBOID) {  // Also catches FBO 0.
-            SkASSERT(!this->requiresManualMSAAResolve());
-            return kAutoResolves_ResolveType;
-        } else if (kUnresolvableFBOID == fTexFBOID) {
-            SkASSERT(!this->requiresManualMSAAResolve());
-            return kCantResolve_ResolveType;
-        } else {
-            SkASSERT(this->requiresManualMSAAResolve());
-            return kCanResolve_ResolveType;
-        }
-    }
 
     GrBackendRenderTarget getBackendRenderTarget() const override;
 

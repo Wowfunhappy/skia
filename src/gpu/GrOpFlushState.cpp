@@ -12,6 +12,7 @@
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrDrawOpAtlas.h"
 #include "src/gpu/GrGpu.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrResourceProvider.h"
 
 //////////////////////////////////////////////////////////////////////////////
@@ -23,8 +24,7 @@ GrOpFlushState::GrOpFlushState(GrGpu* gpu, GrResourceProvider* resourceProvider,
         , fIndexPool(gpu, std::move(cpuBufferCache))
         , fGpu(gpu)
         , fResourceProvider(resourceProvider)
-        , fTokenTracker(tokenTracker)
-        , fDeinstantiateProxyTracker() {}
+        , fTokenTracker(tokenTracker) {}
 
 const GrCaps& GrOpFlushState::caps() const {
     return *fGpu->caps();
@@ -84,10 +84,11 @@ void GrOpFlushState::reset() {
     fBaseDrawToken = GrDeferredUploadToken::AlreadyFlushedToken();
 }
 
-void GrOpFlushState::doUpload(GrDeferredTextureUploadFn& upload) {
-    GrDeferredTextureUploadWritePixelsFn wp = [this](GrTextureProxy* dstProxy, int left, int top,
-                                                     int width, int height, GrColorType colorType,
-                                                     const void* buffer, size_t rowBytes) {
+void GrOpFlushState::doUpload(GrDeferredTextureUploadFn& upload,
+                              bool shouldPrepareSurfaceForSampling) {
+    GrDeferredTextureUploadWritePixelsFn wp = [this, shouldPrepareSurfaceForSampling](
+            GrTextureProxy* dstProxy, int left, int top, int width, int height,
+            GrColorType colorType, const void* buffer, size_t rowBytes) {
         GrSurface* dstSurface = dstProxy->peekSurface();
         if (!fGpu->caps()->surfaceSupportsWritePixels(dstSurface)) {
             return false;
@@ -102,8 +103,8 @@ void GrOpFlushState::doUpload(GrDeferredTextureUploadFn& upload) {
             tmpPixels.reset(new char[height * tightRB]);
             // Use kUnpremul to ensure no alpha type conversions or clamping occur.
             static constexpr auto kAT = kUnpremul_SkAlphaType;
-            GrPixelInfo srcInfo(colorType, kAT, nullptr, width, height);
-            GrPixelInfo tmpInfo(supportedWrite.fColorType, kAT, nullptr, width,
+            GrImageInfo srcInfo(colorType, kAT, nullptr, width, height);
+            GrImageInfo tmpInfo(supportedWrite.fColorType, kAT, nullptr, width,
                                 height);
             if (!GrConvertPixels(tmpInfo, tmpPixels.get(), tightRB, srcInfo, buffer, rowBytes)) {
                 return false;
@@ -112,7 +113,8 @@ void GrOpFlushState::doUpload(GrDeferredTextureUploadFn& upload) {
             buffer = tmpPixels.get();
         }
         return this->fGpu->writePixels(dstSurface, left, top, width, height, colorType,
-                                       supportedWrite.fColorType, buffer, rowBytes);
+                                       supportedWrite.fColorType, buffer, rowBytes,
+                                       shouldPrepareSurfaceForSampling);
     };
     upload(wp);
 }

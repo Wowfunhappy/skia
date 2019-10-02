@@ -30,6 +30,9 @@ typedef uint64_t GrGLDriverVersion;
                                                (static_cast<uint64_t>(minor) << 16) | \
                                                 static_cast<uint64_t>(point))
 
+#define GR_GL_MAJOR_VER(version) (static_cast<uint32_t>(version) >> 16)
+#define GR_GL_MINOR_VER(version) (static_cast<uint32_t>(version) & 0xFFFF)
+
 #define GR_GL_INVALID_VER GR_GL_VER(0, 0)
 #define GR_GLSL_INVALID_VER GR_GLSL_VER(0, 0)
 #define GR_GL_DRIVER_UNKNOWN_VER GR_GL_DRIVER_VER(0, 0, 0)
@@ -58,7 +61,6 @@ enum GrGLRenderer {
     kAdreno430_GrGLRenderer,
     kAdreno4xx_other_GrGLRenderer,
     kAdreno5xx_GrGLRenderer,
-    kOSMesa_GrGLRenderer,
     kGoogleSwiftShader_GrGLRenderer,
 
     /** Intel GPU families, ordered by generation **/
@@ -290,7 +292,6 @@ static constexpr GrGLFormat GrGLFormatFromGLEnum(GrGLenum glFormat) {
         case GR_GL_RG8:                  return GrGLFormat::kRG8;
         case GR_GL_RGB10_A2:             return GrGLFormat::kRGB10_A2;
         case GR_GL_RGBA4:                return GrGLFormat::kRGBA4;
-        case GR_GL_RGBA32F:              return GrGLFormat::kRGBA32F;
         case GR_GL_SRGB8_ALPHA8:         return GrGLFormat::kSRGB8_ALPHA8;
         case GR_GL_COMPRESSED_RGB8_ETC2: return GrGLFormat::kCOMPRESSED_RGB8_ETC2;
         case GR_GL_COMPRESSED_ETC1_RGB8: return GrGLFormat::kCOMPRESSED_ETC1_RGB8;
@@ -319,7 +320,6 @@ static constexpr GrGLenum GrGLFormatToEnum(GrGLFormat format) {
         case GrGLFormat::kRG8:                  return GR_GL_RG8;
         case GrGLFormat::kRGB10_A2:             return GR_GL_RGB10_A2;
         case GrGLFormat::kRGBA4:                return GR_GL_RGBA4;
-        case GrGLFormat::kRGBA32F:              return GR_GL_RGBA32F;
         case GrGLFormat::kSRGB8_ALPHA8:         return GR_GL_SRGB8_ALPHA8;
         case GrGLFormat::kCOMPRESSED_RGB8_ETC2: return GR_GL_COMPRESSED_RGB8_ETC2;
         case GrGLFormat::kCOMPRESSED_ETC1_RGB8: return GR_GL_COMPRESSED_ETC1_RGB8;

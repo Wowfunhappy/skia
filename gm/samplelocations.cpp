@@ -208,7 +208,7 @@ public:
 
 private:
     SampleLocationsTestOp(GradType gradType) : GrDrawOp(ClassID()), fGradType(gradType) {
-        this->setBounds(SkRect::MakeIWH(200, 200), HasAABloat::kNo, IsZeroArea::kNo);
+        this->setBounds(SkRect::MakeIWH(200, 200), HasAABloat::kNo, IsHairline::kNo);
     }
 
     const char* name() const override { return "SampleLocationsTestOp"; }
@@ -266,7 +266,7 @@ DrawResult SampleLocationsGM::onDraw(
     }
 
     auto offscreenRTC = ctx->priv().makeDeferredRenderTargetContext(
-            SkBackingFit::kExact, 200, 200, rtc->colorSpaceInfo().colorType(), nullptr,
+            SkBackingFit::kExact, 200, 200, rtc->colorInfo().colorType(), nullptr,
             rtc->numSamples(), GrMipMapped::kNo, fOrigin);
     if (!offscreenRTC) {
         *errorMsg = "Failed to create offscreen render target.";

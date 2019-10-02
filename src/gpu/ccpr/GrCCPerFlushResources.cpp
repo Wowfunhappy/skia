@@ -52,7 +52,7 @@ protected:
             : GrDrawOp(classID)
             , fResources(std::move(resources)) {
         this->setBounds(SkRect::MakeIWH(drawBounds.width(), drawBounds.height()),
-                        GrOp::HasAABloat::kNo, GrOp::IsZeroArea::kNo);
+                        GrOp::HasAABloat::kNo, GrOp::IsHairline::kNo);
     }
 
     const sk_sp<const GrCCPerFlushResources> fResources;
@@ -588,6 +588,10 @@ bool GrCCPerFlushResources::finalize(GrOnFlushResourceProvider* onFlushRP) {
                         atlas->getStrokeBatchID(), atlas->drawBounds());
             }
             rtc->addDrawOp(GrNoClip(), std::move(op));
+            if (rtc->proxy()->requiresManualMSAAResolve()) {
+                onFlushRP->addTextureResolveTask(sk_ref_sp(rtc->proxy()->asTextureProxy()),
+                                                 GrSurfaceProxy::ResolveFlags::kMSAA);
+            }
         }
 
         SkASSERT(atlas->getEndStencilResolveInstance() >= baseStencilResolveInstance);

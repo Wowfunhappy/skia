@@ -252,7 +252,7 @@ public:
             : INHERITED(ClassID()), fHelper(helperArgs, GrAAType::kCoverage, stencilSettings) {
         SkASSERT(shape.hasUnstyledKey());
         // Compute bounds
-        this->setTransformedBounds(shape.bounds(), viewMatrix, HasAABloat::kYes, IsZeroArea::kNo);
+        this->setTransformedBounds(shape.bounds(), viewMatrix, HasAABloat::kYes, IsHairline::kNo);
 
 #if defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_ANDROID_FRAMEWORK)
         fUsesDistanceField = true;
@@ -326,7 +326,10 @@ private:
         int numActiveProxies = fAtlas->numActivePages();
         const auto proxies = fAtlas->getProxies();
         for (int i = 0; i < numActiveProxies; ++i) {
+            // This op does not know its atlas proxies when it is added to a GrOpsTasks, so the
+            // proxies don't get added during the visitProxies call. Thus we add them here.
             flushInfo.fFixedDynamicState->fPrimitiveProcessorTextures[i] = proxies[i].get();
+            target->sampledProxyArray()->push_back(proxies[i].get());
         }
 
         // Setup GrGeometryProcessor
@@ -777,6 +780,9 @@ private:
         if (gp->numTextureSamplers() != numAtlasTextures) {
             for (int i = gp->numTextureSamplers(); i < numAtlasTextures; ++i) {
                 flushInfo->fFixedDynamicState->fPrimitiveProcessorTextures[i] = proxies[i].get();
+                // This op does not know its atlas proxies when it is added to a GrOpsTasks, so the
+                // proxies don't get added during the visitProxies call. Thus we add them here.
+                target->sampledProxyArray()->push_back(proxies[i].get());
             }
             // During preparation the number of atlas pages has increased.
             // Update the proxies used in the GP to match.

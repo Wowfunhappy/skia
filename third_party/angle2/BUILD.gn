@@ -8,9 +8,9 @@ declare_args() {
 
 angle_root = "../externals/angle2"
 
-import("../third_party.gni")
 import("$angle_root/src/compiler.gni")
 import("$angle_root/src/libGLESv2.gni")
+import("../third_party.gni")
 
 third_party("angle2") {
   public_include_dirs = [ "$angle_root/include" ]
@@ -99,7 +99,7 @@ shared_library("libGLESv2") {
               libglesv2_sources + libangle_gl_sources +
               angle_system_utils_sources + xxhash_sources,
           ".",
-          angle_root) + [ "$angle_root/src/libANGLE/FrameCapture.cpp" ]
+          angle_root) + [ "$angle_root/src/libANGLE/FrameCapture_mock.cpp" ]
   if (is_win) {
     sources += [ "$angle_root/src/libGLESv2/libGLESv2_autogen.def" ]
   }

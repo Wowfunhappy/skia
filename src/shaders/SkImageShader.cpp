@@ -165,7 +165,7 @@ sk_sp<SkShader> SkImageShader::Make(sk_sp<SkImage> image,
 
 #include "include/private/GrRecordingContext.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrColorSpaceInfo.h"
+#include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrBicubicEffect.h"
@@ -228,8 +228,7 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
         return nullptr;
     }
 
-    GrPixelConfig config = proxy->config();
-    bool isAlphaOnly = GrPixelConfigIsAlphaOnly(config);
+    bool isAlphaOnly = SkColorTypeIsAlphaOnly(fImage->colorType());
 
     lmInverse.postScale(scaleAdjust[0], scaleAdjust[1]);
 
@@ -252,8 +251,7 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
         }
     }
     inner = GrColorSpaceXformEffect::Make(std::move(inner), fImage->colorSpace(),
-                                          fImage->alphaType(),
-                                          args.fDstColorSpaceInfo->colorSpace());
+                                          fImage->alphaType(), args.fDstColorInfo->colorSpace());
     if (isAlphaOnly) {
         return inner;
     } else if (args.fInputColorIsOpaque) {
@@ -421,10 +419,17 @@ bool SkImageShader::doStages(const SkStageRec& rec, SkImageStageUpdater* updater
         void* ctx = gather;
         switch (info.colorType()) {
             case kAlpha_8_SkColorType:      p->append(SkRasterPipeline::gather_a8,      ctx); break;
+            case kA16_unorm_SkColorType:    p->append(SkRasterPipeline::gather_a16,     ctx); break;
+            case kA16_float_SkColorType:    p->append(SkRasterPipeline::gather_af16,    ctx); break;
             case kRGB_565_SkColorType:      p->append(SkRasterPipeline::gather_565,     ctx); break;
             case kARGB_4444_SkColorType:    p->append(SkRasterPipeline::gather_4444,    ctx); break;
+            case kR8G8_unorm_SkColorType:   p->append(SkRasterPipeline::gather_rg88,    ctx); break;
+            case kR16G16_unorm_SkColorType: p->append(SkRasterPipeline::gather_rg1616,  ctx); break;
+            case kR16G16_float_SkColorType: p->append(SkRasterPipeline::gather_rgf16,  ctx);  break;
             case kRGBA_8888_SkColorType:    p->append(SkRasterPipeline::gather_8888,    ctx); break;
             case kRGBA_1010102_SkColorType: p->append(SkRasterPipeline::gather_1010102, ctx); break;
+            case kR16G16B16A16_unorm_SkColorType:
+                                            p->append(SkRasterPipeline::gather_16161616,ctx); break;
             case kRGBA_F16Norm_SkColorType:
             case kRGBA_F16_SkColorType:     p->append(SkRasterPipeline::gather_f16,     ctx); break;
             case kRGBA_F32_SkColorType:     p->append(SkRasterPipeline::gather_f32,     ctx); break;

@@ -22,7 +22,7 @@
 #include "include/utils/SkNoDrawCanvas.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkMakeUnique.h"
-#include "src/core/SkStrikeInterface.h"
+#include "src/core/SkStrikeForGPU.h"
 #include "src/core/SkTLazy.h"
 
 class Deserializer;
@@ -37,15 +37,6 @@ class SkTypefaceProxy;
 struct WireTypeface;
 
 class SkStrikeServer;
-
-struct SkDescriptorMapOperators {
-    size_t operator()(const SkDescriptor* key) const;
-    bool operator()(const SkDescriptor* lhs, const SkDescriptor* rhs) const;
-};
-
-template <typename T>
-using SkDescriptorMap = std::unordered_map<const SkDescriptor*, T, SkDescriptorMapOperators,
-                                           SkDescriptorMapOperators>;
 
 // A SkTextBlobCacheDiffCanvas is used to populate the SkStrikeServer with ops
 // which will be serialized and rendered using the SkStrikeClient.
@@ -75,7 +66,7 @@ private:
 using SkDiscardableHandleId = uint32_t;
 
 // This class is not thread-safe.
-class SkStrikeServer final : public SkStrikeCacheInterface {
+class SkStrikeServer final : public SkStrikeForGPUCacheInterface {
 public:
     // An interface used by the server to create handles for pinning SkStrike
     // entries on the remote client.
@@ -122,9 +113,9 @@ public:
                                    SkScalerContextFlags flags,
                                    SkScalerContextEffects* effects);
 
-    SkScopedStrike findOrCreateScopedStrike(const SkDescriptor& desc,
-                                            const SkScalerContextEffects& effects,
-                                            const SkTypeface& typeface) override;
+    SkScopedStrikeForGPU findOrCreateScopedStrike(const SkDescriptor& desc,
+                                                  const SkScalerContextEffects& effects,
+                                                  const SkTypeface& typeface) override;
 
     static void AddGlyphForTesting(
             RemoteStrike* cache, SkPackedGlyphID glyphID, bool asPath);
@@ -132,7 +123,7 @@ public:
     void setMaxEntriesInDescriptorMapForTesting(size_t count) {
         fMaxEntriesInDescriptorMap = count;
     }
-    size_t remoteGlyphStateMapSizeForTesting() const { return fRemoteGlyphStateMap.size(); }
+    size_t remoteStrikeMapSizeForTesting() const { return fDescToRemoteStrike.size(); }
 
 private:
     static constexpr size_t kMaxEntriesInDescriptorMap = 2000u;
@@ -143,7 +134,14 @@ private:
                                    const SkTypeface& typeface,
                                    SkScalerContextEffects effects);
 
-    SkDescriptorMap<std::unique_ptr<RemoteStrike>> fRemoteGlyphStateMap;
+    struct MapOps {
+        size_t operator()(const SkDescriptor* key) const;
+        bool operator()(const SkDescriptor* lhs, const SkDescriptor* rhs) const;
+    };
+    using DescToRemoteStrike =
+            std::unordered_map<const SkDescriptor*, std::unique_ptr<RemoteStrike>, MapOps, MapOps>;
+    DescToRemoteStrike fDescToRemoteStrike;
+
     DiscardableHandleManager* const fDiscardableHandleManager;
     SkTHashSet<SkFontID> fCachedTypefaces;
     size_t fMaxEntriesInDescriptorMap = kMaxEntriesInDescriptorMap;

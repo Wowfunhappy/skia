@@ -30,7 +30,7 @@ public:
         size_t len = fStorage.size();
         SkASSERT(fPos <= len);
 
-        size_t overwrite = std::min(len - fPos, bytes);
+        size_t overwrite = SkTMin(len - fPos, bytes);
         if (overwrite) {
             SkDebugf("overwrite %zu bytes at %zu offset with %zu remaining\n", overwrite, fPos, bytes - overwrite);
             memcpy(&fStorage[fPos], src, overwrite);
@@ -234,7 +234,7 @@ bool SkVideoEncoder::beginRecording(SkISize dim, int fps) {
     // need opaque and bgra to efficiently use libyuv / convert-to-yuv-420
     SkAlphaType alphaType = kOpaque_SkAlphaType;
     sk_sp<SkColorSpace> cs = nullptr;   // should we use this?
-    fInfo = SkImageInfo::Make(dim.width(), dim.height(), kRGBA_8888_SkColorType, alphaType, cs);
+    fInfo = SkImageInfo::Make(dim, kRGBA_8888_SkColorType, alphaType, cs);
     if (!this->init(fps)) {
         return false;
     }

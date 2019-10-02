@@ -11,6 +11,7 @@
 #include "include/gpu/GrGpuResource.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTargetContext.h"
@@ -59,7 +60,7 @@ private:
 
     TestOp(std::unique_ptr<GrFragmentProcessor> fp)
             : INHERITED(ClassID()), fProcessors(std::move(fp)) {
-        this->setBounds(SkRect::MakeWH(100, 100), HasAABloat::kNo, IsZeroArea::kNo);
+        this->setBounds(SkRect::MakeWH(100, 100), HasAABloat::kNo, IsHairline::kNo);
     }
 
     void onPrepareDraws(Target* target) override { return; }
@@ -147,7 +148,7 @@ static void check_refs(skiatest::Reporter* reporter,
                        GrTextureProxy* proxy,
                        int32_t expectedProxyRefs,
                        int32_t expectedBackingRefs) {
-    int32_t actualProxyRefs = proxy->priv().getProxyRefCnt();
+    int32_t actualProxyRefs = proxy->refCnt();
     int32_t actualBackingRefs = proxy->testingOnly_getBackingRefCnt();
 
     SkASSERT(actualProxyRefs == expectedProxyRefs);
@@ -177,7 +178,7 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ProcessorRefTest, reporter, ctxInfo) {
             {
                 sk_sp<GrTextureProxy> proxy = proxyProvider->createProxy(
                         format, desc, GrRenderable::kNo, 1, kTopLeft_GrSurfaceOrigin,
-                        SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
+                        GrMipMapped::kNo, SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
 
                 {
                     SkTArray<sk_sp<GrTextureProxy>> proxies;

@@ -14,6 +14,7 @@
 #include "src/gpu/GrColor.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGeometryProcessor.h"
+#include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrOpsRenderPass.h"
@@ -129,7 +130,7 @@ private:
         , fScissorTest(scissorTest)
         , fVertexBuffer(std::move(vbuff)) {
         this->setBounds(SkRect::MakeIWH(kScreenSize, kScreenSize),
-                        HasAABloat::kNo, IsZeroArea::kNo);
+                        HasAABloat::kNo, IsHairline::kNo);
     }
 
     const char* name() const override { return "GrPipelineDynamicStateTestOp"; }

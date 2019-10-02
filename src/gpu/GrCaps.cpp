@@ -17,8 +17,6 @@
 GrCaps::GrCaps(const GrContextOptions& options) {
     fMipMapSupport = false;
     fNPOTTextureTileSupport = false;
-    fSRGBSupport = false;
-    fSRGBWriteControl = false;
     fReuseScratchTextures = true;
     fReuseScratchBuffers = true;
     fGpuTracingSupport = false;
@@ -167,8 +165,6 @@ void GrCaps::dumpJSON(SkJSONWriter* writer) const {
 
     writer->appendBool("MIP Map Support", fMipMapSupport);
     writer->appendBool("NPOT Texture Tile Support", fNPOTTextureTileSupport);
-    writer->appendBool("sRGB Support", fSRGBSupport);
-    writer->appendBool("sRGB Write Control", fSRGBWriteControl);
     writer->appendBool("Reuse Scratch Textures", fReuseScratchTextures);
     writer->appendBool("Reuse Scratch Buffers", fReuseScratchBuffers);
     writer->appendBool("Gpu Tracing Support", fGpuTracingSupport);
@@ -181,7 +177,7 @@ void GrCaps::dumpJSON(SkJSONWriter* writer) const {
     writer->appendBool("MSAA Resolves Automatically", fMSAAResolvesAutomatically);
     writer->appendBool("Use primitive restart", fUsePrimitiveRestart);
     writer->appendBool("Prefer client-side dynamic buffers", fPreferClientSideDynamicBuffers);
-    writer->appendBool("Prefer fullscreen clears", fPreferFullscreenClears);
+    writer->appendBool("Prefer fullscreen clears (and stencil discard)", fPreferFullscreenClears);
     writer->appendBool("Must clear buffer memory", fMustClearUploadedBufferData);
     writer->appendBool("Should initialize textures", fShouldInitializeTextures);
     writer->appendBool("Supports importing AHardwareBuffers", fSupportsAHardwareBufferImages);

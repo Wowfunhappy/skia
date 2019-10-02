@@ -173,14 +173,6 @@ private:
 // Paths use a SkWriter32 which requires 4 byte alignment.
 static const size_t kPathAlignment  = 4u;
 
-size_t SkDescriptorMapOperators::operator()(const SkDescriptor* key) const {
-    return key->getChecksum();
-}
-
-bool SkDescriptorMapOperators::operator()(const SkDescriptor* lhs, const SkDescriptor* rhs) const {
-    return *lhs == *rhs;
-}
-
 // -- StrikeSpec -----------------------------------------------------------------------------------
 struct StrikeSpec {
     StrikeSpec() = default;
@@ -193,7 +185,7 @@ struct StrikeSpec {
 };
 
 // -- RemoteStrike ----------------------------------------------------------------------------
-class SkStrikeServer::RemoteStrike : public SkStrikeInterface {
+class SkStrikeServer::RemoteStrike : public SkStrikeForGPU {
 public:
     // N.B. RemoteStrike is not valid until ensureScalerContext is called.
     RemoteStrike(const SkDescriptor& descriptor,
@@ -229,14 +221,16 @@ public:
 
     void onAboutToExitScope() override {}
 
-private:
     bool hasPendingGlyphs() const {
         return !fPendingGlyphImages.empty() || !fPendingGlyphPaths.empty();
     }
+
+    void resetScalerContext();
+
+private:
     void writeGlyphPath(const SkPackedGlyphID& glyphID, Serializer* serializer) const;
 
     void ensureScalerContext();
-    void resetScalerContext();
 
     // The set of glyphs cached on the remote client.
     SkTHashSet<SkPackedGlyphID> fCachedGlyphImages;
@@ -316,6 +310,14 @@ void SkStrikeServer::RemoteStrike::addGlyph(SkPackedGlyphID glyph, bool asPath) 
     pending->push_back(glyph);
 }
 
+size_t SkStrikeServer::MapOps::operator()(const SkDescriptor* key) const {
+    return key->getChecksum();
+}
+
+bool SkStrikeServer::MapOps::operator()(const SkDescriptor* lhs, const SkDescriptor* rhs) const {
+    return *lhs == *rhs;
+}
+
 
 // -- TrackLayerDevice -----------------------------------------------------------------------------
 class SkTextBlobCacheDiffCanvas::TrackLayerDevice final : public SkNoPixelsDevice {
@@ -358,9 +360,6 @@ private:
 };
 
 // -- SkTextBlobCacheDiffCanvas -------------------------------------------------------------------
-// DEPRECATED
-// TODO(herb): remove uses in Chrome
-
 SkTextBlobCacheDiffCanvas::SkTextBlobCacheDiffCanvas(int width, int height,
                                                      const SkSurfaceProps& props,
                                                      SkStrikeServer* strikeServer,
@@ -428,7 +427,17 @@ sk_sp<SkData> SkStrikeServer::serializeTypeface(SkTypeface* tf) {
 }
 
 void SkStrikeServer::writeStrikeData(std::vector<uint8_t>* memory) {
-    if (fRemoteStrikesToSend.empty() && fTypefacesToSend.empty()) {
+    size_t strikesToSend = 0;
+    fRemoteStrikesToSend.foreach ([&strikesToSend](RemoteStrike* strike) {
+        if (strike->hasPendingGlyphs()) {
+            strikesToSend++;
+        } else {
+            strike->resetScalerContext();
+        }
+    });
+
+    if (strikesToSend == 0 && fTypefacesToSend.empty()) {
+        fRemoteStrikesToSend.reset();
         return;
     }
 
@@ -439,19 +448,25 @@ void SkStrikeServer::writeStrikeData(std::vector<uint8_t>* memory) {
     }
     fTypefacesToSend.clear();
 
-    serializer.emplace<uint64_t>(SkTo<uint64_t>(fRemoteStrikesToSend.count()));
-    fRemoteStrikesToSend.foreach(
+    serializer.emplace<uint64_t>(SkTo<uint64_t>(strikesToSend));
+    fRemoteStrikesToSend.foreach (
 #ifdef SK_DEBUG
             [&serializer, this](RemoteStrike* strike) {
-                strike->writePendingGlyphs(&serializer);
-                auto it = fRemoteGlyphStateMap.find(&strike->getDescriptor());
-                SkASSERT(it != fRemoteGlyphStateMap.end());
+                if (strike->hasPendingGlyphs()) {
+                    strike->writePendingGlyphs(&serializer);
+                    strike->resetScalerContext();
+                }
+                auto it = fDescToRemoteStrike.find(&strike->getDescriptor());
+                SkASSERT(it != fDescToRemoteStrike.end());
                 SkASSERT(it->second.get() == strike);
             }
 
 #else
             [&serializer](RemoteStrike* strike) {
-                strike->writePendingGlyphs(&serializer);
+                if (strike->hasPendingGlyphs()) {
+                    strike->writePendingGlyphs(&serializer);
+                    strike->resetScalerContext();
+                }
             }
 #endif
     );
@@ -471,10 +486,10 @@ SkStrikeServer::RemoteStrike* SkStrikeServer::getOrCreateCache(
     return this->getOrCreateCache(*desc, *font.getTypefaceOrDefault(), *effects);
 }
 
-SkScopedStrike SkStrikeServer::findOrCreateScopedStrike(const SkDescriptor& desc,
-                                                        const SkScalerContextEffects& effects,
-                                                        const SkTypeface& typeface) {
-    return SkScopedStrike{this->getOrCreateCache(desc, typeface, effects)};
+SkScopedStrikeForGPU SkStrikeServer::findOrCreateScopedStrike(const SkDescriptor& desc,
+                                                              const SkScalerContextEffects& effects,
+                                                              const SkTypeface& typeface) {
+    return SkScopedStrikeForGPU{this->getOrCreateCache(desc, typeface, effects)};
 }
 
 void SkStrikeServer::AddGlyphForTesting(
@@ -483,13 +498,14 @@ void SkStrikeServer::AddGlyphForTesting(
 }
 
 void SkStrikeServer::checkForDeletedEntries() {
-    auto it = fRemoteGlyphStateMap.begin();
-    while (fRemoteGlyphStateMap.size() > fMaxEntriesInDescriptorMap &&
-           it != fRemoteGlyphStateMap.end()) {
-        if (fDiscardableHandleManager->isHandleDeleted(it->second->discardableHandleId())) {
+    auto it = fDescToRemoteStrike.begin();
+    while (fDescToRemoteStrike.size() > fMaxEntriesInDescriptorMap &&
+           it != fDescToRemoteStrike.end()) {
+        RemoteStrike* strike = it->second.get();
+        if (fDiscardableHandleManager->isHandleDeleted(strike->discardableHandleId())) {
             // If we are removing the strike, we better not be trying to send it at the same time.
-            SkASSERT(!fRemoteStrikesToSend.contains(it->second.get()));
-            it = fRemoteGlyphStateMap.erase(it);
+            SkASSERT(!fRemoteStrikesToSend.contains(strike));
+            it = fDescToRemoteStrike.erase(it);
         } else {
             ++it;
         }
@@ -512,8 +528,8 @@ SkStrikeServer::RemoteStrike* SkStrikeServer::getOrCreateCache(
             )
     );
 
-    auto it = fRemoteGlyphStateMap.find(&desc);
-    if (it != fRemoteGlyphStateMap.end()) {
+    auto it = fDescToRemoteStrike.find(&desc);
+    if (it != fDescToRemoteStrike.end()) {
         // We have processed the RemoteStrike before. Reuse it.
         RemoteStrike* strike = it->second.get();
         strike->setTypefaceAndEffects(&typeface, effects);
@@ -529,7 +545,7 @@ SkStrikeServer::RemoteStrike* SkStrikeServer::getOrCreateCache(
             return strike;
         }
 
-        fRemoteGlyphStateMap.erase(it);
+        fDescToRemoteStrike.erase(it);
     }
 
     // Create a new RemoteStrike. Start by processing the typeface.
@@ -548,7 +564,7 @@ SkStrikeServer::RemoteStrike* SkStrikeServer::getOrCreateCache(
     auto remoteStrikePtr = remoteStrike.get();
     fRemoteStrikesToSend.add(remoteStrikePtr);
     auto d = &remoteStrike->getDescriptor();
-    fRemoteGlyphStateMap[d] = std::move(remoteStrike);
+    fDescToRemoteStrike[d] = std::move(remoteStrike);
 
     checkForDeletedEntries();
 
@@ -571,12 +587,7 @@ static void writeGlyph(SkGlyph* glyph, Serializer* serializer) {
 }
 
 void SkStrikeServer::RemoteStrike::writePendingGlyphs(Serializer* serializer) {
-    // TODO(khushalsagar): Write a strike only if it has any pending glyphs.
-    serializer->emplace<bool>(this->hasPendingGlyphs());
-    if (!this->hasPendingGlyphs()) {
-        this->resetScalerContext();
-        return;
-    }
+    SkASSERT(this->hasPendingGlyphs());
 
     // Write the desc.
     serializer->emplace<StrikeSpec>(fContext->getTypeface()->uniqueID(), fDiscardableHandleId);
@@ -620,7 +631,6 @@ void SkStrikeServer::RemoteStrike::writePendingGlyphs(Serializer* serializer) {
         writeGlyphPath(glyphID, serializer);
     }
     fPendingGlyphPaths.clear();
-    this->resetScalerContext();
 }
 
 void SkStrikeServer::RemoteStrike::ensureScalerContext() {
@@ -659,7 +669,7 @@ void SkStrikeServer::RemoteStrike::writeGlyphPath(const SkPackedGlyphID& glyphID
 
 
 // Be sure to read and understand the comment for prepareForDrawingRemoveEmpty in
-// SkStrikeInterface.h before working on this code.
+// SkStrikeForGPU.h before working on this code.
 SkSpan<const SkGlyphPos>
 SkStrikeServer::RemoteStrike::prepareForDrawingRemoveEmpty(
         const SkPackedGlyphID packedGlyphIDs[],
@@ -789,11 +799,6 @@ bool SkStrikeClient::readStrikeData(const volatile void* memory, size_t memorySi
     if (!deserializer.read<uint64_t>(&strikeCount)) READ_FAILURE
 
     for (size_t i = 0; i < strikeCount; ++i) {
-        bool has_glyphs = false;
-        if (!deserializer.read<bool>(&has_glyphs)) READ_FAILURE
-
-        if (!has_glyphs) continue;
-
         StrikeSpec spec;
         if (!deserializer.read<StrikeSpec>(&spec)) READ_FAILURE
 

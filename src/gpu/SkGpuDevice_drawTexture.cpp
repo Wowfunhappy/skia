@@ -176,7 +176,7 @@ static void draw_texture(GrRenderTargetContext* rtc, const GrClip& clip, const S
                          const SkPoint dstClip[4], GrAA aa, GrQuadAAFlags aaFlags,
                          SkCanvas::SrcRectConstraint constraint, sk_sp<GrTextureProxy> proxy,
                          SkAlphaType alphaType, SkColorSpace* colorSpace) {
-    const GrColorSpaceInfo& dstInfo(rtc->colorSpaceInfo());
+    const GrColorInfo& dstInfo(rtc->colorInfo());
     auto textureXform =
         GrColorSpaceXform::Make(colorSpace          , alphaType,
                                 dstInfo.colorSpace(), kPremul_SkAlphaType);
@@ -304,14 +304,14 @@ static void draw_texture_producer(GrContext* context, GrRenderTargetContext* rtc
     auto fp = producer->createFragmentProcessor(textureMatrix, src, constraintMode,
                                                 coordsAllInsideSrcRect, filterMode);
     fp = GrColorSpaceXformEffect::Make(std::move(fp), producer->colorSpace(), producer->alphaType(),
-                                       rtc->colorSpaceInfo().colorSpace());
+                                       rtc->colorInfo().colorSpace());
     if (!fp) {
         return;
     }
 
     GrPaint grPaint;
-    if (!SkPaintToGrPaintWithTexture(context, rtc->colorSpaceInfo(), paint, ctm,
-                                     std::move(fp), producer->isAlphaOnly(), &grPaint)) {
+    if (!SkPaintToGrPaintWithTexture(context, rtc->colorInfo(), paint, ctm, std::move(fp),
+                                     producer->isAlphaOnly(), &grPaint)) {
         return;
     }
 
@@ -467,12 +467,18 @@ void SkGpuDevice::drawEdgeAAImageSet(const SkCanvas::ImageSetEntry set[], int co
             SkASSERT(!set[i].fHasClip || dstClips);
             SkASSERT(set[i].fMatrixIndex < 0 || preViewMatrices);
 
+            SkTCopyOnFirstWrite<SkPaint> entryPaint(paint);
+            if (set[i].fAlpha != 1.f) {
+                auto paintAlpha = paint.getAlphaf();
+                entryPaint.writable()->setAlphaf(paintAlpha * set[i].fAlpha);
+            }
             // Always send GrAA::kYes to preserve seaming across tiling in MSAA
-            this->drawImageQuad(set[i].fImage.get(), &set[i].fSrcRect, &set[i].fDstRect,
-                    set[i].fHasClip ? dstClips + dstClipIndex : nullptr,
-                    GrAA::kYes, SkToGrQuadAAFlags(set[i].fAAFlags),
+            this->drawImageQuad(
+                    set[i].fImage.get(), &set[i].fSrcRect, &set[i].fDstRect,
+                    set[i].fHasClip ? dstClips + dstClipIndex : nullptr, GrAA::kYes,
+                    SkToGrQuadAAFlags(set[i].fAAFlags),
                     set[i].fMatrixIndex < 0 ? nullptr : preViewMatrices + set[i].fMatrixIndex,
-                    paint, constraint);
+                    *entryPaint, constraint);
             dstClipIndex += 4 * set[i].fHasClip;
         }
         return;
@@ -490,7 +496,7 @@ void SkGpuDevice::drawEdgeAAImageSet(const SkCanvas::ImageSetEntry set[], int co
         if (n > 0) {
             auto textureXform = GrColorSpaceXform::Make(
                     set[base].fImage->colorSpace(), set[base].fImage->alphaType(),
-                    fRenderTargetContext->colorSpaceInfo().colorSpace(), kPremul_SkAlphaType);
+                    fRenderTargetContext->colorInfo().colorSpace(), kPremul_SkAlphaType);
             fRenderTargetContext->drawTextureSet(this->clip(), textures.get() + base, n,
                                                  filter, mode, GrAA::kYes, constraint, this->ctm(),
                                                  std::move(textureXform));
@@ -534,10 +540,16 @@ void SkGpuDevice::drawEdgeAAImageSet(const SkCanvas::ImageSetEntry set[], int co
             draw();
             base = i + 1;
             n = 0;
-            this->drawImageQuad(image, &set[i].fSrcRect, &set[i].fDstRect, clip, GrAA::kYes,
+            SkTCopyOnFirstWrite<SkPaint> entryPaint(paint);
+            if (set[i].fAlpha != 1.f) {
+                auto paintAlpha = paint.getAlphaf();
+                entryPaint.writable()->setAlphaf(paintAlpha * set[i].fAlpha);
+            }
+            this->drawImageQuad(
+                    image, &set[i].fSrcRect, &set[i].fDstRect, clip, GrAA::kYes,
                     SkToGrQuadAAFlags(set[i].fAAFlags),
                     set[i].fMatrixIndex < 0 ? nullptr : preViewMatrices + set[i].fMatrixIndex,
-                    paint, constraint);
+                    *entryPaint, constraint);
             continue;
         }
 

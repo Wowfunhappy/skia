@@ -188,14 +188,12 @@ bool SkSurface_Gpu::onCharacterize(SkSurfaceCharacterization* characterization) 
     GrRenderTargetContext* rtc = fDevice->accessRenderTargetContext();
     GrContext* ctx = fDevice->context();
 
-    int maxResourceCount;
-    size_t maxResourceBytes;
-    ctx->getResourceCacheLimits(&maxResourceCount, &maxResourceBytes);
+    size_t maxResourceBytes = ctx->getResourceCacheLimit();
 
     bool mipmapped = rtc->asTextureProxy() ? GrMipMapped::kYes == rtc->asTextureProxy()->mipMapped()
                                            : false;
 
-    SkColorType ct = GrColorTypeToSkColorType(rtc->colorSpaceInfo().colorType());
+    SkColorType ct = GrColorTypeToSkColorType(rtc->colorInfo().colorType());
     if (ct == kUnknown_SkColorType) {
         return false;
     }
@@ -206,7 +204,7 @@ bool SkSurface_Gpu::onCharacterize(SkSurfaceCharacterization* characterization) 
     SkASSERT(!usesGLFBO0 || !SkToBool(rtc->asTextureProxy()));
 
     SkImageInfo ii = SkImageInfo::Make(rtc->width(), rtc->height(), ct, kPremul_SkAlphaType,
-                                       rtc->colorSpaceInfo().refColorSpace());
+                                       rtc->colorInfo().refColorSpace());
 
     GrBackendFormat format = rtc->asSurfaceProxy()->backendFormat();
 
@@ -272,9 +270,7 @@ bool SkSurface_Gpu::onIsCompatible(const SkSurfaceCharacterization& characteriza
     // As long as the current state if the context allows for greater or equal resources,
     // we allow the DDL to be replayed.
     // DDL TODO: should we just remove the resource check and ignore the cache limits on playback?
-    int maxResourceCount;
-    size_t maxResourceBytes;
-    ctx->getResourceCacheLimits(&maxResourceCount, &maxResourceBytes);
+    size_t maxResourceBytes = ctx->getResourceCacheLimit();
 
     if (characterization.isTextureable()) {
         if (!rtc->asTextureProxy()) {
@@ -296,7 +292,7 @@ bool SkSurface_Gpu::onIsCompatible(const SkSurfaceCharacterization& characteriza
         return false;
     }
 
-    SkColorType rtcColorType = GrColorTypeToSkColorType(rtc->colorSpaceInfo().colorType());
+    SkColorType rtcColorType = GrColorTypeToSkColorType(rtc->colorInfo().colorType());
     if (rtcColorType == kUnknown_SkColorType) {
         return false;
     }
@@ -307,12 +303,10 @@ bool SkSurface_Gpu::onIsCompatible(const SkSurfaceCharacterization& characteriza
            characterization.cacheMaxResourceBytes() <= maxResourceBytes &&
            characterization.origin() == rtc->origin() &&
            characterization.backendFormat() == rtc->asSurfaceProxy()->backendFormat() &&
-           characterization.width() == rtc->width() &&
-           characterization.height() == rtc->height() &&
+           characterization.width() == rtc->width() && characterization.height() == rtc->height() &&
            characterization.colorType() == rtcColorType &&
            characterization.sampleCount() == rtc->numSamples() &&
-           SkColorSpace::Equals(characterization.colorSpace(),
-                                rtc->colorSpaceInfo().colorSpace()) &&
+           SkColorSpace::Equals(characterization.colorSpace(), rtc->colorInfo().colorSpace()) &&
            characterization.isProtected() == isProtected &&
            characterization.surfaceProps() == rtc->surfaceProps();
 }
@@ -332,14 +326,6 @@ bool SkSurface_Gpu::onDraw(const SkDeferredDisplayList* ddl) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-bool SkSurface_Gpu::Valid(const GrCaps* caps, const GrBackendFormat& format) {
-    if (caps->isFormatSRGB(format)) {
-        return caps->srgbSupport();
-    }
-
-    return true;
-}
-
 sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* context,
                                              const SkSurfaceCharacterization& c,
                                              SkBudgeted budgeted) {
@@ -347,18 +333,12 @@ sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* context,
         return nullptr;
     }
 
-    const GrCaps* caps = context->priv().caps();
-
     if (c.usesGLFBO0()) {
         // If we are making the surface we will never use FBO0.
         return nullptr;
     }
 
     if (c.vulkanSecondaryCBCompatible()) {
-        return nullptr;
-    }
-
-    if (!SkSurface_Gpu::Valid(caps, c.backendFormat())) {
         return nullptr;
     }
 
@@ -417,10 +397,6 @@ static bool validate_backend_texture(const GrCaps* caps, const GrBackendTexture&
     }
 
     if (texturable && !caps->isFormatTexturable(backendFormat)) {
-        return false;
-    }
-
-    if (!SkSurface_Gpu::Valid(caps, backendFormat)) {
         return false;
     }
 
@@ -585,20 +561,20 @@ bool SkSurface_Gpu::onReplaceBackendTexture(const GrBackendTexture& backendTextu
     SkASSERT(oldTexture->asRenderTarget());
     int sampleCnt = oldTexture->asRenderTarget()->numSamples();
     GrColorType grColorType = SkColorTypeToGrColorType(this->getCanvas()->imageInfo().colorType());
-    auto colorSpace = sk_ref_sp(oldRTC->colorSpaceInfo().colorSpace());
+    auto colorSpace = sk_ref_sp(oldRTC->colorInfo().colorSpace());
     if (!validate_backend_texture(context->priv().caps(), backendTexture,
                                   sampleCnt, grColorType, true)) {
         return false;
     }
-    auto rtc = context->priv().makeBackendTextureRenderTargetContext(
-            backendTexture,
-            origin,
-            sampleCnt,
-            oldRTC->colorSpaceInfo().colorType(),
-            std::move(colorSpace),
-            &this->props(),
-            releaseProc,
-            releaseContext);
+    auto rtc =
+            context->priv().makeBackendTextureRenderTargetContext(backendTexture,
+                                                                  origin,
+                                                                  sampleCnt,
+                                                                  oldRTC->colorInfo().colorType(),
+                                                                  std::move(colorSpace),
+                                                                  &this->props(),
+                                                                  releaseProc,
+                                                                  releaseContext);
     if (!rtc) {
         return false;
     }
@@ -615,10 +591,6 @@ bool validate_backend_render_target(const GrCaps* caps, const GrBackendRenderTar
     if (!caps->isFormatAsColorTypeRenderable(grCT, rt.getBackendFormat(), rt.sampleCnt())) {
         return false;
     }
-    if (!SkSurface_Gpu::Valid(caps, rt.getBackendFormat())) {
-        return false;
-    }
-
     return true;
 }
 
