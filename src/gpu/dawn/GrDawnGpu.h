@@ -63,7 +63,7 @@ public:
                                                                 int numStencilSamples) override;
 
     GrOpsRenderPass* getOpsRenderPass(
-            GrRenderTarget*, GrSurfaceOrigin, const SkRect& bounds,
+            GrRenderTarget*, GrSurfaceOrigin, const SkIRect& bounds,
             const GrOpsRenderPass::LoadAndStoreInfo&,
             const GrOpsRenderPass::StencilLoadAndStoreInfo&,
             const SkTArray<GrTextureProxy*, true>& sampledProxies) override;
@@ -89,11 +89,7 @@ public:
     sk_sp<GrSemaphore> prepareTextureForCrossContextUsage(GrTexture*) override;
 
     sk_sp<GrDawnProgram> getOrCreateRenderPipeline(GrRenderTarget*,
-                                                   GrSurfaceOrigin origin,
-                                                   const GrPipeline&,
-                                                   const GrPrimitiveProcessor&,
-                                                   const GrTextureProxy* const* primProcProxies,
-                                                   bool hasPoints,
+                                                   const GrProgramInfo& programInfo,
                                                    GrPrimitiveType primitiveType);
 
     dawn::Sampler getOrCreateSampler(const GrSamplerState& samplerState);

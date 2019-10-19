@@ -174,13 +174,13 @@ sk_sp<SkSurface> SkSpecialImage::makeTightSurface(
 }
 
 sk_sp<SkSpecialImage> SkSpecialImage::makeSubset(const SkIRect& subset) const {
-    SkIRect absolute = subset.makeOffset(this->subset().x(), this->subset().y());
+    SkIRect absolute = subset.makeOffset(this->subset().topLeft());
     return as_SIB(this)->onMakeSubset(absolute);
 }
 
 sk_sp<SkImage> SkSpecialImage::asImage(const SkIRect* subset) const {
     if (subset) {
-        SkIRect absolute = subset->makeOffset(this->subset().x(), this->subset().y());
+        SkIRect absolute = subset->makeOffset(this->subset().topLeft());
         return as_SIB(this)->onAsImage(&absolute);
     } else {
         return as_SIB(this)->onAsImage(nullptr);
@@ -346,7 +346,7 @@ sk_sp<SkSpecialImage> SkSpecialImage::CopyFromRaster(const SkIRect& subset,
     }
 
     SkBitmap tmp;
-    SkImageInfo info = bm.info().makeWH(subset.width(), subset.height());
+    SkImageInfo info = bm.info().makeDimensions(subset.size());
     // As in MakeFromRaster, must force src to N32 for ImageFilters
     if (!valid_for_imagefilters(bm.info())) {
         info = info.makeColorType(kN32_SkColorType);
@@ -399,7 +399,9 @@ public:
 
     SkColorType colorType() const override { return GrColorTypeToSkColorType(fColorType); }
 
-    size_t getSize() const override { return fTextureProxy->gpuMemorySize(); }
+    size_t getSize() const override {
+        return fTextureProxy->gpuMemorySize(*fContext->priv().caps());
+    }
 
     void onDraw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkPaint* paint) const override {
         SkRect dst = SkRect::MakeXYWH(x, y,
@@ -499,8 +501,9 @@ public:
             }
 
             sk_sp<GrTextureProxy> subsetProxy(
-                    GrSurfaceProxy::Copy(fContext, fTextureProxy.get(), GrMipMapped::kNo, *subset,
-                                         SkBackingFit::kExact, SkBudgeted::kYes));
+                    GrSurfaceProxy::Copy(fContext, fTextureProxy.get(), fColorType,
+                                         GrMipMapped::kNo, *subset, SkBackingFit::kExact,
+                                         SkBudgeted::kYes));
             if (!subsetProxy) {
                 return nullptr;
             }

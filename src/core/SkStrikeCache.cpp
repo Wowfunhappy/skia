@@ -28,25 +28,12 @@ public:
             , fStrike{desc, std::move(scaler), metrics}
             , fPinner{std::move(pinner)} {}
 
-    SkVector rounding() const override {
-        return fStrike.rounding();
+    const SkGlyphPositionRoundingSpec& roundingSpec() const override {
+        return fStrike.roundingSpec();
     }
 
-    SkIPoint subpixelMask() const override {
-        return fStrike.subpixelMask();
-    }
-
-    SkSpan<const SkGlyphPos>
-    prepareForDrawingRemoveEmpty(const SkPackedGlyphID packedGlyphIDs[],
-                                 const SkPoint positions[],
-                                 size_t n,
-                                 int maxDimension,
-                                 SkGlyphPos results[]) override {
-        return fStrike.prepareForDrawingRemoveEmpty(packedGlyphIDs,
-                                                    positions,
-                                                    n,
-                                                    maxDimension,
-                                                    results);
+    void prepareForDrawing(int maxDimension, SkDrawableGlyphBuffer* drawbles) override {
+        fStrike.prepareForDrawing(maxDimension, drawbles);
     }
 
     const SkDescriptor& getDescriptor() const override {

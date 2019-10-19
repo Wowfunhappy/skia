@@ -90,22 +90,16 @@ enum class GrPrimitiveType {
     kPoints,
     kLines,          // 1 pix wide only
     kLineStrip,      // 1 pix wide only
-    kLinesAdjacency  // requires geometry shader support.
+    kPath
 };
-static constexpr int kNumGrPrimitiveTypes = (int)GrPrimitiveType::kLinesAdjacency + 1;
+static constexpr int kNumGrPrimitiveTypes = (int)GrPrimitiveType::kPath + 1;
 
 static constexpr bool GrIsPrimTypeLines(GrPrimitiveType type) {
-    return GrPrimitiveType::kLines == type ||
-           GrPrimitiveType::kLineStrip == type ||
-           GrPrimitiveType::kLinesAdjacency == type;
+    return GrPrimitiveType::kLines == type || GrPrimitiveType::kLineStrip == type;
 }
 
 static constexpr bool GrIsPrimTypeTris(GrPrimitiveType type) {
     return GrPrimitiveType::kTriangles == type || GrPrimitiveType::kTriangleStrip == type;
-}
-
-static constexpr bool GrPrimTypeRequiresGeometryShaderSupport(GrPrimitiveType type) {
-    return GrPrimitiveType::kLinesAdjacency == type;
 }
 
 enum class GrPrimitiveRestart : bool {
@@ -809,15 +803,6 @@ enum class  GrMipMapsStatus {
 GR_MAKE_BITFIELD_CLASS_OPS(GpuPathRenderers)
 
 /**
- * Describes whether pixel data encoding should be converted to/from linear/sRGB encoding.
- */
-enum class GrSRGBConversion {
-    kNone,
-    kSRGBToLinear,
-    kLinearToSRGB,
-};
-
-/**
  * Utility functions for GrPixelConfig
  */
 
@@ -828,181 +813,16 @@ static constexpr GrPixelConfig GrCompressionTypePixelConfig(SkImage::Compression
     SkUNREACHABLE;
 }
 
-static constexpr size_t GrBytesPerPixel(GrPixelConfig config) {
-    switch (config) {
-        case kAlpha_8_GrPixelConfig:
-        case kAlpha_8_as_Alpha_GrPixelConfig:
-        case kAlpha_8_as_Red_GrPixelConfig:
-        case kGray_8_GrPixelConfig:
-        case kGray_8_as_Lum_GrPixelConfig:
-        case kGray_8_as_Red_GrPixelConfig:
-            return 1;
-        case kRGB_565_GrPixelConfig:
-        case kRGBA_4444_GrPixelConfig:
-        case kRG_88_GrPixelConfig:
-        case kAlpha_half_GrPixelConfig:
-        case kAlpha_half_as_Lum_GrPixelConfig:
-        case kAlpha_half_as_Red_GrPixelConfig:
-        case kAlpha_16_GrPixelConfig:
-            return 2;
-        case kRGBA_8888_GrPixelConfig:
-        case kRGB_888_GrPixelConfig:  // Assuming GPUs store this 4-byte aligned.
-        case kRGB_888X_GrPixelConfig:
-        case kBGRA_8888_GrPixelConfig:
-        case kSRGBA_8888_GrPixelConfig:
-        case kRGBA_1010102_GrPixelConfig:
-        case kRG_1616_GrPixelConfig:
-        case kRG_half_GrPixelConfig:
-            return 4;
-        case kRGBA_half_GrPixelConfig:
-        case kRGBA_half_Clamped_GrPixelConfig:
-        case kRGBA_16161616_GrPixelConfig:
-            return 8;
-        case kUnknown_GrPixelConfig:
-        case kRGB_ETC1_GrPixelConfig:
-            return 0;
-    }
-    SkUNREACHABLE;
-}
-
-static constexpr bool GrPixelConfigIsOpaque(GrPixelConfig config) {
-    switch (config) {
-        case kRGB_565_GrPixelConfig:
-        case kRGB_888_GrPixelConfig:
-        case kRGB_888X_GrPixelConfig:
-        case kRG_88_GrPixelConfig:
-        case kGray_8_GrPixelConfig:
-        case kGray_8_as_Lum_GrPixelConfig:
-        case kGray_8_as_Red_GrPixelConfig:
-        case kRGB_ETC1_GrPixelConfig:
-        case kRG_1616_GrPixelConfig:
-        case kRG_half_GrPixelConfig:
-            return true;
-        case kAlpha_8_GrPixelConfig:
-        case kAlpha_8_as_Alpha_GrPixelConfig:
-        case kAlpha_8_as_Red_GrPixelConfig:
-        case kAlpha_16_GrPixelConfig:
-        case kRGBA_4444_GrPixelConfig:
-        case kAlpha_half_GrPixelConfig:
-        case kAlpha_half_as_Lum_GrPixelConfig:
-        case kAlpha_half_as_Red_GrPixelConfig:
-        case kRGBA_8888_GrPixelConfig:
-        case kBGRA_8888_GrPixelConfig:
-        case kSRGBA_8888_GrPixelConfig:
-        case kRGBA_1010102_GrPixelConfig:
-        case kRGBA_half_GrPixelConfig:
-        case kRGBA_half_Clamped_GrPixelConfig:
-        case kRGBA_16161616_GrPixelConfig:
-        case kUnknown_GrPixelConfig:
-            return false;
-    }
-    SkUNREACHABLE;
-}
-
-static constexpr bool GrPixelConfigIsAlphaOnly(GrPixelConfig config) {
-    switch (config) {
-        case kAlpha_8_GrPixelConfig:
-        case kAlpha_8_as_Alpha_GrPixelConfig:
-        case kAlpha_8_as_Red_GrPixelConfig:
-        case kAlpha_16_GrPixelConfig:
-        case kAlpha_half_GrPixelConfig:
-        case kAlpha_half_as_Lum_GrPixelConfig:
-        case kAlpha_half_as_Red_GrPixelConfig:
-            return true;
-        case kUnknown_GrPixelConfig:
-        case kGray_8_GrPixelConfig:
-        case kGray_8_as_Lum_GrPixelConfig:
-        case kGray_8_as_Red_GrPixelConfig:
-        case kRGB_565_GrPixelConfig:
-        case kRGBA_4444_GrPixelConfig:
-        case kRGBA_8888_GrPixelConfig:
-        case kRGB_888_GrPixelConfig:
-        case kRGB_888X_GrPixelConfig:
-        case kRG_88_GrPixelConfig:
-        case kBGRA_8888_GrPixelConfig:
-        case kSRGBA_8888_GrPixelConfig:
-        case kRGBA_1010102_GrPixelConfig:
-        case kRGBA_half_GrPixelConfig:
-        case kRGBA_half_Clamped_GrPixelConfig:
-        case kRGB_ETC1_GrPixelConfig:
-        case kRG_1616_GrPixelConfig:
-        case kRGBA_16161616_GrPixelConfig:
-        case kRG_half_GrPixelConfig:
-            return false;
-    }
-    SkUNREACHABLE;
-}
-
-static constexpr bool GrPixelConfigIsFloatingPoint(GrPixelConfig config) {
-    switch (config) {
-        case kUnknown_GrPixelConfig:
-        case kAlpha_8_GrPixelConfig:
-        case kAlpha_8_as_Alpha_GrPixelConfig:
-        case kAlpha_8_as_Red_GrPixelConfig:
-        case kGray_8_GrPixelConfig:
-        case kGray_8_as_Lum_GrPixelConfig:
-        case kGray_8_as_Red_GrPixelConfig:
-        case kRGB_565_GrPixelConfig:
-        case kRGBA_4444_GrPixelConfig:
-        case kRGB_888_GrPixelConfig:
-        case kRGB_888X_GrPixelConfig:
-        case kRG_88_GrPixelConfig:
-        case kRGBA_8888_GrPixelConfig:
-        case kBGRA_8888_GrPixelConfig:
-        case kSRGBA_8888_GrPixelConfig:
-        case kRGBA_1010102_GrPixelConfig:
-        case kRGB_ETC1_GrPixelConfig:
-        case kAlpha_16_GrPixelConfig:
-        case kRG_1616_GrPixelConfig:
-        case kRGBA_16161616_GrPixelConfig:
-            return false;
-        case kAlpha_half_GrPixelConfig:
-        case kAlpha_half_as_Lum_GrPixelConfig:
-        case kAlpha_half_as_Red_GrPixelConfig:
-        case kRGBA_half_GrPixelConfig:
-        case kRGBA_half_Clamped_GrPixelConfig:
-        case kRG_half_GrPixelConfig:
-            return true;
-    }
-    SkUNREACHABLE;
-}
-
-static constexpr GrClampType GrPixelConfigClampType(GrPixelConfig config) {
-    if (!GrPixelConfigIsFloatingPoint(config)) {
-        return GrClampType::kAuto;
-    }
-    return kRGBA_half_Clamped_GrPixelConfig == config ? GrClampType::kManual : GrClampType::kNone;
-}
-
 /**
- * Returns true if the pixel config is a GPU-specific compressed format
- * representation.
+ * Returns the data size for the given SkImage::CompressionType
  */
-static constexpr bool GrPixelConfigIsCompressed(GrPixelConfig config) {
-    switch (config) {
-        case kRGB_ETC1_GrPixelConfig:
-            return true;
-        default:
-            return false;
-    }
-    SkUNREACHABLE;
-}
-
-/**
- * Returns the data size for the given compressed pixel config
- */
-static inline size_t GrCompressedFormatDataSize(GrPixelConfig config,
+static inline size_t GrCompressedFormatDataSize(SkImage::CompressionType compressionType,
                                                 int width, int height) {
-    SkASSERT(GrPixelConfigIsCompressed(config));
-
-    switch (config) {
-        case kRGB_ETC1_GrPixelConfig:
+    switch (compressionType) {
+        case SkImage::kETC1_CompressionType:
             SkASSERT((width & 3) == 0);
             SkASSERT((height & 3) == 0);
             return (width >> 2) * (height >> 2) * 8;
-
-        default:
-            SK_ABORT("Unknown compressed pixel config");
     }
 
     SK_ABORT("Invalid pixel config");
@@ -1453,38 +1273,6 @@ static constexpr const char* GrBackendApiToStr(GrBackendApi api) {
         case GrBackendApi::kOpenGL: return "OpenGL";
         case GrBackendApi::kVulkan: return "Vulkan";
         case GrBackendApi::kMock:   return "Mock";
-    }
-    SkUNREACHABLE;
-}
-
-static constexpr const char* GrPixelConfigToStr(GrPixelConfig config) {
-    switch (config) {
-        case kUnknown_GrPixelConfig:           return "Unknown";
-        case kAlpha_8_GrPixelConfig:           return "Alpha8";
-        case kAlpha_8_as_Alpha_GrPixelConfig:  return "Alpha8_asAlpha";
-        case kAlpha_8_as_Red_GrPixelConfig:    return "Alpha8_asRed";
-        case kGray_8_GrPixelConfig:            return "Gray8";
-        case kGray_8_as_Lum_GrPixelConfig:     return "Gray8_asLum";
-        case kGray_8_as_Red_GrPixelConfig:     return "Gray8_asRed";
-        case kRGB_565_GrPixelConfig:           return "RGB565";
-        case kRGBA_4444_GrPixelConfig:         return "RGBA444";
-        case kRGBA_8888_GrPixelConfig:         return "RGBA8888";
-        case kRGB_888_GrPixelConfig:           return "RGB888";
-        case kRGB_888X_GrPixelConfig:          return "RGB888X";
-        case kRG_88_GrPixelConfig:             return "RG88";
-        case kBGRA_8888_GrPixelConfig:         return "BGRA8888";
-        case kSRGBA_8888_GrPixelConfig:        return "SRGBA8888";
-        case kRGBA_1010102_GrPixelConfig:      return "RGBA1010102";
-        case kAlpha_half_GrPixelConfig:        return "AlphaHalf";
-        case kAlpha_half_as_Lum_GrPixelConfig: return "AlphaHalf_asLum";
-        case kAlpha_half_as_Red_GrPixelConfig: return "AlphaHalf_asRed";
-        case kRGBA_half_GrPixelConfig:         return "RGBAHalf";
-        case kRGBA_half_Clamped_GrPixelConfig: return "RGBAHalfClamped";
-        case kRGB_ETC1_GrPixelConfig:          return "RGBETC1";
-        case kAlpha_16_GrPixelConfig:          return "Alpha16";
-        case kRG_1616_GrPixelConfig:           return "RG1616";
-        case kRGBA_16161616_GrPixelConfig:     return "RGBA16161616";
-        case kRG_half_GrPixelConfig:           return "RGHalf";
     }
     SkUNREACHABLE;
 }

@@ -177,10 +177,10 @@ var (
 	// used where necessary.
 	EXTRA_PROPS = map[string]string{
 		"buildbucket_build_id": specs.PLACEHOLDER_BUILDBUCKET_BUILD_ID,
-		"patch_issue":          specs.PLACEHOLDER_ISSUE,
+		"patch_issue":          specs.PLACEHOLDER_ISSUE_INT,
 		"patch_ref":            specs.PLACEHOLDER_PATCH_REF,
 		"patch_repo":           specs.PLACEHOLDER_PATCH_REPO,
-		"patch_set":            specs.PLACEHOLDER_PATCHSET,
+		"patch_set":            specs.PLACEHOLDER_PATCHSET_INT,
 		"patch_storage":        specs.PLACEHOLDER_PATCH_STORAGE,
 		"repository":           specs.PLACEHOLDER_REPO,
 		"revision":             specs.PLACEHOLDER_REVISION,
@@ -1111,19 +1111,6 @@ func (b *builder) compile(name string, parts map[string]string) string {
 		glog.Fatalf("Job %q is missing from the jobs list!", name)
 	}
 
-	// Upload the skiaserve binary only for Linux Android compile bots.
-	// See skbug.com/7399 for context.
-	if parts["configuration"] == "Release" &&
-		parts["extra_config"] == "Android" &&
-		!strings.Contains(parts["os"], "Win") &&
-		!strings.Contains(parts["os"], "Mac") {
-		uploadName := fmt.Sprintf("%s%s%s", PREFIX_UPLOAD, b.jobNameSchema.Sep, name)
-		task := b.kitchenTask(uploadName, "upload_skiaserve", "swarm_recipe.isolate", b.cfg.ServiceAccountUploadBinary, b.linuxGceDimensions(MACHINE_TYPE_SMALL), EXTRA_PROPS, OUTPUT_NONE)
-		task.Dependencies = append(task.Dependencies, name)
-		b.MustAddTask(uploadName, task)
-		return uploadName
-	}
-
 	return name
 }
 
@@ -1475,7 +1462,7 @@ func (b *builder) presubmit(name string) string {
 	task.CipdPackages = append(task.CipdPackages, &specs.CipdPackage{
 		Name:    "infra/recipe_bundles/chromium.googlesource.com/chromium/tools/build",
 		Path:    "recipe_bundle",
-		Version: "refs/heads/master",
+		Version: "git_revision:617e0fd3186eaae8bcb7521def0d6d3b4a5bcaf1",
 	})
 	task.Dependencies = []string{} // No bundled recipes for this one.
 	b.MustAddTask(name, task)

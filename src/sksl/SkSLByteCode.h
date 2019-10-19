@@ -82,13 +82,16 @@ enum class ByteCodeInstruction : uint16_t {
     // local/global slot to load
     VECTOR(kLoad),
     VECTOR(kLoadGlobal),
+    VECTOR(kLoadUniform),
     // As kLoad/kLoadGlobal, then a count byte (1-4), and then one byte per swizzle component (0-3).
     kLoadSwizzle,
     kLoadSwizzleGlobal,
+    kLoadSwizzleUniform,
     // kLoadExtended* are fallback load ops when we lack a specialization. They are followed by a
     // count byte, and get the slot to load from the top of the stack.
     kLoadExtended,
     kLoadExtendedGlobal,
+    kLoadExtendedUniform,
     // Followed by four bytes: srcCols, srcRows, dstCols, dstRows. Consumes the src matrix from the
     // stack, and replaces it with the dst matrix. Per GLSL rules, there are no restrictions on
     // dimensions. Any overlapping values are copied, and any other values are filled in with the
@@ -208,6 +211,13 @@ private:
     void preprocess(const void* labels[]);
 };
 
+enum class TypeCategory {
+    kBool,
+    kSigned,
+    kUnsigned,
+    kFloat,
+};
+
 class SK_API ByteCode {
 public:
     static constexpr int kVecWidth = 16;
@@ -254,6 +264,26 @@ public:
                                             float* outReturn[], int returnCount,
                                             const float* uniforms, int uniformCount) const;
 
+    struct Uniform {
+        SkSL::String fName;
+        TypeCategory fType;
+        int fColumns;
+        int fRows;
+        int fSlot;
+    };
+
+    int getUniformSlotCount() const { return fUniformSlotCount; }
+    int getUniformCount() const { return fUniforms.size(); }
+    int getUniformLocation(const char* name) const {
+        for (int i = 0; i < (int)fUniforms.size(); ++i) {
+            if (fUniforms[i].fName == name) {
+                return fUniforms[i].fSlot;
+            }
+        }
+        return -1;
+    }
+    const Uniform& getUniform(int i) const { return fUniforms[i]; }
+
 private:
     ByteCode(const ByteCode&) = delete;
     ByteCode& operator=(const ByteCode&) = delete;
@@ -261,8 +291,10 @@ private:
     friend class ByteCodeGenerator;
     friend struct Interpreter;
 
-    int fGlobalCount = 0;
-    std::vector<uint8_t> fUniformSlots;
+    int fGlobalSlotCount = 0;
+    int fUniformSlotCount = 0;
+    std::vector<Uniform> fUniforms;
+
     std::vector<std::unique_ptr<ByteCodeFunction>> fFunctions;
     std::vector<ExternalValue*> fExternalValues;
 };

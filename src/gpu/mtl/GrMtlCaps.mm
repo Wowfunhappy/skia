@@ -41,11 +41,13 @@ GrMtlCaps::GrMtlCaps(const GrContextOptions& contextOptions, const id<MTLDevice>
 void GrMtlCaps::initFeatureSet(MTLFeatureSet featureSet) {
     // Mac OSX
 #ifdef SK_BUILD_FOR_MAC
-    if (MTLFeatureSet_OSX_GPUFamily1_v2 == featureSet) {
-        fPlatform = Platform::kMac;
-        fFamilyGroup = 1;
-        fVersion = 2;
-        return;
+    if (@available(macOS 10.12, *)) {
+        if (MTLFeatureSet_OSX_GPUFamily1_v2 == featureSet) {
+            fPlatform = Platform::kMac;
+            fFamilyGroup = 1;
+            fVersion = 2;
+            return;
+        }
     }
     if (MTLFeatureSet_OSX_GPUFamily1_v1 == featureSet) {
         fPlatform = Platform::kMac;
@@ -57,31 +59,39 @@ void GrMtlCaps::initFeatureSet(MTLFeatureSet featureSet) {
 
     // iOS Family group 3
 #ifdef SK_BUILD_FOR_IOS
-    if (MTLFeatureSet_iOS_GPUFamily3_v2 == featureSet) {
-        fPlatform = Platform::kIOS;
-        fFamilyGroup = 3;
-        fVersion = 2;
-        return;
+    if (@available(iOS 10.0, *)) {
+        if (MTLFeatureSet_iOS_GPUFamily3_v2 == featureSet) {
+            fPlatform = Platform::kIOS;
+            fFamilyGroup = 3;
+            fVersion = 2;
+            return;
+        }
     }
-    if (MTLFeatureSet_iOS_GPUFamily3_v1 == featureSet) {
-        fPlatform = Platform::kIOS;
-        fFamilyGroup = 3;
-        fVersion = 1;
-        return;
+    if (@available(iOS 9.0, *)) {
+        if (MTLFeatureSet_iOS_GPUFamily3_v1 == featureSet) {
+            fPlatform = Platform::kIOS;
+            fFamilyGroup = 3;
+            fVersion = 1;
+            return;
+        }
     }
 
     // iOS Family group 2
-    if (MTLFeatureSet_iOS_GPUFamily2_v3 == featureSet) {
-        fPlatform = Platform::kIOS;
-        fFamilyGroup = 2;
-        fVersion = 3;
-        return;
+    if (@available(iOS 10.0, *)) {
+        if (MTLFeatureSet_iOS_GPUFamily2_v3 == featureSet) {
+            fPlatform = Platform::kIOS;
+            fFamilyGroup = 2;
+            fVersion = 3;
+            return;
+        }
     }
-    if (MTLFeatureSet_iOS_GPUFamily2_v2 == featureSet) {
-        fPlatform = Platform::kIOS;
-        fFamilyGroup = 2;
-        fVersion = 2;
-        return;
+    if (@available(iOS 9.0, *)) {
+        if (MTLFeatureSet_iOS_GPUFamily2_v2 == featureSet) {
+            fPlatform = Platform::kIOS;
+            fFamilyGroup = 2;
+            fVersion = 2;
+            return;
+        }
     }
     if (MTLFeatureSet_iOS_GPUFamily2_v1 == featureSet) {
         fPlatform = Platform::kIOS;
@@ -91,17 +101,21 @@ void GrMtlCaps::initFeatureSet(MTLFeatureSet featureSet) {
     }
 
     // iOS Family group 1
-    if (MTLFeatureSet_iOS_GPUFamily1_v3 == featureSet) {
-        fPlatform = Platform::kIOS;
-        fFamilyGroup = 1;
-        fVersion = 3;
-        return;
+    if (@available(iOS 10.0, *)) {
+        if (MTLFeatureSet_iOS_GPUFamily1_v3 == featureSet) {
+            fPlatform = Platform::kIOS;
+            fFamilyGroup = 1;
+            fVersion = 3;
+            return;
+        }
     }
-    if (MTLFeatureSet_iOS_GPUFamily1_v2 == featureSet) {
-        fPlatform = Platform::kIOS;
-        fFamilyGroup = 1;
-        fVersion = 2;
-        return;
+    if (@available(iOS 9.0, *)) {
+        if (MTLFeatureSet_iOS_GPUFamily1_v2 == featureSet) {
+            fPlatform = Platform::kIOS;
+            fFamilyGroup = 1;
+            fVersion = 2;
+            return;
+        }
     }
     if (MTLFeatureSet_iOS_GPUFamily1_v1 == featureSet) {
         fPlatform = Platform::kIOS;
@@ -207,21 +221,21 @@ void GrMtlCaps::initGrCaps(const id<MTLDevice> device) {
 
     // Init sample counts. All devices support 1 (i.e. 0 in skia).
     fSampleCounts.push_back(1);
-    for (auto sampleCnt : {2, 4, 8}) {
-        if ([device supportsTextureSampleCount:sampleCnt]) {
-            fSampleCounts.push_back(sampleCnt);
+    if (@available(iOS 9.0, *)) {
+        for (auto sampleCnt : {2, 4, 8}) {
+            if ([device supportsTextureSampleCount:sampleCnt]) {
+                fSampleCounts.push_back(sampleCnt);
+            }
         }
     }
 
-    // Clamp to border is supported on Mac 10.12 and higher (gpu family.version >= 1.2). It is not
-    // supported on iOS.
-    if (this->isMac()) {
-        if (fFamilyGroup == 1 && fVersion < 2) {
-            fClampToBorderSupport = false;
-        }
-    } else {
-        fClampToBorderSupport = false;
+    // Clamp to border is supported on Mac 10.12 and higher. It is not supported on iOS.
+    fClampToBorderSupport = false;
+#ifdef SK_BUILD_FOR_MAC
+    if (@available(macOS 10.12, *)) {
+        fClampToBorderSupport = true;
     }
+#endif
 
     // Starting with the assumption that there isn't a reason to not map small buffers.
     fBufferMapThreshold = 0;
@@ -243,27 +257,20 @@ void GrMtlCaps::initGrCaps(const id<MTLDevice> device) {
     fSampleLocationsSupport = false;
     fMultisampleDisableSupport = false;
 
-    if (this->isMac() || 3 == fFamilyGroup) {
-        fInstanceAttribSupport = true;
+    if (@available(macOS 10.11, iOS 9.0, *)) {
+        if (this->isMac() || 3 == fFamilyGroup) {
+            fInstanceAttribSupport = true;
+        }
     }
 
     fMixedSamplesSupport = false;
     fGpuTracingSupport = false;
 
+    fFenceSyncSupport = true;
     bool supportsMTLEvent = false;
-#ifdef GR_METAL_SDK_SUPPORTS_EVENTS
-    // TODO: this may be redundant
     if (@available(macOS 10.14, iOS 12.0, *)) {
-        NSOperatingSystemVersion osVersion = [[NSProcessInfo processInfo] operatingSystemVersion];
-#ifdef SK_BUILD_FOR_MAC
-        supportsMTLEvent = (osVersion.majorVersion > 10 ||
-                            (osVersion.majorVersion == 10 && osVersion.minorVersion >= 14));
-#else
-        supportsMTLEvent = (osVersion.majorVersion >= 12);
-#endif
+        supportsMTLEvent = true;
     }
-#endif
-    fFenceSyncSupport = supportsMTLEvent;
     fSemaphoreSupport = supportsMTLEvent;
 
     fCrossContextTextureSupport = false;
@@ -284,11 +291,22 @@ bool GrMtlCaps::isFormatSRGB(const GrBackendFormat& format) const {
     return format_is_srgb(GrBackendFormatAsMTLPixelFormat(format));
 }
 
-bool GrMtlCaps::isFormatCompressed(const GrBackendFormat& format) const {
+bool GrMtlCaps::isFormatCompressed(const GrBackendFormat& format,
+                                  SkImage::CompressionType* compressionType) const {
 #ifdef SK_BUILD_FOR_MAC
     return false;
 #else
-    return GrBackendFormatAsMTLPixelFormat(format) == MTLPixelFormatETC2_RGB8;
+    SkImage::CompressionType dummyType;
+    SkImage::CompressionType* compressionTypePtr = compressionType ? compressionType : &dummyType;
+
+    switch (GrBackendFormatAsMTLPixelFormat(format)) {
+        case MTLPixelFormatETC2_RGB8:
+            // ETC2 uses the same compression layout as ETC1
+            *compressionTypePtr = SkImage::kETC1_CompressionType;
+            return true;
+        default:
+            return false;
+    }
 #endif
 }
 
@@ -371,6 +389,15 @@ int GrMtlCaps::getRenderTargetSampleCount(int requestedCount, MTLPixelFormat for
     return 1 == requestedCount ? 1 : 0;
 }
 
+size_t GrMtlCaps::bytesPerPixel(const GrBackendFormat& format) const {
+    MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
+    return this->bytesPerPixel(mtlFormat);
+}
+
+size_t GrMtlCaps::bytesPerPixel(MTLPixelFormat format) const {
+    return this->getFormatInfo(format).fBytesPerPixel;
+}
+
 void GrMtlCaps::initShaderCaps() {
     GrShaderCaps* shaderCaps = fShaderCaps.get();
 
@@ -384,11 +411,10 @@ void GrMtlCaps::initShaderCaps() {
     shaderCaps->fShaderDerivativeSupport = true;
     shaderCaps->fGeometryShaderSupport = false;
 
-    if ((this->isMac() && fVersion >= 2) ||
-        (this->isIOS() && ((1 == fFamilyGroup && 4 == fVersion) ||
-                           (2 == fFamilyGroup && 4 == fVersion) ||
-                           (3 == fFamilyGroup && 3 == fVersion)))) {
+    if (@available(macOS 10.12, iOS 11.0, *)) {
         shaderCaps->fDualSourceBlendingSupport = true;
+    } else {
+        shaderCaps->fDualSourceBlendingSupport = false;
     }
 
     // TODO: Re-enable this once skbug:8720 is fixed. Will also need to remove asserts in
@@ -489,6 +515,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatR8Unorm)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 1;
         info->fColorTypeInfoCount = 2;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -513,6 +540,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatA8Unorm)];
         info->fFlags = FormatInfo::kTexturable_Flag;
+        info->fBytesPerPixel = 1;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -530,6 +558,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatB5G6R5Unorm)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 2;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -545,6 +574,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatABGR4Unorm)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 2;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -561,6 +591,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatRGBA8Unorm)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 4;
         info->fColorTypeInfoCount = 2;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -583,6 +614,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatRG8Unorm)];
         info->fFlags = FormatInfo::kTexturable_Flag;
+        info->fBytesPerPixel = 2;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -598,6 +630,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatBGRA8Unorm)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 4;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -613,6 +646,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatRGBA8Unorm_sRGB)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 4;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -632,6 +666,7 @@ void GrMtlCaps::initFormatTable() {
         } else {
             info->fFlags = FormatInfo::kTexturable_Flag;
         }
+        info->fBytesPerPixel = 4;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -647,6 +682,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatR16Float)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 2;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -664,6 +700,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatRGBA16Float)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 8;
         info->fColorTypeInfoCount = 2;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -689,6 +726,7 @@ void GrMtlCaps::initFormatTable() {
         } else {
             info->fFlags = FormatInfo::kTexturable_Flag | FormatInfo::kRenderable_Flag;
         }
+        info->fBytesPerPixel = 2;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -710,6 +748,7 @@ void GrMtlCaps::initFormatTable() {
         } else {
             info->fFlags = FormatInfo::kTexturable_Flag | FormatInfo::kRenderable_Flag;
         }
+        info->fBytesPerPixel = 4;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -736,6 +775,7 @@ void GrMtlCaps::initFormatTable() {
         } else {
             info->fFlags = FormatInfo::kTexturable_Flag | FormatInfo::kRenderable_Flag;
         }
+        info->fBytesPerPixel = 8;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;
@@ -751,6 +791,7 @@ void GrMtlCaps::initFormatTable() {
     {
         info = &fFormatTable[GetFormatIndex(MTLPixelFormatRG16Float)];
         info->fFlags = FormatInfo::kAllFlags;
+        info->fBytesPerPixel = 4;
         info->fColorTypeInfoCount = 1;
         info->fColorTypeInfos.reset(new ColorTypeInfo[info->fColorTypeInfoCount]());
         int ctIdx = 0;

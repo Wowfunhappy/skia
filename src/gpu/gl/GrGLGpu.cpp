@@ -26,6 +26,7 @@
 #include "src/gpu/GrGpuResourcePriv.h"
 #include "src/gpu/GrMesh.h"
 #include "src/gpu/GrPipeline.h"
+#include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrRenderTargetPriv.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrSurfaceProxyPriv.h"
@@ -1658,26 +1659,11 @@ void GrGLGpu::disableWindowRectangles() {
 }
 
 bool GrGLGpu::flushGLState(GrRenderTarget* renderTarget,
-                           GrSurfaceOrigin origin,
-                           const GrPrimitiveProcessor& primProc,
-                           const GrPipeline& pipeline,
-                           const GrPipeline::FixedDynamicState* fixedDynamicState,
-                           const GrPipeline::DynamicStateArrays* dynamicStateArrays,
-                           int dynamicStateArraysLength,
-                           bool willDrawPoints) {
-    const GrTextureProxy* const* primProcProxies = nullptr;
-    const GrTextureProxy* const* primProcProxiesToBind = nullptr;
-    if (dynamicStateArrays && dynamicStateArrays->fPrimitiveProcessorTextures) {
-        primProcProxies = dynamicStateArrays->fPrimitiveProcessorTextures;
-    } else if (fixedDynamicState && fixedDynamicState->fPrimitiveProcessorTextures) {
-        primProcProxies = fixedDynamicState->fPrimitiveProcessorTextures;
-        primProcProxiesToBind = fixedDynamicState->fPrimitiveProcessorTextures;
-    }
+                           const GrProgramInfo& programInfo,
+                           GrPrimitiveType primitiveType) {
 
-    SkASSERT(SkToBool(primProcProxies) == SkToBool(primProc.numTextureSamplers()));
-
-    sk_sp<GrGLProgram> program(fProgramCache->refProgram(
-            this, renderTarget, origin, primProc, primProcProxies, pipeline, willDrawPoints));
+    sk_sp<GrGLProgram> program(fProgramCache->refProgram(this, renderTarget, programInfo,
+                                                         primitiveType));
     if (!program) {
         GrCapsDebugf(this->caps(), "Failed to create program!\n");
         return false;
@@ -1686,30 +1672,32 @@ bool GrGLGpu::flushGLState(GrRenderTarget* renderTarget,
     this->flushProgram(std::move(program));
 
     // Swizzle the blend to match what the shader will output.
-    this->flushBlendAndColorWrite(
-            pipeline.getXferProcessor().getBlendInfo(), pipeline.outputSwizzle());
+    this->flushBlendAndColorWrite(programInfo.pipeline().getXferProcessor().getBlendInfo(),
+                                  programInfo.pipeline().outputSwizzle());
 
-    fHWProgram->updateUniformsAndTextureBindings(renderTarget, origin,
-                                                 primProc, pipeline, primProcProxiesToBind);
+    fHWProgram->updateUniformsAndTextureBindings(renderTarget, programInfo);
 
     GrGLRenderTarget* glRT = static_cast<GrGLRenderTarget*>(renderTarget);
     GrStencilSettings stencil;
-    if (pipeline.isStencilEnabled()) {
+    if (programInfo.pipeline().isStencilEnabled()) {
         // TODO: attach stencil and create settings during render target flush.
         SkASSERT(glRT->renderTargetPriv().getStencilAttachment());
-        stencil.reset(*pipeline.getUserStencil(), pipeline.hasStencilClip(),
+        stencil.reset(*programInfo.pipeline().getUserStencil(),
+                      programInfo.pipeline().hasStencilClip(),
                       glRT->renderTargetPriv().numStencilBits());
     }
-    this->flushStencil(stencil, origin);
-    if (pipeline.isScissorEnabled()) {
+    this->flushStencil(stencil, programInfo.origin());
+    if (programInfo.pipeline().isScissorEnabled()) {
         static constexpr SkIRect kBogusScissor{0, 0, 1, 1};
-        GrScissorState state(fixedDynamicState ? fixedDynamicState->fScissorRect : kBogusScissor);
-        this->flushScissor(state, glRT->width(), glRT->height(), origin);
+        GrScissorState state(programInfo.fixedDynamicState() ? programInfo.fixedScissor()
+                                                             : kBogusScissor);
+        this->flushScissor(state, glRT->width(), glRT->height(), programInfo.origin());
     } else {
         this->disableScissor();
     }
-    this->flushWindowRectangles(pipeline.getWindowRectsState(), glRT, origin);
-    this->flushHWAAState(glRT, pipeline.isHWAntialiasState());
+    this->flushWindowRectangles(programInfo.pipeline().getWindowRectsState(),
+                                glRT, programInfo.origin());
+    this->flushHWAAState(glRT, programInfo.pipeline().isHWAntialiasState());
 
     // This must come after textures are flushed because a texture may need
     // to be msaa-resolved (which will modify bound FBO state).
@@ -1872,7 +1860,15 @@ void GrGLGpu::clearStencil(GrRenderTarget* target, int clearValue) {
     fHWStencilSettings.invalidate();
 }
 
-void GrGLGpu::beginCommandBuffer(GrRenderTarget* rt,
+static bool use_tiled_rendering(const GrGLCaps& glCaps,
+                                const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilLoadStore) {
+    // Only use the tiled rendering extension if we can explicitly clear and discard the stencil.
+    // Otherwise it's faster to just not use it.
+    return glCaps.tiledRenderingSupport() && GrLoadOp::kClear == stencilLoadStore.fLoadOp &&
+           GrStoreOp::kDiscard == stencilLoadStore.fStoreOp;
+}
+
+void GrGLGpu::beginCommandBuffer(GrRenderTarget* rt, const SkIRect& bounds, GrSurfaceOrigin origin,
                                  const GrOpsRenderPass::LoadAndStoreInfo& colorLoadStore,
                                  const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilLoadStore) {
     SkASSERT(!fIsExecutingCommandBuffer_DebugOnly);
@@ -1882,6 +1878,15 @@ void GrGLGpu::beginCommandBuffer(GrRenderTarget* rt,
     auto glRT = static_cast<GrGLRenderTarget*>(rt);
     this->flushRenderTarget(glRT);
     SkDEBUGCODE(fIsExecutingCommandBuffer_DebugOnly = true);
+
+    if (use_tiled_rendering(this->glCaps(), stencilLoadStore)) {
+        auto nativeBounds = GrNativeRect::MakeRelativeTo(origin, glRT->height(), bounds);
+        GrGLbitfield preserveMask = (GrLoadOp::kLoad == colorLoadStore.fLoadOp)
+                ? GR_GL_COLOR_BUFFER_BIT0 : GR_GL_NONE;
+        SkASSERT(GrLoadOp::kLoad != stencilLoadStore.fLoadOp);  // Handled by use_tiled_rendering().
+        GL_CALL(StartTiling(nativeBounds.fX, nativeBounds.fY, nativeBounds.fWidth,
+                            nativeBounds.fHeight, preserveMask));
+    }
 
     GrGLbitfield clearMask = 0;
     if (GrLoadOp::kClear == colorLoadStore.fLoadOp) {
@@ -1939,6 +1944,14 @@ void GrGLGpu::endCommandBuffer(GrRenderTarget* rt,
                                            discardAttachments.begin()));
             }
         }
+    }
+
+    if (use_tiled_rendering(this->glCaps(), stencilLoadStore)) {
+        GrGLbitfield preserveMask = (GrStoreOp::kStore == colorLoadStore.fStoreOp)
+                ? GR_GL_COLOR_BUFFER_BIT0 : GR_GL_NONE;
+        // Handled by use_tiled_rendering().
+        SkASSERT(GrStoreOp::kStore != stencilLoadStore.fStoreOp);
+        GL_CALL(EndTiling(preserveMask));
     }
 
     SkDEBUGCODE(fIsExecutingCommandBuffer_DebugOnly = false);
@@ -2096,7 +2109,7 @@ GrOpsRenderPass* GrGLGpu::getOpsRenderPass(
         fCachedOpsRenderPass.reset(new GrGLOpsRenderPass(this));
     }
 
-    fCachedOpsRenderPass->set(rt, origin, colorInfo, stencilInfo);
+    fCachedOpsRenderPass->set(rt, bounds, origin, colorInfo, stencilInfo);
     return fCachedOpsRenderPass.get();
 }
 
@@ -2178,48 +2191,51 @@ void GrGLGpu::flushViewport(int width, int height) {
     #endif
 #endif
 
-void GrGLGpu::draw(GrRenderTarget* renderTarget, GrSurfaceOrigin origin,
-                   const GrPrimitiveProcessor& primProc,
-                   const GrPipeline& pipeline,
-                   const GrPipeline::FixedDynamicState* fixedDynamicState,
-                   const GrPipeline::DynamicStateArrays* dynamicStateArrays,
+void GrGLGpu::draw(GrRenderTarget* renderTarget,
+                   const GrProgramInfo& programInfo,
                    const GrMesh meshes[],
                    int meshCount) {
     this->handleDirtyContext();
 
-    bool hasPoints = false;
-    for (int i = 0; i < meshCount; ++i) {
-        if (meshes[i].primitiveType() == GrPrimitiveType::kPoints) {
-            hasPoints = true;
-            break;
+    SkASSERT(meshCount); // guaranteed by GrOpsRenderPass::draw
+
+    GrPrimitiveType primitiveType = meshes[0].primitiveType();
+
+#ifdef SK_DEBUG
+    // kPoints should never be intermingled in with the other primitive types
+    for (int i = 1; i < meshCount; ++i) {
+        if (primitiveType == GrPrimitiveType::kPoints) {
+            SkASSERT(meshes[i].primitiveType() == GrPrimitiveType::kPoints);
+        } else {
+            SkASSERT(meshes[i].primitiveType() != GrPrimitiveType::kPoints);
         }
     }
-    if (!this->flushGLState(renderTarget, origin, primProc, pipeline, fixedDynamicState,
-                            dynamicStateArrays, meshCount, hasPoints)) {
+#endif
+
+    // Passing 'primitiveType' here is a bit misleading. In GL's case it works out, since
+    // GL only cares if it is kPoints or not.
+    if (!this->flushGLState(renderTarget, programInfo, primitiveType)) {
         return;
     }
 
-    bool dynamicScissor = false;
-    bool dynamicPrimProcTextures = false;
-    if (dynamicStateArrays) {
-        dynamicScissor = pipeline.isScissorEnabled() && dynamicStateArrays->fScissorRects;
-        dynamicPrimProcTextures = dynamicStateArrays->fPrimitiveProcessorTextures;
-    }
+    bool hasDynamicScissors = programInfo.hasDynamicScissors();
+    bool hasDynamicPrimProcTextures = programInfo.hasDynamicPrimProcTextures();
+
     for (int m = 0; m < meshCount; ++m) {
-        if (GrXferBarrierType barrierType = pipeline.xferBarrierType(renderTarget->asTexture(),
-                                                                     *this->caps())) {
+        if (auto barrierType = programInfo.pipeline().xferBarrierType(renderTarget->asTexture(),
+                                                                      *this->caps())) {
             this->xferBarrier(renderTarget, barrierType);
         }
 
-        if (dynamicScissor) {
+        if (hasDynamicScissors) {
             GrGLRenderTarget* glRT = static_cast<GrGLRenderTarget*>(renderTarget);
-            this->flushScissor(GrScissorState(dynamicStateArrays->fScissorRects[m]),
-                               glRT->width(), glRT->height(), origin);
+            this->flushScissor(GrScissorState(programInfo.dynamicScissor(m)),
+                               glRT->width(), glRT->height(), programInfo.origin());
         }
-        if (dynamicPrimProcTextures) {
-            auto texProxyArray = dynamicStateArrays->fPrimitiveProcessorTextures +
-                                 m * primProc.numTextureSamplers();
-            fHWProgram->updatePrimitiveProcessorTextureBindings(primProc, texProxyArray);
+        if (hasDynamicPrimProcTextures) {
+            auto texProxyArray = programInfo.dynamicPrimProcTextures(m);
+            fHWProgram->updatePrimitiveProcessorTextureBindings(programInfo.primProc(),
+                                                                texProxyArray);
         }
         if (this->glCaps().requiresCullFaceEnableDisableWhenDrawingLinesAfterNonLines() &&
             GrIsPrimTypeLines(meshes[m].primitiveType()) &&
@@ -2257,8 +2273,9 @@ static GrGLenum gr_primitive_type_to_gl_mode(GrPrimitiveType primitiveType) {
             return GR_GL_LINES;
         case GrPrimitiveType::kLineStrip:
             return GR_GL_LINE_STRIP;
-        case GrPrimitiveType::kLinesAdjacency:
-            return GR_GL_LINES_ADJACENCY;
+        case GrPrimitiveType::kPath:
+            SK_ABORT("non-mesh-based GrPrimitiveType");
+            return 0;
     }
     SK_ABORT("invalid GrPrimitiveType");
 }
@@ -3636,14 +3653,14 @@ GrBackendTexture GrGLGpu::onCreateBackendTexture(int w, int h,
         texels.append(mipLevelCount);
         SkTArray<size_t> individualMipOffsets(mipLevelCount);
 
-        size_t bytesPerPixel = GrBytesPerPixel(config);
+        size_t bytesPerPixel = this->glCaps().bytesPerPixel(glFormat);
 
         size_t totalSize = GrComputeTightCombinedBufferSize(
                 bytesPerPixel, w, h, &individualMipOffsets, mipLevelCount);
 
         char* tmpPixels = (char*)pixelStorage.reset(totalSize);
 
-        GrFillInData(config, w, h, individualMipOffsets, tmpPixels, *color);
+        GrFillInData(textureColorType, w, h, individualMipOffsets, tmpPixels, *color);
         for (int i = 0; i < mipLevelCount; ++i) {
             size_t offset = individualMipOffsets[i];
 

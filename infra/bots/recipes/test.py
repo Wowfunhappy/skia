@@ -487,6 +487,11 @@ def dm_flags(api, bot):
     # skia:7160
     blacklist('_ test _ SRGBReadWritePixels')
     blacklist('_ test _ SRGBMipMap')
+    # skia:9517
+    blacklist('_ test _ CharacterizationBackendAllocationTest')
+    blacklist('_ test _ ColorTypeBackendAllocationTest')
+    blacklist('_ test _ GLBackendAllocationTest')
+    blacklist('_ test _ VKBackendAllocationTest')
 
   if api.vars.internal_hardware_label == '5':
     # http://b/118312149#comment9
@@ -654,10 +659,6 @@ def dm_flags(api, bot):
   if 'Valgrind' in bot and 'PreAbandonGpuContext' in bot:
     # skia:6575
     match.append('~multipicturedraw_')
-
-  if 'CommandBuffer' in bot:
-    # https://crbug.com/697030
-    match.append('~HalfFloatAlphaTextureTest')
 
   if 'AndroidOne' in bot:
     match.append('~WritePixels')  # skia:4711
@@ -1182,6 +1183,9 @@ def GenTests(api):
   )
 
   builder = 'Test-Android-Clang-Nexus7-GPU-Tegra3-arm-Debug-All-Android'
+  retry_step_name = ('push [START_DIR]/skia/resources/* '
+                     '/sdcard/revenge_of_the_skiabot/resources.push '
+                     '[START_DIR]/skia/resources/file1')
   yield (
     api.test('failed_push') +
     api.properties(buildername=builder,
@@ -1203,8 +1207,9 @@ def GenTests(api):
     ) +
     api.step_data('get swarming bot id',
                   stdout=api.raw_io.output('build123-m2--device5')) +
-    api.step_data('push [START_DIR]/skia/resources/* '+
-                  '/sdcard/revenge_of_the_skiabot/resources', retcode=1)
+    api.step_data(retry_step_name, retcode=1) +
+    api.step_data(retry_step_name + ' (attempt 2)', retcode=1) +
+    api.step_data(retry_step_name + ' (attempt 3)', retcode=1)
   )
 
   retry_step_name = 'adb pull.pull /sdcard/revenge_of_the_skiabot/dm_out'

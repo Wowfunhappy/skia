@@ -13,6 +13,7 @@
 #include "include/private/SkDeferredDisplayList.h"
 #include "src/core/SkTTopoSort.h"
 #include "src/gpu/GrAuditTrail.h"
+#include "src/gpu/GrClientMappedBufferManager.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrCopyRenderTask.h"
 #include "src/gpu/GrGpu.h"
@@ -248,6 +249,7 @@ GrSemaphoresSubmitted GrDrawingManager::flush(GrSurfaceProxy* proxies[], int num
         }
         return GrSemaphoresSubmitted::kNo; // Can't flush while DDL recording
     }
+    direct->priv().clientMappedBufferManager()->process();
 
     GrGpu* gpu = direct->priv().getGpu();
     if (!gpu) {
@@ -574,6 +576,10 @@ void GrDrawingManager::moveRenderTasksToDDL(SkDeferredDisplayList* ddl) {
     fActiveOpsTask = nullptr;
 
     fDAG.swap(&ddl->fRenderTasks);
+
+    for (auto renderTask : ddl->fRenderTasks) {
+        renderTask->prePrepare(fContext);
+    }
 
     if (fPathRendererChain) {
         if (auto ccpr = fPathRendererChain->getCoverageCountingPathRenderer()) {

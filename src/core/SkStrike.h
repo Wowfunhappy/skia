@@ -97,15 +97,8 @@ public:
         return fScalerContext->getMaskFormat();
     }
 
-    bool isSubpixel() const {
-        return fIsSubpixel;
-    }
-
-    SkVector rounding() const override;
-
-    SkIPoint subpixelMask() const override {
-        return SkIPoint::Make((!fIsSubpixel || fAxisAlignment == kY_SkAxisAlignment) ? 0 : ~0,
-                              (!fIsSubpixel || fAxisAlignment == kX_SkAxisAlignment) ? 0 : ~0);
+    const SkGlyphPositionRoundingSpec& roundingSpec() const override {
+        return fRoundingSpec;
     }
 
     const SkDescriptor& getDescriptor() const override;
@@ -119,11 +112,11 @@ public:
     SkSpan<const SkGlyph*> prepareImages(SkSpan<const SkPackedGlyphID> glyphIDs,
                                          const SkGlyph* results[]);
 
-    SkSpan<const SkGlyphPos> prepareForDrawingRemoveEmpty(const SkPackedGlyphID packedGlyphIDs[],
-                                                          const SkPoint positions[],
-                                                          size_t n,
-                                                          int maxDimension,
-                                                          SkGlyphPos results[]) override;
+    void prepareForDrawingMasksCPU(SkDrawableGlyphBuffer* drawables);
+
+    void prepareForDrawingPathsCPU(SkDrawableGlyphBuffer* drawables);
+    void  prepareForDrawing(
+            int maxDimension, SkDrawableGlyphBuffer* drawables)override;
 
     void onAboutToExitScope() override;
 
@@ -203,8 +196,7 @@ private:
     // Tracks (approx) how much ram is tied-up in this strike.
     size_t                  fMemoryUsed;
 
-    const bool              fIsSubpixel;
-    const SkAxisAlignment   fAxisAlignment;
+    const SkGlyphPositionRoundingSpec fRoundingSpec;
 };
 
 #endif  // SkStrike_DEFINED

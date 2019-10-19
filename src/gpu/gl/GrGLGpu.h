@@ -75,13 +75,7 @@ public:
     // The GrGLOpsRenderPass does not buffer up draws before submitting them to the gpu.
     // Thus this is the implementation of the draw call for the corresponding passthrough function
     // on GrGLOpsRenderPass.
-    void draw(GrRenderTarget*, GrSurfaceOrigin,
-              const GrPrimitiveProcessor&,
-              const GrPipeline&,
-              const GrPipeline::FixedDynamicState*,
-              const GrPipeline::DynamicStateArrays*,
-              const GrMesh[],
-              int meshCount);
+    void draw(GrRenderTarget*, const GrProgramInfo&, const GrMesh[], int meshCount);
 
     // GrMesh::SendToGpuImpl methods. These issue the actual GL draw calls.
     // Marked final as a hint to the compiler to not use virtual dispatch.
@@ -117,7 +111,7 @@ public:
     // stencil buffer as not dirty?
     void clearStencil(GrRenderTarget*, int clearValue);
 
-    void beginCommandBuffer(GrRenderTarget*,
+    void beginCommandBuffer(GrRenderTarget*, const SkIRect& bounds, GrSurfaceOrigin,
                             const GrOpsRenderPass::LoadAndStoreInfo& colorLoadStore,
                             const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilLoadStore);
 
@@ -280,10 +274,7 @@ private:
     // willDrawPoints must be true if point primitives will be rendered after setting the GL state.
     // If DynamicStateArrays is not null then dynamicStateArraysLength is the number of dynamic
     // state entries in each array.
-    bool flushGLState(GrRenderTarget*, GrSurfaceOrigin, const GrPrimitiveProcessor&,
-                      const GrPipeline&, const GrPipeline::FixedDynamicState*,
-                      const GrPipeline::DynamicStateArrays*, int dynamicStateArraysLength,
-                      bool willDrawPoints);
+    bool flushGLState(GrRenderTarget*, const GrProgramInfo&, GrPrimitiveType);
 
     void flushProgram(sk_sp<GrGLProgram>);
 
@@ -321,10 +312,7 @@ private:
 
         void abandon();
         void reset();
-        GrGLProgram* refProgram(GrGLGpu*, GrRenderTarget*, GrSurfaceOrigin,
-                                const GrPrimitiveProcessor&,
-                                const GrTextureProxy* const primProcProxies[],
-                                const GrPipeline&, bool hasPointSize);
+        GrGLProgram* refProgram(GrGLGpu*, GrRenderTarget*, const GrProgramInfo&, GrPrimitiveType);
         bool precompileShader(const SkData& key, const SkData& data);
 
     private:

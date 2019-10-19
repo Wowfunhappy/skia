@@ -69,10 +69,6 @@ GrSurfaceProxy::GrSurfaceProxy(const GrBackendFormat& format,
         , fGpuMemorySize(kInvalidGpuMemorySize) {
     SkASSERT(fFormat.isValid());
     SkASSERT(is_valid_non_lazy(desc));
-    if (GrPixelConfigIsCompressed(desc.fConfig)) {
-        SkASSERT(renderable == GrRenderable::kNo);
-        fSurfaceFlags |= GrInternalSurfaceFlags::kReadOnly;
-    }
 }
 
 // Lazy-callback version
@@ -103,10 +99,6 @@ GrSurfaceProxy::GrSurfaceProxy(LazyInstantiateCallback&& callback,
     SkASSERT(fFormat.isValid());
     SkASSERT(fLazyInstantiateCallback);
     SkASSERT(is_valid_lazy(desc, fit));
-    if (GrPixelConfigIsCompressed(desc.fConfig)) {
-        SkASSERT(renderable == GrRenderable::kNo);
-        fSurfaceFlags |= GrInternalSurfaceFlags::kReadOnly;
-    }
 }
 
 // Wrapped version
@@ -333,6 +325,7 @@ void GrSurfaceProxy::validate(GrContext_Base* context) const {
 
 sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context,
                                            GrSurfaceProxy* src,
+                                           GrColorType srcColorType,
                                            GrMipMapped mipMapped,
                                            SkIRect srcRect,
                                            SkBackingFit fit,
@@ -374,7 +367,8 @@ sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context,
                 fit, width, height, colorType, nullptr, 1, mipMapped, src->origin(), nullptr,
                 budgeted);
 
-        if (dstContext && dstContext->blitTexture(src->asTextureProxy(), srcRect, dstPoint)) {
+        if (dstContext && dstContext->blitTexture(src->asTextureProxy(), srcColorType, srcRect,
+                                                  dstPoint)) {
             return dstContext->asTextureProxyRef();
         }
     }
@@ -383,11 +377,11 @@ sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context,
 }
 
 sk_sp<GrTextureProxy> GrSurfaceProxy::Copy(GrRecordingContext* context, GrSurfaceProxy* src,
-                                           GrMipMapped mipMapped, SkBackingFit fit,
-                                           SkBudgeted budgeted) {
+                                           GrColorType srcColorType, GrMipMapped mipMapped,
+                                           SkBackingFit fit, SkBudgeted budgeted) {
     SkASSERT(!src->isFullyLazy());
-    return Copy(context, src, mipMapped, SkIRect::MakeWH(src->width(), src->height()), fit,
-                budgeted);
+    return Copy(context, src, srcColorType, mipMapped, SkIRect::MakeWH(src->width(), src->height()),
+                fit, budgeted);
 }
 
 #if GR_TEST_UTILS

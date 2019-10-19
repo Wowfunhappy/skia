@@ -27,7 +27,8 @@ public:
               MTLFeatureSet featureSet);
 
     bool isFormatSRGB(const GrBackendFormat&) const override;
-    bool isFormatCompressed(const GrBackendFormat&) const override;
+    bool isFormatCompressed(const GrBackendFormat&,
+                            SkImage::CompressionType* compressionType = nullptr) const override;
 
     bool isFormatTexturableAndUploadable(GrColorType, const GrBackendFormat&) const override;
     bool isFormatTexturable(const GrBackendFormat&) const override;
@@ -45,6 +46,9 @@ public:
 
     int maxRenderTargetSampleCount(const GrBackendFormat&) const override;
     int maxRenderTargetSampleCount(MTLPixelFormat) const;
+
+    size_t bytesPerPixel(const GrBackendFormat&) const override;
+    size_t bytesPerPixel(MTLPixelFormat) const;
 
     SupportedWrite supportedWritePixelsColorType(GrColorType surfaceColorType,
                                                  const GrBackendFormat& surfaceFormat,
@@ -140,6 +144,9 @@ private:
                                           kMSAA_Flag | kResolve_Flag;
 
         uint16_t fFlags = 0;
+
+        // This value is only valid for regular formats. Compressed formats will be 0.
+        size_t fBytesPerPixel = 0;
 
         std::unique_ptr<ColorTypeInfo[]> fColorTypeInfos;
         int fColorTypeInfoCount = 0;

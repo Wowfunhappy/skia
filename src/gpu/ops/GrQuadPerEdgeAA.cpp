@@ -477,32 +477,10 @@ static V4f compute_nested_persp_quad_vertices(const GrQuadAAFlags aaFlags, Verti
     return coverage;
 }
 
-enum class CoverageMode {
-    kNone,
-    kWithPosition,
-    kWithColor
-};
-
-static CoverageMode get_mode_for_spec(const GrQuadPerEdgeAA::VertexSpec& spec) {
-    if (spec.usesCoverageAA()) {
-        if (spec.compatibleWithCoverageAsAlpha() && spec.hasVertexColors() &&
-            !spec.requiresGeometryDomain()) {
-            // Using a geometric domain acts as a second source of coverage and folding the original
-            // coverage into color makes it impossible to apply the color's alpha to the geometric
-            // domain's coverage when the original shape is clipped.
-            return CoverageMode::kWithColor;
-        } else {
-            return CoverageMode::kWithPosition;
-        }
-    } else {
-        return CoverageMode::kNone;
-    }
-}
-
 // Writes four vertices in triangle strip order, including the additional data for local
 // coordinates, geometry + texture domains, color, and coverage as needed to satisfy the vertex spec
 static void write_quad(GrVertexWriter* vb, const GrQuadPerEdgeAA::VertexSpec& spec,
-                       CoverageMode mode, const V4f& coverage, SkPMColor4f color4f,
+                       GrQuadPerEdgeAA::CoverageMode mode, const V4f& coverage, SkPMColor4f color4f,
                        const SkRect& geomDomain, const SkRect& texDomain, const Vertices& quad) {
     static constexpr auto If = GrVertexWriter::If<float>;
 
@@ -511,13 +489,14 @@ static void write_quad(GrVertexWriter* vb, const GrQuadPerEdgeAA::VertexSpec& sp
         // perspective and coverage mode.
         vb->write(quad.fX[i], quad.fY[i],
                   If(spec.deviceQuadType() == GrQuad::Type::kPerspective, quad.fW[i]),
-                  If(mode == CoverageMode::kWithPosition, coverage[i]));
+                  If(mode == GrQuadPerEdgeAA::CoverageMode::kWithPosition, coverage[i]));
 
         // save color
         if (spec.hasVertexColors()) {
             bool wide = spec.colorType() == GrQuadPerEdgeAA::ColorType::kHalf;
             vb->write(GrVertexColor(
-                    color4f * (mode == CoverageMode::kWithColor ? coverage[i] : 1.f), wide));
+                color4f * (mode == GrQuadPerEdgeAA::CoverageMode::kWithColor ? coverage[i] : 1.f),
+                wide));
         }
 
         // save local position
@@ -584,7 +563,7 @@ void* Tessellate(void* vertices, const VertexSpec& spec, const GrQuad& deviceQua
     SkASSERT(deviceQuad.quadType() <= spec.deviceQuadType());
     SkASSERT(!spec.hasLocalCoords() || localQuad.quadType() <= spec.localQuadType());
 
-    CoverageMode mode = get_mode_for_spec(spec);
+    GrQuadPerEdgeAA::CoverageMode mode = spec.coverageMode();
 
     // Load position data into V4fs (always x, y, and load w to avoid branching down the road)
     Vertices outer;
@@ -685,6 +664,63 @@ int VertexSpec::localDimensionality() const {
     return fHasLocalCoords ? (this->localQuadType() == GrQuad::Type::kPerspective ? 3 : 2) : 0;
 }
 
+CoverageMode VertexSpec::coverageMode() const {
+    if (this->usesCoverageAA()) {
+        if (this->compatibleWithCoverageAsAlpha() && this->hasVertexColors() &&
+            !this->requiresGeometryDomain()) {
+            // Using a geometric domain acts as a second source of coverage and folding
+            // the original coverage into color makes it impossible to apply the color's
+            // alpha to the geometric domain's coverage when the original shape is clipped.
+            return CoverageMode::kWithColor;
+        } else {
+            return CoverageMode::kWithPosition;
+        }
+    } else {
+        return CoverageMode::kNone;
+    }
+}
+
+// This needs to stay in sync w/ QuadPerEdgeAAGeometryProcessor::initializeAttrs
+size_t VertexSpec::vertexSize() const {
+    bool needsPerspective = (this->deviceDimensionality() == 3);
+    CoverageMode coverageMode = this->coverageMode();
+
+    size_t count = 0;
+
+    if (coverageMode == CoverageMode::kWithPosition) {
+        if (needsPerspective) {
+            count += GrVertexAttribTypeSize(kFloat4_GrVertexAttribType);
+        } else {
+            count += GrVertexAttribTypeSize(kFloat2_GrVertexAttribType) +
+                     GrVertexAttribTypeSize(kFloat_GrVertexAttribType);
+        }
+    } else {
+        if (needsPerspective) {
+            count += GrVertexAttribTypeSize(kFloat3_GrVertexAttribType);
+        } else {
+            count += GrVertexAttribTypeSize(kFloat2_GrVertexAttribType);
+        }
+    }
+
+    if (this->requiresGeometryDomain()) {
+        count += GrVertexAttribTypeSize(kFloat4_GrVertexAttribType);
+    }
+
+    count += this->localDimensionality() * GrVertexAttribTypeSize(kFloat_GrVertexAttribType);
+
+    if (ColorType::kByte == this->colorType()) {
+        count += GrVertexAttribTypeSize(kUByte4_norm_GrVertexAttribType);
+    } else if (ColorType::kHalf == this->colorType()) {
+        count += GrVertexAttribTypeSize(kHalf4_GrVertexAttribType);
+    }
+
+    if (this->hasDomain()) {
+        count += GrVertexAttribTypeSize(kFloat4_GrVertexAttribType);
+    }
+
+    return count;
+}
+
 ////////////////// Geometry Processor Implementation
 
 class QuadPerEdgeAAGeometryProcessor : public GrGeometryProcessor {
@@ -696,13 +732,13 @@ public:
     }
 
     static sk_sp<GrGeometryProcessor> Make(const VertexSpec& vertexSpec, const GrShaderCaps& caps,
-                                           GrTextureType textureType,
+                                           const GrBackendFormat& backendFormat,
                                            const GrSamplerState& samplerState,
                                            const GrSwizzle& swizzle, uint32_t extraSamplerKey,
                                            sk_sp<GrColorSpaceXform> textureColorSpaceXform,
                                            Saturate saturate) {
         return sk_sp<QuadPerEdgeAAGeometryProcessor>(new QuadPerEdgeAAGeometryProcessor(
-                vertexSpec, caps, textureType, samplerState, swizzle, extraSamplerKey,
+                vertexSpec, caps, backendFormat, samplerState, swizzle, extraSamplerKey,
                 std::move(textureColorSpaceXform), saturate));
     }
 
@@ -903,7 +939,7 @@ private:
 
     QuadPerEdgeAAGeometryProcessor(const VertexSpec& spec,
                                    const GrShaderCaps& caps,
-                                   GrTextureType textureType,
+                                   const GrBackendFormat& backendFormat,
                                    const GrSamplerState& samplerState,
                                    const GrSwizzle& swizzle,
                                    uint32_t extraSamplerKey,
@@ -912,15 +948,16 @@ private:
             : INHERITED(kQuadPerEdgeAAGeometryProcessor_ClassID)
             , fSaturate(saturate)
             , fTextureColorSpaceXform(std::move(textureColorSpaceXform))
-            , fSampler(textureType, samplerState, swizzle, extraSamplerKey) {
+            , fSampler(samplerState, backendFormat, swizzle, extraSamplerKey) {
         SkASSERT(spec.hasLocalCoords());
         this->initializeAttrs(spec);
         this->setTextureSamplerCnt(1);
     }
 
+    // This needs to stay in sync w/ VertexSpec::vertexSize
     void initializeAttrs(const VertexSpec& spec) {
         fNeedsPerspective = spec.deviceDimensionality() == 3;
-        fCoverageMode = get_mode_for_spec(spec);
+        fCoverageMode = spec.coverageMode();
 
         if (fCoverageMode == CoverageMode::kWithPosition) {
             if (fNeedsPerspective) {
@@ -992,12 +1029,12 @@ sk_sp<GrGeometryProcessor> MakeProcessor(const VertexSpec& spec) {
 }
 
 sk_sp<GrGeometryProcessor> MakeTexturedProcessor(const VertexSpec& spec, const GrShaderCaps& caps,
-                                                 GrTextureType textureType,
+                                                 const GrBackendFormat& backendFormat,
                                                  const GrSamplerState& samplerState,
                                                  const GrSwizzle& swizzle, uint32_t extraSamplerKey,
                                                  sk_sp<GrColorSpaceXform> textureColorSpaceXform,
                                                  Saturate saturate) {
-    return QuadPerEdgeAAGeometryProcessor::Make(spec, caps, textureType, samplerState, swizzle,
+    return QuadPerEdgeAAGeometryProcessor::Make(spec, caps, backendFormat, samplerState, swizzle,
                                                 extraSamplerKey, std::move(textureColorSpaceXform),
                                                 saturate);
 }

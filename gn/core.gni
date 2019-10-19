@@ -215,6 +215,8 @@ skia_core_sources = [
   "$_src/core/SkGlobalInitialization_core.cpp",
   "$_src/core/SkGlyph.h",
   "$_src/core/SkGlyph.cpp",
+  "$_src/core/SkGlyphBuffer.h",
+  "$_src/core/SkGlyphBuffer.cpp",
   "$_src/core/SkGlyphRun.cpp",
   "$_src/core/SkGlyphRun.h",
   "$_src/core/SkGlyphRunPainter.cpp",
@@ -228,6 +230,7 @@ skia_core_sources = [
   "$_src/core/SkImageFilter_Base.h",
   "$_src/core/SkImageFilterCache.cpp",
   "$_src/core/SkImageFilterCache.h",
+  "$_src/core/SkImageFilterTypes.cpp",
   "$_src/core/SkImageFilterTypes.h",
   "$_src/core/SkImageInfo.cpp",
   "$_src/core/SkImageGenerator.cpp",
@@ -452,6 +455,7 @@ skia_core_sources = [
 
   # private
   "$_include/private/SkChecksum.h",
+  "$_include/private/SkColorData.h",
   "$_include/private/SkDeferredDisplayList.h",
   "$_include/private/SkFixed.h",
   "$_include/private/SkFloatBits.h",

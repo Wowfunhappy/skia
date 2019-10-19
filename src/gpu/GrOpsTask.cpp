@@ -391,6 +391,26 @@ void GrOpsTask::endFlush() {
     fAuditTrail = nullptr;
 }
 
+void GrOpsTask::onPrePrepare(GrRecordingContext* context) {
+    SkASSERT(this->isClosed());
+#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
+#endif
+    // TODO: remove the check for discard here once reduced op splitting is turned on. Currently we
+    // can end up with GrOpsTasks that only have a discard load op and no ops. For vulkan validation
+    // we need to keep that discard and not drop it. Once we have reduce op list splitting enabled
+    // we shouldn't end up with GrOpsTasks with only discard.
+    if (this->isNoOp() || (fClippedContentBounds.isEmpty() && fColorLoadOp != GrLoadOp::kDiscard)) {
+        return;
+    }
+
+    for (const auto& chain : fOpChains) {
+        if (chain.shouldExecute()) {
+            chain.head()->prePrepare(context);
+        }
+    }
+}
+
 void GrOpsTask::onPrepare(GrOpFlushState* flushState) {
     SkASSERT(fTarget->peekRenderTarget());
     SkASSERT(this->isClosed());
@@ -412,14 +432,13 @@ void GrOpsTask::onPrepare(GrOpFlushState* flushState) {
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
             TRACE_EVENT0("skia.gpu", chain.head()->name());
 #endif
-            GrOpFlushState::OpArgs opArgs = {
-                chain.head(),
-                fTarget->asRenderTargetProxy(),
-                chain.appliedClip(),
-                fTarget.get()->asRenderTargetProxy()->outputSwizzle(),
-                chain.dstProxy()
-            };
+            GrOpFlushState::OpArgs opArgs(chain.head(),
+                                          fTarget->asRenderTargetProxy(),
+                                          chain.appliedClip(),
+                                          chain.dstProxy());
+
             flushState->setOpArgs(&opArgs);
+            // GrOp::prePrepare may or may not have been called at this point
             chain.head()->prepare(flushState);
             flushState->setOpArgs(nullptr);
         }
@@ -532,13 +551,10 @@ bool GrOpsTask::onExecute(GrOpFlushState* flushState) {
         TRACE_EVENT0("skia.gpu", chain.head()->name());
 #endif
 
-        GrOpFlushState::OpArgs opArgs {
-            chain.head(),
-            fTarget->asRenderTargetProxy(),
-            chain.appliedClip(),
-            fTarget.get()->asRenderTargetProxy()->outputSwizzle(),
-            chain.dstProxy()
-        };
+        GrOpFlushState::OpArgs opArgs(chain.head(),
+                                      fTarget->asRenderTargetProxy(),
+                                      chain.appliedClip(),
+                                      chain.dstProxy());
 
         flushState->setOpArgs(&opArgs);
         chain.head()->execute(flushState, chain.bounds());
