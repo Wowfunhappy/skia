@@ -59,6 +59,8 @@ var CanvasKit = {
 	/** @return {RadialCanvasGradient} */
 	MakeTwoPointConicalGradientShader: function() {},
 	MakeWebGLCanvasSurface: function() {},
+	/** @return {TypedArray} */
+	Malloc: function() {},
 	/** @return {TonalColors} */
 	computeTonalColors: function() {},
 	currentContext: function() {},
@@ -107,7 +109,6 @@ var CanvasKit = {
 	},
 
 	ParagraphStyle: function() {},
-
 	RSXFormBuilder: function() {},
 	SkColorBuilder: function() {},
 	SkRectBuilder: function() {},
@@ -119,20 +120,26 @@ var CanvasKit = {
 
 	SkAnimatedImage: {
 		// public API (from C++ bindings)
-		getRepetitionCount: function() {},
 		decodeNextFrame: function() {},
+		getFrameCount: function() {},
+		getRepetitionCount: function() {},
+		height: function() {},
+		reset: function() {},
+		width: function() {},
 	},
 
 	SkCanvas: {
 		// public API (from C++ bindings)
 		clear: function() {},
 		clipPath: function() {},
+		clipRRect: function() {},
 		clipRect: function() {},
 		concat: function() {},
+		drawAnimatedImage: function() {},
 		drawArc: function() {},
 		drawCircle: function() {},
+		drawColor: function() {},
 		drawDRRect:  function() {},
-		drawAnimatedImage: function() {},
 		drawImage: function() {},
 		drawImageRect: function() {},
 		drawLine: function() {},
@@ -225,6 +232,12 @@ var CanvasKit = {
 		_makeShader: function() {},
 	},
 
+	SkImageFilter: {
+		MakeBlur: function() {},
+		MakeColorFilter: function() {},
+		MakeCompose: function() {},
+	},
+
 	SkMatrix: {
 		identity: function() {},
 		invert: function() {},
@@ -234,6 +247,10 @@ var CanvasKit = {
 		scaled: function() {},
 		skewed: function() {},
 		translated: function() {},
+	},
+
+	SkMaskFilter: {
+		MakeBlur: function() {},
 	},
 
 	SkPaint: {
@@ -251,6 +268,7 @@ var CanvasKit = {
 		setBlendMode: function() {},
 		setColor: function() {},
 		setFilterQuality: function() {},
+		setImageFilter: function() {},
 		setMaskFilter: function() {},
 		setPathEffect: function() {},
 		setShader: function() {},
@@ -299,6 +317,12 @@ var CanvasKit = {
 		_moveTo: function() {},
 		_op: function() {},
 		_quadTo: function() {},
+		_rArcTo: function() {},
+		_rConicTo: function() {},
+		_rCubicTo: function() {},
+		_rLineTo: function() {},
+		_rMoveTo: function() {},
+		_rQuadTo: function() {},
 		_rect: function() {},
 		_simplify: function() {},
 		_stroke: function() {},
@@ -418,6 +442,9 @@ var CanvasKit = {
 	OverlineDecoration: {},
 	LineThroughDecoration: {},
 
+	SaveLayerInitWithPrevious: {},
+	SaveLayerF16ColorType: {},
+
 	Affinity: {
 		Upstream: {},
 		Downstream: {},
@@ -501,6 +528,38 @@ var CanvasKit = {
 		High: {},
 	},
 
+	FontSlant: {
+		Upright: {},
+		Italic: {},
+		Oblique: {},
+	},
+
+	FontWeight: {
+		Invisible: {},
+		Thin: {},
+		ExtraLight: {},
+		Light: {},
+		Normal: {},
+		Medium: {},
+		SemiBold: {},
+		Bold: {},
+		ExtraBold: {},
+		Black: {},
+		ExtraBlack: {},
+	},
+
+	FontWidth: {
+		UltraCondensed: {},
+		ExtraCondensed: {},
+		Condensed: {},
+		SemiCondensed: {},
+		Normal: {},
+		SemiExpanded: {},
+		Expanded: {},
+		ExtraExpanded: {},
+		UltraExpanded: {},
+	},
+
 	ImageFormat: {
 		PNG: {},
 		JPEG: {},
@@ -549,6 +608,11 @@ var CanvasKit = {
 		Justify: {},
 		Start: {},
 		End: {},
+	},
+
+	TextDirection: {
+		LTR: {},
+		RTL: {},
 	},
 
 	TextEncoding: {
@@ -632,6 +696,12 @@ CanvasKit.SkPath.prototype.moveTo = function() {};
 CanvasKit.SkPath.prototype.offset = function() {};
 CanvasKit.SkPath.prototype.op = function() {};
 CanvasKit.SkPath.prototype.quadTo = function() {};
+CanvasKit.SkPath.prototype.rArcTo = function() {};
+CanvasKit.SkPath.prototype.rConicTo = function() {};
+CanvasKit.SkPath.prototype.rCubicTo = function() {};
+CanvasKit.SkPath.prototype.rLineTo = function() {};
+CanvasKit.SkPath.prototype.rMoveTo = function() {};
+CanvasKit.SkPath.prototype.rQuadTo = function() {};
 CanvasKit.SkPath.prototype.rect = function() {};
 CanvasKit.SkPath.prototype.simplify = function() {};
 CanvasKit.SkPath.prototype.stroke = function() {};

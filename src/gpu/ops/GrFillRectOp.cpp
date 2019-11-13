@@ -192,9 +192,12 @@ private:
         using Domain = GrQuadPerEdgeAA::Domain;
         static constexpr SkRect kEmptyDomain = SkRect::MakeEmpty();
 
+        auto indexBufferOption = GrQuadPerEdgeAA::CalcIndexBufferOption(fHelper.aaType(),
+                                                                        fQuads.count());
+
         VertexSpec vertexSpec(fQuads.deviceQuadType(), fColorType, fQuads.localQuadType(),
                               fHelper.usesLocalCoords(), Domain::kNo, fHelper.aaType(),
-                              fHelper.compatibleWithCoverageAsAlpha());
+                              fHelper.compatibleWithCoverageAsAlpha(), indexBufferOption);
         // Make sure that if the op thought it was a solid color, the vertex spec does not use
         // local coords.
         SkASSERT(!fHelper.isTrivial() || !fHelper.usesLocalCoords());
@@ -202,13 +205,14 @@ private:
         sk_sp<GrGeometryProcessor> gp = GrQuadPerEdgeAA::MakeProcessor(vertexSpec);
         size_t vertexSize = gp->vertexStride();
 
-        sk_sp<const GrBuffer> vbuffer;
+        sk_sp<const GrBuffer> vertexBuffer;
         int vertexOffsetInBuffer = 0;
 
+        const int totalNumVertices = fQuads.count() * vertexSpec.verticesPerQuad();
+
         // Fill the allocated vertex data
-        void* vdata = target->makeVertexSpace(
-                vertexSize, fQuads.count() * vertexSpec.verticesPerQuad(),
-                &vbuffer, &vertexOffsetInBuffer);
+        void* vdata = target->makeVertexSpace(vertexSize, totalNumVertices,
+                                              &vertexBuffer, &vertexOffsetInBuffer);
         if (!vdata) {
             SkDebugf("Could not allocate vertices\n");
             return;
@@ -226,14 +230,21 @@ private:
                     info.fColor, iter.localQuad(), kEmptyDomain, info.fAAFlags);
         }
 
+        sk_sp<const GrBuffer> indexBuffer;
+        if (vertexSpec.needsIndexBuffer()) {
+            indexBuffer = GrQuadPerEdgeAA::GetIndexBuffer(target, vertexSpec.indexBufferOption());
+            if (!indexBuffer) {
+                SkDebugf("Could not allocate indices\n");
+                return;
+            }
+        }
+
         // Configure the mesh for the vertex data
         GrMesh* mesh = target->allocMeshes(1);
-        if (!GrQuadPerEdgeAA::ConfigureMeshIndices(target, mesh, vertexSpec, fQuads.count())) {
-            SkDebugf("Could not allocate indices\n");
-            return;
-        }
-        mesh->setVertexData(std::move(vbuffer), vertexOffsetInBuffer);
-        target->recordDraw(std::move(gp), mesh);
+        GrQuadPerEdgeAA::ConfigureMesh(mesh, vertexSpec, 0, fQuads.count(), totalNumVertices,
+                                       std::move(vertexBuffer), std::move(indexBuffer),
+                                       vertexOffsetInBuffer);
+        target->recordDraw(std::move(gp), mesh, 1, vertexSpec.primitiveType());
     }
 
     void onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) override {
@@ -244,10 +255,16 @@ private:
         TRACE_EVENT0("skia.gpu", TRACE_FUNC);
         const auto* that = t->cast<FillRectOp>();
 
-        if ((fHelper.aaType() == GrAAType::kCoverage ||
-             that->fHelper.aaType() == GrAAType::kCoverage) &&
-            fQuads.count() + that->fQuads.count() > GrQuadPerEdgeAA::kNumAAQuadsInIndexBuffer) {
-            // This limit on batch size seems to help on Adreno devices
+        bool upgradeToCoverageAAOnMerge = false;
+        if (fHelper.aaType() != that->fHelper.aaType()) {
+            if (!CanUpgradeAAOnMerge(fHelper.aaType(), that->fHelper.aaType())) {
+                return CombineResult::kCannotCombine;
+            }
+            upgradeToCoverageAAOnMerge = true;
+        }
+
+        if (CombinedQuadCountWillOverflow(fHelper.aaType(), upgradeToCoverageAAOnMerge,
+                                          fQuads.count() + that->fQuads.count())) {
             return CombineResult::kCannotCombine;
         }
 
@@ -268,7 +285,7 @@ private:
         // The helper stores the aa type, but isCompatible(with true arg) allows the two ops' aa
         // types to be none and coverage, in which case this op's aa type must be lifted to coverage
         // so that quads with no aa edges can be batched with quads that have some/all edges aa'ed.
-        if (fHelper.aaType() == GrAAType::kNone && that->fHelper.aaType() == GrAAType::kCoverage) {
+        if (upgradeToCoverageAAOnMerge) {
             fHelper.setAAType(GrAAType::kCoverage);
         }
 

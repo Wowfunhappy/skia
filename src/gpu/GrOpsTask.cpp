@@ -35,7 +35,7 @@ static const int kMaxOpChainDistance = 10;
 
 ////////////////////////////////////////////////////////////////////////////////
 
-using DstProxy = GrXferProcessor::DstProxy;
+using DstProxyView = GrXferProcessor::DstProxyView;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -123,13 +123,13 @@ inline void GrOpsTask::OpChain::List::validate() const {
 
 GrOpsTask::OpChain::OpChain(std::unique_ptr<GrOp> op,
                             GrProcessorSet::Analysis processorAnalysis,
-                            GrAppliedClip* appliedClip, const DstProxy* dstProxy)
+                            GrAppliedClip* appliedClip, const DstProxyView* dstProxyView)
         : fList{std::move(op)}
         , fProcessorAnalysis(processorAnalysis)
         , fAppliedClip(appliedClip) {
     if (fProcessorAnalysis.requiresDstTexture()) {
-        SkASSERT(dstProxy && dstProxy->proxy());
-        fDstProxy = *dstProxy;
+        SkASSERT(dstProxyView && dstProxyView->proxy());
+        fDstProxyView = *dstProxyView;
     }
     fBounds = fList.head()->bounds();
 }
@@ -141,8 +141,8 @@ void GrOpsTask::OpChain::visitProxies(const GrOp::VisitProxyFunc& func) const {
     for (const auto& op : GrOp::ChainRange<>(fList.head())) {
         op.visitProxies(func);
     }
-    if (fDstProxy.proxy()) {
-        func(fDstProxy.proxy(), GrMipMapped::kNo);
+    if (fDstProxyView.proxy()) {
+        func(fDstProxyView.proxy(), GrMipMapped::kNo);
     }
     if (fAppliedClip) {
         fAppliedClip->visitProxies(func);
@@ -234,13 +234,13 @@ GrOpsTask::OpChain::List GrOpsTask::OpChain::DoConcat(
 // Attempts to concatenate the given chain onto our own and merge ops across the chains. Returns
 // whether the operation succeeded. On success, the provided list will be returned empty.
 bool GrOpsTask::OpChain::tryConcat(
-        List* list, GrProcessorSet::Analysis processorAnalysis, const DstProxy& dstProxy,
+        List* list, GrProcessorSet::Analysis processorAnalysis, const DstProxyView& dstProxyView,
         const GrAppliedClip* appliedClip, const SkRect& bounds, const GrCaps& caps,
         GrOpMemoryPool* pool, GrAuditTrail* auditTrail) {
     SkASSERT(!fList.empty());
     SkASSERT(!list->empty());
-    SkASSERT(fProcessorAnalysis.requiresDstTexture() == SkToBool(fDstProxy.proxy()));
-    SkASSERT(processorAnalysis.requiresDstTexture() == SkToBool(dstProxy.proxy()));
+    SkASSERT(fProcessorAnalysis.requiresDstTexture() == SkToBool(fDstProxyView.proxy()));
+    SkASSERT(processorAnalysis.requiresDstTexture() == SkToBool(dstProxyView.proxy()));
     // All returns use explicit tuple constructor rather than {a, b} to work around old GCC bug.
     if (fList.head()->classID() != list->head()->classID() ||
         SkToBool(fAppliedClip) != SkToBool(appliedClip) ||
@@ -253,7 +253,7 @@ bool GrOpsTask::OpChain::tryConcat(
                 // chain nor combine overlapping Ops.
                 GrRectsTouchOrOverlap(fBounds, bounds)) ||
         (fProcessorAnalysis.requiresDstTexture() != processorAnalysis.requiresDstTexture()) ||
-        (fProcessorAnalysis.requiresDstTexture() && fDstProxy != dstProxy)) {
+        (fProcessorAnalysis.requiresDstTexture() && fDstProxyView != dstProxyView)) {
         return false;
     }
 
@@ -293,8 +293,8 @@ bool GrOpsTask::OpChain::tryConcat(
 
 bool GrOpsTask::OpChain::prependChain(OpChain* that, const GrCaps& caps, GrOpMemoryPool* pool,
                                       GrAuditTrail* auditTrail) {
-    if (!that->tryConcat(
-            &fList, fProcessorAnalysis, fDstProxy, fAppliedClip, fBounds, caps, pool, auditTrail)) {
+    if (!that->tryConcat(&fList, fProcessorAnalysis, fDstProxyView, fAppliedClip, fBounds, caps,
+                         pool, auditTrail)) {
         this->validate();
         // append failed
         return false;
@@ -305,7 +305,7 @@ bool GrOpsTask::OpChain::prependChain(OpChain* that, const GrCaps& caps, GrOpMem
     fList = std::move(that->fList);
     fBounds = that->fBounds;
 
-    that->fDstProxy.setProxy(nullptr);
+    that->fDstProxyView.setProxyView({});
     if (that->fAppliedClip) {
         for (int i = 0; i < that->fAppliedClip->numClipCoverageFragmentProcessors(); ++i) {
             that->fAppliedClip->detachClipCoverageFragmentProcessor(i);
@@ -317,17 +317,18 @@ bool GrOpsTask::OpChain::prependChain(OpChain* that, const GrCaps& caps, GrOpMem
 
 std::unique_ptr<GrOp> GrOpsTask::OpChain::appendOp(
         std::unique_ptr<GrOp> op, GrProcessorSet::Analysis processorAnalysis,
-        const DstProxy* dstProxy, const GrAppliedClip* appliedClip, const GrCaps& caps,
+        const DstProxyView* dstProxyView, const GrAppliedClip* appliedClip, const GrCaps& caps,
         GrOpMemoryPool* pool, GrAuditTrail* auditTrail) {
-    const GrXferProcessor::DstProxy noDstProxy;
-    if (!dstProxy) {
-        dstProxy = &noDstProxy;
+    const GrXferProcessor::DstProxyView noDstProxyView;
+    if (!dstProxyView) {
+        dstProxyView = &noDstProxyView;
     }
     SkASSERT(op->isChainHead() && op->isChainTail());
     SkRect opBounds = op->bounds();
     List chain(std::move(op));
     if (!this->tryConcat(
-            &chain, processorAnalysis, *dstProxy, appliedClip, opBounds, caps, pool, auditTrail)) {
+            &chain, processorAnalysis, *dstProxyView, appliedClip, opBounds, caps, pool,
+            auditTrail)) {
         // append failed, give the op back to the caller.
         this->validate();
         return chain.popHead();
@@ -352,15 +353,15 @@ inline void GrOpsTask::OpChain::validate() const {
 ////////////////////////////////////////////////////////////////////////////////
 
 GrOpsTask::GrOpsTask(sk_sp<GrOpMemoryPool> opMemoryPool,
-                     sk_sp<GrRenderTargetProxy> rtProxy,
+                     GrSurfaceProxyView view,
                      GrAuditTrail* auditTrail)
-        : GrRenderTask(std::move(rtProxy))
+        : GrRenderTask(std::move(view))
         , fOpMemoryPool(std::move(opMemoryPool))
         , fAuditTrail(auditTrail)
         , fLastClipStackGenID(SK_InvalidUniqueID)
         SkDEBUGCODE(, fNumClips(0)) {
     SkASSERT(fOpMemoryPool);
-    fTarget->setLastRenderTask(this);
+    fTargetView.proxy()->setLastRenderTask(this);
 }
 
 void GrOpsTask::deleteOps() {
@@ -381,11 +382,12 @@ void GrOpsTask::endFlush() {
     this->deleteOps();
     fClipAllocator.reset();
 
-    if (fTarget && this == fTarget->getLastRenderTask()) {
-        fTarget->setLastRenderTask(nullptr);
+    GrSurfaceProxy* proxy = fTargetView.proxy();
+    if (proxy && this == proxy->getLastRenderTask()) {
+        proxy->setLastRenderTask(nullptr);
     }
 
-    fTarget.reset();
+    fTargetView.reset();
     fDeferredProxies.reset();
     fSampledProxies.reset();
     fAuditTrail = nullptr;
@@ -406,13 +408,13 @@ void GrOpsTask::onPrePrepare(GrRecordingContext* context) {
 
     for (const auto& chain : fOpChains) {
         if (chain.shouldExecute()) {
-            chain.head()->prePrepare(context);
+            chain.head()->prePrepare(context, chain.appliedClip());
         }
     }
 }
 
 void GrOpsTask::onPrepare(GrOpFlushState* flushState) {
-    SkASSERT(fTarget->peekRenderTarget());
+    SkASSERT(fTargetView.proxy()->peekRenderTarget());
     SkASSERT(this->isClosed());
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
@@ -433,9 +435,9 @@ void GrOpsTask::onPrepare(GrOpFlushState* flushState) {
             TRACE_EVENT0("skia.gpu", chain.head()->name());
 #endif
             GrOpFlushState::OpArgs opArgs(chain.head(),
-                                          fTarget->asRenderTargetProxy(),
+                                          &fTargetView,
                                           chain.appliedClip(),
-                                          chain.dstProxy());
+                                          chain.dstProxyView());
 
             flushState->setOpArgs(&opArgs);
             // GrOp::prePrepare may or may not have been called at this point
@@ -482,7 +484,9 @@ bool GrOpsTask::onExecute(GrOpFlushState* flushState) {
         return false;
     }
 
-    SkASSERT(fTarget->peekRenderTarget());
+    SkASSERT(fTargetView.proxy());
+    GrRenderTargetProxy* proxy = fTargetView.proxy()->asRenderTargetProxy();
+    SkASSERT(proxy);
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
 
     // Make sure load ops are not kClear if the GPU needs to use draws for clears
@@ -490,9 +494,20 @@ bool GrOpsTask::onExecute(GrOpFlushState* flushState) {
              !flushState->gpu()->caps()->performColorClearsAsDraws());
 
     const GrCaps& caps = *flushState->gpu()->caps();
-    GrRenderTarget* renderTarget = fTarget.get()->peekRenderTarget();
+    GrRenderTarget* renderTarget = proxy->peekRenderTarget();
     SkASSERT(renderTarget);
-    GrStencilAttachment* stencil = renderTarget->renderTargetPriv().getStencilAttachment();
+
+    GrStencilAttachment* stencil = nullptr;
+    if (int numStencilSamples = proxy->numStencilSamples()) {
+        if (!flushState->resourceProvider()->attachStencilAttachment(
+                renderTarget, numStencilSamples)) {
+            SkDebugf("WARNING: failed to attach a stencil buffer. Rendering will be skipped.\n");
+            return false;
+        }
+        stencil = renderTarget->renderTargetPriv().getStencilAttachment();
+    }
+
+    SkASSERT(!stencil || stencil->numSamples() == proxy->numStencilSamples());
 
     GrLoadOp stencilLoadOp;
     switch (fInitialStencilContent) {
@@ -536,9 +551,12 @@ bool GrOpsTask::onExecute(GrOpFlushState* flushState) {
             : GrStoreOp::kStore;
 
     GrOpsRenderPass* renderPass = create_render_pass(
-            flushState->gpu(), fTarget->peekRenderTarget(), fTarget->origin(),
+            flushState->gpu(), proxy->peekRenderTarget(), fTargetView.origin(),
             fClippedContentBounds, fColorLoadOp, fLoadClearColor, stencilLoadOp, stencilStoreOp,
             fSampledProxies);
+    if (!renderPass) {
+        return false;
+    }
     flushState->setOpsRenderPass(renderPass);
     renderPass->begin();
 
@@ -552,9 +570,9 @@ bool GrOpsTask::onExecute(GrOpFlushState* flushState) {
 #endif
 
         GrOpFlushState::OpArgs opArgs(chain.head(),
-                                      fTarget->asRenderTargetProxy(),
+                                      &fTargetView,
                                       chain.appliedClip(),
-                                      chain.dstProxy());
+                                      chain.dstProxyView());
 
         flushState->setOpArgs(&opArgs);
         chain.head()->execute(flushState, chain.bounds());
@@ -572,7 +590,9 @@ void GrOpsTask::setColorLoadOp(GrLoadOp op, const SkPMColor4f& color) {
     fColorLoadOp = op;
     fLoadClearColor = color;
     if (GrLoadOp::kClear == fColorLoadOp) {
-        fTotalBounds.setWH(fTarget->width(), fTarget->height());
+        GrSurfaceProxy* proxy = fTargetView.proxy();
+        SkASSERT(proxy);
+        fTotalBounds = proxy->getBoundsRect();
     }
 }
 
@@ -591,7 +611,7 @@ bool GrOpsTask::resetForFullscreenClear(CanDiscardPreviousOps canDiscardPrevious
         // If the opsTask is using a render target which wraps a vulkan command buffer, we can't do
         // a clear load since we cannot change the render pass that we are using. Thus we fall back
         // to making a clear op in this case.
-        return !fTarget->asRenderTargetProxy()->wrapsVkSecondaryCB();
+        return !fTargetView.asRenderTargetProxy()->wrapsVkSecondaryCB();
     }
 
     // Could not empty the task, so an op must be added to handle the clear
@@ -717,24 +737,26 @@ void GrOpsTask::gatherProxyIntervals(GrResourceAllocator* alloc) const {
         alloc->addInterval(fDeferredProxies[i], 0, 0, GrResourceAllocator::ActualUse::kNo);
     }
 
+    GrSurfaceProxy* targetProxy = fTargetView.proxy();
+
     // Add the interval for all the writes to this GrOpsTasks's target
     if (fOpChains.count()) {
         unsigned int cur = alloc->curOp();
 
-        alloc->addInterval(fTarget.get(), cur, cur + fOpChains.count() - 1,
+        alloc->addInterval(targetProxy, cur, cur + fOpChains.count() - 1,
                            GrResourceAllocator::ActualUse::kYes);
     } else {
         // This can happen if there is a loadOp (e.g., a clear) but no other draws. In this case we
         // still need to add an interval for the destination so we create a fake op# for
         // the missing clear op.
-        alloc->addInterval(fTarget.get(), alloc->curOp(), alloc->curOp(),
+        alloc->addInterval(targetProxy, alloc->curOp(), alloc->curOp(),
                            GrResourceAllocator::ActualUse::kYes);
         alloc->incOps();
     }
 
     auto gather = [ alloc SkDEBUGCODE(, this) ] (GrSurfaceProxy* p, GrMipMapped) {
         alloc->addInterval(p, alloc->curOp(), alloc->curOp(), GrResourceAllocator::ActualUse::kYes
-                           SkDEBUGCODE(, fTarget.get() == p));
+                           SkDEBUGCODE(, fTargetView.proxy() == p));
     };
     for (const OpChain& recordedOp : fOpChains) {
         recordedOp.visitProxies(gather);
@@ -747,10 +769,11 @@ void GrOpsTask::gatherProxyIntervals(GrResourceAllocator* alloc) const {
 
 void GrOpsTask::recordOp(
         std::unique_ptr<GrOp> op, GrProcessorSet::Analysis processorAnalysis, GrAppliedClip* clip,
-        const DstProxy* dstProxy, const GrCaps& caps) {
+        const DstProxyView* dstProxyView, const GrCaps& caps) {
     SkDEBUGCODE(op->validate();)
-    SkASSERT(processorAnalysis.requiresDstTexture() == (dstProxy && dstProxy->proxy()));
-    SkASSERT(fTarget);
+    SkASSERT(processorAnalysis.requiresDstTexture() == (dstProxyView && dstProxyView->proxy()));
+    GrSurfaceProxy* proxy = fTargetView.proxy();
+    SkASSERT(proxy);
 
     // A closed GrOpsTask should never receive new/more ops
     SkASSERT(!this->isClosed());
@@ -767,7 +790,7 @@ void GrOpsTask::recordOp(
     // 1) check every op
     // 2) intersect with something
     // 3) find a 'blocker'
-    GR_AUDIT_TRAIL_ADD_OP(fAuditTrail, op.get(), fTarget->uniqueID());
+    GR_AUDIT_TRAIL_ADD_OP(fAuditTrail, op.get(), proxy->uniqueID());
     GrOP_INFO("opsTask: %d Recording (%s, opID: %u)\n"
               "\tBounds [L: %.2f, T: %.2f R: %.2f B: %.2f]\n",
                this->uniqueID(),
@@ -782,7 +805,7 @@ void GrOpsTask::recordOp(
         int i = 0;
         while (true) {
             OpChain& candidate = fOpChains.fromBack(i);
-            op = candidate.appendOp(std::move(op), processorAnalysis, dstProxy, clip, caps,
+            op = candidate.appendOp(std::move(op), processorAnalysis, dstProxyView, clip, caps,
                                     fOpMemoryPool.get(), fAuditTrail);
             if (!op) {
                 return;
@@ -805,7 +828,7 @@ void GrOpsTask::recordOp(
         clip = fClipAllocator.make<GrAppliedClip>(std::move(*clip));
         SkDEBUGCODE(fNumClips++;)
     }
-    fOpChains.emplace_back(std::move(op), processorAnalysis, clip, dstProxy);
+    fOpChains.emplace_back(std::move(op), processorAnalysis, clip, dstProxyView);
 }
 
 void GrOpsTask::forwardCombine(const GrCaps& caps) {
@@ -843,9 +866,10 @@ GrRenderTask::ExpectedOutcome GrOpsTask::onMakeClosed(
         const GrCaps& caps, SkIRect* targetUpdateBounds) {
     this->forwardCombine(caps);
     if (!this->isNoOp()) {
-        SkRect clippedContentBounds = SkRect::MakeIWH(fTarget->width(), fTarget->height());
-        // TODO: If we can fix up GLPrograms test to always intersect the fTarget bounds then we can
-        // simply assert here that the bounds intersect.
+        GrSurfaceProxy* proxy = fTargetView.proxy();
+        SkRect clippedContentBounds = proxy->getBoundsRect();
+        // TODO: If we can fix up GLPrograms test to always intersect the fTargetView proxy bounds
+        // then we can simply assert here that the bounds intersect.
         if (clippedContentBounds.intersect(fTotalBounds)) {
             clippedContentBounds.roundOut(&fClippedContentBounds);
             *targetUpdateBounds = fClippedContentBounds;

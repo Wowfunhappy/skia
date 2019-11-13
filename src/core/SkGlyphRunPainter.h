@@ -35,10 +35,12 @@ struct SkGlyphPositionRoundingSpec {
     SkGlyphPositionRoundingSpec(bool isSubpixel, SkAxisAlignment axisAlignment);
     const SkVector halfAxisSampleFreq;
     const SkIPoint ignorePositionMask;
+    const SkIPoint ignorePositionFieldMask;
 
 private:
     static SkVector HalfAxisSampleFreq(bool isSubpixel, SkAxisAlignment axisAlignment);
     static SkIPoint IgnorePositionMask(bool isSubpixel, SkAxisAlignment axisAlignment);
+    static SkIPoint IgnorePositionFieldMask(bool isSubpixel, SkAxisAlignment axisAlignment);
 };
 
 class SkStrikeCommon {
@@ -103,20 +105,6 @@ private:
     // TODO: Remove once I can hoist ensureBuffers above the list for loop in all cases.
     ScopedBuffers SK_WARN_UNUSED_RESULT ensureBuffers(const SkGlyphRun& glyphRun);
 
-    /**
-     *  @param fARGBPositions in source space
-     *  @param fARGBGlyphsIDs the glyphs to process
-     *  @param fGlyphPos used as scratch space
-     *  @param maxSourceGlyphDimension the longest dimension of any glyph as if all fARGBGlyphsIDs
-     *                                 were drawn in source space (as if viewMatrix were identity)
-     */
-    void processARGBFallback(SkScalar maxSourceGlyphDimension,
-                             const SkPaint& runPaint,
-                             const SkFont& runFont,
-                             SkPoint origin,
-                             const SkMatrix& viewMatrix,
-                             SkGlyphRunPainterInterface* process);
-
     // The props as on the actual device.
     const SkSurfaceProps fDeviceProps;
     // The props for when the bitmap device can't draw LCD text.
@@ -128,10 +116,6 @@ private:
 
     SkDrawableGlyphBuffer fDrawable;
     SkSourceGlyphBuffer fRejects;
-
-    size_t fMaxRunSize{0};
-
-    std::vector<SkGlyphPos> fPaths;
 };
 
 // SkGlyphRunPainterInterface are all the ways that Ganesh generates glyphs. The first
@@ -155,10 +139,8 @@ public:
     virtual void processDeviceMasks(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                                     const SkStrikeSpec& strikeSpec) = 0;
 
-    virtual void processSourcePaths(SkSpan<const SkGlyphPos> paths,
+    virtual void processSourcePaths(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                                     const SkStrikeSpec& strikeSpec) = 0;
-
-    virtual void processDevicePaths(SkSpan<const SkGlyphPos> paths) = 0;
 
     virtual void processSourceSDFT(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                                    const SkStrikeSpec& strikeSpec,

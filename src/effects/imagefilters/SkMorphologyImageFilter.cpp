@@ -565,7 +565,7 @@ static sk_sp<SkSpecialImage> apply_morphology(
     GrColorType colorType = ctx.grColorType();
 
     // setup new clip
-    const GrFixedClip clip(SkIRect::MakeWH(srcTexture->width(), srcTexture->height()));
+    const GrFixedClip clip(SkIRect::MakeSize(srcTexture->dimensions()));
 
     const SkIRect dstRect = SkIRect::MakeWH(rect.width(), rect.height());
     SkIRect srcRect = rect;
@@ -766,7 +766,10 @@ sk_sp<SkSpecialImage> SkMorphologyImageFilterImpl::onFilterImage(const Context& 
     int width = SkScalarFloorToInt(radius.width());
     int height = SkScalarFloorToInt(radius.height());
 
-    if (width < 0 || height < 0) {
+    // Width (or height) must fit in a signed 32-bit int to avoid UBSAN issues (crbug.com/1018190)
+    constexpr int kMaxRadius = (std::numeric_limits<int>::max() - 1) / 2;
+
+    if (width < 0 || height < 0 || width > kMaxRadius || height > kMaxRadius) {
         return nullptr;
     }
 

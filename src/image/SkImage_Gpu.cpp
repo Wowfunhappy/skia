@@ -56,7 +56,7 @@ static SkColorType proxy_color_type(GrTextureProxy* proxy) {
 
 SkImage_Gpu::SkImage_Gpu(sk_sp<GrContext> context, uint32_t uniqueID, SkAlphaType at,
                          sk_sp<GrTextureProxy> proxy, sk_sp<SkColorSpace> colorSpace)
-        : INHERITED(std::move(context), proxy->worstCaseWidth(), proxy->worstCaseHeight(), uniqueID,
+        : INHERITED(std::move(context), proxy->backingStoreDimensions(), uniqueID,
                     proxy_color_type(proxy.get()), at, colorSpace)
         , fProxy(std::move(proxy)) {}
 
@@ -383,9 +383,8 @@ sk_sp<SkImage> SkImage::makeTextureImage(GrContext* context, GrMipMapped mipMapp
         if (GrMipMapped::kNo == mipMapped || proxy->mipMapped() == mipMapped) {
             return sk_ref_sp(const_cast<SkImage*>(this));
         }
-        GrTextureAdjuster adjuster(context, std::move(proxy),
-                                   SkColorTypeToGrColorType(this->colorType()), this->alphaType(),
-                                   this->uniqueID(), this->colorSpace());
+        GrTextureAdjuster adjuster(context, std::move(proxy), this->imageInfo().colorInfo(),
+                                   this->uniqueID());
         return create_image_from_producer(context, &adjuster, this->alphaType(),
                                           this->uniqueID(), mipMapped);
     }

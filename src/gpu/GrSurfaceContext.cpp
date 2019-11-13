@@ -35,8 +35,13 @@
 GrSurfaceContext::GrSurfaceContext(GrRecordingContext* context,
                                    GrColorType colorType,
                                    SkAlphaType alphaType,
-                                   sk_sp<SkColorSpace> colorSpace)
-        : fContext(context), fColorInfo(colorType, alphaType, std::move(colorSpace)) {}
+                                   sk_sp<SkColorSpace> colorSpace,
+                                   GrSurfaceOrigin origin,
+                                   GrSwizzle texSwizzle)
+        : fContext(context)
+        , fOrigin(origin)
+        , fColorInfo(colorType, alphaType, std::move(colorSpace))
+        , fTextureSwizzle(texSwizzle) {}
 
 const GrCaps* GrSurfaceContext::caps() const { return fContext->priv().caps(); }
 
@@ -425,8 +430,10 @@ bool GrSurfaceContext::copy(GrSurfaceProxy* src, const SkIRect& srcRect, const S
         return false;
     }
 
-    return this->drawingManager()->newCopyRenderTask(sk_ref_sp(src), srcRect,
-                                                     this->asSurfaceProxyRef(), dstPoint);
+    // The swizzle doesn't matter for copies and it is not used.
+    return this->drawingManager()->newCopyRenderTask(
+            GrSurfaceProxyView(sk_ref_sp(src), src->origin(), GrSwizzle()), srcRect,
+            this->textureSurfaceView(), dstPoint);
 }
 
 std::unique_ptr<GrRenderTargetContext> GrSurfaceContext::rescale(

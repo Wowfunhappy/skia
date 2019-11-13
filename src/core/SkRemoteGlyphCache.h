@@ -8,6 +8,11 @@
 #ifndef SkRemoteGlyphCache_DEFINED
 #define SkRemoteGlyphCache_DEFINED
 
+// Use `extra_cflags=["-DSK_CAPTURE_DRAW_TEXT_BLOB"]` to capture traces to disc.
+
+// Or uncomment this line:
+//#define SK_CAPTURE_DRAW_TEXT_BLOB
+
 #include <memory>
 #include <tuple>
 #include <unordered_map>
@@ -24,11 +29,13 @@
 #include "src/core/SkMakeUnique.h"
 #include "src/core/SkStrikeForGPU.h"
 #include "src/core/SkTLazy.h"
+#include "src/core/SkTextBlobTrace.h"
 
 class Deserializer;
 class Serializer;
 enum SkAxisAlignment : uint32_t;
 class SkDescriptor;
+class SkAutoDescriptor;
 class SkStrike;
 struct SkPackedGlyphID;
 enum SkScalerContextFlags : uint32_t;
@@ -118,12 +125,17 @@ public:
                                                   const SkTypeface& typeface) override;
 
     static void AddGlyphForTesting(
-            RemoteStrike* cache, SkPackedGlyphID glyphID, bool asPath);
+            RemoteStrike* strike, SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects);
 
     void setMaxEntriesInDescriptorMapForTesting(size_t count) {
         fMaxEntriesInDescriptorMap = count;
     }
     size_t remoteStrikeMapSizeForTesting() const { return fDescToRemoteStrike.size(); }
+
+    #ifdef SK_CAPTURE_DRAW_TEXT_BLOB
+    // DrawTextBlob trace capture.
+    std::unique_ptr<SkTextBlobTrace::Capture> fCapture;
+    #endif  //  SK_CAPTURE_DRAW_TEXT_BLOB
 
 private:
     static constexpr size_t kMaxEntriesInDescriptorMap = 2000u;
@@ -220,5 +232,8 @@ private:
     SkStrikeCache* const fStrikeCache;
     const bool fIsLogging;
 };
+
+// For exposure to fuzzing only.
+bool SkFuzzDeserializeSkDescriptor(sk_sp<SkData> bytes, SkAutoDescriptor* ad);
 
 #endif  // SkRemoteGlyphCache_DEFINED

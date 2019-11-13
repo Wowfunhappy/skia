@@ -18,6 +18,7 @@
 #include "src/gpu/GrPaint.h"
 #include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrSurfaceContext.h"
+#include "src/gpu/GrSurfaceProxyView.h"
 #include "src/gpu/GrXferProcessor.h"
 #include "src/gpu/geometry/GrQuad.h"
 #include "src/gpu/text/GrTextTarget.h"
@@ -201,9 +202,12 @@ public:
                      sk_sp<GrColorSpaceXform> texXform) {
         const SkRect* domain = constraint == SkCanvas::kStrict_SrcRectConstraint ?
                 &srcRect : nullptr;
-        this->drawTexturedQuad(clip, std::move(proxy), srcColorType, std::move(texXform), filter,
-                               color, mode, aa, edgeAA, GrQuad::MakeFromRect(dstRect, viewMatrix),
-                               GrQuad(srcRect), domain);
+        GrSurfaceOrigin origin = proxy->origin();
+        const GrSwizzle& swizzle = proxy->textureSwizzle();
+        GrSurfaceProxyView proxyView(std::move(proxy), origin, swizzle);
+        this->drawTexturedQuad(clip, std::move(proxyView), srcColorType, std::move(texXform),
+                               filter, color, mode, aa, edgeAA,
+                               GrQuad::MakeFromRect(dstRect, viewMatrix), GrQuad(srcRect), domain);
     }
 
     /**
@@ -217,14 +221,18 @@ public:
                          const SkPoint srcQuad[4], const SkPoint dstQuad[4], GrAA aa,
                          GrQuadAAFlags edgeAA, const SkRect* domain, const SkMatrix& viewMatrix,
                          sk_sp<GrColorSpaceXform> texXform) {
-        this->drawTexturedQuad(clip, std::move(proxy), srcColorType, std::move(texXform), filter,
-                               color, mode, aa, edgeAA, GrQuad::MakeFromSkQuad(dstQuad, viewMatrix),
+        GrSurfaceOrigin origin = proxy->origin();
+        const GrSwizzle& swizzle = proxy->textureSwizzle();
+        GrSurfaceProxyView proxyView(std::move(proxy), origin, swizzle);
+        this->drawTexturedQuad(clip, std::move(proxyView), srcColorType, std::move(texXform),
+                               filter, color, mode, aa, edgeAA,
+                               GrQuad::MakeFromSkQuad(dstQuad, viewMatrix),
                                GrQuad::MakeFromSkQuad(srcQuad, SkMatrix::I()), domain);
     }
 
     /** Used with drawTextureSet */
     struct TextureSetEntry {
-        sk_sp<GrTextureProxy> fProxy;
+        GrSurfaceProxyView fProxyView;
         GrColorType fSrcColorType;
         SkRect fSrcRect;
         SkRect fDstRect;
@@ -480,9 +488,12 @@ public:
     int height() const { return fRenderTargetProxy->height(); }
     int numSamples() const { return fRenderTargetProxy->numSamples(); }
     const SkSurfaceProps& surfaceProps() const { return fSurfaceProps; }
-    GrSurfaceOrigin origin() const { return fRenderTargetProxy->origin(); }
     bool wrapsVkSecondaryCB() const { return fRenderTargetProxy->wrapsVkSecondaryCB(); }
     GrMipMapped mipMapped() const;
+
+    GrSurfaceProxyView outputSurfaceView() {
+        return { fRenderTargetProxy, fOrigin, fOutputSwizzle };
+    }
 
     // This entry point should only be called if the backing GPU object is known to be
     // instantiated.
@@ -512,12 +523,6 @@ public:
     void testingOnly_SetPreserveOpsOnFullClear() { fPreserveOpsOnFullClear_TestingOnly = true; }
     GrOpsTask* testingOnly_PeekLastOpsTask() { return fOpsTask.get(); }
 #endif
-
-protected:
-    GrRenderTargetContext(GrRecordingContext*, sk_sp<GrRenderTargetProxy>, GrColorType,
-                          sk_sp<SkColorSpace>, const SkSurfaceProps*, bool managedOpsTask = true);
-
-    SkDEBUGCODE(void validate() const override;)
 
 private:
     class TextTarget;
@@ -550,6 +555,13 @@ private:
                              std::unique_ptr<GrFragmentProcessor>,
                              sk_sp<GrTextureProxy>,
                              GrColorType);
+
+    GrRenderTargetContext(GrRecordingContext*, sk_sp<GrRenderTargetProxy>, GrColorType,
+                          GrSurfaceOrigin, GrSwizzle texSwizzle, GrSwizzle outSwizzle,
+                          sk_sp<SkColorSpace>, const SkSurfaceProps*, bool managedOpsTask = true);
+
+    SkDEBUGCODE(void validate() const override;)
+
 
     GrOpsTask::CanDiscardPreviousOps canDiscardPreviousOpsOnFullClear() const;
     void setNeedsStencil(bool useMixedSamplesIfNotMSAA);
@@ -596,7 +608,7 @@ private:
 
     // Like drawFilledQuad but does not require using a GrPaint or FP for texturing
     void drawTexturedQuad(const GrClip& clip,
-                          sk_sp<GrTextureProxy> proxy,
+                          GrSurfaceProxyView proxyView,
                           GrColorType srcColorType,
                           sk_sp<GrColorSpaceXform> textureXform,
                           GrSamplerState::Filter filter,
@@ -625,8 +637,8 @@ private:
     // Makes a copy of the proxy if it is necessary for the draw and places the texture that should
     // be used by GrXferProcessor to access the destination color in 'result'. If the return
     // value is false then a texture copy could not be made.
-    bool SK_WARN_UNUSED_RESULT setupDstProxy(const GrClip&, const GrOp& op,
-                                             GrXferProcessor::DstProxy* result);
+    bool SK_WARN_UNUSED_RESULT setupDstProxyView(const GrClip&, const GrOp& op,
+                                                 GrXferProcessor::DstProxyView* result);
 
     class AsyncReadResult;
 
@@ -637,7 +649,9 @@ private:
     GrOpsTask* getOpsTask();
 
     std::unique_ptr<GrTextTarget> fTextTarget;
+
     sk_sp<GrRenderTargetProxy> fRenderTargetProxy;
+    GrSwizzle fOutputSwizzle;
 
     // In MDB-mode the GrOpsTask can be closed by some other renderTargetContext that has picked
     // it up. For this reason, the GrOpsTask should only ever be accessed via 'getOpsTask'.

@@ -85,7 +85,7 @@ GrCCPathProcessor::GrCCPathProcessor(CoverageMode coverageMode, const GrTexture*
         : INHERITED(kGrCCPathProcessor_ClassID)
         , fCoverageMode(coverageMode)
         , fAtlasAccess(GrSamplerState::ClampNearest(), atlasTexture->backendFormat(), swizzle)
-        , fAtlasSize(SkISize::Make(atlasTexture->width(), atlasTexture->height()))
+        , fAtlasDimensions(atlasTexture->dimensions())
         , fAtlasOrigin(atlasOrigin) {
     // TODO: Can we just assert that atlas has GrCCAtlas::kTextureOrigin and remove fAtlasOrigin?
     this->setInstanceAttributes(kInstanceAttribs, SK_ARRAY_COUNT(kInstanceAttribs));
@@ -107,8 +107,9 @@ private:
     void setData(const GrGLSLProgramDataManager& pdman, const GrPrimitiveProcessor& primProc,
                  FPCoordTransformIter&& transformIter) override {
         const auto& proc = primProc.cast<GrCCPathProcessor>();
-        pdman.set2f(
-                fAtlasAdjustUniform, 1.0f / proc.fAtlasSize.fWidth, 1.0f / proc.fAtlasSize.fHeight);
+        pdman.set2f(fAtlasAdjustUniform,
+                    1.0f / proc.fAtlasDimensions.fWidth,
+                    1.0f / proc.fAtlasDimensions.fHeight);
         this->setTransformDataHelper(proc.fLocalMatrix, pdman, &transformIter);
     }
 
@@ -140,12 +141,13 @@ void GrCCPathProcessor::drawPaths(GrOpFlushState* flushState, const GrPipeline& 
                              baseInstance, enablePrimitiveRestart);
     mesh.setVertexData(resources.refVertexBuffer());
 
-    GrProgramInfo programInfo(flushState->drawOpArgs().numSamples(),
+    GrProgramInfo programInfo(flushState->proxy()->numSamples(),
+                              flushState->proxy()->numStencilSamples(),
                               flushState->drawOpArgs().origin(),
                               pipeline,
                               *this,
                               fixedDynamicState,
-                              nullptr, 0);
+                              nullptr, 0, primitiveType);
 
     flushState->opsRenderPass()->draw(programInfo, &mesh, 1, bounds);
 }

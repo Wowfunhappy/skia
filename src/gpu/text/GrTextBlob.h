@@ -520,10 +520,8 @@ private:
     void processDeviceMasks(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                             const SkStrikeSpec& strikeSpec) override;
 
-    void processSourcePaths(SkSpan<const SkGlyphPos> paths,
+    void processSourcePaths(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                             const SkStrikeSpec& strikeSpec) override;
-
-    void processDevicePaths(SkSpan<const SkGlyphPos> paths) override;
 
     void processSourceSDFT(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                            const SkStrikeSpec& strikeSpec,
@@ -595,8 +593,7 @@ public:
      */
     VertexRegenerator(GrResourceProvider*, GrTextBlob*, int runIdx, int subRunIdx,
                       const SkMatrix& viewMatrix, SkScalar x, SkScalar y, GrColor color,
-                      GrDeferredUploadTarget*, GrStrikeCache*, GrAtlasManager*,
-                      SkExclusiveStrikePtr*);
+                      GrDeferredUploadTarget*, GrStrikeCache*, GrAtlasManager*);
 
     struct Result {
         /**
@@ -628,7 +625,7 @@ private:
     GrDeferredUploadTarget* fUploadTarget;
     GrStrikeCache* fGlyphCache;
     GrAtlasManager* fFullAtlasManager;
-    SkExclusiveStrikePtr* fLazyStrike;
+    SkTLazy<SkBulkGlyphMetricsAndImages> fMetricsAndImages;
     SubRun* fSubRun;
     GrColor fColor;
     SkScalar fTransX;

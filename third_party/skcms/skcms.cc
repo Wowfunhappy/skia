@@ -137,10 +137,10 @@ static TFKind classify(const skcms_TransferFunction& tf, TF_PQish*   pq = nullpt
                                                        , TF_HLGish* hlg = nullptr) {
     if (tf.g < 0 && (int)tf.g == tf.g) {
         // TODO: sanity checks for PQ/HLG like we do for sRGBish.
-        switch (-(int)tf.g) {
-            case PQish:     if (pq ) { memcpy(pq , &tf.a, sizeof(*pq )); } return PQish;
-            case HLGish:    if (hlg) { memcpy(hlg, &tf.a, sizeof(*hlg)); } return HLGish;
-            case HLGinvish: if (hlg) { memcpy(hlg, &tf.a, sizeof(*hlg)); } return HLGinvish;
+        switch ((int)tf.g) {
+            case -PQish:     if (pq ) { memcpy(pq , &tf.a, sizeof(*pq )); } return PQish;
+            case -HLGish:    if (hlg) { memcpy(hlg, &tf.a, sizeof(*hlg)); } return HLGish;
+            case -HLGinvish: if (hlg) { memcpy(hlg, &tf.a, sizeof(*hlg)); } return HLGinvish;
         }
         return Bad;
     }
@@ -266,6 +266,7 @@ enum {
     skcms_Signature_mAB  = 0x6D414220,
 
     skcms_Signature_CHAD = 0x63686164,
+    skcms_Signature_WTPT = 0x77747074,
 
     // Type signatures
     skcms_Signature_curv = 0x63757276,
@@ -389,6 +390,12 @@ static bool read_tag_xyz(const skcms_ICCTag* tag, float* x, float* y, float* z) 
     *y = read_big_fixed(xyzTag->Y);
     *z = read_big_fixed(xyzTag->Z);
     return true;
+}
+
+bool skcms_GetWTPT(const skcms_ICCProfile* profile, float xyz[3]) {
+    skcms_ICCTag tag;
+    return skcms_GetTagBySignature(profile, skcms_Signature_WTPT, &tag) &&
+           read_tag_xyz(&tag, &xyz[0], &xyz[1], &xyz[2]);
 }
 
 static bool read_to_XYZD50(const skcms_ICCTag* rXYZ, const skcms_ICCTag* gXYZ,

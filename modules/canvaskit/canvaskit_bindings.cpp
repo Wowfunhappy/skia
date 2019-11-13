@@ -20,6 +20,7 @@
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkFontTypes.h"
 #include "include/core/SkImage.h"
+#include "include/core/SkImageFilter.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMaskFilter.h"
 #include "include/core/SkPaint.h"
@@ -43,6 +44,7 @@
 #include "include/effects/SkDashPathEffect.h"
 #include "include/effects/SkDiscretePathEffect.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/effects/SkImageFilters.h"
 #include "include/effects/SkTrimPathEffect.h"
 #include "include/pathops/SkPathOps.h"
 #include "include/utils/SkParsePath.h"
@@ -230,11 +232,18 @@ void ApplyArcToAngle(SkPath& p, SkRect& oval, SkScalar startAngle, SkScalar swee
     p.arcTo(oval, startAngle, sweepAngle, forceMoveTo);
 }
 
-void ApplyAddArcToArcSize(SkPath& orig, SkScalar rx, SkScalar ry, SkScalar xAxisRotate,
-                          bool useSmallArc, bool ccw, SkScalar x, SkScalar y) {
+void ApplyArcToArcSize(SkPath& orig, SkScalar rx, SkScalar ry, SkScalar xAxisRotate,
+                       bool useSmallArc, bool ccw, SkScalar x, SkScalar y) {
     auto arcSize = useSmallArc ? SkPath::ArcSize::kSmall_ArcSize : SkPath::ArcSize::kLarge_ArcSize;
     auto sweep = ccw ? SkPath::Direction::kCCW_Direction : SkPath::Direction::kCW_Direction;
     orig.arcTo(rx, ry, xAxisRotate, arcSize, sweep, x, y);
+}
+
+void ApplyRArcToArcSize(SkPath& orig, SkScalar rx, SkScalar ry, SkScalar xAxisRotate,
+                        bool useSmallArc, bool ccw, SkScalar dx, SkScalar dy) {
+    auto arcSize = useSmallArc ? SkPath::ArcSize::kSmall_ArcSize : SkPath::ArcSize::kLarge_ArcSize;
+    auto sweep = ccw ? SkPath::Direction::kCCW_Direction : SkPath::Direction::kCW_Direction;
+    orig.rArcTo(rx, ry, xAxisRotate, arcSize, sweep, dx, dy);
 }
 
 void ApplyClose(SkPath& p) {
@@ -246,17 +255,35 @@ void ApplyConicTo(SkPath& p, SkScalar x1, SkScalar y1, SkScalar x2, SkScalar y2,
     p.conicTo(x1, y1, x2, y2, w);
 }
 
+void ApplyRConicTo(SkPath& p, SkScalar dx1, SkScalar dy1, SkScalar dx2, SkScalar dy2,
+                  SkScalar w) {
+    p.rConicTo(dx1, dy1, dx2, dy2, w);
+}
+
 void ApplyCubicTo(SkPath& p, SkScalar x1, SkScalar y1, SkScalar x2, SkScalar y2,
                   SkScalar x3, SkScalar y3) {
     p.cubicTo(x1, y1, x2, y2, x3, y3);
+}
+
+void ApplyRCubicTo(SkPath& p, SkScalar dx1, SkScalar dy1, SkScalar dx2, SkScalar dy2,
+                  SkScalar dx3, SkScalar dy3) {
+    p.rCubicTo(dx1, dy1, dx2, dy2, dx3, dy3);
 }
 
 void ApplyLineTo(SkPath& p, SkScalar x, SkScalar y) {
     p.lineTo(x, y);
 }
 
+void ApplyRLineTo(SkPath& p, SkScalar dx, SkScalar dy) {
+    p.rLineTo(dx, dy);
+}
+
 void ApplyMoveTo(SkPath& p, SkScalar x, SkScalar y) {
     p.moveTo(x, y);
+}
+
+void ApplyRMoveTo(SkPath& p, SkScalar dx, SkScalar dy) {
+    p.rMoveTo(dx, dy);
 }
 
 void ApplyReset(SkPath& p) {
@@ -269,6 +296,10 @@ void ApplyRewind(SkPath& p) {
 
 void ApplyQuadTo(SkPath& p, SkScalar x1, SkScalar y1, SkScalar x2, SkScalar y2) {
     p.quadTo(x1, y1, x2, y2);
+}
+
+void ApplyRQuadTo(SkPath& p, SkScalar dx1, SkScalar dy1, SkScalar dx2, SkScalar dy2) {
+    p.rQuadTo(dx1, dy1, dx2, dy2);
 }
 
 void ApplyTransform(SkPath& orig,
@@ -557,8 +588,18 @@ private:
 };
 
 void drawShapedText(SkCanvas& canvas, ShapedText st, SkScalar x,
-                     SkScalar y, SkPaint paint) {
+                    SkScalar y, SkPaint paint) {
     canvas.drawTextBlob(st.blob(), x, y, paint);
+}
+
+int saveLayerRec(SkCanvas& canvas, const SkPaint* paint,
+                 const SkImageFilter* backdrop, SkCanvas::SaveLayerFlags flags) {
+    return canvas.saveLayer(SkCanvas::SaveLayerRec(nullptr, paint, backdrop, flags));
+}
+
+int saveLayerRecBounds(SkCanvas& canvas, const SkPaint* paint, const SkImageFilter* backdrop,
+                       SkCanvas::SaveLayerFlags flags, const SkRect& bounds) {
+    return canvas.saveLayer(SkCanvas::SaveLayerRec(&bounds, paint, backdrop, flags));
 }
 
 // This is simpler than dealing with an SkPoint and SkVector
@@ -680,6 +721,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
     function("getSkDataBytes", &getSkDataBytes, allow_raw_pointers());
     function("MakeSkCornerPathEffect", &SkCornerPathEffect::Make, allow_raw_pointers());
     function("MakeSkDiscretePathEffect", &SkDiscretePathEffect::Make, allow_raw_pointers());
+    // Deprecated: use Canvaskit.SkMaskFilter.MakeBlur
     function("MakeBlurMaskFilter", optional_override([](SkBlurStyle style, SkScalar sigma, bool respectCTM)->sk_sp<SkMaskFilter> {
         // Adds a little helper because emscripten doesn't expose default params.
         return SkMaskFilter::MakeBlur(style, sigma, respectCTM);
@@ -805,13 +847,24 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
     class_<SkAnimatedImage>("SkAnimatedImage")
         .smart_ptr<sk_sp<SkAnimatedImage>>("sk_sp<SkAnimatedImage>")
+        .function("decodeNextFrame", &SkAnimatedImage::decodeNextFrame)
+        .function("getFrameCount", &SkAnimatedImage::getFrameCount)
         .function("getRepetitionCount", &SkAnimatedImage::getRepetitionCount)
-        .function("decodeNextFrame", &SkAnimatedImage::decodeNextFrame);
+        .function("height",  optional_override([](SkAnimatedImage& self)->int32_t {
+            return self.dimensions().height();
+        }))
+        .function("reset", &SkAnimatedImage::reset)
+        .function("width",  optional_override([](SkAnimatedImage& self)->int32_t {
+            return self.dimensions().width();
+        }));
 
     class_<SkCanvas>("SkCanvas")
         .constructor<>()
         .function("clear", &SkCanvas::clear)
         .function("clipPath", select_overload<void (const SkPath&, SkClipOp, bool)>(&SkCanvas::clipPath))
+        .function("clipRRect", optional_override([](SkCanvas& self, const SimpleRRect& r, SkClipOp op, bool doAntiAlias) {
+            self.clipRRect(toRRect(r), op, doAntiAlias);
+        }))
         .function("clipRect", select_overload<void (const SkRect&, SkClipOp, bool)>(&SkCanvas::clipRect))
         .function("concat", optional_override([](SkCanvas& self, const SimpleMatrix& m) {
             self.concat(toSkMatrix(m));
@@ -831,6 +884,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
             self.drawAtlas(atlas, dstXforms, srcRects, colors, count, mode, nullptr, paint);
         }), allow_raw_pointers())
         .function("drawCircle", select_overload<void (SkScalar, SkScalar, SkScalar, const SkPaint& paint)>(&SkCanvas::drawCircle))
+        .function("drawColor", &SkCanvas::drawColor)
         .function("drawDRRect",optional_override([](SkCanvas& self, const SimpleRRect& o, const SimpleRRect& i, const SkPaint& paint) {
             self.drawDRRect(toRRect(o), toRRect(i), paint);
         }))
@@ -906,8 +960,14 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("restoreToCount", &SkCanvas::restoreToCount)
         .function("rotate", select_overload<void (SkScalar, SkScalar, SkScalar)>(&SkCanvas::rotate))
         .function("save", &SkCanvas::save)
+         // 2 params
         .function("saveLayer", select_overload<int (const SkRect&, const SkPaint*)>(&SkCanvas::saveLayer),
                                allow_raw_pointers())
+         // 3 params (effectively with SaveLayerRec, but no bounds)
+        .function("saveLayer", saveLayerRec, allow_raw_pointers())
+         // 4 params (effectively with SaveLayerRec)
+        .function("saveLayer", saveLayerRecBounds, allow_raw_pointers())
+
         .function("scale", &SkCanvas::scale)
         .function("skew", &SkCanvas::skew)
         .function("translate", &SkCanvas::translate)
@@ -1046,8 +1106,26 @@ EMSCRIPTEN_BINDINGS(Skia) {
             return self->readPixels(ii, pixels, dstRowBytes, srcX, srcY);
         }), allow_raw_pointers());
 
+    class_<SkImageFilter>("SkImageFilter")
+        .smart_ptr<sk_sp<SkImageFilter>>("sk_sp<SkImageFilter>")
+        .class_function("MakeBlur", optional_override([](SkScalar sigmaX, SkScalar sigmaY,
+                                                         SkTileMode tileMode, sk_sp<SkImageFilter> input)->sk_sp<SkImageFilter> {
+            // Emscripten does not like default args nor SkIRect* much
+            return SkImageFilters::Blur(sigmaX, sigmaY, tileMode, input);
+        }))
+        .class_function("MakeColorFilter", optional_override([](sk_sp<SkColorFilter> cf,
+                                                                  sk_sp<SkImageFilter> input)->sk_sp<SkImageFilter> {
+            // Emscripten does not like default args nor SkIRect* much
+            return SkImageFilters::ColorFilter(cf, input);
+        }))
+        .class_function("MakeCompose", &SkImageFilters::Compose);
+
     class_<SkMaskFilter>("SkMaskFilter")
-        .smart_ptr<sk_sp<SkMaskFilter>>("sk_sp<SkMaskFilter>");
+        .smart_ptr<sk_sp<SkMaskFilter>>("sk_sp<SkMaskFilter>")
+        .class_function("MakeBlur", optional_override([](SkBlurStyle style, SkScalar sigma, bool respectCTM)->sk_sp<SkMaskFilter> {
+        // Adds a little helper because emscripten doesn't expose default params.
+        return SkMaskFilter::MakeBlur(style, sigma, respectCTM);
+    }), allow_raw_pointers());
 
     class_<SkPaint>("SkPaint")
         .constructor<>()
@@ -1073,6 +1151,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }))
         .function("setColorFilter", &SkPaint::setColorFilter)
         .function("setFilterQuality", &SkPaint::setFilterQuality)
+        .function("setImageFilter", &SkPaint::setImageFilter)
         .function("setMaskFilter", &SkPaint::setMaskFilter)
         .function("setPathEffect", &SkPaint::setPathEffect)
         .function("setShader", &SkPaint::setShader)
@@ -1098,7 +1177,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("_addRoundRect", &ApplyAddRoundRect)
         .function("_arcTo", &ApplyArcTo)
         .function("_arcTo", &ApplyArcToAngle)
-        .function("_arcTo", &ApplyAddArcToArcSize)
+        .function("_arcTo", &ApplyArcToArcSize)
         .function("_close", &ApplyClose)
         .function("_conicTo", &ApplyConicTo)
         .function("countPoints", &SkPath::countPoints)
@@ -1109,9 +1188,15 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("isVolatile", &SkPath::isVolatile)
         .function("_lineTo", &ApplyLineTo)
         .function("_moveTo", &ApplyMoveTo)
+        .function("_quadTo", &ApplyQuadTo)
+        .function("_rArcTo", &ApplyRArcToArcSize)
+        .function("_rConicTo", &ApplyRConicTo)
+        .function("_rCubicTo", &ApplyRCubicTo)
+        .function("_rLineTo", &ApplyRLineTo)
+        .function("_rMoveTo", &ApplyRMoveTo)
+        .function("_rQuadTo", &ApplyRQuadTo)
         .function("reset", &ApplyReset)
         .function("rewind", &ApplyRewind)
-        .function("_quadTo", &ApplyQuadTo)
         .function("setIsVolatile", &SkPath::setIsVolatile)
         .function("_transform", select_overload<void(SkPath&, SkScalar, SkScalar, SkScalar, SkScalar, SkScalar, SkScalar, SkScalar, SkScalar, SkScalar)>(&ApplyTransform))
 
@@ -1498,4 +1583,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
     constant("CONIC_VERB", CONIC);
     constant("CUBIC_VERB", CUBIC);
     constant("CLOSE_VERB", CLOSE);
+
+    constant("SaveLayerInitWithPrevious", SkCanvas::SaveLayerFlagsSet::kInitWithPrevious_SaveLayerFlag);
+    constant("SaveLayerF16ColorType",     SkCanvas::SaveLayerFlagsSet::kF16ColorType);
+
 }
