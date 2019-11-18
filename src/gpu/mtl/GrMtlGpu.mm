@@ -1252,7 +1252,7 @@ GrFence SK_WARN_UNUSED_RESULT GrMtlGpu::insertFence() {
         dispatch_semaphore_signal(semaphore);
     });
 
-    const void* cfFence = (__bridge_retained const void*) semaphore;
+    const void* cfFence = (/*__bridge_retained */const void*) semaphore;
     return (GrFence) cfFence;
 }
 
@@ -1271,7 +1271,7 @@ bool GrMtlGpu::waitFence(GrFence fence, uint64_t timeout) {
 
     } else {
         const void* cfFence = (const void*) fence;
-        semaphore = (__bridge dispatch_semaphore_t)cfFence;
+        semaphore = (/*__bridge */dispatch_semaphore_t)cfFence;
     }
     long result = dispatch_semaphore_wait(semaphore, timeout);
 
