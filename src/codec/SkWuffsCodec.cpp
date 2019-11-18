@@ -83,10 +83,55 @@ static SkCodecAnimation::DisposalMethod wuffs_disposal_to_skia_disposal(
     }
 }
 
+static SkAlphaType to_alpha_type(bool opaque) {
+    return opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType;
+}
+
 static SkCodec::Result reset_and_decode_image_config(wuffs_gif__decoder*       decoder,
                                                      wuffs_base__image_config* imgcfg,
                                                      wuffs_base__io_buffer*    b,
-                                                     SkStream*                 s);
+                                                     SkStream*                 s) {
+    // Calling decoder->initialize will memset it to zero.
+    const char* status = decoder->initialize(sizeof__wuffs_gif__decoder(), WUFFS_VERSION, 0);
+    if (status != nullptr) {
+        SkCodecPrintf("initialize: %s", status);
+        return SkCodec::kInternalError;
+    }
+    while (true) {
+        status = decoder->decode_image_config(imgcfg, b);
+        if (status == nullptr) {
+            break;
+        } else if (status != wuffs_base__suspension__short_read) {
+            SkCodecPrintf("decode_image_config: %s", status);
+            return SkCodec::kErrorInInput;
+        } else if (!fill_buffer(b, s)) {
+            return SkCodec::kIncompleteInput;
+        }
+    }
+
+    // A GIF image's natural color model is indexed color: 1 byte per pixel,
+    // indexing a 256-element palette.
+    //
+    // For Skia, we override that to decode to 4 bytes per pixel, BGRA or RGBA.
+    wuffs_base__pixel_format pixfmt = 0;
+    switch (kN32_SkColorType) {
+        case kBGRA_8888_SkColorType:
+            pixfmt = WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL;
+            break;
+        case kRGBA_8888_SkColorType:
+            pixfmt = WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL;
+            break;
+        default:
+            return SkCodec::kInternalError;
+    }
+    if (imgcfg) {
+        imgcfg->pixcfg.set(pixfmt, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, imgcfg->pixcfg.width(),
+                           imgcfg->pixcfg.height());
+    }
+
+    return SkCodec::kSuccess;
+}
+
 
 // -------------------------------- Class definitions
 
@@ -216,6 +261,7 @@ private:
     size_t   fIncrDecRowBytes;
     bool     fFirstCallToIncrementalDecode;
 
+    uint64_t                  fFrameCountReaderIOPosition;
     uint64_t                  fNumFullyReceivedFrames;
     std::vector<SkWuffsFrame> fFrames;
     bool                      fFramesComplete;
@@ -318,6 +364,7 @@ SkWuffsCodec::SkWuffsCodec(SkEncodedInfo&&                                      
       fIncrDecReaderIOPosition(0),
       fIncrDecRowBytes(0),
       fFirstCallToIncrementalDecode(false),
+      fFrameCountReaderIOPosition(0),
       fNumFullyReceivedFrames(0),
       fFramesComplete(false),
       fDecoderIsSuspended{
@@ -408,10 +455,6 @@ SkCodec::Result SkWuffsCodec::onStartIncrementalDecode(const SkImageInfo&      d
     fIncrDecRowBytes = rowBytes;
     fFirstCallToIncrementalDecode = true;
     return SkCodec::kSuccess;
-}
-
-static SkAlphaType to_alpha_type(bool opaque) {
-    return opaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType;
 }
 
 SkCodec::Result SkWuffsCodec::onIncrementalDecode(int* rowsDecoded) {
@@ -552,16 +595,15 @@ SkCodec::Result SkWuffsCodec::onIncrementalDecodeInternal(int* rowsDecoded) {
 }
 
 int SkWuffsCodec::onGetFrameCount() {
-    if (!fFramesComplete) {
+    if (!fFramesComplete && seek_buffer(&fIOBuffer, fStream.get(), fFrameCountReaderIOPosition)) {
         this->onGetFrameCountInternal();
+        fFrameCountReaderIOPosition =
+            fDecoders[WhichDecoder::kFrameCount] ? fIOBuffer.reader_io_position() : 0;
     }
     return fFrames.size();
 }
 
 void SkWuffsCodec::onGetFrameCountInternal() {
-    if (!seek_buffer(&fIOBuffer, fStream.get(), 0)) {
-        return;
-    }
     if (!fDecoders[WhichDecoder::kFrameCount]) {
         void* decoder_raw = sk_malloc_canfail(sizeof__wuffs_gif__decoder());
         if (!decoder_raw) {
@@ -569,20 +611,13 @@ void SkWuffsCodec::onGetFrameCountInternal() {
         }
         std::unique_ptr<wuffs_gif__decoder, decltype(&sk_free)> decoder(
             reinterpret_cast<wuffs_gif__decoder*>(decoder_raw), &sk_free);
+        reset_and_decode_image_config(decoder.get(), nullptr, &fIOBuffer, fStream.get());
         fDecoders[WhichDecoder::kFrameCount] = std::move(decoder);
-    }
-    reset_and_decode_image_config(fDecoders[WhichDecoder::kFrameCount].get(), nullptr, &fIOBuffer,
-                                  fStream.get());
-
-    size_t n = fFrames.size();
-    int    i = n ? n - 1 : 0;
-    if (this->seekFrame(WhichDecoder::kFrameCount, i) != SkCodec::kSuccess) {
-        return;
     }
 
     // Iterate through the frames, converting from Wuffs'
     // wuffs_base__frame_config type to Skia's SkWuffsFrame type.
-    for (; i < INT_MAX; i++) {
+    while (true) {
         const char* status = this->decodeFrameConfig(WhichDecoder::kFrameCount);
         if (status == nullptr) {
             // No-op.
@@ -592,7 +627,11 @@ void SkWuffsCodec::onGetFrameCountInternal() {
             return;
         }
 
-        if (static_cast<size_t>(i) < fFrames.size()) {
+        uint64_t i = fDecoders[WhichDecoder::kFrameCount]->num_decoded_frame_configs();
+        if (i > INT_MAX) {
+            break;
+        }
+        if ((i == 0) || (static_cast<size_t>(i - 1) != fFrames.size())) {
             continue;
         }
         fFrames.emplace_back(&fFrameConfigs[WhichDecoder::kFrameCount]);
@@ -720,51 +759,6 @@ SkCodec::Result SkWuffsCodec::seekFrame(WhichDecoder which, int frameIndex) {
 // to zero, check the Wuffs version and then, in order to be able to call
 // restart_frame, call decode_image_config. The io_buffer and its associated
 // stream will also need to be rewound.
-
-static SkCodec::Result reset_and_decode_image_config(wuffs_gif__decoder*       decoder,
-                                                     wuffs_base__image_config* imgcfg,
-                                                     wuffs_base__io_buffer*    b,
-                                                     SkStream*                 s) {
-    // Calling decoder->initialize will memset it to zero.
-    const char* status = decoder->initialize(sizeof__wuffs_gif__decoder(), WUFFS_VERSION, 0);
-    if (status != nullptr) {
-        SkCodecPrintf("initialize: %s", status);
-        return SkCodec::kInternalError;
-    }
-    while (true) {
-        status = decoder->decode_image_config(imgcfg, b);
-        if (status == nullptr) {
-            break;
-        } else if (status != wuffs_base__suspension__short_read) {
-            SkCodecPrintf("decode_image_config: %s", status);
-            return SkCodec::kErrorInInput;
-        } else if (!fill_buffer(b, s)) {
-            return SkCodec::kIncompleteInput;
-        }
-    }
-
-    // A GIF image's natural color model is indexed color: 1 byte per pixel,
-    // indexing a 256-element palette.
-    //
-    // For Skia, we override that to decode to 4 bytes per pixel, BGRA or RGBA.
-    wuffs_base__pixel_format pixfmt = 0;
-    switch (kN32_SkColorType) {
-        case kBGRA_8888_SkColorType:
-            pixfmt = WUFFS_BASE__PIXEL_FORMAT__BGRA_NONPREMUL;
-            break;
-        case kRGBA_8888_SkColorType:
-            pixfmt = WUFFS_BASE__PIXEL_FORMAT__RGBA_NONPREMUL;
-            break;
-        default:
-            return SkCodec::kInternalError;
-    }
-    if (imgcfg) {
-        imgcfg->pixcfg.set(pixfmt, WUFFS_BASE__PIXEL_SUBSAMPLING__NONE, imgcfg->pixcfg.width(),
-                           imgcfg->pixcfg.height());
-    }
-
-    return SkCodec::kSuccess;
-}
 
 SkCodec::Result SkWuffsCodec::resetDecoder(WhichDecoder which) {
     if (!fStream->rewind()) {

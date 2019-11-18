@@ -175,8 +175,12 @@ GrVkPipelineState* GrVkPipelineStateBuilder::finalize(VkRenderPass compatibleRen
     layoutCreateInfo.pushConstantRangeCount = 0;
     layoutCreateInfo.pPushConstantRanges = nullptr;
 
-    GR_VK_CALL_ERRCHECK(fGpu, CreatePipelineLayout(fGpu->device(), &layoutCreateInfo, nullptr,
-                                                   &pipelineLayout));
+    VkResult result;
+    GR_VK_CALL_RESULT(fGpu, result, CreatePipelineLayout(fGpu->device(), &layoutCreateInfo, nullptr,
+                                                         &pipelineLayout));
+    if (result != VK_SUCCESS) {
+        return nullptr;
+    }
 
     // We need to enable the following extensions so that the compiler can correctly make spir-v
     // from our glsl shaders.
@@ -351,6 +355,12 @@ bool GrVkPipelineStateBuilder::Desc::Build(Desc* desc,
 
     // Vulkan requires the full primitive type as part of its key
     b.add32((uint32_t)programInfo.primitiveType());
+
+    if (caps.mixedSamplesSupport()) {
+        // Add "0" to indicate that coverage modulation will not be enabled, or the (non-zero)
+        // raster sample count if it will.
+        b.add32(!programInfo.isMixedSampled() ? 0 : programInfo.numRasterSamples());
+    }
 
     return true;
 }

@@ -388,8 +388,7 @@ void GrVkCaps::init(const GrContextOptions& contextOptions, const GrVkInterface*
         this->applyDriverCorrectnessWorkarounds(properties);
     }
 
-    this->applyOptionsOverrides(contextOptions);
-    fShaderCaps->applyOptionsOverrides(contextOptions);
+    this->finishInitialization(contextOptions);
 }
 
 void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDeviceProperties& properties) {
@@ -442,6 +441,10 @@ void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDevicePropertie
     // GrCaps workarounds
     ////////////////////////////////////////////////////////////////////////////
 
+    // Temporarily disable the MSAA implementation of CCPR while we work out a crash on Win10
+    // GTX660 and incorrect rendring on Adreno.
+    fDriverBlacklistMSAACCPR = true;
+
     if (kARM_VkVendor == properties.vendorID) {
         fInstanceAttribSupport = false;
         fAvoidWritePixelsFastPath = true; // bugs.skia.org/8064
@@ -459,6 +462,12 @@ void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDevicePropertie
     if (kImagination_VkVendor == properties.vendorID) {
         fShaderCaps->fAtan2ImplementedAsAtanYOverX = true;
     }
+
+    if (kQualcomm_VkVendor == properties.vendorID) {
+        // The sample mask round rect op draws nothing on Adreno for the srcmode gm.
+        // http://skbug.com/8921
+        fShaderCaps->fCanOnlyUseSampleMaskWithStencil = true;
+    }
 }
 
 void GrVkCaps::initGrCaps(const GrVkInterface* vkInterface,
@@ -474,9 +483,17 @@ void GrVkCaps::initGrCaps(const GrVkInterface* vkInterface,
     static const uint32_t kMaxVertexAttributes = 64;
     fMaxVertexAttributes = SkTMin(properties.limits.maxVertexInputAttributes, kMaxVertexAttributes);
 
+    if (properties.limits.standardSampleLocations) {
+        fSampleLocationsSupport = true;
+    }
+
     if (extensions.hasExtension(VK_EXT_SAMPLE_LOCATIONS_EXTENSION_NAME, 1)) {
         // We "disable" multisample by colocating all samples at pixel center.
         fMultisampleDisableSupport = true;
+    }
+
+    if (extensions.hasExtension(VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME, 1)) {
+        fMixedSamplesSupport = true;
     }
 
     // We could actually query and get a max size for each config, however maxImageDimension2D will
@@ -545,7 +562,7 @@ void GrVkCaps::initShaderCaps(const VkPhysicalDeviceProperties& properties,
     // to be true with Vulkan as well.
     shaderCaps->fPreferFlatInterpolation = kQualcomm_VkVendor != properties.vendorID;
 
-    // GrShaderCaps
+    shaderCaps->fSampleMaskSupport = true;
 
     shaderCaps->fShaderDerivativeSupport = true;
 
