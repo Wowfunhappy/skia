@@ -63,7 +63,7 @@
 // Set to make glyph bounding boxes visible.
 #define SK_SHOW_TEXT_BLIT_COVERAGE 0
 
-extern const CFStringRef kCTFontOpticalSizeAttribute;
+//extern const CFStringRef kCTFontOpticalSizeAttribute;
 
 CTFontRef SkTypeface_GetCTFontRef(const SkTypeface* face) {
     return face ? (CTFontRef)face->internal_private_getCTFontRef() : nullptr;
@@ -1137,7 +1137,7 @@ static SkUniqueCFRef<CTFontDescriptorRef> create_opsz_descriptor(double opsz) {
                                       &kCFTypeDictionaryValueCallBacks));
     SkUniqueCFRef<CFNumberRef> opszValueNumber(
         CFNumberCreate(kCFAllocatorDefault, kCFNumberDoubleType, &opsz));
-    //CFStringRef kCTFontOpticalSizeAttribute = CFSTR("NSCTFontOpticalSizeAttribute");
+    CFStringRef kCTFontOpticalSizeAttribute = CFSTR("NSCTFontOpticalSizeAttribute");
     CFDictionarySetValue(attr.get(), kCTFontOpticalSizeAttribute, opszValueNumber.get());
     return SkUniqueCFRef<CTFontDescriptorRef>(CTFontDescriptorCreateWithAttributes(attr.get()));
 }
