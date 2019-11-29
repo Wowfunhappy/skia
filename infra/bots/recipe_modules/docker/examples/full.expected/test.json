@@ -123,19 +123,23 @@
       "run",
       "--shm-size=2gb",
       "--rm",
-      "--volume",
-      "/host-src:/SRC",
-      "--volume",
-      "/host-out:/OUT",
+      "--mount",
+      "type=bind,source=/host-src,target=/SRC",
+      "--mount",
+      "type=bind,source=/host-out,target=/OUT",
       "--cpus",
       "2",
       "my.docker.image",
-      "/SRC/./do-stuff.sh",
-      "--key",
-      "value"
+      "/SRC/../do-stuff.sh",
+      "--src",
+      "/SRC",
+      "--out",
+      "/OUT"
     ],
     "env": {
-      "DOCKER_CONFIG": "/home/chrome-bot/.docker"
+      "CHROME_HEADLESS": "1",
+      "DOCKER_CONFIG": "/home/chrome-bot/.docker",
+      "PATH": "<PATH>:RECIPE_REPO[depot_tools]"
     },
     "name": "do Docker stuff"
   },

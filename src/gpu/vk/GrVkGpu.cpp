@@ -322,7 +322,7 @@ GrOpsRenderPass* GrVkGpu::getOpsRenderPass(
             GrRenderTarget* rt, GrSurfaceOrigin origin, const SkIRect& bounds,
             const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
             const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
-            const SkTArray<GrTextureProxy*, true>& sampledProxies) {
+            const SkTArray<GrSurfaceProxy*, true>& sampledProxies) {
     if (!fCachedOpsRenderPass) {
         fCachedOpsRenderPass.reset(new GrVkOpsRenderPass(this));
     }
@@ -1986,7 +1986,7 @@ void GrVkGpu::addImageMemoryBarrier(const GrVkResource* resource,
                                        barrier);
 }
 
-void GrVkGpu::onFinishFlush(GrSurfaceProxy* proxies[], int n,
+bool GrVkGpu::onFinishFlush(GrSurfaceProxy* proxies[], int n,
                             SkSurface::BackendSurfaceAccess access, const GrFlushInfo& info,
                             const GrPrepareForExternalIORequests& externalRequests) {
     SkASSERT(n >= 0);
@@ -2063,6 +2063,9 @@ void GrVkGpu::onFinishFlush(GrSurfaceProxy* proxies[], int n,
     } else {
         this->submitCommandBuffer(kSkip_SyncQueue, info.fFinishedProc, info.fFinishedContext);
     }
+    // TODO: We may fail to wait on fences or submit command buffers. We should return false here if
+    // we fail any part of the submission.
+    return true;
 }
 
 static int get_surface_sample_cnt(GrSurface* surf) {

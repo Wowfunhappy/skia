@@ -28,7 +28,7 @@ public:
             GrRenderTarget*, GrSurfaceOrigin, const SkIRect&,
             const GrOpsRenderPass::LoadAndStoreInfo&,
             const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-            const SkTArray<GrTextureProxy*, true>& sampledProxies) override;
+            const SkTArray<GrSurfaceProxy*, true>& sampledProxies) override;
 
     GrFence SK_WARN_UNUSED_RESULT insertFence() override { return 0; }
     bool waitFence(GrFence, uint64_t) override { return true; }
@@ -126,11 +126,12 @@ private:
     void onResolveRenderTarget(GrRenderTarget* target, const SkIRect&, GrSurfaceOrigin,
                                ForExternalIO) override {}
 
-    void onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
+    bool onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
                        const GrFlushInfo& info, const GrPrepareForExternalIORequests&) override {
         if (info.fFinishedProc) {
             info.fFinishedProc(info.fFinishedContext);
         }
+        return true;
     }
 
     GrStencilAttachment* createStencilAttachmentForRenderTarget(

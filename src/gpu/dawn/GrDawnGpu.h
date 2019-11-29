@@ -9,6 +9,7 @@
 #define GrDawnGpu_DEFINED
 
 #include "src/gpu/GrGpu.h"
+#include "src/gpu/GrProgramDesc.h"
 #include "dawn/dawncpp.h"
 #include "src/core/SkLRUCache.h"
 #include "src/gpu/dawn/GrDawnRingBuffer.h"
@@ -64,7 +65,7 @@ public:
             GrRenderTarget*, GrSurfaceOrigin, const SkIRect& bounds,
             const GrOpsRenderPass::LoadAndStoreInfo&,
             const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-            const SkTArray<GrTextureProxy*, true>& sampledProxies) override;
+            const SkTArray<GrSurfaceProxy*, true>& sampledProxies) override;
 
     SkSL::Compiler* shaderCompiler() const {
         return fCompiler.get();
@@ -76,7 +77,7 @@ public:
     bool waitFence(GrFence, uint64_t timeout) override;
     void deleteFence(GrFence) const override;
 
-    std::unqiue_ptr<GrSemaphore> SK_WARN_UNUSED_RESULT makeSemaphore(bool isOwned = true) override;
+    std::unique_ptr<GrSemaphore> SK_WARN_UNUSED_RESULT makeSemaphore(bool isOwned = true) override;
     std::unique_ptr<GrSemaphore> wrapBackendSemaphore(
             const GrBackendSemaphore& semaphore,
             GrResourceProvider::SemaphoreWrapType wrapType,
@@ -155,7 +156,7 @@ private:
     bool onCopySurface(GrSurface* dst, GrSurface* src,
                        const SkIRect& srcRect, const SkIPoint& dstPoint) override;
 
-    void onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
+    bool onFinishFlush(GrSurfaceProxy*[], int n, SkSurface::BackendSurfaceAccess access,
                        const GrFlushInfo& info, const GrPrepareForExternalIORequests&) override;
 
     wgpu::Device                                    fDevice;

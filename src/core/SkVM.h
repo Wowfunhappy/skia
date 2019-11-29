@@ -310,7 +310,7 @@ namespace skvm {
         struct Instruction {
             Op  op;         // v* = op(x,y,z,imm), where * == index of this Instruction.
             Val x,y,z;      // Enough arguments for mad().
-            int imm;        // Immediate bit pattern, shift count, argument index, etc.
+            int immy,immz;  // Immediate bit pattern, shift count, argument index, etc.
 
             // Not populated until done() has been called.
             int  death;         // Index of last live instruction taking this input; live if != 0.
@@ -467,7 +467,7 @@ namespace skvm {
         //    - bytes(x, 0x0404) transforms an RGBA pixel into an A0A0 bit pattern.
         I32 bytes  (I32 x, int control);
 
-        I32 extract(I32 x, int bits, I32 y);   // (x >> bits) & y
+        I32 extract(I32 x, int bits, I32 z);   // (x >> bits) & z
         I32 pack   (I32 x, I32 y, int bits);   // x | (y << bits), assuming (x & (y << bits)) == 0
 
         void dump(SkWStream* = nullptr) const;
@@ -479,8 +479,18 @@ namespace skvm {
             size_t operator()(const Instruction& inst) const;
         };
 
-        Val push(Op, Val x, Val y=NA, Val z=NA, int imm=0);
-        bool isImm(Val, int* imm) const;
+        Val push(Op, Val x, Val y=NA, Val z=NA, int immy=0, int immz=0);
+
+        bool allImm() const;
+
+        template <typename T, typename... Rest>
+        bool allImm(Val, T* imm, Rest...) const;
+
+        template <typename T>
+        bool isImm(Val id, T want) const {
+            T imm = 0;
+            return this->allImm(id, &imm) && imm == want;
+        }
 
         SkTHashMap<Instruction, Val, InstructionHash> fIndex;
         std::vector<Instruction>                      fProgram;
@@ -508,15 +518,18 @@ namespace skvm {
         Builder::Uniform pushF(float val) { return this->pushF(&val, 1); }
     };
 
+    // Maps Builder::Instructions to regions of JIT'd code, for debugging in VTune.
+    struct LineTableEntry { int line; size_t offset; };
 
     using Reg = int;
 
     class Program {
     public:
-        struct Instruction {   // d = op(x, y, z/imm)
+        struct Instruction {   // d = op(x, y/imm, z/imm)
             Op  op;
-            Reg d,x,y;
-            union { Reg z; int imm; };
+            Reg d,x;
+            union { Reg y; int immy; };
+            union { Reg z; int immz; };
         };
 
         Program(const std::vector<Builder::Instruction>& instructions,
@@ -556,6 +569,7 @@ namespace skvm {
 
         bool jit(const std::vector<Builder::Instruction>&,
                  bool try_hoisting,
+                 std::vector<LineTableEntry>*,
                  Assembler*) const;
 
         // Dump jit-*.dump files for perf inject.
