@@ -33,7 +33,7 @@
 
 namespace skiagm {
 /**
- * This GM directly exercises GrTextureDomainEffect.
+ * This GM directly exercises GrDomainEffect.
  */
 class TextureDomainEffect : public GpuGM {
 public:
@@ -120,13 +120,17 @@ protected:
                 for (int m = 0; m < GrTextureDomain::kModeCount; ++m) {
                     GrTextureDomain::Mode mode = (GrTextureDomain::Mode) m;
                     if (fFilter != GrSamplerState::Filter::kNearest &&
-                        mode == GrTextureDomain::kRepeat_Mode) {
-                        // Repeat mode doesn't produce correct results with bilerp filtering
+                        (mode == GrTextureDomain::kRepeat_Mode ||
+                         mode == GrTextureDomain::kMirrorRepeat_Mode)) {
+                        // [Mirror] Repeat mode doesn't produce correct results with bilerp
+                        // filtering
                         continue;
                     }
-                    SkRect domainRect = GrTextureDomain::MakeTexelDomain(texelDomains[d], mode);
-                    auto fp1 = GrTextureDomainEffect::Make(
-                            proxy, fBitmap.alphaType(), textureMatrices[tm], domainRect, mode, fFilter);
+                    auto fp1 = GrSimpleTextureEffect::Make(proxy, fBitmap.alphaType(),
+                                                           textureMatrices[tm], fFilter);
+                    fp1 = GrDomainEffect::Make(
+                            std::move(fp1), GrTextureDomain::MakeTexelDomain(texelDomains[d], mode),
+                            mode, fFilter);
                     if (!fp1) {
                         continue;
                     }

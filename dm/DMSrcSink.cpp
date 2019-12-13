@@ -32,7 +32,6 @@
 #include "src/codec/SkSwizzler.h"
 #include "src/core/SkAutoMalloc.h"
 #include "src/core/SkAutoPixmapStorage.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkOpts.h"
 #include "src/core/SkPictureCommon.h"
@@ -1663,8 +1662,7 @@ Error XPSSink::draw(const Src& src, SkBitmap*, SkWStream* dst, SkString*) const 
 SKPSink::SKPSink() {}
 
 Error SKPSink::draw(const Src& src, SkBitmap*, SkWStream* dst, SkString*) const {
-    SkSize size;
-    size = src.size();
+    auto size = SkSize::Make(src.size());
     SkPictureRecorder recorder;
     Error err = src.draw(recorder.beginRecording(size.width(), size.height()));
     if (!err.isEmpty()) {

@@ -21,9 +21,12 @@ public:
     explicit OneLineShaper(ParagraphImpl* paragraph)
         : fParagraph(paragraph)
         , fHeight(0.0f)
-        , fAdvance(SkPoint::Make(0.0f, 0.0f)) { }
+        , fAdvance(SkPoint::Make(0.0f, 0.0f))
+        , fUnresolvedGlyphs(0) { }
 
     bool shape();
+
+    size_t unresolvedGlyphs() { return fUnresolvedGlyphs; }
 
 private:
 
@@ -54,7 +57,7 @@ private:
             std::function<SkScalar(SkSpan<const char>, SkSpan<Block>, SkScalar&, TextIndex)>;
     bool iterateThroughShapingRegions(const ShapeVisitor& shape);
 
-    using ShapeSingleFontVisitor = std::function<void(Block)>;
+    using ShapeSingleFontVisitor = std::function<void(Block, SkTArray<SkShaper::Feature>)>;
     void iterateThroughFontStyles(SkSpan<Block> styleSpan, const ShapeSingleFontVisitor& visitor);
 
     using TypefaceVisitor = std::function<bool(sk_sp<SkTypeface> typeface)>;
@@ -97,6 +100,7 @@ private:
     TextRange fCurrentText;
     SkScalar fHeight;
     SkVector fAdvance;
+    size_t fUnresolvedGlyphs;
 
     // TODO: Something that is not thead-safe since we don't need it
     std::shared_ptr<Run> fCurrentRun;

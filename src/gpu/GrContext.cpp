@@ -11,7 +11,6 @@
 #include "include/gpu/GrBackendSemaphore.h"
 #include "include/private/SkDeferredDisplayList.h"
 #include "include/private/SkImageInfoPriv.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkMipMap.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/gpu/GrClientMappedBufferManager.h"
@@ -26,6 +25,7 @@
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSemaphore.h"
 #include "src/gpu/GrShaderUtils.h"
+#include "src/gpu/GrSkSLFPFactoryCache.h"
 #include "src/gpu/GrSoftwarePathRenderer.h"
 #include "src/gpu/GrTracing.h"
 #include "src/gpu/SkGr.h"
@@ -81,7 +81,7 @@ bool GrContext::init(sk_sp<const GrCaps> caps, sk_sp<GrSkSLFPFactoryCache> FPFac
     if (fGpu) {
         fResourceCache = new GrResourceCache(this->caps(), this->singleOwner(), this->contextID());
         fResourceProvider = new GrResourceProvider(fGpu.get(), fResourceCache, this->singleOwner());
-        fMappedBufferManager = skstd::make_unique<GrClientMappedBufferManager>(this->contextID());
+        fMappedBufferManager = std::make_unique<GrClientMappedBufferManager>(this->contextID());
     }
 
     if (fResourceCache) {
@@ -93,7 +93,7 @@ bool GrContext::init(sk_sp<const GrCaps> caps, sk_sp<GrSkSLFPFactoryCache> FPFac
     // DDL TODO: we need to think through how the task group & persistent cache
     // get passed on to/shared between all the DDLRecorders created with this context.
     if (this->options().fExecutor) {
-        fTaskGroup = skstd::make_unique<SkTaskGroup>(*this->options().fExecutor);
+        fTaskGroup = std::make_unique<SkTaskGroup>(*this->options().fExecutor);
     }
 
     fPersistentCache = this->options().fPersistentCache;
@@ -550,7 +550,9 @@ GrBackendTexture GrContext::createBackendTexture(const SkPixmap srcData[], int n
 
 void GrContext::deleteBackendTexture(GrBackendTexture backendTex) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
-    if (this->abandoned() || !backendTex.isValid()) {
+    // For the Vulkan backend we still must destroy the backend texture when the context is
+    // abandoned.
+    if ((this->abandoned() && this->backend() != GrBackendApi::kVulkan) || !backendTex.isValid()) {
         return;
     }
 

@@ -17,7 +17,6 @@
 #include "src/core/SkDrawShadowInfo.h"
 #include "src/core/SkGlyphRunPainter.h"
 #include "src/core/SkLatticeIter.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkRRectPriv.h"
 #include "src/core/SkSurfacePriv.h"
@@ -863,7 +862,8 @@ void GrRenderTargetContextPriv::stencilPath(const GrHardClip& clip,
     fRenderTargetContext->addOp(std::move(op));
 }
 
-void GrRenderTargetContext::drawTextureSet(const GrClip& clip, const TextureSetEntry set[], int cnt,
+void GrRenderTargetContext::drawTextureSet(const GrClip& clip, TextureSetEntry set[],
+                                           int cnt, int proxyRunCnt,
                                            GrSamplerState::Filter filter, SkBlendMode mode,
                                            GrAA aa, SkCanvas::SrcRectConstraint constraint,
                                            const SkMatrix& viewMatrix,
@@ -880,8 +880,8 @@ void GrRenderTargetContext::drawTextureSet(const GrClip& clip, const TextureSetE
     auto clampType = GrColorTypeClampType(this->colorInfo().colorType());
     auto saturate = clampType == GrClampType::kManual ? GrTextureOp::Saturate::kYes
                                                       : GrTextureOp::Saturate::kNo;
-    GrTextureOp::AddTextureSetOps(this, clip, fContext, set, cnt, filter, saturate, mode, aaType,
-                                  constraint, viewMatrix, std::move(texXform));
+    GrTextureOp::AddTextureSetOps(this, clip, fContext, set, cnt, proxyRunCnt, filter, saturate,
+                                  mode, aaType, constraint, viewMatrix, std::move(texXform));
 }
 
 void GrRenderTargetContext::drawVertices(const GrClip& clip,
@@ -1460,7 +1460,7 @@ void GrRenderTargetContext::drawArc(const GrClip& clip,
 void GrRenderTargetContext::drawImageLattice(const GrClip& clip,
                                              GrPaint&& paint,
                                              const SkMatrix& viewMatrix,
-                                             sk_sp<GrTextureProxy> image,
+                                             GrSurfaceProxyView view,
                                              GrColorType srcColorType,
                                              sk_sp<GrColorSpaceXform> csxf,
                                              GrSamplerState::Filter filter,
@@ -1474,7 +1474,7 @@ void GrRenderTargetContext::drawImageLattice(const GrClip& clip,
     AutoCheckFlush acf(this->drawingManager());
 
     std::unique_ptr<GrDrawOp> op =
-            GrLatticeOp::MakeNonAA(fContext, std::move(paint), viewMatrix, std::move(image),
+            GrLatticeOp::MakeNonAA(fContext, std::move(paint), viewMatrix, std::move(view),
                                    srcColorType, std::move(csxf), filter, std::move(iter), dst);
     this->addDrawOp(clip, std::move(op));
 }
@@ -1675,7 +1675,7 @@ void GrRenderTargetContext::asyncReadPixels(const SkIRect& rect, SkColorType col
         auto ii = SkImageInfo::Make(rect.size(), colorType,
                                     this->colorInfo().alphaType(),
                                     this->colorInfo().refColorSpace());
-        auto result = skstd::make_unique<AsyncReadResult>(0);
+        auto result = std::make_unique<AsyncReadResult>(0);
         std::unique_ptr<char[]> data(new char[ii.computeMinByteSize()]);
         SkPixmap pm(ii, data.get(), ii.minRowBytes());
         result->addCpuPlane(std::move(data), pm.rowBytes());
@@ -1706,7 +1706,7 @@ void GrRenderTargetContext::asyncReadPixels(const SkIRect& rect, SkColorType col
                                             std::move(transferResult)};
     auto finishCallback = [](GrGpuFinishedContext c) {
         const auto* context = reinterpret_cast<const FinishContext*>(c);
-        auto result = skstd::make_unique<AsyncReadResult>(context->fMappedBufferManager->inboxID());
+        auto result = std::make_unique<AsyncReadResult>(context->fMappedBufferManager->inboxID());
         size_t rowBytes = context->fSize.width() * SkColorTypeBytesPerPixel(context->fColorType);
         if (!result->addTransferResult(context->fTransferResult, context->fSize, rowBytes,
                                        context->fMappedBufferManager)) {
@@ -1905,7 +1905,7 @@ void GrRenderTargetContext::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvC
                                             std::move(vTransfer)};
     auto finishCallback = [](GrGpuFinishedContext c) {
         const auto* context = reinterpret_cast<const FinishContext*>(c);
-        auto result = skstd::make_unique<AsyncReadResult>(context->fMappedBufferManager->inboxID());
+        auto result = std::make_unique<AsyncReadResult>(context->fMappedBufferManager->inboxID());
         auto manager = context->fMappedBufferManager;
         size_t rowBytes = SkToSizeT(context->fSize.width());
         if (!result->addTransferResult(context->fYTransfer, context->fSize, rowBytes, manager)) {

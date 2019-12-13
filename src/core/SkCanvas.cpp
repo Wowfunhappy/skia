@@ -31,7 +31,6 @@
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkLatticeIter.h"
 #include "src/core/SkMSAN.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkMatrixUtils.h"
 #include "src/core/SkPaintPriv.h"
 #include "src/core/SkRasterClip.h"
@@ -54,8 +53,9 @@
 #define RETURN_ON_NULL(ptr)     do { if (nullptr == (ptr)) return; } while (0)
 #define RETURN_ON_FALSE(pred)   do { if (!(pred)) return; } while (0)
 
-// This is a test: static_assert with no message is a c++17 feature.
-static_assert(true);
+// This is a test: static_assert with no message is a c++17 feature,
+// and std::max() is constexpr only since the c++14 stdlib.
+static_assert(std::max(3,4) == 4);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -194,7 +194,7 @@ struct DeviceCM {
              const SkImage* clipImage, const SkMatrix* clipMatrix)
         : fNext(nullptr)
         , fDevice(std::move(device))
-        , fPaint(paint ? skstd::make_unique<SkPaint>(*paint) : nullptr)
+        , fPaint(paint ? std::make_unique<SkPaint>(*paint) : nullptr)
         , fStashedMatrix(stashed)
         , fClipImage(sk_ref_sp(const_cast<SkImage*>(clipImage)))
         , fClipMatrix(clipMatrix ? *clipMatrix : SkMatrix::I())
@@ -518,7 +518,7 @@ void SkCanvas::init(sk_sp<SkBaseDevice> device) {
         device->androidFramework_setDeviceClipRestriction(&fClipRestrictionRect);
     }
 
-    fScratchGlyphRunBuilder = skstd::make_unique<SkGlyphRunBuilder>();
+    fScratchGlyphRunBuilder = std::make_unique<SkGlyphRunBuilder>();
 }
 
 SkCanvas::SkCanvas()
@@ -3068,8 +3068,8 @@ std::unique_ptr<SkCanvas> SkCanvas::MakeRasterDirect(const SkImageInfo& info, vo
     }
 
     return props ?
-        skstd::make_unique<SkCanvas>(bitmap, *props) :
-        skstd::make_unique<SkCanvas>(bitmap);
+        std::make_unique<SkCanvas>(bitmap, *props) :
+        std::make_unique<SkCanvas>(bitmap);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

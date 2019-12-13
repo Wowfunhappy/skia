@@ -330,7 +330,7 @@ sk_sp<sksg::Transform> LayerBuilder::doAttachTransform(const AnimationBuilder& a
         const auto camera_type = (*jtransform)["a"].is<skjson::NullValue>()
                 ? CameraAdapter::Type::kOneNode
                 : CameraAdapter::Type::kTwoNode;
-        auto camera_adapter = sk_make_sp<CameraAdapter>(abuilder.fSize, camera_type);
+        auto camera_adapter = sk_make_sp<CameraAdapter>(cbuilder->fSize, camera_type);
 
         abuilder.bindProperty<ScalarValue>(fJlayer["pe"],
             [camera_adapter] (const ScalarValue& pe) {
@@ -363,9 +363,10 @@ bool LayerBuilder::hasMotionBlur(const CompositionBuilder* cbuilder) const {
 }
 
 sk_sp<sksg::RenderNode> LayerBuilder::buildRenderTree(const AnimationBuilder& abuilder,
-                                                      CompositionBuilder* cbuilder) {
+                                                      CompositionBuilder* cbuilder,
+                                                      const LayerBuilder* prev_layer) {
     AnimationBuilder::LayerInfo layer_info = {
-        abuilder.fSize,
+        cbuilder->fSize,
         ParseDefault<float>(fJlayer["ip"], 0.0f),
         ParseDefault<float>(fJlayer["op"], 0.0f),
     };
@@ -475,40 +476,38 @@ sk_sp<sksg::RenderNode> LayerBuilder::buildRenderTree(const AnimationBuilder& ab
 
     abuilder.fCurrentAnimatorScope->push_back(std::move(controller));
 
-    if (!layer) {
+    // Stash the content tree in case it is needed for later mattes.
+    fContentTree = layer;
+
+    if (ParseDefault<bool>(fJlayer["td"], false)) {
+        // |layer| is a track matte.  We apply it as a mask to the next layer.
         return nullptr;
     }
 
-    if (auto matte = cbuilder->popMatte()) {
-        // There is a pending matte (|layer| is a matte target).
-        static constexpr sksg::MaskEffect::Mode gMaskModes[] = {
+    // Optional matte.
+    size_t matte_mode;
+    if (prev_layer && Parse(fJlayer["tt"], &matte_mode)) {
+        static constexpr sksg::MaskEffect::Mode gMatteModes[] = {
             sksg::MaskEffect::Mode::kAlphaNormal, // tt: 1
             sksg::MaskEffect::Mode::kAlphaInvert, // tt: 2
             sksg::MaskEffect::Mode::kLumaNormal,  // tt: 3
             sksg::MaskEffect::Mode::kLumaInvert,  // tt: 4
         };
-        const auto matteType = ParseDefault<size_t>(fJlayer["tt"], 1) - 1;
 
-        if (matteType < SK_ARRAY_COUNT(gMaskModes)) {
+        if (matte_mode > 0 && matte_mode <= SK_ARRAY_COUNT(gMatteModes)) {
+            // The current layer is masked with the previous layer *content*.
             layer = sksg::MaskEffect::Make(std::move(layer),
-                                           std::move(matte),
-                                           gMaskModes[matteType]);
+                                           prev_layer->fContentTree,
+                                           gMatteModes[matte_mode - 1]);
+        } else {
+            abuilder.log(Logger::Level::kError, nullptr,
+                         "Unknown track matte mode: %zu\n", matte_mode);
         }
     }
 
-    // Optional blend mode.  The attachment point is important for matte interactions:
-    //   - for mattes (mask layers), the blend mode is applied to the layer content
-    //   - for matte targets (masked layers), the blend mode is applied post-masking
-    //     (wrapping the MaskEffect above)
-    layer = abuilder.attachBlendMode(fJlayer, std::move(layer));
-
-    if (ParseDefault<bool>(fJlayer["td"], false)) {
-        // |layer| is a matte.  We apply it as a mask to the next layer.
-        cbuilder->pushMatte(std::move(layer));
-        return nullptr;
-    }
-
-    return layer;
+    // Finally, attach an optional blend mode.
+    // NB: blend modes are never applied to matte sources (layer content only).
+    return abuilder.attachBlendMode(fJlayer, std::move(layer));
 }
 
 } // namespace internal

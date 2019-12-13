@@ -94,7 +94,10 @@ public:
                 "sample(%s, float2(texCoord)).%s;\n",
                 args.fOutputColor, args.fInputColor,
                 fragBuilder->getProgramBuilder()->samplerVariable(args.fTexSamplers[0]),
-                fragBuilder->getProgramBuilder()->samplerSwizzle(args.fTexSamplers[0]).c_str());
+                fragBuilder->getProgramBuilder()
+                        ->samplerSwizzle(args.fTexSamplers[0])
+                        .asString()
+                        .c_str());
     }
 
 private:
@@ -108,8 +111,8 @@ private:
         (void)rect;
         UniformHandle& cornerRadius = cornerRadiusVar;
         (void)cornerRadius;
-        GrSurfaceProxy& ninePatchSamplerProxy = *_outer.textureSampler(0).proxy();
-        GrTexture& ninePatchSampler = *ninePatchSamplerProxy.peekTexture();
+        const GrSurfaceProxyView& ninePatchSamplerView = _outer.textureSampler(0).view();
+        GrTexture& ninePatchSampler = *ninePatchSamplerView.proxy()->peekTexture();
         (void)ninePatchSampler;
         UniformHandle& proxyRect = proxyRectVar;
         (void)proxyRect;

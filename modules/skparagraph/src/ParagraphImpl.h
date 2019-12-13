@@ -174,6 +174,9 @@ public:
     SkTArray<ResolvedFontDescriptor> resolvedFonts() const { return fFontSwitches; }
 
     void markDirty() override { fState = kUnknown; }
+
+    int32_t unresolvedGlyphs() override;
+
     void setState(InternalState state);
     sk_sp<SkPicture> getPicture() { return fPicture; }
     SkRect getBoundaries() const { return fOrigin; }
@@ -193,8 +196,10 @@ public:
     void updateForegroundPaint(size_t from, size_t to, SkPaint paint) override;
     void updateBackgroundPaint(size_t from, size_t to, SkPaint paint) override;
 
-    InternalLineMetrics computeEmptyMetrics();
+    InternalLineMetrics getEmptyMetrics() const { return fEmptyMetrics; }
     InternalLineMetrics getStrutMetrics() const { return fStrutMetrics; }
+
+    BlockRange findAllBlocks(TextRange textRange);
 
 private:
     friend class ParagraphBuilder;
@@ -206,11 +211,12 @@ private:
     friend class OneLineShaper;
 
     void calculateBoundaries(ClusterRange clusters, SkVector offset, SkVector advance);
-    BlockRange findAllBlocks(TextRange textRange);
     void extractStyles();
 
     void markGraphemes16();
     void markGraphemes();
+
+    void computeEmptyMetrics();
 
     // Input
     SkTArray<StyleBlock<SkScalar>> fLetterSpaceStyles;
@@ -230,6 +236,7 @@ private:
     SkTArray<Grapheme, true> fGraphemes16;
     SkTArray<Codepoint, true> fCodePoints;
     SkTHashSet<size_t> fGraphemes;
+    size_t fUnresolvedGlyphs;
 
     SkTArray<RunShifts, false> fRunShifts;
     SkTArray<TextLine, true> fLines;    // kFormatted   (cached: width, max lines, ellipsis, text align)
@@ -237,6 +244,7 @@ private:
 
     SkTArray<ResolvedFontDescriptor> fFontSwitches;
 
+    InternalLineMetrics fEmptyMetrics;
     InternalLineMetrics fStrutMetrics;
 
     SkScalar fOldWidth;

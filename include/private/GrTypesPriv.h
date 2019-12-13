@@ -260,8 +260,11 @@ enum class GrAAType : unsigned {
     /** Use fragment shader code or mixed samples to blend with a fractional pixel coverage. */
     kCoverage,
     /** Use normal MSAA. */
-    kMSAA
+    kMSAA,
+
+    kLast = kMSAA
 };
+static const int kGrAATypeCount = static_cast<int>(GrAAType::kLast) + 1;
 
 static constexpr bool GrAATypeIsHW(GrAAType type) {
     switch (type) {
@@ -803,29 +806,19 @@ enum class  GrMipMapsStatus {
 GR_MAKE_BITFIELD_CLASS_OPS(GpuPathRenderers)
 
 /**
- * Utility functions for GrPixelConfig
- */
-
-static constexpr GrPixelConfig GrCompressionTypePixelConfig(SkImage::CompressionType compression) {
-    switch (compression) {
-        case SkImage::kETC1_CompressionType: return kRGB_ETC1_GrPixelConfig;
-    }
-    SkUNREACHABLE;
-}
-
-/**
  * Returns the data size for the given SkImage::CompressionType
  */
 static inline size_t GrCompressedFormatDataSize(SkImage::CompressionType compressionType,
                                                 SkISize dimensions) {
     switch (compressionType) {
-        case SkImage::kETC1_CompressionType:
+        case SkImage::CompressionType::kNone:
+            return 0;
+        case SkImage::CompressionType::kETC1:
             SkASSERT((dimensions.width() & 3) == 0);
             SkASSERT((dimensions.height() & 3) == 0);
             return (dimensions.width() >> 2) * (dimensions.height() >> 2) * 8;
     }
-
-    SK_ABORT("Invalid pixel config");
+    SkUNREACHABLE;
 }
 
 /**
@@ -1282,6 +1275,15 @@ static constexpr GrPixelConfig GrColorTypeToPixelConfig(GrColorType colorType) {
     SkUNREACHABLE;
 }
 
+static constexpr GrPixelConfig GrCompressionTypeToPixelConfig(SkImage::CompressionType compression) {
+    switch (compression) {
+        case SkImage::CompressionType::kNone: return kUnknown_GrPixelConfig;
+        case SkImage::CompressionType::kETC1: return kRGB_ETC1_GrPixelConfig;
+    }
+
+    SkUNREACHABLE;
+}
+
 /**
  * Ref-counted object that calls a callback from its destructor.
  */
@@ -1343,6 +1345,14 @@ static constexpr const char* GrColorTypeToStr(GrColorType ct) {
         case GrColorType::kR_16:             return "kR_16";
         case GrColorType::kR_F16:            return "kR_F16";
         case GrColorType::kGray_F16:         return "kGray_F16";
+    }
+    SkUNREACHABLE;
+}
+
+static constexpr const char* GrCompressionTypeToStr(SkImage::CompressionType compression) {
+    switch (compression) {
+        case SkImage::CompressionType::kNone:          return "kNone";
+        case SkImage::CompressionType::kETC1:          return "kETC1";
     }
     SkUNREACHABLE;
 }

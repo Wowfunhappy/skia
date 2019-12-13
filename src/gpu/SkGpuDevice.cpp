@@ -22,7 +22,6 @@
 #include "src/core/SkImageFilterCache.h"
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkLatticeIter.h"
-#include "src/core/SkMakeUnique.h"
 #include "src/core/SkPictureData.h"
 #include "src/core/SkRRectPriv.h"
 #include "src/core/SkRasterClip.h"
@@ -956,8 +955,10 @@ void SkGpuDevice::drawBitmapTile(const SkBitmap& bitmap,
             static constexpr auto kDir = GrBicubicEffect::Direction::kXY;
             fp = GrBicubicEffect::Make(std::move(proxy), texMatrix, domain, kDir, srcAlphaType);
         } else {
-            fp = GrTextureDomainEffect::Make(std::move(proxy), srcAlphaType, texMatrix, domain,
-                                             GrTextureDomain::kClamp_Mode, samplerState.filter());
+            fp = GrSimpleTextureEffect::Make(std::move(proxy), srcAlphaType, texMatrix,
+                                             samplerState);
+            fp = GrDomainEffect::Make(std::move(fp), domain, GrTextureDomain::kClamp_Mode,
+                                      samplerState.filter());
         }
     } else if (bicubic) {
         SkASSERT(GrSamplerState::Filter::kNearest == samplerState.filter());
@@ -1314,7 +1315,7 @@ void SkGpuDevice::drawImageNine(const SkImage* image,
                                 const SkIRect& center, const SkRect& dst, const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
     uint32_t pinnedUniqueID;
-    auto iter = skstd::make_unique<SkLatticeIter>(image->width(), image->height(), center, dst);
+    auto iter = std::make_unique<SkLatticeIter>(image->width(), image->height(), center, dst);
     if (sk_sp<GrTextureProxy> proxy = as_IB(image)->refPinnedTextureProxy(this->context(),
                                                                           &pinnedUniqueID)) {
         GrTextureAdjuster adjuster(this->context(), std::move(proxy),
@@ -1335,7 +1336,7 @@ void SkGpuDevice::drawImageNine(const SkImage* image,
 void SkGpuDevice::drawBitmapNine(const SkBitmap& bitmap, const SkIRect& center,
                                  const SkRect& dst, const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
-    auto iter = skstd::make_unique<SkLatticeIter>(bitmap.width(), bitmap.height(), center, dst);
+    auto iter = std::make_unique<SkLatticeIter>(bitmap.width(), bitmap.height(), center, dst);
     GrBitmapTextureMaker maker(fContext.get(), bitmap);
     this->drawProducerLattice(&maker, std::move(iter), dst, paint);
 }
@@ -1364,8 +1365,12 @@ void SkGpuDevice::drawProducerLattice(GrTextureProducer* producer,
     auto csxf = GrColorSpaceXform::Make(producer->colorSpace(), producer->alphaType(),
                                         dstColorSpace,          kPremul_SkAlphaType);
 
+    GrSurfaceOrigin origin = proxy->origin();
+    const GrSwizzle& swizzle = proxy->textureSwizzle();
+    GrSurfaceProxyView view(std::move(proxy), origin, swizzle);
+
     fRenderTargetContext->drawImageLattice(this->clip(), std::move(grPaint), this->localToDevice(),
-                                           std::move(proxy), producer->colorType(), std::move(csxf),
+                                           std::move(view), producer->colorType(), std::move(csxf),
                                            filter, std::move(iter), dst);
 }
 
@@ -1374,7 +1379,7 @@ void SkGpuDevice::drawImageLattice(const SkImage* image,
                                    const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
     uint32_t pinnedUniqueID;
-    auto iter = skstd::make_unique<SkLatticeIter>(lattice, dst);
+    auto iter = std::make_unique<SkLatticeIter>(lattice, dst);
     if (sk_sp<GrTextureProxy> proxy = as_IB(image)->refPinnedTextureProxy(this->context(),
                                                                           &pinnedUniqueID)) {
         GrTextureAdjuster adjuster(this->context(), std::move(proxy),
@@ -1396,7 +1401,7 @@ void SkGpuDevice::drawBitmapLattice(const SkBitmap& bitmap,
                                     const SkCanvas::Lattice& lattice, const SkRect& dst,
                                     const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
-    auto iter = skstd::make_unique<SkLatticeIter>(lattice, dst);
+    auto iter = std::make_unique<SkLatticeIter>(lattice, dst);
     GrBitmapTextureMaker maker(fContext.get(), bitmap);
     this->drawProducerLattice(&maker, std::move(iter), dst, paint);
 }

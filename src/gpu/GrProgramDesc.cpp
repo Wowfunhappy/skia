@@ -64,9 +64,10 @@ static void add_fp_sampler_keys(GrProcessorKeyBuilder* b, const GrFragmentProces
     }
     for (int i = 0; i < numTextureSamplers; ++i) {
         const GrFragmentProcessor::TextureSampler& sampler = fp.textureSampler(i);
-        const GrBackendFormat& backendFormat = sampler.proxy()->backendFormat();
+        const GrBackendFormat& backendFormat = sampler.view().proxy()->backendFormat();
 
-        uint32_t samplerKey = sampler_key(backendFormat.textureType(), sampler.swizzle(), caps);
+        uint32_t samplerKey = sampler_key(backendFormat.textureType(), sampler.view().swizzle(),
+                                          caps);
         b->add32(samplerKey);
 
         caps.addExtraSamplerKey(b, sampler.samplerState(), backendFormat);
@@ -167,8 +168,7 @@ static bool gen_frag_proc_and_meta_keys(const GrPrimitiveProcessor& primProc,
 
     fp.getGLSLProcessorKey(*caps.shaderCaps(), b);
 
-    return gen_fp_meta_key(fp, caps, primProc.getTransformKey(fp.coordTransforms(),
-                                                              fp.numCoordTransforms()), b);
+    return gen_fp_meta_key(fp, caps, primProc.computeCoordTransformsKey(fp), b);
 }
 
 bool GrProgramDesc::Build(GrProgramDesc* desc, const GrRenderTarget* renderTarget,
