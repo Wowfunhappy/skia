@@ -262,12 +262,7 @@ public:
     GrProcessorSet::Analysis finalize(
             const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
             GrClampType clampType) override {
-        GrProcessorAnalysisCoverage coverage;
-        if (AAMode::kNone == fAAMode && !clip->numClipCoverageFragmentProcessors()) {
-            coverage = GrProcessorAnalysisCoverage::kNone;
-        } else {
-            coverage = GrProcessorAnalysisCoverage::kSingleChannel;
-        }
+        GrProcessorAnalysisCoverage coverage = GrProcessorAnalysisCoverage::kSingleChannel;
         auto analysis = fProcessorSet.finalize(
                 fColor, coverage, clip, fStencilSettings, hasMixedSampledCoverage, caps, clampType,
                 &fColor);
@@ -642,7 +637,8 @@ private:
         flushState->executeDrawsAndUploadsForMeshDrawOp(this, chainBounds, pipeline);
     }
 
-    CombineResult onCombineIfPossible(GrOp* t, SkArenaAlloc*, const GrCaps& caps) override {
+    CombineResult onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas*,
+                                      const GrCaps& caps) override {
         DashOp* that = t->cast<DashOp>();
         if (fProcessorSet != that->fProcessorSet) {
             return CombineResult::kCannotCombine;
@@ -665,7 +661,7 @@ private:
             return CombineResult::kCannotCombine;
         }
 
-        if (fUsesLocalCoords && !this->viewMatrix().cheapEqualTo(that->viewMatrix())) {
+        if (fUsesLocalCoords && !SkMatrixPriv::CheapEqual(this->viewMatrix(), that->viewMatrix())) {
             return CombineResult::kCannotCombine;
         }
 

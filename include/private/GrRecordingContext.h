@@ -22,7 +22,6 @@ class GrStrikeCache;
 class GrSurfaceContext;
 class GrSurfaceProxy;
 class GrTextBlobCache;
-class GrTextureContext;
 class SkArenaAlloc;
 
 class GrRecordingContext : public GrImageContext {
@@ -43,26 +42,54 @@ public:
     bool testingOnly_getSuppressAllocationWarnings() const { return fSuppressAllocationWarnings; }
 #endif
 
+    // The collection of specialized memory arenas for different types of data recorded by a
+    // GrRecordingContext. Arenas does not maintain ownership of the pools it groups together.
+    class Arenas {
+    public:
+        Arenas(GrOpMemoryPool*, SkArenaAlloc*);
+
+        // For storing GrOp-derived classes recorded by a GrRecordingContext
+        GrOpMemoryPool* opMemoryPool() { return fOpMemoryPool; }
+
+        // For storing pipelines and other complex data as-needed by ops
+        SkArenaAlloc* recordTimeAllocator() { return fRecordTimeAllocator; }
+
+    private:
+        GrOpMemoryPool* fOpMemoryPool;
+        SkArenaAlloc*   fRecordTimeAllocator;
+    };
+
 protected:
     friend class GrRecordingContextPriv; // for hidden functions
+    friend class SkDeferredDisplayList;  // for OwnedArenas;
+
+    // Like Arenas, but preserves ownership of the underlying pools.
+    class OwnedArenas {
+    public:
+        OwnedArenas();
+        ~OwnedArenas();
+
+        Arenas get();
+
+        OwnedArenas& operator=(OwnedArenas&&);
+
+    private:
+        std::unique_ptr<GrOpMemoryPool> fOpMemoryPool;
+        std::unique_ptr<SkArenaAlloc>   fRecordTimeAllocator;
+    };
 
     GrRecordingContext(GrBackendApi, const GrContextOptions&, uint32_t contextID);
-    bool init(sk_sp<const GrCaps>, sk_sp<GrSkSLFPFactoryCache>) override;
+    bool init(sk_sp<const GrCaps>) override;
     void setupDrawingManager(bool sortOpsTasks, bool reduceOpsTaskSplitting);
 
     void abandonContext() override;
 
     GrDrawingManager* drawingManager();
 
-    GrOpMemoryPool* opMemoryPool();
+    Arenas arenas() { return fArenas.get(); }
     // This entry point should only be used for DDL creation where we want the ops' lifetime to
     // match that of the DDL.
-    std::unique_ptr<GrOpMemoryPool> detachOpMemoryPool();
-
-    SkArenaAlloc* recordTimeAllocator();
-    // This entry point should only be used for DDL creation where we want the ops' data's lifetime
-    // to match that of the DDL.
-    std::unique_ptr<SkArenaAlloc> detachRecordTimeAllocator();
+    OwnedArenas&& detachArenas();
 
     // This entry point gives the recording context a chance to cache the provided
     // programInfo. The DDL context takes this opportunity to store programInfos as a sidecar
@@ -87,71 +114,14 @@ protected:
      */
     void addOnFlushCallbackObject(GrOnFlushCallbackObject*);
 
-    std::unique_ptr<GrSurfaceContext> makeWrappedSurfaceContext(sk_sp<GrSurfaceProxy>,
-                                                                GrColorType,
-                                                                SkAlphaType,
-                                                                sk_sp<SkColorSpace> = nullptr,
-                                                                const SkSurfaceProps* = nullptr);
-
-    /** Create a new texture context backed by a deferred-style GrTextureProxy. */
-    std::unique_ptr<GrTextureContext> makeDeferredTextureContext(
-            SkBackingFit,
-            int width,
-            int height,
-            GrColorType,
-            SkAlphaType,
-            sk_sp<SkColorSpace>,
-            GrMipMapped = GrMipMapped::kNo,
-            GrSurfaceOrigin = kTopLeft_GrSurfaceOrigin,
-            SkBudgeted = SkBudgeted::kYes,
-            GrProtected = GrProtected::kNo);
-
-    /*
-     * Create a new render target context backed by a deferred-style
-     * GrRenderTargetProxy. We guarantee that "asTextureProxy" will succeed for
-     * renderTargetContexts created via this entry point.
-     */
-    std::unique_ptr<GrRenderTargetContext> makeDeferredRenderTargetContext(
-            SkBackingFit fit,
-            int width,
-            int height,
-            GrColorType colorType,
-            sk_sp<SkColorSpace> colorSpace,
-            int sampleCnt = 1,
-            GrMipMapped = GrMipMapped::kNo,
-            GrSurfaceOrigin origin = kBottomLeft_GrSurfaceOrigin,
-            const SkSurfaceProps* surfaceProps = nullptr,
-            SkBudgeted = SkBudgeted::kYes,
-            GrProtected isProtected = GrProtected::kNo);
-
-    /*
-     * This method will attempt to create a renderTargetContext that has, at least, the number of
-     * channels and precision per channel as requested in 'config' (e.g., A8 and 888 can be
-     * converted to 8888). It may also swizzle the channels (e.g., BGRA -> RGBA).
-     * SRGB-ness will be preserved.
-     */
-    std::unique_ptr<GrRenderTargetContext> makeDeferredRenderTargetContextWithFallback(
-            SkBackingFit fit,
-            int width,
-            int height,
-            GrColorType colorType,
-            sk_sp<SkColorSpace> colorSpace,
-            int sampleCnt = 1,
-            GrMipMapped = GrMipMapped::kNo,
-            GrSurfaceOrigin origin = kBottomLeft_GrSurfaceOrigin,
-            const SkSurfaceProps* surfaceProps = nullptr,
-            SkBudgeted budgeted = SkBudgeted::kYes,
-            GrProtected isProtected = GrProtected::kNo);
-
     GrAuditTrail* auditTrail() { return fAuditTrail.get(); }
 
     GrRecordingContext* asRecordingContext() override { return this; }
 
 private:
+    OwnedArenas                       fArenas;
+
     std::unique_ptr<GrDrawingManager> fDrawingManager;
-    // All the GrOp-derived classes use this pool.
-    std::unique_ptr<GrOpMemoryPool>   fOpMemoryPool;
-    std::unique_ptr<SkArenaAlloc>     fRecordTimeAllocator;
 
     std::unique_ptr<GrStrikeCache>    fStrikeCache;
     std::unique_ptr<GrTextBlobCache>  fTextBlobCache;

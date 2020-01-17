@@ -713,6 +713,16 @@ def exp_xform_lib_srcs():
     return native.glob(["experimental/xform/*.cpp"])
 
 ################################################################################
+## skresources_lib
+################################################################################
+
+def skresources_lib_hdrs():
+    return ["modules/skresources/include/SkResources.h"]
+
+def skresources_lib_srcs():
+    return ["modules/skresources/src/SkResources.cpp"]
+
+################################################################################
 ## skottie_lib
 ################################################################################
 
@@ -777,4 +787,26 @@ SKSHAPER_PRIMITIVE_SRCS = [
     "modules/skshaper/include/SkShaper.h",
     "modules/skshaper/src/SkShaper.cpp",
     "modules/skshaper/src/SkShaper_primitive.cpp",
+]
+
+################################################################################
+## skottie_ios_lib
+################################################################################
+
+SKOTTIE_IOS_LIB_SRCS = [
+    "tools/skottie_ios_app/SkiaContext.mm",
+    "tools/skottie_ios_app/SkiaUIContext.mm",
+    "tools/skottie_ios_app/SkiaViewController.mm",
+    "tools/skottie_ios_app/SkottieViewController.mm",
+]
+
+SKOTTIE_IOS_LIB_HDRS = [
+    "tools/skottie_ios_app/SkiaContext.h",
+    "tools/skottie_ios_app/SkiaViewController.h",
+    "tools/skottie_ios_app/SkottieViewController.h",
+]
+
+SKOTTIE_IOS_LIB_SDK_FRAMEWORKS = [
+    "Foundation",
+    "UIKit",
 ]

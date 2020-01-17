@@ -90,8 +90,9 @@ static void run_test(GrContext* context, const char* testName, skiatest::Reporte
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrMeshTest, reporter, ctxInfo) {
     GrContext* context = ctxInfo.grContext();
 
-    auto rtc = context->priv().makeDeferredRenderTargetContext(
-            SkBackingFit::kExact, kImageWidth, kImageHeight, GrColorType::kRGBA_8888, nullptr);
+    auto rtc = GrRenderTargetContext::Make(
+            context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact,
+            {kImageWidth, kImageHeight});
     if (!rtc) {
         ERRORF(reporter, "could not create render target context.");
         return;
@@ -179,7 +180,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrMeshTest, reporter, ctxInfo) {
                 // Start at various repetitions within the patterned index buffer to exercise base
                 // index.
                 while (i < kBoxCount) {
-                    GR_STATIC_ASSERT(kIndexPatternRepeatCount >= 3);
+                    static_assert(kIndexPatternRepeatCount >= 3);
                     int repetitionCount = SkTMin(3 - baseRepetition, kBoxCount - i);
 
                     GrMesh mesh(GrPrimitiveType::kTriangles);
@@ -434,8 +435,8 @@ void DrawMeshHelper::drawMesh(const GrMesh& mesh, GrPrimitiveType primitiveType)
                                                              std::move(processorSet),
                                                              GrPipeline::InputFlags::kNone);
 
-    GrGeometryProcessor* mtp = GrMeshTestProcessor::Make(fState->allocator(),
-                                                         mesh.isInstanced(), mesh.hasVertexData());
+    GrGeometryProcessor* mtp = GrMeshTestProcessor::Make(
+            fState->allocator(), mesh.isInstanced(), SkToBool(mesh.vertexBuffer()));
 
     GrProgramInfo programInfo(fState->proxy()->numSamples(),
                               fState->proxy()->numStencilSamples(),

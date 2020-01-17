@@ -14,6 +14,7 @@
 #include "include/gpu/GrDriverBugWorkarounds.h"
 #include "include/private/GrTypesPriv.h"
 #include "src/gpu/GrBlend.h"
+#include "src/gpu/GrSamplerState.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrSurfaceProxy.h"
 
@@ -25,7 +26,6 @@ class GrProcessorKeyBuilder;
 class GrProgramDesc;
 class GrProgramInfo;
 class GrRenderTargetProxy;
-class GrSamplerState;
 class GrSurface;
 class SkJSONWriter;
 
@@ -53,6 +53,8 @@ public:
     bool multisampleDisableSupport() const { return fMultisampleDisableSupport; }
     bool instanceAttribSupport() const { return fInstanceAttribSupport; }
     bool mixedSamplesSupport() const { return fMixedSamplesSupport; }
+    bool conservativeRasterSupport() const { return fConservativeRasterSupport; }
+    bool wireframeSupport() const { return fWireframeSupport; }
     // This flag indicates that we never have to resolve MSAA. In practice, it means that we have
     // an MSAA-render-to-texture extension: Any render target we create internally will use the
     // extension, and any wrapped render target is the client's responsibility.
@@ -85,6 +87,11 @@ public:
 
     bool avoidWritePixelsFastPath() const { return fAvoidWritePixelsFastPath; }
 
+    // http://skbug.com/9739
+    bool requiresManualFBBarrierAfterTessellatedStencilDraw() const {
+        return fRequiresManualFBBarrierAfterTessellatedStencilDraw;
+    }
+
     /**
      * Indicates the capabilities of the fixed function blend unit.
      */
@@ -113,6 +120,13 @@ public:
         SkASSERT(GrBlendEquationIsAdvanced(equation));
         SkASSERT(this->advancedBlendEquationSupport());
         return SkToBool(fAdvBlendEqBlacklist & (1 << equation));
+    }
+
+    // On some GPUs it is a performance win to disable blending instead of doing src-over with a src
+    // alpha equal to 1. To disable blending we collapse src-over to src and the backends will
+    // handle the disabling of blending.
+    bool shouldCollapseSrcOverToSrcWhenAble() const {
+        return fShouldCollapseSrcOverToSrcWhenAble;
     }
 
     /**
@@ -165,10 +179,12 @@ public:
 
     virtual bool isFormatSRGB(const GrBackendFormat&) const = 0;
 
-    // Callers can optionally pass in an SkImage::CompressionType which will be filled in with the
-    // correct type if the GrBackendFormat is compressed.
-    virtual bool isFormatCompressed(const GrBackendFormat&,
-                                    SkImage::CompressionType* compressionType = nullptr) const = 0;
+    // This will return SkImage::CompressionType::kNone if the backend format is not compressed.
+    virtual SkImage::CompressionType compressionType(const GrBackendFormat&) const = 0;
+
+    bool isFormatCompressed(const GrBackendFormat& format) const {
+        return this->compressionType(format) != SkImage::CompressionType::kNone;
+    }
 
     // TODO: Once we use the supportWritePixels call for uploads, we can remove this function and
     // instead only have the version that takes a GrBackendFormat.
@@ -281,8 +297,8 @@ public:
      */
     bool readPixelsRowBytesSupport() const { return fReadPixelsRowBytesSupport; }
 
-    /** Are transfer buffers (to textures and from surfaces) supported? */
-    bool transferBufferSupport() const { return fTransferBufferSupport; }
+    bool transferFromSurfaceToBufferSupport() const { return fTransferFromSurfaceToBufferSupport; }
+    bool transferFromBufferToTextureSupport() const { return fTransferFromBufferToTextureSupport; }
 
     bool suppressPrints() const { return fSuppressPrints; }
 
@@ -370,9 +386,8 @@ public:
         return {};
     }
 
-    bool validateSurfaceParams(const SkISize&, const GrBackendFormat&, GrPixelConfig,
-                               GrRenderable renderable, int renderTargetSampleCnt,
-                               GrMipMapped) const;
+    bool validateSurfaceParams(const SkISize&, const GrBackendFormat&, GrRenderable renderable,
+                               int renderTargetSampleCnt, GrMipMapped) const;
 
     bool areColorTypeAndFormatCompatible(GrColorType grCT,
                                          const GrBackendFormat& format) const {
@@ -392,6 +407,9 @@ public:
         }
 
         return this->onGetConfigFromBackendFormat(format, grCT);
+    }
+    GrPixelConfig getConfigFromCompressedBackendFormat(const GrBackendFormat& format) const {
+        return this->onGetConfigFromCompressedBackendFormat(format);
     }
 
     /**
@@ -413,10 +431,10 @@ public:
     bool clampToBorderSupport() const { return fClampToBorderSupport; }
 
     /**
-     * Returns the GrSwizzle to use when sampling from a texture with the passed in GrBackendFormat
-     * and GrColorType.
+     * Returns the GrSwizzle to use when sampling or reading back from a texture with the passed in
+     * GrBackendFormat and GrColorType.
      */
-    virtual GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const = 0;
+    virtual GrSwizzle getReadSwizzle(const GrBackendFormat&, GrColorType) const = 0;
 
     /**
      * Returns the GrSwizzle to use when outputting to a render target with the passed in
@@ -443,7 +461,7 @@ public:
      * with immutable samplers.
      */
     virtual void addExtraSamplerKey(GrProcessorKeyBuilder*,
-                                    const GrSamplerState&,
+                                    GrSamplerState,
                                     const GrBackendFormat&) const {}
 
     virtual GrProgramDesc makeDesc(const GrRenderTarget*, const GrProgramInfo&) const = 0;
@@ -483,6 +501,8 @@ protected:
     bool fMultisampleDisableSupport                  : 1;
     bool fInstanceAttribSupport                      : 1;
     bool fMixedSamplesSupport                        : 1;
+    bool fConservativeRasterSupport                  : 1;
+    bool fWireframeSupport                           : 1;
     bool fMSAAResolvesAutomatically                  : 1;
     bool fUsePrimitiveRestart                        : 1;
     bool fPreferClientSideDynamicBuffers             : 1;
@@ -497,15 +517,18 @@ protected:
     bool fAvoidLargeIndexBufferDraws                 : 1;
     bool fPerformStencilClearsAsDraws                : 1;
     bool fAllowCoverageCounting                      : 1;
-    bool fTransferBufferSupport                      : 1;
+    bool fTransferFromBufferToTextureSupport         : 1;
+    bool fTransferFromSurfaceToBufferSupport         : 1;
     bool fWritePixelsRowBytesSupport                 : 1;
     bool fReadPixelsRowBytesSupport                  : 1;
+    bool fShouldCollapseSrcOverToSrcWhenAble         : 1;
 
     // Driver workaround
     bool fDriverBlacklistCCPR                        : 1;
     bool fDriverBlacklistMSAACCPR                    : 1;
     bool fAvoidStencilBuffers                        : 1;
     bool fAvoidWritePixelsFastPath                   : 1;
+    bool fRequiresManualFBBarrierAfterTessellatedStencilDraw : 1;
 
     // ANGLE performance workaround
     bool fPreferVRAMUseOverFlushes                   : 1;
@@ -524,7 +547,7 @@ protected:
 
     BlendEquationSupport fBlendEquationSupport;
     uint32_t fAdvBlendEqBlacklist;
-    GR_STATIC_ASSERT(kLast_GrBlendEquation < 32);
+    static_assert(kLast_GrBlendEquation < 32);
 
     uint32_t fMapBufferFlags;
     int fBufferMapThreshold;
@@ -557,6 +580,7 @@ private:
 
     virtual GrPixelConfig onGetConfigFromBackendFormat(const GrBackendFormat& format,
                                                        GrColorType ct) const = 0;
+    virtual GrPixelConfig onGetConfigFromCompressedBackendFormat(const GrBackendFormat&) const = 0;
 
     virtual bool onAreColorTypeAndFormatCompatible(GrColorType, const GrBackendFormat&) const = 0;
 

@@ -105,7 +105,7 @@ public:
         return IsDecalSampled(wraps[0], wraps[1], modeX, modeY);
     }
 
-    static bool IsDecalSampled(const GrSamplerState& sampler, Mode modeX, Mode modeY) {
+    static bool IsDecalSampled(GrSamplerState sampler, Mode modeX, Mode modeY) {
         return IsDecalSampled(sampler.wrapModeX(), sampler.wrapModeY(), modeX, modeY);
     }
 
@@ -179,7 +179,7 @@ public:
          * the GrSamplerState's filter mode.
          */
         void setData(const GrGLSLProgramDataManager&, const GrTextureDomain&,
-                     const GrSurfaceProxyView&, const GrSamplerState& state);
+                     const GrSurfaceProxyView&, GrSamplerState state);
         /** Same as above but with direct control over decal filtering. */
         void setData(const GrGLSLProgramDataManager&, const GrTextureDomain&, const GrSurfaceProxy*,
                      GrSurfaceOrigin, bool filterIfDecal);
@@ -194,7 +194,7 @@ public:
          * computed key. The returned will be limited to the lower kDomainKeyBits bits.
          */
         static uint32_t DomainKey(const GrTextureDomain& domain) {
-            GR_STATIC_ASSERT(kModeCount <= (1 << kModeBits));
+            static_assert(kModeCount <= (1 << kModeBits));
             return domain.modeX() | (domain.modeY() << kModeBits);
         }
 

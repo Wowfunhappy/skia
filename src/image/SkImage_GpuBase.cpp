@@ -57,6 +57,34 @@ bool SkImage_GpuBase::ValidateBackendTexture(const GrCaps* caps, const GrBackend
     return caps->areColorTypeAndFormatCompatible(grCT, backendFormat);
 }
 
+bool SkImage_GpuBase::ValidateCompressedBackendTexture(const GrCaps* caps,
+                                                       const GrBackendTexture& tex,
+                                                       SkAlphaType at) {
+
+    if (!tex.isValid() || tex.width() <= 0 || tex.height() <= 0) {
+        return false;
+    }
+
+    if (tex.width() > caps->maxTextureSize() || tex.height() > caps->maxTextureSize()) {
+        return false;
+    }
+
+    if (at == kUnknown_SkAlphaType) {
+        return false;
+    }
+
+    GrBackendFormat backendFormat = tex.getBackendFormat();
+    if (!backendFormat.isValid()) {
+        return false;
+    }
+
+    if (!caps->isFormatCompressed(backendFormat)) {
+        return false;
+    }
+
+    return true;
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool SkImage_GpuBase::getROPixels(SkBitmap* dst, CachingHint chint) const {
@@ -86,13 +114,13 @@ bool SkImage_GpuBase::getROPixels(SkBitmap* dst, CachingHint chint) const {
         }
     }
 
-    sk_sp<GrTextureProxy> texProxy = this->asTextureProxyRef(direct);
+    GrSurfaceProxyView view = this->asSurfaceProxyViewRef(direct);
     GrColorType grColorType = SkColorTypeAndFormatToGrColorType(fContext->priv().caps(),
                                                                 this->colorType(),
-                                                                texProxy->backendFormat());
+                                                                view.proxy()->backendFormat());
 
-    auto sContext = direct->priv().makeWrappedSurfaceContext(
-            std::move(texProxy), grColorType, this->alphaType(), this->refColorSpace());
+    auto sContext = GrSurfaceContext::Make(direct, std::move(view), grColorType,
+                                           this->alphaType(), this->refColorSpace());
     if (!sContext) {
         return false;
     }
@@ -116,15 +144,17 @@ sk_sp<SkImage> SkImage_GpuBase::onMakeSubset(GrRecordingContext* context,
 
     sk_sp<GrSurfaceProxy> proxy = this->asTextureProxyRef(context);
 
+    GrColorType grColorType = SkColorTypeToGrColorType(this->colorType());
+
     sk_sp<GrTextureProxy> copyProxy =
-            GrSurfaceProxy::Copy(context, proxy.get(), GrMipMapped::kNo, subset,
+            GrSurfaceProxy::Copy(context, proxy.get(), grColorType, GrMipMapped::kNo, subset,
                                  SkBackingFit::kExact, proxy->isBudgeted());
 
     if (!copyProxy) {
         return nullptr;
     }
 
-    GrSurfaceProxyView currView = this->asSurfaceProxyViewRef(context);
+    const GrSurfaceProxyView& currView = this->getSurfaceProxyView(context);
     if (!currView.proxy()) {
         return nullptr;
     }
@@ -147,13 +177,13 @@ bool SkImage_GpuBase::onReadPixels(const SkImageInfo& dstInfo, void* dstPixels, 
         return false;
     }
 
-    sk_sp<GrTextureProxy> texProxy = this->asTextureProxyRef(direct);
+    GrSurfaceProxyView view = this->asSurfaceProxyViewRef(direct);
     GrColorType grColorType = SkColorTypeAndFormatToGrColorType(fContext->priv().caps(),
                                                                 this->colorType(),
-                                                                texProxy->backendFormat());
+                                                                view.proxy()->backendFormat());
 
-    auto sContext = direct->priv().makeWrappedSurfaceContext(
-            std::move(texProxy), grColorType, this->alphaType(), this->refColorSpace());
+    auto sContext = GrSurfaceContext::Make(direct, std::move(view), grColorType,
+                                           this->alphaType(), this->refColorSpace());
     if (!sContext) {
         return false;
     }
@@ -162,7 +192,7 @@ bool SkImage_GpuBase::onReadPixels(const SkImageInfo& dstInfo, void* dstPixels, 
 }
 
 sk_sp<GrTextureProxy> SkImage_GpuBase::asTextureProxyRef(GrRecordingContext* context,
-                                                         const GrSamplerState& params,
+                                                         GrSamplerState params,
                                                          SkScalar scaleAdjust[2]) const {
     if (!context || !fContext->priv().matches(context)) {
         SkASSERT(0);

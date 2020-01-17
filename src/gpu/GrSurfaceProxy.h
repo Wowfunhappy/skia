@@ -124,6 +124,9 @@ public:
      */
     SkRect getBoundsRect() const { return SkRect::Make(this->dimensions()); }
 
+    /* A perhaps faster check for this->dimensions() == this->backingStoreDimensions(). */
+    bool isFunctionallyExact() const;
+
     /**
      * Helper that gets the dimensions the backing GrSurface will have as a bounding rectangle.
      */
@@ -284,13 +287,15 @@ public:
 
     // Helper function that creates a temporary SurfaceContext to perform the copy
     // The copy is is not a render target and not multisampled.
-    static sk_sp<GrTextureProxy> Copy(GrRecordingContext*, GrSurfaceProxy* src, GrMipMapped,
+    static sk_sp<GrTextureProxy> Copy(GrRecordingContext*, GrSurfaceProxy* src,
+                                      GrColorType srcColorType, GrMipMapped,
                                       SkIRect srcRect, SkBackingFit, SkBudgeted,
                                       RectsMustMatch = RectsMustMatch::kNo);
 
     // Copy the entire 'src'
-    static sk_sp<GrTextureProxy> Copy(GrRecordingContext*, GrSurfaceProxy* src, GrMipMapped,
-                                      SkBackingFit, SkBudgeted);
+    static sk_sp<GrTextureProxy> Copy(GrRecordingContext*, GrSurfaceProxy* src,
+                                      GrColorType srcColorType, GrMipMapped, SkBackingFit,
+                                      SkBudgeted);
 
 #if GR_TEST_UTILS
     int32_t testingOnly_getBackingRefCnt() const;
@@ -303,8 +308,7 @@ public:
     inline GrSurfaceProxyPriv priv();
     inline const GrSurfaceProxyPriv priv() const;
 
-    // Returns true if we are working with protected content.
-    bool isProtected() const { return fIsProtected == GrProtected::kYes; }
+    GrProtected isProtected() const { return fIsProtected; }
 
 protected:
     // Deferred version - takes a new UniqueID from the shared resource/proxy pool.

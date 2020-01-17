@@ -32,6 +32,20 @@ using GrStdSteadyClock = std::chrono::steady_clock;
 #endif
 
 /**
+ *  divide, rounding up
+ */
+
+static inline constexpr size_t GrSizeDivRoundUp(size_t x, size_t y) { return (x + (y - 1)) / y; }
+
+/**
+ *  align up to a power of 2
+ */
+static inline constexpr size_t GrAlignTo(size_t x, size_t alignment) {
+    SkASSERT(alignment && SkIsPow2(alignment));
+    return (x + alignment - 1) & ~(alignment - 1);
+}
+
+/**
  * Pixel configurations. This type conflates texture formats, CPU pixel formats, and
  * premultipliedness. We are moving away from it towards SkColorType and backend API (GL, Vulkan)
  * texture formats in the public API. Right now this mostly refers to texture formats as we're
@@ -60,6 +74,8 @@ enum GrPixelConfig {
     kRGBA_half_GrPixelConfig,
     kRGBA_half_Clamped_GrPixelConfig,
     kRGB_ETC1_GrPixelConfig,
+    kBC1_RGB8_UNORM_GrPixelConfig,
+    kBC1_RGBA8_UNORM_GrPixelConfig,
     kAlpha_16_GrPixelConfig,
     kRG_1616_GrPixelConfig,
     kRGBA_16161616_GrPixelConfig,
@@ -84,12 +100,13 @@ static const GrPixelConfig kSkia8888_GrPixelConfig = kRGBA_8888_GrPixelConfig;
 /**
  * Geometric primitives used for drawing.
  */
-enum class GrPrimitiveType {
+enum class GrPrimitiveType : uint8_t {
     kTriangles,
     kTriangleStrip,
     kPoints,
     kLines,          // 1 pix wide only
     kLineStrip,      // 1 pix wide only
+    kPatches,
     kPath
 };
 static constexpr int kNumGrPrimitiveTypes = (int)GrPrimitiveType::kPath + 1;
@@ -242,7 +259,7 @@ enum class GrFillRule : bool {
 };
 
 inline GrFillRule GrFillRuleForSkPath(const SkPath& path) {
-    switch (path.getNewFillType()) {
+    switch (path.getFillType()) {
         case SkPathFillType::kWinding:
         case SkPathFillType::kInverseWinding:
             return GrFillRule::kNonzero;
@@ -396,9 +413,11 @@ static const int kGrShaderTypeCount = kLastkFragment_GrShaderType + 1;
 
 enum GrShaderFlags {
     kNone_GrShaderFlags = 0,
-    kVertex_GrShaderFlag = 1 << kVertex_GrShaderType,
-    kGeometry_GrShaderFlag = 1 << kGeometry_GrShaderType,
-    kFragment_GrShaderFlag = 1 << kFragment_GrShaderType
+    kVertex_GrShaderFlag = 1,
+    kTessControl_GrShaderFlag = 1 << 2,
+    kTessEvaluation_GrShaderFlag = 1 << 2,
+    kGeometry_GrShaderFlag = 1 << 3,
+    kFragment_GrShaderFlag = 1 << 4
 };
 GR_MAKE_BITFIELD_OPS(GrShaderFlags)
 
@@ -779,19 +798,17 @@ typedef uint64_t GrFence;
  * Used to include or exclude specific GPU path renderers for testing purposes.
  */
 enum class GpuPathRenderers {
-    kNone              = 0, // Always use software masks and/or GrDefaultPathRenderer.
-    kDashLine          = 1 << 0,
-    kStencilAndCover   = 1 << 1,
-    kCoverageCounting  = 1 << 2,
-    kAAHairline        = 1 << 3,
-    kAAConvex          = 1 << 4,
-    kAALinearizing     = 1 << 5,
-    kSmall             = 1 << 6,
-    kTessellating      = 1 << 7,
-
-    kAll               = (kTessellating | (kTessellating - 1)),
-    kDefault           = kAll & ~kCoverageCounting
-
+    kNone              =   0,  // Always use software masks and/or GrDefaultPathRenderer.
+    kDashLine          =   1 << 0,
+    kGpuTessellation   =   1 << 1,
+    kStencilAndCover   =   1 << 2,
+    kCoverageCounting  =   1 << 3,
+    kAAHairline        =   1 << 4,
+    kAAConvex          =   1 << 5,
+    kAALinearizing     =   1 << 6,
+    kSmall             =   1 << 7,
+    kTessellating      =   1 << 8,
+    kDefault           = ((1 << 9) - 1) & ~kGpuTessellation  // All but kGpuTessellation.
 };
 
 /**
@@ -808,18 +825,8 @@ GR_MAKE_BITFIELD_CLASS_OPS(GpuPathRenderers)
 /**
  * Returns the data size for the given SkImage::CompressionType
  */
-static inline size_t GrCompressedFormatDataSize(SkImage::CompressionType compressionType,
-                                                SkISize dimensions) {
-    switch (compressionType) {
-        case SkImage::CompressionType::kNone:
-            return 0;
-        case SkImage::CompressionType::kETC1:
-            SkASSERT((dimensions.width() & 3) == 0);
-            SkASSERT((dimensions.height() & 3) == 0);
-            return (dimensions.width() >> 2) * (dimensions.height() >> 2) * 8;
-    }
-    SkUNREACHABLE;
-}
+size_t GrCompressedFormatDataSize(SkImage::CompressionType, SkISize dimensions,
+                                  GrMipMapped = GrMipMapped::kNo);
 
 /**
  * Like SkColorType this describes a layout of pixel data in CPU memory. It specifies the channels,
@@ -1215,10 +1222,14 @@ static constexpr GrColorType GrPixelConfigToColorType(GrPixelConfig config) {
             return GrColorType::kRGBA_F16;
         case kRGBA_half_Clamped_GrPixelConfig:
             return GrColorType::kRGBA_F16_Clamped;
+
+        // We may need a roughly equivalent color type for a compressed textures. This should be
+        // the logical format for decompressing the data into.
         case kRGB_ETC1_GrPixelConfig:
-            // We may need a roughly equivalent color type for a compressed texture. This should be
-            // the logical format for decompressing the data into.
+        case kBC1_RGB8_UNORM_GrPixelConfig:
             return GrColorType::kRGB_888x;
+        case kBC1_RGBA8_UNORM_GrPixelConfig:
+            return GrColorType::kRGBA_8888;
         case kAlpha_8_as_Alpha_GrPixelConfig:
             return GrColorType::kAlpha_8;
         case kAlpha_8_as_Red_GrPixelConfig:
@@ -1277,8 +1288,21 @@ static constexpr GrPixelConfig GrColorTypeToPixelConfig(GrColorType colorType) {
 
 static constexpr GrPixelConfig GrCompressionTypeToPixelConfig(SkImage::CompressionType compression) {
     switch (compression) {
-        case SkImage::CompressionType::kNone: return kUnknown_GrPixelConfig;
-        case SkImage::CompressionType::kETC1: return kRGB_ETC1_GrPixelConfig;
+        case SkImage::CompressionType::kNone:            return kUnknown_GrPixelConfig;
+        case SkImage::CompressionType::kETC2_RGB8_UNORM: return kRGB_ETC1_GrPixelConfig;
+        case SkImage::CompressionType::kBC1_RGB8_UNORM:  return kBC1_RGB8_UNORM_GrPixelConfig;
+        case SkImage::CompressionType::kBC1_RGBA8_UNORM: return kBC1_RGBA8_UNORM_GrPixelConfig;
+    }
+
+    SkUNREACHABLE;
+}
+
+static constexpr bool GrCompressionTypeIsOpaque(SkImage::CompressionType compression) {
+    switch (compression) {
+        case SkImage::CompressionType::kNone:            return true;
+        case SkImage::CompressionType::kETC2_RGB8_UNORM: return true;
+        case SkImage::CompressionType::kBC1_RGB8_UNORM:  return true;
+        case SkImage::CompressionType::kBC1_RGBA8_UNORM: return false;
     }
 
     SkUNREACHABLE;
@@ -1351,8 +1375,10 @@ static constexpr const char* GrColorTypeToStr(GrColorType ct) {
 
 static constexpr const char* GrCompressionTypeToStr(SkImage::CompressionType compression) {
     switch (compression) {
-        case SkImage::CompressionType::kNone:          return "kNone";
-        case SkImage::CompressionType::kETC1:          return "kETC1";
+        case SkImage::CompressionType::kNone:            return "kNone";
+        case SkImage::CompressionType::kETC2_RGB8_UNORM: return "kETC2_RGB8_UNORM";
+        case SkImage::CompressionType::kBC1_RGB8_UNORM:  return "kBC1_RGB8_UNORM";
+        case SkImage::CompressionType::kBC1_RGBA8_UNORM: return "kBC1_RGBA8_UNORM";
     }
     SkUNREACHABLE;
 }

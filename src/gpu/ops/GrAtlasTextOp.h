@@ -106,8 +106,9 @@ private:
         sk_sp<const GrBuffer> fIndexBuffer;
         GrGeometryProcessor*  fGeometryProcessor;
         GrPipeline::FixedDynamicState* fFixedDynamicState;
-        int fGlyphsToFlush;
-        int fVertexOffset;
+        int fGlyphsToFlush = 0;
+        int fVertexOffset = 0;
+        int fNumDraws = 0;
     };
 
     void onPrepareDraws(Target*) override;
@@ -148,7 +149,8 @@ private:
     bool usesLocalCoords() const { return fUsesLocalCoords; }
     int numGlyphs() const { return fNumGlyphs; }
 
-    CombineResult onCombineIfPossible(GrOp* t, SkArenaAlloc*, const GrCaps& caps) override;
+    CombineResult onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas*,
+                                      const GrCaps& caps) override;
 
     GrGeometryProcessor* setupDfProcessor(SkArenaAlloc* arena,
                                           const GrShaderCaps& caps,

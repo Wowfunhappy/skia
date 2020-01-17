@@ -455,17 +455,13 @@ GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrMorphologyEffect);
 
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrMorphologyEffect::TestCreate(GrProcessorTestData* d) {
-    int texIdx = d->fRandom->nextBool() ? GrProcessorUnitTest::kSkiaPMTextureIdx
-                                        : GrProcessorUnitTest::kAlphaTextureIdx;
-    sk_sp<GrTextureProxy> proxy = d->textureProxy(texIdx);
+    auto [proxy, ct, at] = d->randomProxy();
 
     MorphDirection dir = d->fRandom->nextBool() ? MorphDirection::kX : MorphDirection::kY;
     static const int kMaxRadius = 10;
     int radius = d->fRandom->nextRangeU(1, kMaxRadius);
     MorphType type = d->fRandom->nextBool() ? MorphType::kErode : MorphType::kDilate;
-    auto alphaType = static_cast<SkAlphaType>(
-            d->fRandom->nextRangeU(kUnknown_SkAlphaType + 1, kLastEnum_SkAlphaType));
-    return GrMorphologyEffect::Make(std::move(proxy), alphaType, dir, radius, type);
+    return GrMorphologyEffect::Make(std::move(proxy), at, dir, radius, type);
 }
 #endif
 
@@ -571,18 +567,9 @@ static sk_sp<SkSpecialImage> apply_morphology(
     SkASSERT(radius.width() > 0 || radius.height() > 0);
 
     if (radius.fWidth > 0) {
-        auto dstRTContext = context->priv().makeDeferredRenderTargetContext(
-                SkBackingFit::kApprox,
-                rect.width(),
-                rect.height(),
-                colorType,
-                colorSpace,
-                1,
-                GrMipMapped::kNo,
-                kBottomLeft_GrSurfaceOrigin,
-                nullptr,
-                SkBudgeted::kYes,
-                srcTexture->isProtected() ? GrProtected::kYes : GrProtected::kNo);
+        auto dstRTContext = GrRenderTargetContext::Make(
+                context, colorType, colorSpace, SkBackingFit::kApprox, rect.size(), 1,
+                GrMipMapped::kNo, srcTexture->isProtected(), kBottomLeft_GrSurfaceOrigin);
         if (!dstRTContext) {
             return nullptr;
         }
@@ -600,18 +587,9 @@ static sk_sp<SkSpecialImage> apply_morphology(
         srcRect = dstRect;
     }
     if (radius.fHeight > 0) {
-        auto dstRTContext = context->priv().makeDeferredRenderTargetContext(
-                SkBackingFit::kApprox,
-                rect.width(),
-                rect.height(),
-                colorType,
-                colorSpace,
-                1,
-                GrMipMapped::kNo,
-                kBottomLeft_GrSurfaceOrigin,
-                nullptr,
-                SkBudgeted::kYes,
-                srcTexture->isProtected() ? GrProtected::kYes : GrProtected::kNo);
+        auto dstRTContext = GrRenderTargetContext::Make(
+                context, colorType, colorSpace, SkBackingFit::kApprox, rect.size(), 1,
+                GrMipMapped::kNo, srcTexture->isProtected(), kBottomLeft_GrSurfaceOrigin);
         if (!dstRTContext) {
             return nullptr;
         }

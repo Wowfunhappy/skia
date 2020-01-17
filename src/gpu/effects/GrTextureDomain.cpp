@@ -12,7 +12,7 @@
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrSurfaceProxyPriv.h"
-#include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
+#include "src/gpu/effects/GrTextureEffect.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
@@ -111,7 +111,8 @@ void GrTextureDomain::GLDomain::sampleTexture(GrGLSLShaderBuilder* builder,
                                               const char* inModulateColor) {
     auto appendTextureSample = [&sampler, inModulateColor, builder](const char* coord) {
         builder->codeAppend("half4 textureColor = ");
-        builder->appendTextureLookupAndModulate(inModulateColor, sampler, coord);
+        builder->appendTextureLookupAndBlend(inModulateColor, SkBlendMode::kModulate, sampler,
+                                             coord);
         builder->codeAppend(";");
         return SkString("textureColor");
     };
@@ -223,7 +224,7 @@ void GrTextureDomain::GLDomain::sample(GrGLSLShaderBuilder* builder,
 void GrTextureDomain::GLDomain::setData(const GrGLSLProgramDataManager& pdman,
                                         const GrTextureDomain& textureDomain,
                                         const GrSurfaceProxyView& view,
-                                        const GrSamplerState& state) {
+                                        GrSamplerState state) {
     // We want a hard transition from texture content to trans-black in nearest mode.
     bool filterDecal = state.filter() != GrSamplerState::Filter::kNearest;
     this->setData(pdman, textureDomain, view.proxy(), view.origin(), filterDecal);
@@ -513,7 +514,7 @@ GrDeviceSpaceTextureDecalFragmentProcessor::GrDeviceSpaceTextureDecalFragmentPro
         sk_sp<GrSurfaceProxy> proxy, const SkIRect& subset, const SkIPoint& deviceSpaceOffset)
         : INHERITED(kGrDeviceSpaceTextureDecalFragmentProcessor_ClassID,
                     kCompatibleWithCoverageAsAlpha_OptimizationFlag)
-        , fTextureSampler(proxy, GrSamplerState::ClampNearest())
+        , fTextureSampler(proxy, GrSamplerState::Filter::kNearest)
         , fTextureDomain(proxy.get(),
                          GrTextureDomain::MakeTexelDomain(subset, GrTextureDomain::kDecal_Mode),
                          GrTextureDomain::kDecal_Mode, GrTextureDomain::kDecal_Mode) {
@@ -607,9 +608,7 @@ GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrDeviceSpaceTextureDecalFragmentProcessor);
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrDeviceSpaceTextureDecalFragmentProcessor::TestCreate(
         GrProcessorTestData* d) {
-    int texIdx = d->fRandom->nextBool() ? GrProcessorUnitTest::kSkiaPMTextureIdx
-                                        : GrProcessorUnitTest::kAlphaTextureIdx;
-    sk_sp<GrTextureProxy> proxy = d->textureProxy(texIdx);
+    auto [proxy, at, ct] = d->randomProxy();
     SkIRect subset;
     subset.fLeft = d->fRandom->nextULessThan(proxy->width() - 1);
     subset.fRight = d->fRandom->nextRangeU(subset.fLeft, proxy->width());

@@ -15,6 +15,7 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkVertices.h"
 #include "include/private/SkTo.h"
+#include "src/core/SkCanvasMatrix.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkGlyphRun.h"
 #include "src/core/SkImageFilterCache.h"
@@ -42,24 +43,15 @@ SkBaseDevice::SkBaseDevice(const SkImageInfo& info, const SkSurfaceProps& surfac
 void SkBaseDevice::setOrigin(const SkMatrix& globalCTM, int x, int y) {
     fOrigin.set(x, y);
     fLocalToDevice = globalCTM;
+    fLocalToDevice.normalizePerspective();
     fLocalToDevice.postTranslate(SkIntToScalar(-x), SkIntToScalar(-y));
 }
 
-void SkBaseDevice::setGlobalCTM(const SkMatrix& ctm) {
+void SkBaseDevice::setGlobalCTM(const SkCanvasMatrix& ctm) {
     fLocalToDevice = ctm;
+    fLocalToDevice.normalizePerspective();
     if (fOrigin.fX | fOrigin.fY) {
         fLocalToDevice.postTranslate(-SkIntToScalar(fOrigin.fX), -SkIntToScalar(fOrigin.fY));
-    }
-}
-
-bool SkBaseDevice::clipIsWideOpen() const {
-    if (ClipType::kRect == this->onGetClipType()) {
-        SkRegion rgn;
-        this->onAsRgnClip(&rgn);
-        SkASSERT(rgn.isRect());
-        return rgn.getBounds() == SkIRect::MakeWH(this->width(), this->height());
-    } else {
-        return false;
     }
 }
 

@@ -2272,21 +2272,46 @@ void* polys_to_triangles(Poly* polys, SkPathFillType fillType, bool emitCoverage
 Poly* path_to_polys(const SkPath& path, SkScalar tolerance, const SkRect& clipBounds,
                     int contourCnt, SkArenaAlloc& alloc, bool antialias, bool* isLinear,
                     VertexList* outerMesh) {
-    SkPathFillType fillType = path.getNewFillType();
+    SkPathFillType fillType = path.getFillType();
     if (SkPathFillType_IsInverse(fillType)) {
         contourCnt++;
     }
     std::unique_ptr<VertexList[]> contours(new VertexList[contourCnt]);
 
     path_to_contours(path, tolerance, clipBounds, contours.get(), alloc, isLinear);
-    return contours_to_polys(contours.get(), contourCnt, path.getNewFillType(), path.getBounds(),
+    return contours_to_polys(contours.get(), contourCnt, path.getFillType(), path.getBounds(),
                              antialias, outerMesh, alloc);
 }
 
 int get_contour_count(const SkPath& path, SkScalar tolerance) {
-    int contourCnt;
-    int maxPts = GrPathUtils::worstCasePointCount(path, &contourCnt, tolerance);
-    if (maxPts <= 0) {
+    // We could theoretically be more aggressive about not counting empty contours, but we need to
+    // actually match the exact number of contour linked lists the tessellator will create later on.
+    int contourCnt = 1;
+    bool hasPoints = false;
+
+    SkPath::Iter iter(path, false);
+    SkPath::Verb verb;
+    SkPoint pts[4];
+    bool first = true;
+    while ((verb = iter.next(pts)) != SkPath::kDone_Verb) {
+        switch (verb) {
+            case SkPath::kMove_Verb:
+                if (!first) {
+                    ++contourCnt;
+                }
+                // fallthru.
+            case SkPath::kLine_Verb:
+            case SkPath::kConic_Verb:
+            case SkPath::kQuad_Verb:
+            case SkPath::kCubic_Verb:
+                hasPoints = true;
+                // fallthru to break.
+            default:
+                break;
+        }
+        first = false;
+    }
+    if (!hasPoints) {
         return 0;
     }
     return contourCnt;
@@ -2343,7 +2368,7 @@ int PathToTriangles(const SkPath& path, SkScalar tolerance, const SkRect& clipBo
     VertexList outerMesh;
     Poly* polys = path_to_polys(path, tolerance, clipBounds, contourCnt, alloc, antialias,
                                 isLinear, &outerMesh);
-    SkPathFillType fillType = antialias ? SkPathFillType::kWinding : path.getNewFillType();
+    SkPathFillType fillType = antialias ? SkPathFillType::kWinding : path.getFillType();
     int64_t count64 = count_points(polys, fillType);
     if (antialias) {
         count64 += count_outer_mesh_points(outerMesh);
@@ -2381,7 +2406,7 @@ int PathToVertices(const SkPath& path, SkScalar tolerance, const SkRect& clipBou
     bool isLinear;
     Poly* polys = path_to_polys(path, tolerance, clipBounds, contourCnt, alloc, false, &isLinear,
                                 nullptr);
-    SkPathFillType fillType = path.getNewFillType();
+    SkPathFillType fillType = path.getFillType();
     int64_t count64 = count_points(polys, fillType);
     if (0 == count64 || count64 > SK_MaxS32) {
         *verts = nullptr;

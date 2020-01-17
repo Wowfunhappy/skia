@@ -15,34 +15,36 @@
 
 #include "src/gpu/ops/GrOp.h"
 
-GrPipeline::GrPipeline(const InitArgs& args,
-                       GrProcessorSet&& processors,
-                       GrAppliedClip&& appliedClip)
+GrPipeline::GrPipeline(const InitArgs& args, sk_sp<const GrXferProcessor> xferProcessor,
+                       const GrAppliedHardClip& hardClip)
         : fOutputSwizzle(args.fOutputSwizzle) {
-    SkASSERT(processors.isFinalized());
-
     fFlags = (Flags)args.fInputFlags;
-    if (appliedClip.hasStencilClip()) {
+    if (hardClip.hasStencilClip()) {
         fFlags |= Flags::kHasStencilClip;
     }
-    if (appliedClip.scissorState().enabled()) {
+    if (hardClip.scissorState().enabled()) {
         fFlags |= Flags::kScissorEnabled;
     }
 
-    fWindowRectsState = appliedClip.windowRectsState();
+    fWindowRectsState = hardClip.windowRectsState();
     if (!args.fUserStencil->isDisabled(fFlags & Flags::kHasStencilClip)) {
         fFlags |= Flags::kStencilEnabled;
     }
 
     fUserStencilSettings = args.fUserStencil;
 
-    fXferProcessor = processors.refXferProcessor();
+    fXferProcessor = std::move(xferProcessor);
 
     if (args.fDstProxyView.proxy()) {
         fDstProxyView = args.fDstProxyView.proxyView();
         fDstTextureOffset = args.fDstProxyView.offset();
     }
+}
 
+GrPipeline::GrPipeline(const InitArgs& args, GrProcessorSet&& processors,
+                       GrAppliedClip&& appliedClip)
+        : GrPipeline(args, processors.refXferProcessor(), appliedClip.hardClip()) {
+    SkASSERT(processors.isFinalized());
     // Copy GrFragmentProcessors from GrProcessorSet to Pipeline
     fNumColorProcessors = processors.numColorFragmentProcessors();
     int numTotalProcessors = fNumColorProcessors +
@@ -77,8 +79,6 @@ GrPipeline::GrPipeline(GrScissorTest scissorTest, sk_sp<const GrXferProcessor> x
         , fUserStencilSettings(userStencil)
         , fFlags((Flags)inputFlags)
         , fXferProcessor(std::move(xp))
-        , fFragmentProcessors()
-        , fNumColorProcessors(0)
         , fOutputSwizzle(outputSwizzle) {
     if (GrScissorTest::kEnabled == scissorTest) {
         fFlags |= Flags::kScissorEnabled;
@@ -101,8 +101,8 @@ void GrPipeline::genKey(GrProcessorKeyBuilder* b, const GrCaps& caps) const {
 
     static const uint32_t kBlendWriteShift = 1;
     static const uint32_t kBlendCoeffShift = 5;
-    GR_STATIC_ASSERT(kLast_GrBlendCoeff < (1 << kBlendCoeffShift));
-    GR_STATIC_ASSERT(kFirstAdvancedGrBlendEquation - 1 < 4);
+    static_assert(kLast_GrBlendCoeff < (1 << kBlendCoeffShift));
+    static_assert(kFirstAdvancedGrBlendEquation - 1 < 4);
 
     uint32_t blendKey = blendInfo.fWriteColor;
     blendKey |= (blendInfo.fSrcBlend << kBlendWriteShift);

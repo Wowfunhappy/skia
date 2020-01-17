@@ -33,6 +33,10 @@
 <h2> Paragraph </h2>
 <canvas id=para1 width=600 height=600></canvas>
 
+
+<h2> CanvasKit can serialize/deserialize .skp files</h2>
+<canvas id=skp width=300 height=300></canvas>
+
 <script type="text/javascript" src="/node_modules/canvaskit/bin/canvaskit.js"></script>
 
 <script type="text/javascript" charset="utf-8">
@@ -51,6 +55,7 @@
 
   var bonesImageData = null;
   var flightAnimGif = null;
+  var skpData = null;
   CanvasKitInit({
     locateFile: (file) => '/node_modules/canvaskit/bin/'+file,
   }).ready().then((CK) => {
@@ -74,6 +79,8 @@
     ParagraphAPI1(CanvasKit, robotoData);
 
     RTShaderAPI1(CanvasKit);
+
+    SkpExample(CanvasKit, skpData);
   });
 
   fetch('https://storage.googleapis.com/skia-cdn/misc/lego_loader.json').then((resp) => {
@@ -131,6 +138,11 @@
       });
       ParagraphAPI1(CanvasKit, robotoData);
     });
+  });
+
+  fetch('./red_line.skp').then((response) => response.arrayBuffer()).then((buffer) => {
+    skpData = buffer;
+    SkpExample(CanvasKit, skpData);
   });
 
   function SkottieExample(CanvasKit, id, jsonStr, bounds, assets) {
@@ -357,12 +369,13 @@ const curves = {
   }
 
   function RTShaderAPI1(CanvasKit) {
+    return; // TODO(kjlubick): Fix this example.
     if (!CanvasKit) {
       return;
     }
     const prog = `
 
-  layout(ctype=SkRect) uniform half4 gColor;
+  uniform half4 gColor;
 
   void main(float x, float y, inout half4 color) {
       color = half4(half(x)*(1.0/255), half(y)*(1.0/255), gColor.b, 1);
@@ -376,9 +389,9 @@ const curves = {
 
     const canvas = surface.getCanvas();
 
-    const fact = CanvasKit._RTShaderFactory.MakeFromProgram(prog, true);
+    const effect = CanvasKit._SkRuntimeEffect.Make(prog);
     const rot = CanvasKit.SkMatrix.rotated(90, 128, 128);
-    const shader = fact.make([1, 0, 0, 1], rot);
+    const shader = effect.makeShader([1, 0, 0, 1], true, rot);
 
     const paint = new CanvasKit.SkPaint();
     paint.setShader(shader);
@@ -387,6 +400,27 @@ const curves = {
     surface.flush();
     shader.delete();
     paint.delete();
-    fact.delete();
+    effect.delete();
+  }
+
+  function SkpExample(CanvasKit, skpData) {
+    if (!skpData || !CanvasKit) {
+      return;
+    }
+
+    const surface = CanvasKit.MakeSWCanvasSurface('skp');
+    if (!surface) {
+      console.error('Could not make surface');
+      return;
+    }
+
+    const pic = CanvasKit.MakeSkPicture(skpData);
+
+    function drawFrame(canvas) {
+      canvas.clear(CanvasKit.TRANSPARENT);
+      canvas.drawPicture(pic);
+      // Intentionally just draw frame once
+    }
+    surface.requestAnimationFrame(drawFrame);
   }
 </script>

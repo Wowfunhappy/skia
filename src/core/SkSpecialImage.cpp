@@ -451,8 +451,11 @@ public:
         if (!rec) {
             return false;
         }
-        auto sContext = fContext->priv().makeWrappedSurfaceContext(fTextureProxy, fColorType,
-                                                                   this->alphaType(), fColorSpace);
+        // TODO: Store a GrSurfaceProxyView on SkSpecialImage_Gpu instead of just a GrTextureProxy
+        GrSurfaceProxyView view(fTextureProxy, fTextureProxy->origin(),
+                                fTextureProxy->textureSwizzle());
+        auto sContext = GrSurfaceContext::Make(fContext, std::move(view), fColorType,
+                                               this->alphaType(), fColorSpace);
         if (!sContext) {
             return false;
         }
@@ -497,9 +500,7 @@ public:
     // TODO: move all the logic here into the subset-flavor GrSurfaceProxy::copy?
     sk_sp<SkImage> onAsImage(const SkIRect* subset) const override {
         if (subset) {
-            // TODO: if this becomes a bottle neck we could base this logic on what the size
-            // will be when it is finally instantiated - but that is more fraught.
-            if (GrProxyProvider::IsFunctionallyExact(fTextureProxy.get()) &&
+            if (fTextureProxy->isFunctionallyExact() &&
                 *subset == SkIRect::MakeSize(fTextureProxy->dimensions())) {
                 fTextureProxy->priv().exactify(false);
                 // The existing GrTexture is already tight so reuse it in the SkImage
@@ -507,8 +508,9 @@ public:
             }
 
             sk_sp<GrTextureProxy> subsetProxy(
-                    GrSurfaceProxy::Copy(fContext, fTextureProxy.get(), GrMipMapped::kNo, *subset,
-                                         SkBackingFit::kExact, SkBudgeted::kYes));
+                    GrSurfaceProxy::Copy(fContext, fTextureProxy.get(), fColorType,
+                                         GrMipMapped::kNo, *subset, SkBackingFit::kExact,
+                                         SkBudgeted::kYes));
             if (!subsetProxy) {
                 return nullptr;
             }

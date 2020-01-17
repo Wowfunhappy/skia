@@ -46,7 +46,7 @@ public:
         fragBuilder->codeAppend("half d = length(shadowParams.xy);");
         fragBuilder->codeAppend("float2 uv = float2(shadowParams.z * (1.0 - d), 0.5);");
         fragBuilder->codeAppend("half factor = ");
-        fragBuilder->appendTextureLookup(args.fTexSamplers[0], "uv", kFloat2_GrSLType);
+        fragBuilder->appendTextureLookup(args.fTexSamplers[0], "uv");
         fragBuilder->codeAppend(".a;");
         fragBuilder->codeAppendf("%s = half4(factor);", args.fOutputCoverage);
     }
@@ -70,7 +70,7 @@ GrRRectShadowGeoProc::GrRRectShadowGeoProc(const GrSurfaceProxyView& lutView)
     this->setVertexAttributes(&fInPosition, 3);
 
     SkASSERT(lutView.proxy());
-    fLUTTextureSampler.reset(GrSamplerState::ClampBilerp(), lutView.proxy()->backendFormat(),
+    fLUTTextureSampler.reset(GrSamplerState::Filter::kBilerp, lutView.proxy()->backendFormat(),
                              lutView.swizzle());
     this->setTextureSamplerCnt(1);
 }
@@ -85,7 +85,7 @@ GR_DEFINE_GEOMETRY_PROCESSOR_TEST(GrRRectShadowGeoProc);
 
 #if GR_TEST_UTILS
 GrGeometryProcessor* GrRRectShadowGeoProc::TestCreate(GrProcessorTestData* d) {
-    sk_sp<GrSurfaceProxy> proxy = d->textureProxy(GrProcessorUnitTest::kAlphaTextureIdx);
+    auto [proxy, ct, at] = d->randomAlphaOnlyProxy();
     GrSurfaceOrigin origin = proxy->origin();
     const GrSwizzle& swizzle = proxy->textureSwizzle();
     GrSurfaceProxyView view(std::move(proxy), origin, swizzle);

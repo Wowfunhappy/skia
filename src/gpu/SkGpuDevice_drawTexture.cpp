@@ -22,7 +22,7 @@
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrBicubicEffect.h"
 #include "src/gpu/effects/GrTextureDomain.h"
-#include "src/gpu/effects/generated/GrSimpleTextureEffect.h"
+#include "src/gpu/effects/GrTextureEffect.h"
 #include "src/gpu/geometry/GrShape.h"
 #include "src/image/SkImage_Base.h"
 
@@ -195,8 +195,7 @@ static void draw_texture(GrRenderTargetContext* rtc, const GrClip& clip, const S
 
     // Must specify the strict constraint when the proxy is not functionally exact and the src
     // rect would access pixels outside the proxy's content area without the constraint.
-    if (constraint != SkCanvas::kStrict_SrcRectConstraint &&
-        !GrProxyProvider::IsFunctionallyExact(proxy.get())) {
+    if (constraint != SkCanvas::kStrict_SrcRectConstraint && !proxy->isFunctionallyExact()) {
         // Conservative estimate of how much a coord could be outset from src rect:
         // 1/2 pixel for AA and 1/2 pixel for bilerp
         float buffer = 0.5f * (aa == GrAA::kYes) +
@@ -242,7 +241,7 @@ static void draw_texture_producer(GrContext* context, GrRenderTargetContext* rtc
     if (attemptDrawTexture && can_use_draw_texture(paint)) {
         // We've done enough checks above to allow us to pass ClampNearest() and not check for
         // scaling adjustments.
-        auto proxy = producer->refTextureProxyForParams(GrSamplerState::ClampNearest(), nullptr);
+        auto proxy = producer->refTextureProxyForParams(GrSamplerState::Filter::kNearest, nullptr);
         if (!proxy) {
             return;
         }
@@ -530,7 +529,7 @@ void SkGpuDevice::drawEdgeAAImageSet(const SkCanvas::ImageSetEntry set[], int co
             uint32_t uniqueID;
             proxy = image->refPinnedTextureProxy(this->context(), &uniqueID);
             if (!proxy) {
-                proxy = image->asTextureProxyRef(this->context(), GrSamplerState::ClampBilerp(),
+                proxy = image->asTextureProxyRef(this->context(), GrSamplerState::Filter::kBilerp,
                                                  nullptr);
             }
         }

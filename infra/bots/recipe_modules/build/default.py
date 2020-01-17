@@ -39,7 +39,10 @@ def compile_swiftshader(api, extra_tokens, swiftshader_root, cc, cxx, out):
     cc, cxx: compiler binaries to use
     out: target directory for libEGL.so and libGLESv2.so
   """
-  swiftshader_opts = ['-DBUILD_TESTS=OFF', '-DWARNINGS_AS_ERRORS=0']
+  swiftshader_opts = [
+      '-DSWIFTSHADER_BUILD_TESTS=OFF',
+      '-DSWIFTSHADER_WARNINGS_AS_ERRORS=0',
+  ]
   cmake_bin = str(api.vars.slave_dir.join('cmake_linux', 'bin'))
   env = {
       'CC': cc,
@@ -60,7 +63,7 @@ def compile_swiftshader(api, extra_tokens, swiftshader_root, cc, cxx, out):
       '-I%s/include/c++/v1' % libcxx_msan,
     ])
     swiftshader_opts.extend([
-      '-DMSAN=ON',
+      '-DSWIFTSHADER_MSAN=ON',
       '-DCMAKE_C_FLAGS=%s' % msan_cflags,
       '-DCMAKE_CXX_FLAGS=%s' % msan_cflags,
     ])
@@ -207,7 +210,7 @@ def compile_fn(api, checkout_root, out_dir):
     api.run.run_once(build_command_buffer, api, chrome_dir, skia_dir, out_dir)
   if 'MSAN' in extra_tokens:
     args['skia_use_fontconfig'] = 'false'
-  if 'ASAN' in extra_tokens or 'UBSAN' in extra_tokens:
+  if 'ASAN' in extra_tokens:
     args['skia_enable_spirv_validation'] = 'false'
   if 'NoDEPS' in extra_tokens:
     args.update({
@@ -229,7 +232,7 @@ def compile_fn(api, checkout_root, out_dir):
     args['is_component_build'] = 'true'
   if 'Vulkan' in extra_tokens and not 'Android' in extra_tokens:
     args['skia_use_vulkan'] = 'true'
-    args['skia_enable_vulkan_debug_layers'] = 'false'
+    args['skia_enable_vulkan_debug_layers'] = 'true'
     if 'MoltenVK' in extra_tokens:
       args['skia_moltenvk_path'] = '"%s"' % moltenvk
   if 'Metal' in extra_tokens:

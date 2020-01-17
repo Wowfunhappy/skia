@@ -238,7 +238,7 @@ bool SkImage_Lazy::onIsValid(GrContext* context) const {
 
 #if SK_SUPPORT_GPU
 sk_sp<GrTextureProxy> SkImage_Lazy::asTextureProxyRef(GrRecordingContext* context,
-                                                      const GrSamplerState& params,
+                                                      GrSamplerState params,
                                                       SkScalar scaleAdjust[2]) const {
     if (!context) {
         return nullptr;
@@ -475,8 +475,10 @@ sk_sp<GrTextureProxy> SkImage_Lazy::lockTextureProxy(
                                      kLockTexturePathCount);
             set_key_on_proxy(proxyProvider, proxy.get(), nullptr, key);
             if (!willBeMipped || GrMipMapped::kYes == proxy->mipMapped()) {
-                *fUniqueKeyInvalidatedMessages.append() =
+                if (generator->texturesAreCacheable()) {
+                    *fUniqueKeyInvalidatedMessages.append() =
                         new GrUniqueKeyInvalidatedMessage(key, ctx->priv().contextID());
+                }
                 return proxy;
             }
         }

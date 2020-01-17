@@ -321,7 +321,7 @@ void basic_transfer_from_test(skiatest::Reporter* reporter, const sk_gpu_test::C
 
     size_t bufferSize = fullBufferRowBytes * kTextureHeight;
     // Arbitrary starting offset for the partial read.
-    size_t partialReadOffset = GrSizeAlignUp(11, offsetAlignment);
+    size_t partialReadOffset = GrAlignTo(11, offsetAlignment);
     bufferSize = SkTMax(bufferSize, partialReadOffset + partialBufferRowBytes * kPartialHeight);
 
     sk_sp<GrGpuBuffer> buffer(resourceProvider->createBuffer(
@@ -417,8 +417,8 @@ void basic_transfer_from_test(skiatest::Reporter* reporter, const sk_gpu_test::C
 #endif
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(TransferPixelsToTest, reporter, ctxInfo) {
-    if (!ctxInfo.grContext()->priv().caps()->transferBufferSupport()) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(TransferPixelsToTextureTest, reporter, ctxInfo) {
+    if (!ctxInfo.grContext()->priv().caps()->transferFromBufferToTextureSupport()) {
         return;
     }
     for (auto renderable : {GrRenderable::kNo, GrRenderable::kYes}) {
@@ -448,8 +448,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(TransferPixelsToTest, reporter, ctxInfo) {
 }
 
 // TODO(bsalomon): Metal
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(TransferPixelsFromTest, reporter, ctxInfo) {
-    if (!ctxInfo.grContext()->priv().caps()->transferBufferSupport()) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(TransferPixelsFromTextureTest, reporter, ctxInfo) {
+    if (!ctxInfo.grContext()->priv().caps()->transferFromSurfaceToBufferSupport()) {
         return;
     }
     for (auto renderable : {GrRenderable::kNo, GrRenderable::kYes}) {

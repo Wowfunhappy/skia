@@ -49,7 +49,7 @@ const SkScalar gOneQuarter = 0.25f;
 #if SK_SUPPORT_GPU
 static void setUniformPoint3(const GrGLSLProgramDataManager& pdman, UniformHandle uni,
                              const SkPoint3& point) {
-    GR_STATIC_ASSERT(sizeof(SkPoint3) == 3 * sizeof(float));
+    static_assert(sizeof(SkPoint3) == 3 * sizeof(float));
     pdman.set3fv(uni, 1, &point.fX);
 }
 
@@ -72,7 +72,15 @@ static inline void shiftMatrixLeft(int m[9]) {
 static inline void fast_normalize(SkPoint3* vector) {
     // add a tiny bit so we don't have to worry about divide-by-zero
     SkScalar magSq = vector->dot(*vector) + SK_ScalarNearlyZero;
+#if defined(_MSC_VER) && _MSC_VER >= 1920
+    // Visual Studio 2019 has some kind of code-generation bug in release builds involving the
+    // lighting math in this file. Using the portable rsqrt avoids the issue. This issue appears
+    // to be specific to the collection of (inline) functions in this file that call into this
+    // function, not with sk_float_rsqrt itself.
+    SkScalar scale = sk_float_rsqrt_portable(magSq);
+#else
     SkScalar scale = sk_float_rsqrt(magSq);
+#endif
     vector->fX *= scale;
     vector->fY *= scale;
     vector->fZ *= scale;
@@ -480,18 +488,10 @@ sk_sp<SkSpecialImage> SkLightingImageFilterInternal::filterImageGPU(
     sk_sp<GrTextureProxy> inputProxy(input->asTextureProxyRef(context));
     SkASSERT(inputProxy);
 
-    auto renderTargetContext = context->priv().makeDeferredRenderTargetContext(
-            SkBackingFit::kApprox,
-            offsetBounds.width(),
-            offsetBounds.height(),
-            ctx.grColorType(),
-            ctx.refColorSpace(),
-            1,
-            GrMipMapped::kNo,
-            kBottomLeft_GrSurfaceOrigin,
-            nullptr,
-            SkBudgeted::kYes,
-            inputProxy->isProtected() ? GrProtected::kYes : GrProtected::kNo);
+    auto renderTargetContext = GrRenderTargetContext::Make(
+            context, ctx.grColorType(), ctx.refColorSpace(), SkBackingFit::kApprox,
+            offsetBounds.size(), 1, GrMipMapped::kNo, inputProxy->isProtected(),
+            kBottomLeft_GrSurfaceOrigin);
     if (!renderTargetContext) {
         return nullptr;
     }
@@ -1705,9 +1705,7 @@ static SkImageFilterLight* create_random_light(SkRandom* random) {
 }
 
 std::unique_ptr<GrFragmentProcessor> GrDiffuseLightingEffect::TestCreate(GrProcessorTestData* d) {
-    int texIdx = d->fRandom->nextBool() ? GrProcessorUnitTest::kSkiaPMTextureIdx
-                                        : GrProcessorUnitTest::kAlphaTextureIdx;
-    sk_sp<GrTextureProxy> proxy = d->textureProxy(texIdx);
+    auto [proxy, ct, at] = d->randomProxy();
     SkScalar surfaceScale = d->fRandom->nextSScalar1();
     SkScalar kd = d->fRandom->nextUScalar1();
     sk_sp<SkImageFilterLight> light(create_random_light(d->fRandom));
@@ -1923,9 +1921,7 @@ GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrSpecularLightingEffect);
 
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrSpecularLightingEffect::TestCreate(GrProcessorTestData* d) {
-    int texIdx = d->fRandom->nextBool() ? GrProcessorUnitTest::kSkiaPMTextureIdx
-                                        : GrProcessorUnitTest::kAlphaTextureIdx;
-    sk_sp<GrTextureProxy> proxy = d->textureProxy(texIdx);
+    auto [proxy, ct, at] = d->randomProxy();
     SkScalar surfaceScale = d->fRandom->nextSScalar1();
     SkScalar ks = d->fRandom->nextUScalar1();
     SkScalar shininess = d->fRandom->nextUScalar1();

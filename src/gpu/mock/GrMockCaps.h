@@ -49,23 +49,15 @@ public:
         return GrGetColorTypeDesc(ct).encoding() == GrColorTypeEncoding::kSRGBUnorm;
     }
 
-    bool isFormatCompressed(const GrBackendFormat& format,
-                            SkImage::CompressionType* compressionType = nullptr) const override {
-        SkImage::CompressionType compression = format.asMockCompressionType();
-        if (compression == SkImage::CompressionType::kNone) {
-            return false;
-        }
-
-        if (compressionType) {
-            *compressionType = compression;
-        }
-        return true;
+    SkImage::CompressionType compressionType(const GrBackendFormat& format) const override {
+        return format.asMockCompressionType();
     }
 
     bool isFormatTexturableAndUploadable(GrColorType,
                                          const GrBackendFormat& format) const override {
         return this->isFormatTexturable(format);
     }
+
     bool isFormatTexturable(const GrBackendFormat& format) const override {
         SkImage::CompressionType compression = format.asMockCompressionType();
         if (compression != SkImage::CompressionType::kNone) {
@@ -177,7 +169,7 @@ public:
         return {};
     }
 
-    GrSwizzle getTextureSwizzle(const GrBackendFormat&, GrColorType) const override {
+    GrSwizzle getReadSwizzle(const GrBackendFormat&, GrColorType) const override {
         return GrSwizzle();
     }
     GrSwizzle getOutputSwizzle(const GrBackendFormat&, GrColorType) const override {
@@ -204,10 +196,22 @@ private:
                                                GrColorType) const override {
         SkImage::CompressionType compression = format.asMockCompressionType();
         if (compression != SkImage::CompressionType::kNone) {
-            return GrCompressionTypeToPixelConfig(compression);
+            // This emulates the behavior of the other backends which validate
+            // the format w/ the colorType
+            return kUnknown_GrPixelConfig;
         }
 
         return GrColorTypeToPixelConfig(format.asMockColorType());
+    }
+
+    GrPixelConfig onGetConfigFromCompressedBackendFormat(const GrBackendFormat& f) const override {
+        SkImage::CompressionType compression = f.asMockCompressionType();
+        if (compression != SkImage::CompressionType::kNone) {
+            return GrCompressionTypeToPixelConfig(compression);
+        }
+
+        // This emulates the behavior of the other backends
+        return kUnknown_GrPixelConfig;
     }
 
     bool onAreColorTypeAndFormatCompatible(GrColorType ct,
@@ -217,8 +221,12 @@ private:
         }
 
         SkImage::CompressionType compression = format.asMockCompressionType();
-        if (compression == SkImage::CompressionType::kETC1) {
+        if (compression == SkImage::CompressionType::kETC2_RGB8_UNORM ||
+            compression == SkImage::CompressionType::kBC1_RGB8_UNORM) {
             return ct == GrColorType::kRGB_888x; // TODO: this may be too restrictive
+        }
+        if (compression == SkImage::CompressionType::kBC1_RGBA8_UNORM) {
+            return ct == GrColorType::kRGBA_8888;
         }
 
         return ct == format.asMockColorType();

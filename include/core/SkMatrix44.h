@@ -188,6 +188,8 @@ public:
      */
     SkMatrix44(const SkMatrix&);
     SkMatrix44& operator=(const SkMatrix& src);
+
+    // TODO: make this explicit (will need to guard that change to update chrome, etc.
     operator SkMatrix() const;
 
     /**
@@ -475,6 +477,8 @@ private:
     inline const SkMScalar* values() const { return &fMat[0][0]; }
 
     friend class SkColorSpace;
+    friend class SkCanvas;
+    friend class SkM44;
 };
 
 #endif

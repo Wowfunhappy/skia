@@ -39,8 +39,8 @@ public:
         GrGLSLVarying uv(kFloat2_GrSLType);
         GrSLType texIdxType = args.fShaderCaps->integerSupport() ? kInt_GrSLType : kFloat_GrSLType;
         GrGLSLVarying texIdx(texIdxType);
-        append_index_uv_varyings(args, btgp.inTextureCoords().name(), atlasDimensionsInvName, &uv,
-                                 &texIdx, nullptr);
+        append_index_uv_varyings(args, btgp.numTextureSamplers(), btgp.inTextureCoords().name(),
+                                 atlasDimensionsInvName, &uv, &texIdx, nullptr);
 
         GrGLSLFPFragmentBuilder* fragBuilder = args.fFragBuilder;
         // Setup pass through color
@@ -123,8 +123,10 @@ GrBitmapTextGeoProc::GrBitmapTextGeoProc(const GrShaderCaps& caps,
                                          bool wideColor,
                                          const GrSurfaceProxyView* views,
                                          int numActiveViews,
-                                         const GrSamplerState& params, GrMaskFormat format,
-                                         const SkMatrix& localMatrix, bool usesW)
+                                         GrSamplerState params,
+                                         GrMaskFormat format,
+                                         const SkMatrix& localMatrix,
+                                         bool usesW)
         : INHERITED(kGrBitmapTextGeoProc_ClassID)
         , fColor(color)
         , fLocalMatrix(localMatrix)
@@ -144,8 +146,8 @@ GrBitmapTextGeoProc::GrBitmapTextGeoProc(const GrShaderCaps& caps,
         fInColor = MakeColorAttribute("inColor", wideColor);
     }
 
-    fInTextureCoords = {"inTextureCoords", kUShort2_GrVertexAttribType,
-                        caps.integerSupport() ? kUShort2_GrSLType : kFloat2_GrSLType};
+    fInTextureCoords = {"inTextureCoords", kShort2_GrVertexAttribType,
+                        caps.integerSupport() ? kShort2_GrSLType : kFloat2_GrSLType};
     this->setVertexAttributes(&fInPosition, 3);
 
     if (numActiveViews) {
@@ -162,7 +164,7 @@ GrBitmapTextGeoProc::GrBitmapTextGeoProc(const GrShaderCaps& caps,
 
 void GrBitmapTextGeoProc::addNewViews(const GrSurfaceProxyView* views,
                                       int numActiveViews,
-                                      const GrSamplerState& params) {
+                                      GrSamplerState params) {
     SkASSERT(numActiveViews <= kMaxTextures);
     // Just to make sure we don't try to add too many proxies
     numActiveViews = SkTMin(numActiveViews, kMaxTextures);
@@ -199,9 +201,7 @@ GR_DEFINE_GEOMETRY_PROCESSOR_TEST(GrBitmapTextGeoProc);
 #if GR_TEST_UTILS
 
 GrGeometryProcessor* GrBitmapTextGeoProc::TestCreate(GrProcessorTestData* d) {
-    int texIdx = d->fRandom->nextBool() ? GrProcessorUnitTest::kSkiaPMTextureIdx
-                                        : GrProcessorUnitTest::kAlphaTextureIdx;
-    sk_sp<GrTextureProxy> proxy = d->textureProxy(texIdx);
+    auto [proxy, ct, at] = d->randomProxy();
 
     GrSamplerState::WrapMode wrapModes[2];
     GrTest::TestWrapModes(d->fRandom, wrapModes);
@@ -209,15 +209,16 @@ GrGeometryProcessor* GrBitmapTextGeoProc::TestCreate(GrProcessorTestData* d) {
                                                    ? GrSamplerState::Filter::kBilerp
                                                    : GrSamplerState::Filter::kNearest);
 
-    GrMaskFormat format = kARGB_GrMaskFormat; // init to avoid warning
-    switch (d->fRandom->nextULessThan(3)) {
-        case 0:
+    GrMaskFormat format;
+    switch (ct) {
+        case GrColorType::kAlpha_8:
             format = kA8_GrMaskFormat;
             break;
-        case 1:
+        case GrColorType::kBGR_565:
             format = kA565_GrMaskFormat;
             break;
-        case 2:
+        case GrColorType::kRGBA_8888:
+        default:  // It doesn't really matter that color type and mask format agree.
             format = kARGB_GrMaskFormat;
             break;
     }

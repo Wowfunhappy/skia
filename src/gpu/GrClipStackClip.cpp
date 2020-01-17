@@ -124,7 +124,7 @@ bool GrClipStackClip::PathNeedsSWRenderer(GrRecordingContext* context,
         GrShape shape(path, GrStyle::SimpleFill());
         GrPathRenderer::CanDrawPathArgs canDrawArgs;
         canDrawArgs.fCaps = context->priv().caps();
-        canDrawArgs.fProxy = renderTargetContext->proxy();
+        canDrawArgs.fProxy = renderTargetContext->asRenderTargetProxy();
         canDrawArgs.fClipConservativeBounds = &scissorRect;
         canDrawArgs.fViewMatrix = &viewMatrix;
         canDrawArgs.fShape = &shape;
@@ -354,18 +354,10 @@ sk_sp<GrTextureProxy> GrClipStackClip::createAlphaClipMask(GrRecordingContext* c
         return proxy;
     }
 
-    auto isProtected = proxy->isProtected() ? GrProtected::kYes : GrProtected::kNo;
-    auto rtc = context->priv().makeDeferredRenderTargetContextWithFallback(SkBackingFit::kApprox,
-                                                                           reducedClip.width(),
-                                                                           reducedClip.height(),
-                                                                           GrColorType::kAlpha_8,
-                                                                           nullptr,
-                                                                           1,
-                                                                           GrMipMapped::kNo,
-                                                                           kTopLeft_GrSurfaceOrigin,
-                                                                           nullptr,
-                                                                           SkBudgeted::kYes,
-                                                                           isProtected);
+    auto rtc = GrRenderTargetContext::MakeWithFallback(
+            context, GrColorType::kAlpha_8, nullptr, SkBackingFit::kApprox,
+            {reducedClip.width(), reducedClip.height()}, 1, GrMipMapped::kNo, proxy->isProtected(),
+            kTopLeft_GrSurfaceOrigin);
     if (!rtc) {
         return nullptr;
     }

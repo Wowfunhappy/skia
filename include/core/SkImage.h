@@ -231,16 +231,29 @@ public:
         return DecodeToTexture(ctx, data->data(), data->size(), subset);
     }
 
-    // Experimental
+    /*
+     * Experimental:
+     *   Skia                | GL_COMPRESSED_*     | MTLPixelFormat*      | VK_FORMAT_*_BLOCK
+     *  --------------------------------------------------------------------------------------
+     *   kETC2_RGB8_UNORM    | ETC1_RGB8           | ETC2_RGB8 (iOS-only) | ETC2_R8G8B8_UNORM
+     *                       | RGB8_ETC2           |                      |
+     *  --------------------------------------------------------------------------------------
+     *   kBC1_RGB8_UNORM     | RGB_S3TC_DXT1_EXT   | N/A                  | BC1_RGB_UNORM
+     *  --------------------------------------------------------------------------------------
+     *   kBC1_RGBA8_UNORM    | RGBA_S3TC_DXT1_EXT  | BC1_RGBA (macOS-only)| BC1_RGBA_UNORM
+     */
     enum class CompressionType {
         kNone,
-        kETC1,
-        kLast = kETC1,
+        kETC2_RGB8_UNORM, // the same as ETC1
+
+        kBC1_RGB8_UNORM,
+        kBC1_RGBA8_UNORM,
+        kLast = kBC1_RGBA8_UNORM,
     };
 
     static constexpr int kCompressionTypeCount = static_cast<int>(CompressionType::kLast) + 1;
 
-    static const CompressionType kETC1_CompressionType = CompressionType::kETC1;
+    static const CompressionType kETC1_CompressionType = CompressionType::kETC2_RGB8_UNORM;
 
     /** Creates a GPU-backed SkImage from compressed data.
 
@@ -255,7 +268,8 @@ public:
         @return         created SkImage, or nullptr
     */
     static sk_sp<SkImage> MakeFromCompressed(GrContext* context, sk_sp<SkData> data,
-                                             int width, int height, CompressionType type);
+                                             int width, int height, CompressionType type,
+                                             GrMipMapped mipMapped = GrMipMapped::kNo);
 
     /** User function called when supplied texture may be deleted.
     */
@@ -312,7 +326,13 @@ public:
         @param alphaType           one of:
                                    kUnknown_SkAlphaType, kOpaque_SkAlphaType, kPremul_SkAlphaType,
                                    kUnpremul_SkAlphaType
-        @param colorSpace          range of colors; may be nullptr
+        @param colorSpace          This describes the color space of this image's contents, as
+                                   seen after sampling. In general, if the format of the backend
+                                   texture is SRGB, some linear colorSpace should be supplied
+                                   (e.g., SkColorSpace::MakeSRGBLinear()). If the format of the
+                                   backend texture is linear, then the colorSpace should include
+                                   a description of the transfer function as
+                                   well (e.g., SkColorSpace::MakeSRGB()).
         @param textureReleaseProc  function called when texture can be released
         @param releaseContext      state passed to textureReleaseProc
         @return                    created SkImage, or nullptr
@@ -325,6 +345,39 @@ public:
                                           sk_sp<SkColorSpace> colorSpace,
                                           TextureReleaseProc textureReleaseProc,
                                           ReleaseContext releaseContext);
+
+    /** Creates an SkImage from a GPU backend texture. The backend texture must stay
+        valid and unchanged until textureReleaseProc is called. The textureReleaseProc is
+        called when the SkImage is deleted or no longer refers to the texture and will be
+        passed the releaseContext.
+
+        An SkImage is returned if the format of backendTexture is recognized and supported.
+        Recognized formats vary by GPU back-end.
+
+        @param context             the GPU context
+        @param backendTexture      a texture already allocated by the GPU
+        @param origin              one of: kBottomLeft_GrSurfaceOrigin, kTopLeft_GrSurfaceOrigin
+        @param alphaType           This characterizes the nature of the alpha values in the
+                                   backend texture. For opaque compressed formats (e.g., ETC1)
+                                   this should usually be set to kOpaque_SkAlphaType.
+        @param colorSpace          This describes the color space of this image's contents, as
+                                   seen after sampling. In general, if the format of the backend
+                                   texture is SRGB, some linear colorSpace should be supplied
+                                   (e.g., SkColorSpace::MakeSRGBLinear()). If the format of the
+                                   backend texture is linear, then the colorSpace should include
+                                   a description of the transfer function as
+                                   well (e.g., SkColorSpace::MakeSRGB()).
+        @param textureReleaseProc  function called when the backend texture can be released
+        @param releaseContext      state passed to textureReleaseProc
+        @return                    created SkImage, or nullptr
+    */
+    static sk_sp<SkImage> MakeFromCompressedTexture(GrContext* context,
+                                                    const GrBackendTexture& backendTexture,
+                                                    GrSurfaceOrigin origin,
+                                                    SkAlphaType alphaType,
+                                                    sk_sp<SkColorSpace> colorSpace,
+                                                    TextureReleaseProc textureReleaseProc = nullptr,
+                                                    ReleaseContext releaseContext = nullptr);
 
     /** Creates SkImage from pixmap. SkImage is uploaded to GPU back-end using context.
 
@@ -1037,11 +1090,15 @@ public:
 
         Returns nullptr if copy, decode, or pixel read fails.
 
+        If cachingHint is kAllow_CachingHint, pixels may be retained locally.
+        If cachingHint is kDisallow_CachingHint, pixels are not added to the local cache.
+
+        @param cachingHint    one of: kAllow_CachingHint, kDisallow_CachingHint
         @return  raster image, or nullptr
 
         example: https://fiddle.skia.org/c/@Image_makeRasterImage
     */
-    sk_sp<SkImage> makeRasterImage() const;
+    sk_sp<SkImage> makeRasterImage(CachingHint cachingHint = kDisallow_CachingHint) const;
 
     /** Creates filtered SkImage. filter processes original SkImage, potentially changing
         color, position, and size. subset is the bounds of original SkImage processed

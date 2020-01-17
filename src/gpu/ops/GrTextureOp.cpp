@@ -279,6 +279,18 @@ public:
         str += INHERITED::dumpInfo();
         return str;
     }
+
+    static void ValidateResourceLimits() {
+        // The op implementation has an upper bound on the number of quads that it can represent.
+        // However, the resource manager imposes its own limit on the number of quads, which should
+        // always be lower than the numerical limit this op can hold.
+        using CountStorage = decltype(Metadata::fTotalQuadCount);
+        CountStorage maxQuadCount = std::numeric_limits<CountStorage>::max();
+        // GrResourceProvider::Max...() is typed as int, so don't compare across signed/unsigned.
+        int resourceLimit = SkTo<int>(maxQuadCount);
+        SkASSERT(GrResourceProvider::MaxNumAAQuads() <= resourceLimit &&
+                 GrResourceProvider::MaxNumNonAAQuads() <= resourceLimit);
+    }
 #endif
 
     GrProcessorSet::Analysis finalize(
@@ -537,10 +549,9 @@ private:
                 new(&fViewCountPairs[++p])ViewCountPair({set[q].fProxyView.detachProxy(), 0});
 
                 curProxy = fViewCountPairs[p].fProxy.get();
-                SkASSERT(curProxy->backendFormat().textureType() ==
-                         fViewCountPairs[0].fProxy->backendFormat().textureType());
+                SkASSERT(GrTextureProxy::ProxiesAreCompatibleAsDynamicState(
+                        curProxy, fViewCountPairs[0].fProxy.get()));
                 SkASSERT(fMetadata.fSwizzle == set[q].fProxyView.swizzle());
-                SkASSERT(curProxy->config() == fViewCountPairs[0].fProxy->config());
             } // else another quad referencing the same proxy
 
             SkMatrix ctm = viewMatrix;
@@ -930,7 +941,8 @@ private:
         flushState->executeDrawsAndUploadsForMeshDrawOp(this, chainBounds, pipeline);
     }
 
-    CombineResult onCombineIfPossible(GrOp* t, SkArenaAlloc*, const GrCaps& caps) override {
+    CombineResult onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas*,
+                                      const GrCaps& caps) override {
         TRACE_EVENT0("skia.gpu", TRACE_FUNC);
         const auto* that = t->cast<TextureOp>();
 
@@ -1060,7 +1072,7 @@ std::unique_ptr<GrDrawOp> GrTextureOp::Make(GrRecordingContext* context,
 
         GrSurfaceProxy* proxy = proxyView.proxy();
         std::unique_ptr<GrFragmentProcessor> fp;
-        fp = GrSimpleTextureEffect::Make(sk_ref_sp(proxy), alphaType, SkMatrix::I(), filter);
+        fp = GrTextureEffect::Make(sk_ref_sp(proxy), alphaType, SkMatrix::I(), filter);
         if (domain) {
             // Update domain to match what GrTextureOp would do for bilerp, but don't do any
             // normalization since GrTextureDomainEffect handles that and the origin.
@@ -1149,8 +1161,7 @@ void GrTextureOp::AddTextureSetOps(GrRenderTargetContext* rtc,
                                    sk_sp<GrColorSpaceXform> textureColorSpaceXform) {
     // Ensure that the index buffer limits are lower than the proxy and quad count limits of
     // the op's metadata so we don't need to worry about overflow.
-    SkASSERT(GrResourceProvider::MaxNumNonAAQuads() <= UINT16_MAX &&
-             GrResourceProvider::MaxNumAAQuads() <= UINT16_MAX);
+    SkDEBUGCODE(TextureOp::ValidateResourceLimits();)
     SkASSERT(proxy_run_count(set, cnt) == proxyRunCnt);
 
     // First check if we can support batches as a single op
@@ -1315,7 +1326,7 @@ GR_DRAW_OP_TEST_DEFINE(TextureOp) {
     auto saturate = random->nextBool() ? GrTextureOp::Saturate::kYes : GrTextureOp::Saturate::kNo;
     GrSurfaceProxyView proxyView(
             std::move(proxy), origin,
-            context->priv().caps()->getTextureSwizzle(format, GrColorType::kRGBA_8888));
+            context->priv().caps()->getReadSwizzle(format, GrColorType::kRGBA_8888));
     auto alphaType = static_cast<SkAlphaType>(
             random->nextRangeU(kUnknown_SkAlphaType + 1, kLastEnum_SkAlphaType));
 

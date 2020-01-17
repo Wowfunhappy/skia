@@ -500,8 +500,8 @@ public:
         @param persp2  perspective scale factor to store
     */
     SkMatrix& setAll(SkScalar scaleX, SkScalar skewX,  SkScalar transX,
-                SkScalar skewY,  SkScalar scaleY, SkScalar transY,
-                SkScalar persp0, SkScalar persp1, SkScalar persp2) {
+                     SkScalar skewY,  SkScalar scaleY, SkScalar transY,
+                     SkScalar persp0, SkScalar persp1, SkScalar persp2) {
         fMat[kMScaleX] = scaleX;
         fMat[kMSkewX]  = skewX;
         fMat[kMTransX] = transX;
@@ -950,34 +950,6 @@ public:
     */
     SkMatrix& postScale(SkScalar sx, SkScalar sy);
 
-    /** Sets SkMatrix to SkMatrix constructed from scaling by (1/divx, 1/divy),
-        about pivot point (px, py), multiplied by SkMatrix.
-
-        Returns false if either divx or divy is zero.
-
-        Given:
-
-                     | J K L |                   | sx  0  0 |
-            Matrix = | M N O |,  I(divx, divy) = |  0 sy  0 |
-                     | P Q R |                   |  0  0  1 |
-
-        where
-
-            sx = 1 / divx
-            sy = 1 / divy
-
-        sets SkMatrix to:
-
-                                     | sx  0  0 | | J K L |   | sx*J sx*K sx*L |
-            I(divx, divy) * Matrix = |  0 sy  0 | | M N O | = | sy*M sy*N sy*O |
-                                     |  0  0  1 | | P Q R |   |    P    Q    R |
-
-        @param divx  integer divisor for inverse scale in x
-        @param divy  integer divisor for inverse scale in y
-        @return      true on successful scale
-    */
-    bool postIDiv(int divx, int divy);
-
     /** Sets SkMatrix to SkMatrix constructed from rotating by degrees about pivot point
         (px, py), multiplied by SkMatrix.
         This can be thought of as rotating about a pivot point after applying SkMatrix.
@@ -1235,6 +1207,23 @@ public:
     */
     SkMatrix& setAffine(const SkScalar affine[6]);
 
+    /**
+     *  A matrix is categorized as 'perspective' if the bottom row is not [0, 0, 1].
+     *  However, for most uses (e.g. mapPoints) a bottom row of [0, 0, X] behaves like a
+     *  non-perspective matrix, though it will be categorized as perspective. Calling
+     *  normalizePerspective() will change the matrix such that, if its bottom row was [0, 0, X],
+     *  it will be changed to [0, 0, 1] by scaling the rest of the matrix by 1/X.
+     *
+     *  | A B C |    | A/X B/X C/X |
+     *  | D E F | -> | D/X E/X F/X |   for X != 0
+     *  | 0 0 X |    |  0   0   1  |
+     */
+    void normalizePerspective() {
+        if (fMat[8] != 1) {
+            this->doNormalizePerspective();
+        }
+    }
+
     /** Maps src SkPoint array of length count to dst SkPoint array of equal or greater
         length. SkPoint are mapped by multiplying each SkPoint by SkMatrix. Given:
 
@@ -1312,6 +1301,11 @@ public:
         example: https://fiddle.skia.org/c/@Matrix_mapHomogeneousPoints
     */
     void mapHomogeneousPoints(SkPoint3 dst[], const SkPoint3 src[], int count) const;
+
+    /**
+     *  Returns homogeneous points, starting with 2D src points (with implied w = 1).
+     */
+    void mapHomogeneousPoints(SkPoint3 dst[], const SkPoint src[], int count) const;
 
     /** Maps SkPoint (x, y) to result. SkPoint is mapped by multiplying by SkMatrix. Given:
 
@@ -1554,46 +1548,6 @@ public:
         example: https://fiddle.skia.org/c/@Matrix_mapRadius
     */
     SkScalar mapRadius(SkScalar radius) const;
-
-    /** Returns true if a unit step on x-axis at some y-axis value mapped through SkMatrix
-        can be represented by a constant vector. Returns true if getType() returns
-        kIdentity_Mask, or combinations of: kTranslate_Mask, kScale_Mask, and kAffine_Mask.
-
-        May return true if getType() returns kPerspective_Mask, but only when SkMatrix
-        does not include rotation or skewing along the y-axis.
-
-        @return  true if SkMatrix does not have complex perspective
-
-        example: https://fiddle.skia.org/c/@Matrix_isFixedStepInX
-    */
-    bool isFixedStepInX() const;
-
-    /** Returns vector representing a unit step on x-axis at y mapped through SkMatrix.
-        If isFixedStepInX() is false, returned value is undefined.
-
-        @param y  position of line parallel to x-axis
-        @return   vector advance of mapped unit step on x-axis
-
-        example: https://fiddle.skia.org/c/@Matrix_fixedStepInX
-    */
-    SkVector fixedStepInX(SkScalar y) const;
-
-    /** Returns true if SkMatrix equals m, using an efficient comparison.
-
-        Returns false when the sign of zero values is the different; when one
-        matrix has positive zero value and the other has negative zero value.
-
-        Returns true even when both SkMatrix contain NaN.
-
-        NaN never equals any value, including itself. To improve performance, NaN values
-        are treated as bit patterns that are equal if their bit patterns are equal.
-
-        @param m  SkMatrix to compare
-        @return   true if m and SkMatrix are represented by identical bit patterns
-    */
-    bool cheapEqualTo(const SkMatrix& m) const {
-        return 0 == memcmp(fMat, m.fMat, sizeof(fMat));
-    }
 
     /** Compares a and b; returns true if a and b are numerically equal. Returns true
         even if sign of zero values are different. Returns false if either SkMatrix
@@ -1925,6 +1879,10 @@ private:
      *         0 if there was not enough memory available
      */
     size_t readFromMemory(const void* buffer, size_t length);
+
+    // legacy method -- still needed? why not just postScale(1/divx, ...)?
+    bool postIDiv(int divx, int divy);
+    void doNormalizePerspective();
 
     friend class SkPerspIter;
     friend class SkMatrixPriv;
