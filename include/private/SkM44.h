@@ -65,6 +65,12 @@ public:
         this->setConcat(a, b);
     }
 
+    enum Uninitialized_Constructor {
+        kUninitialized_Constructor
+    };
+
+    SkM44(Uninitialized_Constructor) {}
+
     /**
      *  Parameters are treated as row-major.
      */
@@ -170,13 +176,15 @@ public:
      */
     bool invert(SkM44* inverse) const;
 
+    SkM44 transpose() const;
+
     void dump() const;
 
     ////////////
 
     SkV4 map(float x, float y, float z, float w) const;
     SkV4 operator*(const SkV4& v) const {
-        return this->map(v.x, v.y, v.z, v.z);
+        return this->map(v.x, v.y, v.z, v.w);
     }
     SkV3 operator*(const SkV3& v) const {
         auto v4 = this->map(v.x, v.y, v.z, 0);

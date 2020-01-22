@@ -74,13 +74,12 @@ uniform half blurRadius;
                                                    std::move(srcProxy),
                                                    rtc->colorInfo().colorType(),
                                                    rtc->colorInfo().alphaType(),
-                                                   SkIPoint::Make(0, 0),
                                                    nullptr,
                                                    SkIRect::MakeSize(dimensions),
                                                    SkIRect::MakeSize(dimensions),
                                                    xformedSigma,
                                                    xformedSigma,
-                                                   GrTextureDomain::kClamp_Mode,
+                                                   SkTileMode::kClamp,
                                                    SkBackingFit::kExact);
             if (!rtc2) {
                 return nullptr;

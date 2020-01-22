@@ -887,13 +887,12 @@ sk_sp<GrTextureProxy> SkBlurMaskFilterImpl::filterMaskGPU(GrRecordingContext* co
                                                             srcProxy,
                                                             srcColorType,
                                                             srcAlphaType,
-                                                            SkIPoint::Make(0, 0),
                                                             nullptr,
                                                             clipRect,
                                                             clipRect,
                                                             xformedSigma,
                                                             xformedSigma,
-                                                            GrTextureDomain::kClamp_Mode);
+                                                            SkTileMode::kClamp);
     if (!renderTargetContext) {
         return nullptr;
     }
