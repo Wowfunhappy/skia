@@ -125,6 +125,14 @@ enum class GrPrimitiveRestart : bool {
 };
 
 /**
+ * Should a created surface be texturable?
+ */
+enum class GrTexturable : bool {
+    kNo = false,
+    kYes = true
+};
+
+/**
  *  Formats for masks, used by the font cache. Important that these are 0-based.
  */
 enum GrMaskFormat {
@@ -1305,6 +1313,31 @@ static constexpr bool GrCompressionTypeIsOpaque(SkImage::CompressionType compres
         case SkImage::CompressionType::kBC1_RGBA8_UNORM: return false;
     }
 
+    SkUNREACHABLE;
+}
+
+// In general we try to not mix CompressionType and ColorType, but currently SkImage still requires
+// an SkColorType even for CompressedTypes so we need some conversion.
+static constexpr SkColorType GrCompressionTypeToSkColorType(SkImage::CompressionType compression) {
+    switch (compression) {
+        case SkImage::CompressionType::kNone:            return kUnknown_SkColorType;
+        case SkImage::CompressionType::kETC2_RGB8_UNORM: return kRGB_888x_SkColorType;
+        case SkImage::CompressionType::kBC1_RGB8_UNORM:  return kRGB_888x_SkColorType;
+        case SkImage::CompressionType::kBC1_RGBA8_UNORM: return kRGBA_8888_SkColorType;
+    }
+
+    SkUNREACHABLE;
+}
+
+static constexpr GrColorType GrMaskFormatToColorType(GrMaskFormat format) {
+    switch (format) {
+        case kA8_GrMaskFormat:
+            return GrColorType::kAlpha_8;
+        case kA565_GrMaskFormat:
+            return GrColorType::kBGR_565;
+        case kARGB_GrMaskFormat:
+            return GrColorType::kRGBA_8888;
+    }
     SkUNREACHABLE;
 }
 

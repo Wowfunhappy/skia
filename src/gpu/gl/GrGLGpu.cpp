@@ -392,7 +392,7 @@ GrGLGpu::GrGLGpu(std::unique_ptr<GrGLContext> ctx, GrContext* context)
 
     this->hwBufferState(GrGpuBufferType::kVertex)->fGLTarget = GR_GL_ARRAY_BUFFER;
     this->hwBufferState(GrGpuBufferType::kIndex)->fGLTarget = GR_GL_ELEMENT_ARRAY_BUFFER;
-    if (GrGLCaps::kChromium_TransferBufferType == this->glCaps().transferBufferType()) {
+    if (GrGLCaps::TransferBufferType::kChromium == this->glCaps().transferBufferType()) {
         this->hwBufferState(GrGpuBufferType::kXferCpuToGpu)->fGLTarget =
                 GR_GL_PIXEL_UNPACK_TRANSFER_BUFFER_CHROMIUM;
         this->hwBufferState(GrGpuBufferType::kXferGpuToCpu)->fGLTarget =
@@ -1444,9 +1444,9 @@ sk_sp<GrTexture> GrGLGpu::onCreateCompressedTexture(SkISize dimensions,
 
 GrBackendTexture GrGLGpu::onCreateCompressedBackendTexture(SkISize dimensions,
                                                            const GrBackendFormat& format,
-                                                           const BackendTextureData* data,
                                                            GrMipMapped mipMapped,
-                                                           GrProtected isProtected) {
+                                                           GrProtected isProtected,
+                                                           const BackendTextureData* data) {
     // We don't support protected textures in GL.
     if (isProtected == GrProtected::kYes) {
         return {};
@@ -3803,9 +3803,9 @@ static GrPixelConfig gl_format_to_pixel_config(GrGLFormat format) {
 GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,
                                                  const GrBackendFormat& format,
                                                  GrRenderable renderable,
-                                                 const BackendTextureData* data,
                                                  GrMipMapped mipMapped,
-                                                 GrProtected isProtected) {
+                                                 GrProtected isProtected,
+                                                 const BackendTextureData* data) {
     // We don't support protected textures in GL.
     if (isProtected == GrProtected::kYes) {
         return {};

@@ -166,7 +166,7 @@ static SkV3 normalize(SkV3 v) { return v * (1.0f / v.length()); }
 static SkColorMatrix comput_planar_lighting(SkCanvas* canvas, SkV3 lightDir) {
     SkM44 l2w = canvas->experimental_getLocalToWorld();
     auto normal = normalize(l2w * SkV3{0, 0, 1});
-    float dot = -normal * lightDir;
+    float dot = -normal.dot(lightDir);
 
     SkColorMatrix cm;
     if (dot < 0) {
@@ -338,13 +338,22 @@ class SamplePointLight3D : public Sample3DView {
             uniform float4x4 localToWorld;
             uniform float3   lightPos;
 
+            // TODO: Remove these helpers once all intrinsics work on the raster backend
+            float3 normalize_(float3 v) {
+                return v / sqrt(dot(v, v));
+            }
+
+            float max_(float a, float b) {
+                return a > b ? a : b;
+            }
+
             void main(float x, float y, inout half4 color) {
                 float3 plane_pos = (localToWorld * float4(x, y, 0, 1)).xyz;
-                float3 plane_norm = normalize((localToWorld * float4(0, 0, 1, 0)).xyz);
-                float3 light_dir = normalize(lightPos - plane_pos);
+                float3 plane_norm = normalize_((localToWorld * float4(0, 0, 1, 0)).xyz);
+                float3 light_dir = normalize_(lightPos - plane_pos);
                 float ambient = 0.5;
                 float dp = dot(plane_norm, light_dir);
-                float scale = ambient + max(dp, 0);
+                float scale = ambient + max_(dp, 0);
 
                 color = color * half4(float4(scale, scale, scale, 1));
             }
@@ -397,9 +406,6 @@ class SamplePointLight3D : public Sample3DView {
     }
 
     void onDrawContent(SkCanvas* canvas) override {
-        if (canvas->getGrContext() == nullptr) {
-            return;
-        }
         SkM44 clickM = canvas->experimental_getLocalToDevice();
 
         canvas->save();
