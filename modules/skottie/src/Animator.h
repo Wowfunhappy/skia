@@ -39,6 +39,10 @@ public:
 protected:
     virtual void onSync() = 0;
 
+    void shrink_to_fit();
+
+    void attachDiscardableAdapter(sk_sp<AnimatablePropertyContainer>);
+
 private:
     void onTick(float) final;
 

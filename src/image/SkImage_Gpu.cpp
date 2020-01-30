@@ -226,12 +226,26 @@ sk_sp<SkImage> SkImage::MakeFromAdoptedTexture(GrContext* ctx,
                                       kAdopt_GrWrapOwnership, nullptr, nullptr);
 }
 
-sk_sp<SkImage> SkImage::MakeFromCompressed(GrContext* context, sk_sp<SkData> data,
-                                           int width, int height, CompressionType type,
-                                           GrMipMapped mipMapped) {
+sk_sp<SkImage> SkImage::MakeTextureFromCompressed(GrContext* context, sk_sp<SkData> data,
+                                                  int width, int height, CompressionType type,
+                                                  GrMipMapped mipMapped,
+                                                  GrProtected isProtected) {
+    if (!context || !data) {
+        return nullptr;
+    }
+
+    GrBackendFormat beFormat = context->compressedBackendFormat(type);
+    if (!beFormat.isValid()) {
+        sk_sp<SkImage> tmp = MakeRasterFromCompressed(std::move(data), width, height, type);
+        if (!tmp) {
+            return nullptr;
+        }
+        return tmp->makeTextureImage(context, mipMapped);
+    }
+
     GrProxyProvider* proxyProvider = context->priv().proxyProvider();
     sk_sp<GrTextureProxy> proxy = proxyProvider->createCompressedTextureProxy(
-            {width, height}, SkBudgeted::kYes, mipMapped, type, std::move(data));
+            {width, height}, SkBudgeted::kYes, mipMapped, isProtected, type, std::move(data));
     if (!proxy) {
         return nullptr;
     }
@@ -440,7 +454,7 @@ sk_sp<SkImage> SkImage::makeTextureImage(GrContext* context, GrMipMapped mipMapp
     }
 
     if (const SkBitmap* bmp = as_IB(this)->onPeekBitmap()) {
-        GrBitmapTextureMaker maker(context, *bmp);
+        GrBitmapTextureMaker maker(context, *bmp, GrBitmapTextureMaker::Cached::kYes);
         return create_image_from_producer(context, &maker, this->uniqueID(), mipMapped);
     }
     return nullptr;
@@ -543,7 +557,7 @@ sk_sp<SkImage> SkImage::MakeCrossContextFromPixmap(GrContext* context,
     // Turn the pixmap into a GrTextureProxy
     SkBitmap bmp;
     bmp.installPixels(*pixmap);
-    GrBitmapTextureMaker bitmapMaker(context, bmp, false, false);
+    GrBitmapTextureMaker bitmapMaker(context, bmp);
     GrMipMapped mipMapped = buildMips ? GrMipMapped::kYes : GrMipMapped::kNo;
     auto [proxy, grCT] = bitmapMaker.refTextureProxy(mipMapped);
     if (!proxy) {

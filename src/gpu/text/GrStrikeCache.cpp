@@ -27,28 +27,10 @@ GrStrikeCache::~GrStrikeCache() {
 }
 
 void GrStrikeCache::freeAll() {
-    fCache.foreach([](sk_sp<GrTextStrike>* strike){
-        (*strike)->fIsAbandoned = true;
-    });
     fCache.reset();
 }
 
-void GrStrikeCache::HandleEviction(GrDrawOpAtlas::AtlasID id, void* ptr) {
-    GrStrikeCache* grStrikeCache = reinterpret_cast<GrStrikeCache*>(ptr);
-
-    grStrikeCache->fCache.mutate([grStrikeCache, id](sk_sp<GrTextStrike>* cacheSlot){
-        GrTextStrike* strike = cacheSlot->get();
-        strike->removeID(id);
-
-        // clear out any empty strikes.  We will preserve the strike whose call to addToAtlas
-        // triggered the eviction
-        if (strike != grStrikeCache->fPreserveStrike && 0 == strike->fAtlasedGlyphs) {
-            strike->fIsAbandoned = true;
-            return false;  // Remove this entry from the cache.
-        }
-        return true;  // Keep this entry in the cache.
-    });
-}
+void GrStrikeCache::evict(GrDrawOpAtlas::PlotLocator) { }
 
 // expands each bit in a bitmask to 0 or ~0 of type INT_TYPE. Used to expand a BW glyph mask to
 // A8, RGB565, or RGBA8888.
@@ -160,10 +142,10 @@ static void get_packed_glyph_image(const SkGlyph* glyph, int width,
 GrTextStrike::GrTextStrike(const SkDescriptor& key)
     : fFontScalerKey(key) {}
 
-void GrTextStrike::removeID(GrDrawOpAtlas::AtlasID id) {
-    fCache.foreach([this, id](GrGlyph** glyph){
-        if ((*glyph)->fID == id) {
-            (*glyph)->fID = GrDrawOpAtlas::kInvalidAtlasID;
+void GrTextStrike::removeID(GrDrawOpAtlas::PlotLocator plotLocator) {
+    fCache.foreach([this, plotLocator](GrGlyph** glyph){
+        if ((*glyph)->fPlotLocator == plotLocator) {
+            (*glyph)->fPlotLocator = GrDrawOpAtlas::kInvalidPlotLocator;
             fAtlasedGlyphs--;
             SkASSERT(fAtlasedGlyphs >= 0);
         }
@@ -210,16 +192,16 @@ GrDrawOpAtlas::ErrorCode GrTextStrike::addGlyphToAtlas(
             rowBytes, expectedMaskFormat, dataPtr, glyphCache->getMasks());
 
     GrDrawOpAtlas::ErrorCode result = fullAtlasManager->addToAtlas(
-                                                resourceProvider, glyphCache, this,
-                                                &glyph->fID, target, expectedMaskFormat,
-                                                width, height,
-                                                storage.get(), &glyph->fAtlasLocation);
+            resourceProvider, glyphCache, this,
+            &glyph->fPlotLocator, target, expectedMaskFormat,
+            width, height,
+            storage.get(), &glyph->fAtlasLocation);
     if (GrDrawOpAtlas::ErrorCode::kSucceeded == result) {
         if (addPad) {
             glyph->fAtlasLocation.fX += 1;
             glyph->fAtlasLocation.fY += 1;
         }
-        SkASSERT(GrDrawOpAtlas::kInvalidAtlasID != glyph->fID);
+        SkASSERT(GrDrawOpAtlas::kInvalidPlotLocator != glyph->fPlotLocator);
         fAtlasedGlyphs++;
     }
     return result;

@@ -45,7 +45,6 @@
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrBicubicEffect.h"
 #include "src/gpu/effects/GrRRectEffect.h"
-#include "src/gpu/effects/GrTextureDomain.h"
 #include "src/gpu/effects/generated/GrColorMatrixFragmentProcessor.h"
 #include "src/gpu/geometry/GrQuad.h"
 #include "src/gpu/geometry/GrQuadUtils.h"
@@ -181,14 +180,9 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::Make(
     if (context->priv().abandoned()) {
         return nullptr;
     }
-    auto config = context->priv().caps()->getConfigFromBackendFormat(format, colorType);
-    if (config == kUnknown_GrPixelConfig) {
-        return nullptr;
-    }
     GrSurfaceDesc desc;
     desc.fWidth = dimensions.width();
     desc.fHeight = dimensions.height();
-    desc.fConfig = config;
 
     GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(format, colorType);
 
@@ -1693,6 +1687,10 @@ void GrRenderTargetContext::asyncRescaleAndReadPixels(
         callback(context, nullptr);
         return;
     }
+    if (this->asRenderTargetProxy()->framebufferOnly()) {
+        callback(context, nullptr);
+        return;
+    }
     auto dstCT = SkColorTypeToGrColorType(info.colorType());
     if (dstCT == GrColorType::kUnknown) {
         callback(context, nullptr);
@@ -1938,20 +1936,24 @@ void GrRenderTargetContext::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvC
         callback(context, nullptr);
         return;
     }
+    if (this->asRenderTargetProxy()->framebufferOnly()) {
+        callback(context, nullptr);
+        return;
+    }
     if (this->asSurfaceProxy()->isProtected() == GrProtected::kYes) {
         callback(context, nullptr);
         return;
     }
     int x = srcRect.fLeft;
     int y = srcRect.fTop;
-    std::unique_ptr<GrRenderTargetContext> tempRTC;
     bool needsRescale = srcRect.size() != dstSize;
+    sk_sp<GrTextureProxy> srcProxy;
     if (needsRescale) {
         // We assume the caller wants kPremul. There is no way to indicate a preference.
         auto info = SkImageInfo::Make(dstSize, kRGBA_8888_SkColorType, kPremul_SkAlphaType,
                                       dstColorSpace);
         // TODO: Incorporate the YUV conversion into last pass of rescaling.
-        tempRTC = this->rescale(info, srcRect, rescaleGamma, rescaleQuality);
+        auto tempRTC = this->rescale(info, srcRect, rescaleGamma, rescaleQuality);
         if (!tempRTC) {
             callback(context, nullptr);
             return;
@@ -1959,40 +1961,43 @@ void GrRenderTargetContext::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvC
         SkASSERT(SkColorSpace::Equals(tempRTC->colorInfo().colorSpace(), info.colorSpace()));
         SkASSERT(tempRTC->origin() == kTopLeft_GrSurfaceOrigin);
         x = y = 0;
+        srcProxy = tempRTC->asTextureProxyRef();
     } else {
+        srcProxy = this->asTextureProxyRef();
+        if (!srcProxy) {
+            srcProxy = GrSurfaceProxy::Copy(fContext, fReadView.proxy(),
+                                            this->colorInfo().colorType(), GrMipMapped::kNo,
+                                            srcRect, SkBackingFit::kApprox, SkBudgeted::kYes);
+            if (!srcProxy) {
+                // If we can't get a texture copy of the contents then give up.
+                callback(context, nullptr);
+                return;
+            }
+            x = y = 0;
+        }
         // We assume the caller wants kPremul. There is no way to indicate a preference.
         sk_sp<GrColorSpaceXform> xform = GrColorSpaceXform::Make(
                 this->colorInfo().colorSpace(), this->colorInfo().alphaType(), dstColorSpace.get(),
                 kPremul_SkAlphaType);
         if (xform) {
-            sk_sp<GrTextureProxy> texProxy = this->asTextureProxyRef();
-            // TODO: Do something if the input is not a texture already.
-            if (!texProxy) {
-                callback(context, nullptr);
-                return;
-            }
-            SkRect srcRectToDraw = SkRect::Make(srcRect);
-            tempRTC = GrRenderTargetContext::Make(
+            SkRect srcRectToDraw = SkRect::MakeXYWH(x, y, srcRect.width(), srcRect.height());
+            auto tempRTC = GrRenderTargetContext::Make(
                     direct, this->colorInfo().colorType(), dstColorSpace, SkBackingFit::kApprox,
                     dstSize, 1, GrMipMapped::kNo, GrProtected::kNo, kTopLeft_GrSurfaceOrigin);
             if (!tempRTC) {
                 callback(context, nullptr);
                 return;
             }
-            tempRTC->drawTexture(GrNoClip(), std::move(texProxy), this->colorInfo().colorType(),
+            tempRTC->drawTexture(GrNoClip(), std::move(srcProxy), this->colorInfo().colorType(),
                                  this->colorInfo().alphaType(), GrSamplerState::Filter::kNearest,
                                  SkBlendMode::kSrc, SK_PMColor4fWHITE, srcRectToDraw,
-                                 SkRect::MakeWH(srcRect.width(), srcRect.height()), GrAA::kNo,
-                                 GrQuadAAFlags::kNone, SkCanvas::kFast_SrcRectConstraint,
-                                 SkMatrix::I(), std::move(xform));
+                                 SkRect::Make(srcRect.size()), GrAA::kNo, GrQuadAAFlags::kNone,
+                                 SkCanvas::kFast_SrcRectConstraint, SkMatrix::I(),
+                                 std::move(xform));
+            srcProxy = tempRTC->asTextureProxyRef();
+            SkASSERT(srcProxy);
             x = y = 0;
         }
-    }
-    auto srcProxy = tempRTC ? tempRTC->asTextureProxyRef() : this->asTextureProxyRef();
-    // TODO: Do something if the input is not a texture already.
-    if (!srcProxy) {
-        callback(context, nullptr);
-        return;
     }
 
     auto yRTC = GrRenderTargetContext::MakeWithFallback(
@@ -2021,6 +2026,9 @@ void GrRenderTargetContext::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvC
     SkRect dstRectY = SkRect::Make(dstSize);
     SkRect dstRectUV = SkRect::MakeWH(halfW, halfH);
 
+    bool doSynchronousRead = !this->caps()->transferFromSurfaceToBufferSupport();
+    PixelTransferResult yTransfer, uTransfer, vTransfer;
+
     // This matrix generates (r,g,b,a) = (0, 0, 0, y)
     float yM[20];
     std::fill_n(yM, 15, 0.f);
@@ -2033,11 +2041,13 @@ void GrRenderTargetContext::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvC
     yPaint.setPorterDuffXPFactory(SkBlendMode::kSrc);
     yRTC->fillRectToRect(GrNoClip(), std::move(yPaint), GrAA::kNo, SkMatrix::I(),
                          dstRectY, dstRectY);
-    auto yTransfer = yRTC->transferPixels(GrColorType::kAlpha_8,
-                                          SkIRect::MakeWH(yRTC->width(), yRTC->height()));
-    if (!yTransfer.fTransferBuffer) {
-        callback(context, nullptr);
-        return;
+    if (!doSynchronousRead) {
+        yTransfer = yRTC->transferPixels(GrColorType::kAlpha_8,
+                                         SkIRect::MakeWH(yRTC->width(), yRTC->height()));
+        if (!yTransfer.fTransferBuffer) {
+            callback(context, nullptr);
+            return;
+        }
     }
 
     texMatrix.preScale(2.f, 2.f);
@@ -2053,11 +2063,13 @@ void GrRenderTargetContext::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvC
     uPaint.setPorterDuffXPFactory(SkBlendMode::kSrc);
     uRTC->fillRectToRect(GrNoClip(), std::move(uPaint), GrAA::kNo, SkMatrix::I(),
                          dstRectUV, dstRectUV);
-    auto uTransfer = uRTC->transferPixels(GrColorType::kAlpha_8,
-                                          SkIRect::MakeWH(uRTC->width(), uRTC->height()));
-    if (!uTransfer.fTransferBuffer) {
-        callback(context, nullptr);
-        return;
+    if (!doSynchronousRead) {
+        uTransfer = uRTC->transferPixels(GrColorType::kAlpha_8,
+                                         SkIRect::MakeWH(uRTC->width(), uRTC->height()));
+        if (!uTransfer.fTransferBuffer) {
+            callback(context, nullptr);
+            return;
+        }
     }
 
     // This matrix generates (r,g,b,a) = (0, 0, 0, v)
@@ -2072,10 +2084,34 @@ void GrRenderTargetContext::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvC
     vPaint.setPorterDuffXPFactory(SkBlendMode::kSrc);
     vRTC->fillRectToRect(GrNoClip(), std::move(vPaint), GrAA::kNo, SkMatrix::I(),
                          dstRectUV, dstRectUV);
-    auto vTransfer = vRTC->transferPixels(GrColorType::kAlpha_8,
-                                          SkIRect::MakeWH(vRTC->width(), vRTC->height()));
-    if (!vTransfer.fTransferBuffer) {
-        callback(context, nullptr);
+    if (!doSynchronousRead) {
+        vTransfer = vRTC->transferPixels(GrColorType::kAlpha_8,
+                                         SkIRect::MakeWH(vRTC->width(), vRTC->height()));
+        if (!vTransfer.fTransferBuffer) {
+            callback(context, nullptr);
+            return;
+        }
+    }
+
+    if (doSynchronousRead) {
+        GrImageInfo yInfo(GrColorType::kAlpha_8, kPremul_SkAlphaType, nullptr, dstSize);
+        GrImageInfo uvInfo = yInfo.makeWH(halfW, halfH);
+        size_t yRB  = yInfo.minRowBytes();
+        size_t uvRB = uvInfo.minRowBytes();
+        std::unique_ptr<char[]> y(new char[yRB * yInfo.height()]);
+        std::unique_ptr<char[]> u(new char[uvRB*uvInfo.height()]);
+        std::unique_ptr<char[]> v(new char[uvRB*uvInfo.height()]);
+        if (!yRTC->readPixels(yInfo,  y.get(), yRB,  {0, 0}, direct) ||
+            !uRTC->readPixels(uvInfo, u.get(), uvRB, {0, 0}, direct) ||
+            !vRTC->readPixels(uvInfo, v.get(), uvRB, {0, 0}, direct)) {
+            callback(context, nullptr);
+            return;
+        }
+        auto result = std::make_unique<AsyncReadResult>(direct->priv().contextID());
+        result->addCpuPlane(std::move(y), yRB );
+        result->addCpuPlane(std::move(u), uvRB);
+        result->addCpuPlane(std::move(v), uvRB);
+        callback(context, std::move(result));
         return;
     }
 
