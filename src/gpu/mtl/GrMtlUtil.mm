@@ -23,6 +23,14 @@
 
 #define PRINT_MSL 0 // print out the MSL code generated
 
+NSError* GrCreateMtlError(NSString* description, GrMtlErrorCode errorCode) {
+    NSDictionary* userInfo = [NSDictionary dictionaryWithObject:description
+                                                         forKey:NSLocalizedDescriptionKey];
+    return [NSError errorWithDomain:@"org.skia.ganesh"
+                               code:(NSInteger)errorCode
+                           userInfo:userInfo];
+}
+
 MTLTextureDescriptor* GrGetMTLTextureDescriptor(id<MTLTexture> mtlTexture) {
     MTLTextureDescriptor* texDesc = [[MTLTextureDescriptor alloc] init];
     texDesc.textureType = mtlTexture.textureType;
@@ -96,7 +104,7 @@ id<MTLLibrary> GrCompileMtlShaderLibrary(const GrMtlGpu* gpu,
                                                                  options: defaultOptions
                                                                    error: &error];
 #endif
-    if (error) {
+    if (!compiledLibrary) {
         SkDebugf("Error compiling MSL shader: %s\n%s\n",
                  shaderString.c_str(),
                  [[error localizedDescription] cStringUsingEncoding: NSASCIIStringEncoding]);
@@ -143,9 +151,16 @@ id<MTLLibrary> GrMtlNewLibraryWithSource(id<MTLDevice> device, NSString* mslCode
                          options: options
                completionHandler: completionHandler];
 
-    // Wait 5 seconds for the compiler
-    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 5000000UL))) {
-        SkDebugf("Timeout compiling MSL shader\n");
+    // Wait 100 ms for the compiler
+    constexpr auto kTimeoutNS = 100000000UL;
+    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, kTimeoutNS))) {
+        if (error) {
+            constexpr auto kTimeoutMS = kTimeoutNS/1000000UL;
+            NSString* description =
+                    [NSString stringWithFormat:@"Compilation took longer than %lu ms",
+                                               kTimeoutMS];
+            *error = GrCreateMtlError(description, GrMtlErrorCode::kTimeout);
+        }
         return nil;
     }
 
@@ -171,9 +186,16 @@ id<MTLRenderPipelineState> GrMtlNewRenderPipelineStateWithDescriptor(
     [device newRenderPipelineStateWithDescriptor: pipelineDescriptor
                                completionHandler: completionHandler];
 
-    // Wait 5 seconds for pipeline creation
-    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 5000000UL))) {
-        SkDebugf("Timeout creating pipeline.\n");
+    // Wait 100 ms for pipeline creation
+    constexpr auto kTimeoutNS = 100000000UL;
+    if (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, kTimeoutNS))) {
+        if (error) {
+            constexpr auto kTimeoutMS = kTimeoutNS/1000000UL;
+            NSString* description =
+                    [NSString stringWithFormat:@"Pipeline creation took longer than %lu ms",
+                                               kTimeoutMS];
+            *error = GrCreateMtlError(description, GrMtlErrorCode::kTimeout);
+        }
         return nil;
     }
 
