@@ -625,15 +625,13 @@ void GrVkGpu::resolveImage(GrSurface* dst, GrVkRenderTarget* src, const SkIRect&
 }
 
 void GrVkGpu::onResolveRenderTarget(GrRenderTarget* target, const SkIRect& resolveRect,
-                                    GrSurfaceOrigin resolveOrigin, ForExternalIO forExternalIO) {
+                                    ForExternalIO forExternalIO) {
     SkASSERT(target->numSamples() > 1);
     GrVkRenderTarget* rt = static_cast<GrVkRenderTarget*>(target);
     SkASSERT(rt->msaaImage());
 
-    auto nativeResolveRect = GrNativeRect::MakeRelativeTo(
-            resolveOrigin, target->height(), resolveRect);
-    this->resolveImage(target, rt, nativeResolveRect.asSkIRect(),
-                       SkIPoint::Make(nativeResolveRect.fX, nativeResolveRect.fY));
+    this->resolveImage(target, rt, resolveRect,
+                       SkIPoint::Make(resolveRect.x(), resolveRect.y()));
 
     if (ForExternalIO::kYes == forExternalIO) {
         // This resolve is called when we are preparing an msaa surface for external I/O. It is
@@ -1886,18 +1884,15 @@ GrBackendTexture GrVkGpu::onCreateBackendTexture(SkISize dimensions,
 
     VkFormat vkFormat;
     if (!format.asVkFormat(&vkFormat)) {
-        SkDebugf("Could net get vkformat\n");
         return {};
     }
 
     // TODO: move the texturability check up to GrGpu::createBackendTexture and just assert here
     if (!caps.isVkFormatTexturable(vkFormat)) {
-        SkDebugf("Config is not texturable\n");
         return {};
     }
 
     if (GrVkFormatNeedsYcbcrSampler(vkFormat)) {
-        SkDebugf("Can't create BackendTexture that requires Ycbcb sampler.\n");
         return {};
     }
 
@@ -1905,7 +1900,6 @@ GrBackendTexture GrVkGpu::onCreateBackendTexture(SkISize dimensions,
     if (!this->createVkImageForBackendSurface(vkFormat, dimensions, GrTexturable::kYes,
                                               renderable, mipMapped,
                                               &info, isProtected, data)) {
-        SkDebugf("Failed to create testing only image\n");
         return {};
     }
 
@@ -1927,18 +1921,15 @@ GrBackendTexture GrVkGpu::onCreateCompressedBackendTexture(SkISize dimensions,
 
     VkFormat vkFormat;
     if (!format.asVkFormat(&vkFormat)) {
-        SkDebugf("Could net get vkformat\n");
         return {};
     }
 
     // TODO: move the texturability check up to GrGpu::createBackendTexture and just assert here
     if (!caps.isVkFormatTexturable(vkFormat)) {
-        SkDebugf("Config is not texturable\n");
         return {};
     }
 
     if (GrVkFormatNeedsYcbcrSampler(vkFormat)) {
-        SkDebugf("Can't create BackendTexture that requires Ycbcb sampler.\n");
         return {};
     }
 
@@ -1946,7 +1937,6 @@ GrBackendTexture GrVkGpu::onCreateCompressedBackendTexture(SkISize dimensions,
     if (!this->createVkImageForBackendSurface(vkFormat, dimensions, GrTexturable::kYes,
                                               GrRenderable::kNo, mipMapped,
                                               &info, isProtected, data)) {
-        SkDebugf("Failed to create testing only image\n");
         return {};
     }
 

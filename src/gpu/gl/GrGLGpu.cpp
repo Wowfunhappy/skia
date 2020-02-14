@@ -2368,6 +2368,10 @@ void GrGLGpu::draw(GrRenderTarget* renderTarget,
         return;
     }
 
+    if (GrPrimitiveType::kPatches == programInfo.primitiveType()) {
+        this->flushPatchVertexCount(programInfo.tessellationPatchVertexCount());
+    }
+
     bool hasDynamicScissors = programInfo.hasDynamicScissors();
     bool hasDynamicPrimProcTextures = programInfo.hasDynamicPrimProcTextures();
 
@@ -2388,13 +2392,13 @@ void GrGLGpu::draw(GrRenderTarget* renderTarget,
                                                                 texProxyArray);
         }
         if (this->glCaps().requiresCullFaceEnableDisableWhenDrawingLinesAfterNonLines() &&
-            GrIsPrimTypeLines(meshes[m].primitiveType()) &&
+            GrIsPrimTypeLines(programInfo.primitiveType()) &&
             !GrIsPrimTypeLines(fLastPrimitiveType)) {
             GL_CALL(Enable(GR_GL_CULL_FACE));
             GL_CALL(Disable(GR_GL_CULL_FACE));
         }
-        meshes[m].sendToGpu(this);
-        fLastPrimitiveType = meshes[m].primitiveType();
+        meshes[m].sendToGpu(programInfo.primitiveType(), this);
+        fLastPrimitiveType = programInfo.primitiveType();
     }
 
 #if SWAP_PER_DRAW
@@ -2432,11 +2436,9 @@ static GrGLenum gr_primitive_type_to_gl_mode(GrPrimitiveType primitiveType) {
     SK_ABORT("invalid GrPrimitiveType");
 }
 
-void GrGLGpu::sendArrayMeshToGpu(const GrMesh& mesh, int vertexCount, int baseVertex) {
-    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(mesh.primitiveType());
-    if (GR_GL_PATCHES == glPrimType) {
-        this->flushPatchVertexCount(mesh.tessellationPatchVertexCount());
-    }
+void GrGLGpu::sendArrayMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh, int vertexCount,
+                                 int baseVertex) {
+    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
     if (this->glCaps().drawArraysBaseVertexIsBroken()) {
         this->setupGeometry(nullptr, mesh.vertexBuffer(), baseVertex, nullptr, 0,
                             GrPrimitiveRestart::kNo);
@@ -2457,13 +2459,10 @@ static const GrGLvoid* element_ptr(const GrBuffer* indexBuffer, int baseIndex) {
     }
 }
 
-void GrGLGpu::sendIndexedMeshToGpu(const GrMesh& mesh, int indexCount, int baseIndex,
-                                   uint16_t minIndexValue, uint16_t maxIndexValue, int baseVertex) {
-    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(mesh.primitiveType());
-    if (GR_GL_PATCHES == glPrimType) {
-        this->flushPatchVertexCount(mesh.tessellationPatchVertexCount());
-    }
-
+void GrGLGpu::sendIndexedMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh,
+                                   int indexCount, int baseIndex, uint16_t minIndexValue,
+                                   uint16_t maxIndexValue, int baseVertex) {
+    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
     const GrGLvoid* elementPtr = element_ptr(mesh.indexBuffer(), baseIndex);
 
     this->setupGeometry(mesh.indexBuffer(), mesh.vertexBuffer(), baseVertex, nullptr, 0,
@@ -2478,12 +2477,10 @@ void GrGLGpu::sendIndexedMeshToGpu(const GrMesh& mesh, int indexCount, int baseI
     fStats.incNumDraws();
 }
 
-void GrGLGpu::sendInstancedMeshToGpu(const GrMesh& mesh, int vertexCount, int baseVertex,
-                                     int instanceCount, int baseInstance) {
-    GrGLenum glPrimType = gr_primitive_type_to_gl_mode(mesh.primitiveType());
-    if (GR_GL_PATCHES == glPrimType) {
-        this->flushPatchVertexCount(mesh.tessellationPatchVertexCount());
-    }
+void GrGLGpu::sendInstancedMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh,
+                                     int vertexCount, int baseVertex, int instanceCount,
+                                     int baseInstance) {
+    GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
     int maxInstances = this->glCaps().maxInstancesPerDrawWithoutCrashing(instanceCount);
     for (int i = 0; i < instanceCount; i += maxInstances) {
         this->setupGeometry(nullptr, mesh.vertexBuffer(), 0, mesh.instanceBuffer(),
@@ -2494,12 +2491,10 @@ void GrGLGpu::sendInstancedMeshToGpu(const GrMesh& mesh, int vertexCount, int ba
     }
 }
 
-void GrGLGpu::sendIndexedInstancedMeshToGpu(const GrMesh& mesh, int indexCount, int baseIndex,
-                                            int baseVertex, int instanceCount, int baseInstance) {
-    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(mesh.primitiveType());
-    if (GR_GL_PATCHES == glPrimType) {
-        this->flushPatchVertexCount(mesh.tessellationPatchVertexCount());
-    }
+void GrGLGpu::sendIndexedInstancedMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh,
+                                            int indexCount, int baseIndex, int baseVertex,
+                                            int instanceCount, int baseInstance) {
+    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
     const GrGLvoid* elementPtr = element_ptr(mesh.indexBuffer(), baseIndex);
     int maxInstances = this->glCaps().maxInstancesPerDrawWithoutCrashing(instanceCount);
     for (int i = 0; i < instanceCount; i += maxInstances) {
@@ -2512,7 +2507,7 @@ void GrGLGpu::sendIndexedInstancedMeshToGpu(const GrMesh& mesh, int indexCount, 
 }
 
 void GrGLGpu::onResolveRenderTarget(GrRenderTarget* target, const SkIRect& resolveRect,
-                                    GrSurfaceOrigin resolveOrigin, ForExternalIO) {
+                                    ForExternalIO) {
     // Some extensions automatically resolves the texture when it is read.
     SkASSERT(this->glCaps().usesMSAARenderBuffers());
 
@@ -2529,7 +2524,9 @@ void GrGLGpu::onResolveRenderTarget(GrRenderTarget* target, const SkIRect& resol
         // Apple's extension uses the scissor as the blit bounds.
         GrScissorState scissorState;
         scissorState.set(resolveRect);
-        this->flushScissor(scissorState, rt->width(), rt->height(), resolveOrigin);
+        // Passing in kTopLeft_GrSurfaceOrigin will make sure no transformation of the rect
+        // happens inside flushScissor since resolveRect is already in native device coordinates.
+        this->flushScissor(scissorState, rt->width(), rt->height(), kTopLeft_GrSurfaceOrigin);
         this->disableWindowRectangles();
         GL_CALL(ResolveMultisampleFramebuffer());
     } else {
@@ -2541,12 +2538,10 @@ void GrGLGpu::onResolveRenderTarget(GrRenderTarget* target, const SkIRect& resol
             r = target->width();
             t = target->height();
         } else {
-            auto rect = GrNativeRect::MakeRelativeTo(
-                    resolveOrigin, rt->height(), resolveRect);
-            l = rect.fX;
-            b = rect.fY;
-            r = rect.fX + rect.fWidth;
-            t = rect.fY + rect.fHeight;
+            l = resolveRect.x();
+            b = resolveRect.y();
+            r = resolveRect.x() + resolveRect.width();
+            t = resolveRect.y() + resolveRect.height();
         }
 
         // BlitFrameBuffer respects the scissor, so disable it.

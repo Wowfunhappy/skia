@@ -50,8 +50,11 @@ sk_sp<GrTextureProxy> GrDynamicAtlas::MakeLazyAtlasProxy(
         InternalMultisample internalMultisample, const GrCaps& caps,
         GrSurfaceProxy::UseAllocator useAllocator) {
     GrBackendFormat format = caps.getDefaultBackendFormat(colorType, GrRenderable::kYes);
-    int sampleCount = (InternalMultisample::kYes == internalMultisample) ?
-            caps.internalMultisampleCount(format) : 1;
+
+    int sampleCount = 1;
+    if (!caps.mixedSamplesSupport() && InternalMultisample::kYes == internalMultisample) {
+        sampleCount = caps.internalMultisampleCount(format);
+    }
 
     auto instantiate = [cb = std::move(callback), format, sampleCount](GrResourceProvider* rp) {
         return cb(rp, format, sampleCount);
@@ -179,7 +182,8 @@ std::unique_ptr<GrRenderTargetContext> GrDynamicAtlas::instantiate(
 #endif
         fBackingTexture = std::move(backingTexture);
     }
-    auto rtc = onFlushRP->makeRenderTargetContext(fTextureProxy, fColorType, nullptr, nullptr);
+    auto rtc = onFlushRP->makeRenderTargetContext(fTextureProxy, kTextureOrigin, fColorType,
+                                                  nullptr, nullptr);
     if (!rtc) {
 #if GR_TEST_UTILS
         if (!onFlushRP->testingOnly_getSuppressAllocationWarnings())
