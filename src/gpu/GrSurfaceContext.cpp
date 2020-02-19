@@ -77,7 +77,7 @@ std::unique_ptr<GrSurfaceContext> GrSurfaceContext::Make(GrRecordingContext* con
     GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(format, colorType);
 
     sk_sp<GrTextureProxy> proxy = context->priv().proxyProvider()->createProxy(
-            format, dimensions, swizzle, renderable, renderTargetSampleCnt, origin, mipMapped, fit,
+            format, dimensions, swizzle, renderable, renderTargetSampleCnt, mipMapped, fit,
             budgeted, isProtected);
     if (!proxy) {
         return nullptr;
@@ -380,7 +380,7 @@ bool GrSurfaceContext::writePixels(const GrImageInfo& origSrcInfo, const void* s
         GrSurfaceOrigin tempOrigin =
                 this->asRenderTargetContext() ? kTopLeft_GrSurfaceOrigin : this->origin();
         auto tempProxy = direct->priv().proxyProvider()->createProxy(
-                format, srcInfo.dimensions(), tempReadSwizzle, GrRenderable::kNo, 1, tempOrigin,
+                format, srcInfo.dimensions(), tempReadSwizzle, GrRenderable::kNo, 1,
                 GrMipMapped::kNo, SkBackingFit::kApprox, SkBudgeted::kYes, GrProtected::kNo);
         if (!tempProxy) {
             return false;
@@ -637,13 +637,10 @@ std::unique_ptr<GrRenderTargetContext> GrSurfaceContext::rescale(
             } else if (nextH == srcH) {
                 dir = GrBicubicEffect::Direction::kX;
             }
-            if (srcW != texView.proxy()->width() || srcH != texView.proxy()->height()) {
-                auto domain = GrTextureDomain::MakeTexelDomain(
-                        SkIRect::MakeXYWH(srcX, srcY, srcW, srcH), GrTextureDomain::kClamp_Mode);
-                fp = GrBicubicEffect::Make(std::move(texView), matrix, domain, dir, prevAlphaType);
-            } else {
-                fp = GrBicubicEffect::Make(std::move(texView), matrix, dir, prevAlphaType);
-            }
+            static constexpr GrSamplerState::WrapMode kWM = GrSamplerState::WrapMode::kClamp;
+            auto subset = SkRect::MakeXYWH(srcX, srcY, srcW, srcH);
+            fp = GrBicubicEffect::MakeSubset(std::move(texView), prevAlphaType, matrix, kWM, kWM,
+                                             subset, dir, *this->caps());
             if (xform) {
                 fp = GrColorSpaceXformEffect::Make(std::move(fp), std::move(xform));
             }

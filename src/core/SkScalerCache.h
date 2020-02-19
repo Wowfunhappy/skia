@@ -20,39 +20,25 @@
 #include "src/core/SkStrikeForGPU.h"
 #include <memory>
 
-/** \class SkGlyphCache
+// This class represents a strike: a specific combination of typeface, size, matrix, etc., and
+// holds the glyphs for that strike.
 
-    This class represents a strike: a specific combination of typeface, size, matrix, etc., and
-    holds the glyphs for that strike. Calling any of the getGlyphID... methods will
-    return the requested glyph, either instantly if it is already cached, or by first generating
-    it and then adding it to the strike.
-
-    The strikes are held in a global list, available to all threads. To interact with one, call
-    either Find{OrCreate}Exclusive().
-
-    The Find*Exclusive() method returns SkExclusiveStrikePtr, which releases exclusive ownership
-    when they go out of scope.
-*/
-class SkStrike final : public SkStrikeForGPU {
+class SkScalerCache {
 public:
-    SkStrike(const SkDescriptor& desc,
-             std::unique_ptr<SkScalerContext> scaler,
-             const SkFontMetrics* metrics = nullptr);
-
-    // Return a glyph.  Create it if it doesn't exist, and initialize with the prototype.
-    SkGlyph* glyphFromPrototype(const SkGlyphPrototype& p, void* image = nullptr) SK_EXCLUDES(fMu);
-
-    // Return a glyph or nullptr if it does not exits in the strike.
-    SkGlyph* glyphOrNull(SkPackedGlyphID id) const SK_EXCLUDES(fMu);
+    SkScalerCache(const SkDescriptor& desc,
+                  std::unique_ptr<SkScalerContext> scaler,
+                  const SkFontMetrics* metrics = nullptr);
 
     // Lookup (or create if needed) the toGlyph using toID. If that glyph is not initialized with
     // an image, then use the information in from to initialize the width, height top, left,
     // format and image of the toGlyph. This is mainly used preserving the glyph if it was
     // created by a search of desperation.
-    SkGlyph* mergeGlyphAndImage(SkPackedGlyphID toID, const SkGlyph& from) SK_EXCLUDES(fMu);
+    std::tuple<SkGlyph*, size_t> mergeGlyphAndImage(
+            SkPackedGlyphID toID, const SkGlyph& from) SK_EXCLUDES(fMu);
 
     // If the path has never been set, then add a path to glyph.
-    const SkPath* preparePath(SkGlyph* glyph, const SkPath* path) SK_EXCLUDES(fMu);
+    std::tuple<const SkPath*, size_t> mergePath(
+            SkGlyph* glyph, const SkPath* path) SK_EXCLUDES(fMu);
 
     /** Return the number of glyphs currently cached. */
     int countCachedGlyphs() const SK_EXCLUDES(fMu);
@@ -63,42 +49,36 @@ public:
     void findIntercepts(const SkScalar bounds[2], SkScalar scale, SkScalar xPos,
                         SkGlyph* , SkScalar* array, int* count) SK_EXCLUDES(fMu);
 
-
-    /** Return the vertical metrics for this strike.
-    */
     const SkFontMetrics& getFontMetrics() const {
         return fFontMetrics;
     }
 
-    const SkGlyphPositionRoundingSpec& roundingSpec() const override {
+    std::tuple<SkSpan<const SkGlyph*>, size_t> metrics(
+            SkSpan<const SkGlyphID> glyphIDs, const SkGlyph* results[]) SK_EXCLUDES(fMu);
+
+    std::tuple<SkSpan<const SkGlyph*>, size_t> preparePaths(
+            SkSpan<const SkGlyphID> glyphIDs, const SkGlyph* results[]) SK_EXCLUDES(fMu);
+
+    std::tuple<SkSpan<const SkGlyph*>, size_t> prepareImages(
+            SkSpan<const SkPackedGlyphID> glyphIDs, const SkGlyph* results[]) SK_EXCLUDES(fMu);
+
+    size_t prepareForDrawingMasksCPU(SkDrawableGlyphBuffer* drawables) SK_EXCLUDES(fMu);
+
+    // SkStrikeForGPU APIs
+    const SkGlyphPositionRoundingSpec& roundingSpec() const {
         return fRoundingSpec;
     }
 
-    const SkDescriptor& getDescriptor() const override;
+    const SkDescriptor& getDescriptor() const;
 
-    SkSpan<const SkGlyph*> metrics(SkSpan<const SkGlyphID> glyphIDs,
-                                   const SkGlyph* results[]) SK_EXCLUDES(fMu);
+    size_t prepareForMaskDrawing(
+            SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects) SK_EXCLUDES(fMu);
 
-    SkSpan<const SkGlyph*> preparePaths(SkSpan<const SkGlyphID> glyphIDs,
-                                        const SkGlyph* results[]) SK_EXCLUDES(fMu);
+    size_t prepareForSDFTDrawing(
+            SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects) SK_EXCLUDES(fMu);
 
-    SkSpan<const SkGlyph*> prepareImages(SkSpan<const SkPackedGlyphID> glyphIDs,
-                                         const SkGlyph* results[]) SK_EXCLUDES(fMu);
-
-    void prepareForDrawingMasksCPU(SkDrawableGlyphBuffer* drawables) SK_EXCLUDES(fMu);
-
-    void prepareForDrawingPathsCPU(SkDrawableGlyphBuffer* drawables) SK_EXCLUDES(fMu);
-
-    void prepareForMaskDrawing(
-            SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects) override SK_EXCLUDES(fMu);
-
-    void prepareForSDFTDrawing(
-            SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects) override SK_EXCLUDES(fMu);
-
-    void prepareForPathDrawing(
-            SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects) override SK_EXCLUDES(fMu);
-
-    void onAboutToExitScope() override;
+    size_t prepareForPathDrawing(
+            SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects) SK_EXCLUDES(fMu);
 
     /** Return the approx RAM usage for this cache. */
     size_t getMemoryUsed() const SK_EXCLUDES(fMu) {
@@ -119,7 +99,7 @@ public:
 
     class AutoValidate : SkNoncopyable {
     public:
-        AutoValidate(const SkStrike* cache) : fCache(cache) {
+        AutoValidate(const SkScalerCache* cache) : fCache(cache) {
             if (fCache) {
                 fCache->validate();
             }
@@ -133,7 +113,7 @@ public:
             fCache = nullptr;
         }
     private:
-        const SkStrike* fCache;
+        const SkScalerCache* fCache;
     };
 
 private:
@@ -147,21 +127,19 @@ private:
         }
     };
 
-    SkGlyph* makeGlyph(SkPackedGlyphID) SK_REQUIRES(fMu);
+    std::tuple<SkGlyph*, size_t> makeGlyph(SkPackedGlyphID) SK_REQUIRES(fMu);
 
     template <typename Fn>
-    void commonFilterLoop(SkDrawableGlyphBuffer* drawables, Fn&& fn) SK_REQUIRES(fMu);
+    size_t commonFilterLoop(SkDrawableGlyphBuffer* drawables, Fn&& fn) SK_REQUIRES(fMu);
 
     // Return a glyph. Create it if it doesn't exist, and initialize the glyph with metrics and
     // advances using a scaler.
-    SkGlyph* glyph(SkPackedGlyphID packedID) SK_REQUIRES(fMu);
+    std::tuple<SkGlyph*, size_t> glyph(SkPackedGlyphID) SK_REQUIRES(fMu);
 
-    const void* prepareImage(SkGlyph* glyph) SK_REQUIRES(fMu);
+    std::tuple<const void*, size_t> prepareImage(SkGlyph* glyph) SK_REQUIRES(fMu);
 
     // If the path has never been set, then use the scaler context to add the glyph.
-    const SkPath* preparePath(SkGlyph*) SK_REQUIRES(fMu);
-
-    SkGlyph* internalGlyphOrNull(SkPackedGlyphID packedID) const SK_REQUIRES(fMu);
+    std::tuple<const SkPath*, size_t> preparePath(SkGlyph*) SK_REQUIRES(fMu);
 
     enum PathDetail {
         kMetricsOnly,
@@ -169,7 +147,7 @@ private:
     };
 
     // internalPrepare will only be called with a mutex already held.
-    SkSpan<const SkGlyph*> internalPrepare(
+    std::tuple<SkSpan<const SkGlyph*>, size_t> internalPrepare(
             SkSpan<const SkGlyphID> glyphIDs,
             PathDetail pathDetail,
             const SkGlyph** results) SK_REQUIRES(fMu);
@@ -194,7 +172,7 @@ private:
     SkArenaAlloc            fAlloc SK_GUARDED_BY(fMu) {kMinAllocAmount};
 
     // Tracks (approx) how much ram is tied-up in this strike.
-    size_t                  fMemoryUsed SK_GUARDED_BY(fMu) {sizeof(SkStrike)};
+    size_t                  fMemoryUsed SK_GUARDED_BY(fMu) {sizeof(SkScalerCache)};
 };
 
 #endif  // SkStrike_DEFINED
