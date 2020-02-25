@@ -39,7 +39,7 @@ void GrProgramInfo::validate(bool flushTime) const {
         SkASSERT(!fPrimProc->numTextureSamplers());
     }
 
-    SkASSERT(!fPipeline->isScissorEnabled() || this->hasFixedScissor() ||
+    SkASSERT(!fPipeline->isScissorTestEnabled() || this->hasFixedScissor() ||
              this->hasDynamicScissors());
 
     if (this->hasDynamicPrimProcTextures()) {
@@ -115,24 +115,6 @@ void GrProgramInfo::checkMSAAAndMIPSAreResolved() const {
 
     for (auto [sampler, fp] : GrFragmentProcessor::PipelineTextureSamplerRange(this->pipeline())) {
         assertResolved(sampler.peekTexture(), sampler.samplerState());
-    }
-}
-
-void GrProgramInfo::compatibleWithMeshes(const GrMesh meshes[], int meshCount,
-                                         const GrCaps& caps) const {
-    SkASSERT(!fNumDynamicStateArrays || meshCount == fNumDynamicStateArrays);
-
-    for (int i = 0; i < meshCount; ++i) {
-        SkASSERT(fPrimProc->hasVertexAttributes() == SkToBool(meshes[i].vertexBuffer()));
-        SkASSERT(fPrimProc->hasInstanceAttributes() == SkToBool(meshes[i].instanceBuffer()));
-        if (fPipeline->usesConservativeRaster()) {
-            // Conservative raster, by default, only supports triangles. Implementations can
-            // optionally indicate that they also support points and lines, but we don't currently
-            // query or track that info.
-            SkASSERT(GrIsPrimTypeTris(fPrimitiveType));
-        }
-        SkASSERT(GrPrimitiveRestart::kNo == meshes[i].primitiveRestart() ||
-                 caps.usePrimitiveRestart());
     }
 }
 

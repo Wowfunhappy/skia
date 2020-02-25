@@ -10,11 +10,8 @@
 #include "include/core/SkGraphics.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkTypeface.h"
-#include "include/private/SkMutex.h"
-#include "include/private/SkOnce.h"
-#include "include/private/SkTemplates.h"
 #include "src/core/SkEnumerate.h"
-#include <cctype>
+#include "src/core/SkScalerContext.h"
 
 static SkFontMetrics use_or_generate_metrics(
         const SkFontMetrics* metrics, SkScalerContext* context) {
@@ -39,12 +36,6 @@ SkScalerCache::SkScalerCache(
     SkASSERT(fScalerContext != nullptr);
 }
 
-#ifdef SK_DEBUG
-#define VALIDATE()  AutoValidate av(this)
-#else
-#define VALIDATE()
-#endif
-
 // -- glyph creation -------------------------------------------------------------------------------
 std::tuple<SkGlyph*, size_t> SkScalerCache::makeGlyph(SkPackedGlyphID packedGlyphID) {
     SkGlyph* glyph = fAlloc.make<SkGlyph>(packedGlyphID);
@@ -53,7 +44,6 @@ std::tuple<SkGlyph*, size_t> SkScalerCache::makeGlyph(SkPackedGlyphID packedGlyp
 }
 
 std::tuple<SkGlyph*, size_t> SkScalerCache::glyph(SkPackedGlyphID packedGlyphID) {
-    VALIDATE();
     SkGlyph* glyph = fGlyphMap.findOrNull(packedGlyphID);
     size_t bytes = 0;
     if (glyph == nullptr) {
@@ -77,7 +67,6 @@ std::tuple<const SkPath*, size_t> SkScalerCache::mergePath(SkGlyph* glyph, const
     if (glyph->setPath(&fAlloc, path)) {
         pathDelta = glyph->path()->approximateBytesUsed();
     }
-    fMemoryUsed += pathDelta;
     return {glyph->path(), pathDelta};
 }
 
@@ -127,7 +116,6 @@ std::tuple<SkGlyph*, size_t> SkScalerCache::mergeGlyphAndImage(
     if (glyph->setMetricsAndImage(&fAlloc, from)) {
         imageDelta= glyph->imageSize();
     }
-    fMemoryUsed += delta + imageDelta;
     return {glyph, delta + imageDelta};
 }
 
@@ -135,7 +123,6 @@ std::tuple<SkSpan<const SkGlyph*>, size_t> SkScalerCache::metrics(
         SkSpan<const SkGlyphID> glyphIDs, const SkGlyph* results[]) {
     SkAutoMutexExclusive lock{fMu};
     auto [glyphs, delta] = this->internalPrepare(glyphIDs, kMetricsOnly, results);
-    fMemoryUsed += delta;
     return {glyphs, delta};
 }
 
@@ -143,7 +130,6 @@ std::tuple<SkSpan<const SkGlyph*>, size_t> SkScalerCache::preparePaths(
         SkSpan<const SkGlyphID> glyphIDs, const SkGlyph* results[]) {
     SkAutoMutexExclusive lock{fMu};
     auto [glyphs, delta] = this->internalPrepare(glyphIDs, kMetricsAndPath, results);
-    fMemoryUsed += delta;
     return {glyphs, delta};
 }
 
@@ -159,7 +145,6 @@ std::tuple<SkSpan<const SkGlyph*>, size_t> SkScalerCache::prepareImages(
         *cursor++ = glyph;
     }
 
-    fMemoryUsed += delta;
     return {{results, glyphIDs.size()}, delta};
 }
 
@@ -191,7 +176,6 @@ size_t SkScalerCache::prepareForDrawingMasksCPU(SkDrawableGlyphBuffer* drawables
             }
         });
 
-    fMemoryUsed += delta + imageDelta;
     return delta + imageDelta;
 }
 
@@ -207,7 +191,7 @@ size_t SkScalerCache::prepareForMaskDrawing(
                 rejects->reject(i);
             }
         });
-    fMemoryUsed += delta;
+
     return delta;
 }
 
@@ -222,7 +206,7 @@ size_t SkScalerCache::prepareForSDFTDrawing(
                 rejects->reject(i);
             }
         });
-    fMemoryUsed += delta;
+
     return delta;
 }
 
@@ -247,12 +231,13 @@ size_t SkScalerCache::prepareForPathDrawing(
                 rejects->reject(i, glyph->maxDimension());
             }
         });
-    fMemoryUsed += delta + pathDelta;
+
     return delta + pathDelta;
 }
 
 void SkScalerCache::findIntercepts(const SkScalar bounds[2], SkScalar scale, SkScalar xPos,
         SkGlyph* glyph, SkScalar* array, int* count) {
+    SkAutoMutexExclusive lock{fMu};
     glyph->ensureIntercepts(bounds, scale, xPos, array, count, &fAlloc);
 }
 
@@ -273,29 +258,4 @@ void SkScalerCache::dump() const {
                rec.dump().c_str(), fGlyphMap.count());
     SkDebugf("%s\n", msg.c_str());
 }
-
-#ifdef SK_DEBUG
-void SkScalerCache::forceValidate() const {
-    SkAutoMutexExclusive lock{fMu};
-    size_t memoryUsed = sizeof(*this);
-    fGlyphMap.foreach ([&memoryUsed](const SkGlyph* glyphPtr) {
-        memoryUsed += sizeof(SkGlyph);
-        if (glyphPtr->setImageHasBeenCalled()) {
-            memoryUsed += glyphPtr->imageSize();
-        }
-        if (glyphPtr->setPathHasBeenCalled() && glyphPtr->path() != nullptr) {
-            memoryUsed += glyphPtr->path()->approximateBytesUsed();
-        }
-    });
-    SkASSERT(fMemoryUsed == memoryUsed);
-}
-
-void SkScalerCache::validate() const {
-#ifdef SK_DEBUG_GLYPH_CACHE
-    forceValidate();
-#endif
-}
-
-#endif  // SK_DEBUG
-
 

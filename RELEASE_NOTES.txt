@@ -7,6 +7,10 @@ This file includes a list of high level updates for each milestone release.
 Milestone 82
 
 <Insert new notes here- top is most recent.>
+  * Made SkDeferredDisplayList.h officially part of the public API (i.e., moved it to
+    include/core). Also added a ProgramIterator to SkDeferredDisplayList which allows
+    clients to pre-compile some of the shaders the DDL requires.
+
   * Added two new helper methods to SkSurfaceCharacterization: createBackendFormat and
     createFBO0. These make it easier for clients to create new surface characterizations that
     differ only a little from an existing surface characterization.
@@ -22,6 +26,9 @@ Milestone 82
   * An SkImageInfo with a null SkColorSpace passed to SkCodec::getPixels() and
     related calls is treated as a request to do no color correction at decode
     time.
+
+  * Add new APIs to add attributes to document structure node when
+    creating a tagged PDF.
 
   * Remove CGFontRef parameter from SkCreateTypefaceFromCTFont.
     Use CTFontManagerCreateFontDescriptorFromData instead of

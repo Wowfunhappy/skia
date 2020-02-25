@@ -107,6 +107,7 @@ public:
     PlaceholderStyle* placeholderStyle() const;
     bool isPlaceholder() const { return fPlaceholderIndex != std::numeric_limits<size_t>::max(); }
     size_t clusterIndex(size_t pos) const { return fClusterIndexes[pos]; }
+    size_t globalClusterIndex(size_t pos) const { return fClusterStart + fClusterIndexes[pos]; }
     SkScalar positionX(size_t pos) const;
 
     TextRange textRange() const { return fTextRange; }
@@ -163,6 +164,11 @@ public:
     void commit();
 
     SkRect getBounds(size_t pos) const { return fBounds[pos]; }
+
+    void resetShifts() {
+        for (auto& r: fShifts) { r = 0; }
+        fSpaced = false;
+    }
 private:
     friend class ParagraphImpl;
     friend class TextLine;

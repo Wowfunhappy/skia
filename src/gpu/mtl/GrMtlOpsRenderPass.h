@@ -33,21 +33,17 @@ public:
 
     void initRenderState(id<MTLRenderCommandEncoder>);
 
-    void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override {
-        // TODO: this could be more efficient
-        state->doUpload(upload);
-    }
+    void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override;
     void submit();
 
 private:
     GrGpu* gpu() override { return fGpu; }
 
-    GrMtlPipelineState* prepareDrawState(const GrProgramInfo&);
-
-    void onDraw(const GrProgramInfo& programInfo,
-                const GrMesh mesh[],
-                int meshCount,
-                const SkRect& bounds) override;
+    bool onBindPipeline(const GrProgramInfo&, const SkRect& drawBounds) override;
+    void onSetScissorRect(const SkIRect&) override;
+    bool onBindTextures(const GrPrimitiveProcessor&, const GrPipeline&,
+                        const GrSurfaceProxy* const primProcTextures[]) override;
+    void onDrawMesh(GrPrimitiveType, const GrMesh&) override;
 
     void onClear(const GrFixedClip& clip, const SkPMColor4f& color) override;
 
@@ -79,6 +75,7 @@ private:
     GrMtlGpu*                   fGpu;
 
     id<MTLRenderCommandEncoder> fActiveRenderCmdEncoder;
+    GrMtlPipelineState*         fActivePipelineState = nullptr;
     MTLRenderPassDescriptor*    fRenderPassDesc;
     SkRect                      fBounds;
     size_t                      fCurrentVertexStride;

@@ -50,6 +50,8 @@ public:
 
         int id() const { return fID; }
 
+        SkDeferredDisplayList* ddl() { return fDisplayList.get(); }
+
     private:
         int                       fID = -1;
         sk_sp<SkSurface>          fDstSurface;       // the ultimate target for composition
@@ -78,7 +80,7 @@ public:
 
     void createDDLsInParallel();
 
-    void drawAllTilesAndFlush(GrContext*, bool flush);
+    void drawAllTiles(GrContext*);
 
     void composeAllTiles();
 

@@ -944,6 +944,8 @@ static Sink* create_sink(const GrContextOptions& grCtxOptions, const SkCommandLi
                 return new GPUPersistentCacheTestingSink(gpuConfig, grCtxOptions);
             } else if (gpuConfig->getTestPrecompile()) {
                 return new GPUPrecompileTestingSink(gpuConfig, grCtxOptions);
+            } else if (gpuConfig->getUseDDLSink()) {
+                return new GPUDDLSink(gpuConfig, grCtxOptions);
             } else {
                 return new GPUSink(gpuConfig, grCtxOptions);
             }
@@ -1579,11 +1581,6 @@ int main(int argc, char** argv) {
             info("\t%s\n", gFailures[i].c_str());
         }
         info("%d failures\n", gFailures.count());
-        // A non-zero return code does not make it to Swarming
-        // An abort does.
-#ifdef SK_BUILD_FOR_IOS
-        SK_ABORT("There were failures!");
-#endif
         return 1;
     }
 

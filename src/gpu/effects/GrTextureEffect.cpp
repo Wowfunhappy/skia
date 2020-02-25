@@ -193,10 +193,10 @@ GrGLSLFragmentProcessor* GrTextureEffect::onCreateGLSLInstance() const {
         void emitCode(EmitArgs& args) override {
             auto te = args.fFp.cast<GrTextureEffect>();
             const char* coords;
-            if (args.fFp.coordTransformsApplyToLocalCoords()) {
-                coords = args.fTransformedCoords[0].fVaryingPoint.c_str();
-            } else {
+            if (args.fFp.isSampledWithExplicitCoords()) {
                 coords = "_coords";
+            } else {
+                coords = args.fTransformedCoords[0].fVaryingPoint.c_str();
             }
             auto* fb = args.fFragBuilder;
             if (te.fShaderModes[0] == ShaderMode::kNone &&
@@ -472,9 +472,10 @@ GrGLSLFragmentProcessor* GrTextureEffect::onCreateGLSLInstance() const {
                     auto repeatBilerpReadXY = read("float2(repeatCoordX, repeatCoordY)");
                     fb->codeAppendf(
                             "if (errX != 0 && errY != 0) {"
+                            "    errX = abs(errX);"
                             "    textureColor = mix(mix(textureColor, %s, errX),"
                             "                       mix(%s, %s, errX),"
-                            "                       errY);"
+                            "                       abs(errY));"
                             "}",
                             repeatBilerpReadX.c_str(), repeatBilerpReadY.c_str(),
                             repeatBilerpReadXY.c_str());

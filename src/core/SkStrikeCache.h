@@ -41,7 +41,6 @@ public:
 class SkStrikeCache final : public SkStrikeForGPUCacheInterface {
 public:
     SkStrikeCache() = default;
-    ~SkStrikeCache() override;
 
     class Strike final : public SkRefCnt, public SkStrikeForGPU {
     public:
@@ -55,16 +54,14 @@ public:
                 , fPinner{std::move(pinner)} {}
 
         SkGlyph* mergeGlyphAndImage(SkPackedGlyphID toID, const SkGlyph& from) {
-            auto [glyph, delta] = fScalerCache.mergeGlyphAndImage(toID, from);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            auto [glyph, increase] = fScalerCache.mergeGlyphAndImage(toID, from);
+            this->updateDelta(increase);
             return glyph;
         }
 
         const SkPath* mergePath(SkGlyph* glyph, const SkPath* path) {
-            auto [glyphPath, delta] = fScalerCache.mergePath(glyph, path);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            auto [glyphPath, increase] = fScalerCache.mergePath(glyph, path);
+            this->updateDelta(increase);
             return glyphPath;
         }
 
@@ -83,32 +80,28 @@ public:
 
         SkSpan<const SkGlyph*> metrics(SkSpan<const SkGlyphID> glyphIDs,
                                        const SkGlyph* results[]) {
-            auto [glyphs, delta] = fScalerCache.metrics(glyphIDs, results);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            auto [glyphs, increase] = fScalerCache.metrics(glyphIDs, results);
+            this->updateDelta(increase);
             return glyphs;
         }
 
         SkSpan<const SkGlyph*> preparePaths(SkSpan<const SkGlyphID> glyphIDs,
                                             const SkGlyph* results[]) {
-            auto [glyphs, delta] = fScalerCache.preparePaths(glyphIDs, results);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            auto [glyphs, increase] = fScalerCache.preparePaths(glyphIDs, results);
+            this->updateDelta(increase);
             return glyphs;
         }
 
         SkSpan<const SkGlyph*> prepareImages(SkSpan<const SkPackedGlyphID> glyphIDs,
                                              const SkGlyph* results[]) {
-            auto [glyphs, delta] = fScalerCache.prepareImages(glyphIDs, results);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            auto [glyphs, increase] = fScalerCache.prepareImages(glyphIDs, results);
+            this->updateDelta(increase);
             return glyphs;
         }
 
         void prepareForDrawingMasksCPU(SkDrawableGlyphBuffer* drawables) {
-            size_t delta = fScalerCache.prepareForDrawingMasksCPU(drawables);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            size_t increase = fScalerCache.prepareForDrawingMasksCPU(drawables);
+            this->updateDelta(increase);
         }
 
         const SkGlyphPositionRoundingSpec& roundingSpec() const override {
@@ -121,139 +114,112 @@ public:
 
         void prepareForMaskDrawing(
                 SkDrawableGlyphBuffer* drawbles, SkSourceGlyphBuffer* rejects) override {
-            size_t delta = fScalerCache.prepareForMaskDrawing(drawbles, rejects);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            size_t increase = fScalerCache.prepareForMaskDrawing(drawbles, rejects);
+            this->updateDelta(increase);
         }
 
         void prepareForSDFTDrawing(
                 SkDrawableGlyphBuffer* drawbles, SkSourceGlyphBuffer* rejects) override {
-            size_t delta = fScalerCache.prepareForSDFTDrawing(drawbles, rejects);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            size_t increase = fScalerCache.prepareForSDFTDrawing(drawbles, rejects);
+            this->updateDelta(increase);
         }
 
         void prepareForPathDrawing(
                 SkDrawableGlyphBuffer* drawbles, SkSourceGlyphBuffer* rejects) override {
-            size_t delta = fScalerCache.prepareForPathDrawing(drawbles, rejects);
-            fMemoryUsed += delta;
-            SkASSERT(fMemoryUsed = fScalerCache.getMemoryUsed());
+            size_t increase = fScalerCache.prepareForPathDrawing(drawbles, rejects);
+            this->updateDelta(increase);
         }
 
         void onAboutToExitScope() override {
-            fStrikeCache->attachStrike(this);
+            this->unref();
         }
+
+        void updateDelta(size_t increase);
 
         SkStrikeCache* const            fStrikeCache;
         Strike*                         fNext{nullptr};
         Strike*                         fPrev{nullptr};
         SkScalerCache                   fScalerCache;
         std::unique_ptr<SkStrikePinner> fPinner;
-        size_t                          fMemoryUsed{0};
+        size_t                          fMemoryUsed{sizeof(SkScalerCache)};
+        bool                            fRemoved{false};
     };  // Strike
-
-    class ExclusiveStrikePtr {
-    public:
-        explicit ExclusiveStrikePtr(Strike*);
-        ExclusiveStrikePtr();
-        ExclusiveStrikePtr(const ExclusiveStrikePtr&) = delete;
-        ExclusiveStrikePtr& operator = (const ExclusiveStrikePtr&) = delete;
-        ExclusiveStrikePtr(ExclusiveStrikePtr&&);
-        ExclusiveStrikePtr& operator = (ExclusiveStrikePtr&&);
-        ~ExclusiveStrikePtr();
-
-        Strike* get() const;
-        Strike* operator -> () const;
-        Strike& operator *  () const;
-        explicit operator bool () const;
-        friend bool operator == (const ExclusiveStrikePtr&, const ExclusiveStrikePtr&);
-        friend bool operator == (const ExclusiveStrikePtr&, decltype(nullptr));
-        friend bool operator == (decltype(nullptr), const ExclusiveStrikePtr&);
-
-    private:
-        Strike* fStrike;
-    };
 
     static SkStrikeCache* GlobalStrikeCache();
 
-    ExclusiveStrikePtr findStrikeExclusive(const SkDescriptor&);
+    sk_sp<Strike> findStrike(const SkDescriptor& desc) SK_EXCLUDES(fLock);
 
-    ExclusiveStrikePtr createStrikeExclusive(
+    sk_sp<Strike> createStrike(
             const SkDescriptor& desc,
             std::unique_ptr<SkScalerContext> scaler,
             SkFontMetrics* maybeMetrics = nullptr,
-            std::unique_ptr<SkStrikePinner> = nullptr);
+            std::unique_ptr<SkStrikePinner> = nullptr) SK_EXCLUDES(fLock);
 
-    ExclusiveStrikePtr findOrCreateStrikeExclusive(
+    sk_sp<Strike> findOrCreateStrike(
             const SkDescriptor& desc,
             const SkScalerContextEffects& effects,
-            const SkTypeface& typeface);
+            const SkTypeface& typeface) SK_EXCLUDES(fLock);
 
-    SkScopedStrikeForGPU findOrCreateScopedStrike(const SkDescriptor& desc,
-                                                  const SkScalerContextEffects& effects,
-                                                  const SkTypeface& typeface) override;
+    SkScopedStrikeForGPU findOrCreateScopedStrike(
+            const SkDescriptor& desc,
+            const SkScalerContextEffects& effects,
+            const SkTypeface& typeface) override SK_EXCLUDES(fLock);
 
     static void PurgeAll();
-    static void ValidateGlyphCacheDataSize();
     static void Dump();
 
     // Dump memory usage statistics of all the attaches caches in the process using the
     // SkTraceMemoryDump interface.
     static void DumpMemoryStatistics(SkTraceMemoryDump* dump);
 
-    void purgeAll(); // does not change budget
+    void purgeAll() SK_EXCLUDES(fLock); // does not change budget
 
-    int getCacheCountLimit() const;
-    int setCacheCountLimit(int limit);
-    int getCacheCountUsed() const;
+    int getCacheCountLimit() const SK_EXCLUDES(fLock);
+    int setCacheCountLimit(int limit) SK_EXCLUDES(fLock);
+    int getCacheCountUsed() const SK_EXCLUDES(fLock);
 
-    size_t getCacheSizeLimit() const;
-    size_t setCacheSizeLimit(size_t limit);
-    size_t getTotalMemoryUsed() const;
+    size_t getCacheSizeLimit() const SK_EXCLUDES(fLock);
+    size_t setCacheSizeLimit(size_t limit) SK_EXCLUDES(fLock);
+    size_t getTotalMemoryUsed() const SK_EXCLUDES(fLock);
 
-    int  getCachePointSizeLimit() const;
-    int  setCachePointSizeLimit(int limit);
-#ifdef SK_DEBUG
-    // Make sure that each glyph cache's memory tracking and actual memory used are in sync.
-    void validateGlyphCacheDataSize() const;
-#else
-    void validateGlyphCacheDataSize() const {}
-#endif
+    int  getCachePointSizeLimit() const SK_EXCLUDES(fLock);
+    int  setCachePointSizeLimit(int limit) SK_EXCLUDES(fLock);
 
 private:
-#ifdef SK_DEBUG
-    // A simple accounting of what each glyph cache reports and the strike cache total.
-    void validate() const SK_REQUIRES(fLock);
-#else
-    void validate() const {}
-#endif
-
-    Strike* findAndDetachStrike(const SkDescriptor&) SK_EXCLUDES(fLock);
-    Strike* createStrike(
+    sk_sp<Strike> internalFindStrikeOrNull(const SkDescriptor& desc) SK_REQUIRES(fLock);
+    sk_sp<Strike> internalCreateStrike(
             const SkDescriptor& desc,
             std::unique_ptr<SkScalerContext> scaler,
             SkFontMetrics* maybeMetrics = nullptr,
-            std::unique_ptr<SkStrikePinner> = nullptr);
-    Strike* findOrCreateStrike(
-            const SkDescriptor& desc,
-            const SkScalerContextEffects& effects,
-            const SkTypeface& typeface) SK_EXCLUDES(fLock);
-    void attachStrike(Strike* strike) SK_EXCLUDES(fLock);
+            std::unique_ptr<SkStrikePinner> = nullptr) SK_REQUIRES(fLock);
 
     // The following methods can only be called when mutex is already held.
-    void internalDetachStrike(Strike* strike) SK_REQUIRES(fLock);
-    void internalAttachToHead(Strike* strike) SK_REQUIRES(fLock);
+    void internalRemoveStrike(Strike* strike) SK_REQUIRES(fLock);
+    void internalAttachToHead(sk_sp<Strike> strike) SK_REQUIRES(fLock);
 
     // Checkout budgets, modulated by the specified min-bytes-needed-to-purge,
     // and attempt to purge caches to match.
     // Returns number of bytes freed.
     size_t internalPurge(size_t minBytesNeeded = 0) SK_REQUIRES(fLock);
 
-    void forEachStrike(std::function<void(const Strike&)> visitor) const;
+    // A simple accounting of what each glyph cache reports and the strike cache total.
+    void validate() const SK_REQUIRES(fLock);
+
+    void forEachStrike(std::function<void(const Strike&)> visitor) const SK_EXCLUDES(fLock);
 
     mutable SkSpinlock fLock;
     Strike* fHead SK_GUARDED_BY(fLock) {nullptr};
     Strike* fTail SK_GUARDED_BY(fLock) {nullptr};
+    struct StrikeTraits {
+        static const SkDescriptor& GetKey(const sk_sp<Strike>& strike) {
+            return strike->getDescriptor();
+        }
+        static uint32_t Hash(const SkDescriptor& descriptor) {
+            return descriptor.getChecksum();
+        }
+    };
+    SkTHashTable<sk_sp<Strike>, SkDescriptor, StrikeTraits> fStrikeLookup SK_GUARDED_BY(fLock);
+
     size_t  fCacheSizeLimit{SK_DEFAULT_FONT_CACHE_LIMIT};
     size_t  fTotalMemoryUsed SK_GUARDED_BY(fLock) {0};
     int32_t fCacheCountLimit{SK_DEFAULT_FONT_CACHE_COUNT_LIMIT};
@@ -261,7 +227,6 @@ private:
     int32_t fPointSizeLimit{SK_DEFAULT_FONT_CACHE_POINT_SIZE_LIMIT};
 };
 
-using SkExclusiveStrikePtr = SkStrikeCache::ExclusiveStrikePtr;
 using SkStrike = SkStrikeCache::Strike;
 
 #endif  // SkStrikeCache_DEFINED
