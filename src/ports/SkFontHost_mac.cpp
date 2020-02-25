@@ -481,7 +481,7 @@ static SmoothBehavior smooth_behavior() {
         CGContextSetShouldAntialias(smoothContext.get(), true);
         CGContextSetTextDrawingMode(smoothContext.get(), kCGTextFill);
         CGContextSetGrayFillColor(smoothContext.get(), 1, 1);
-
+return SmoothBehavior::subpixel;
         CGPoint point = CGPointMake(0, 3);
         CGGlyph spiderGlyph = 3;
         CTFontDrawGlyphs(ctFont.get(), &spiderGlyph, &point, 1, noSmoothContext.get());
