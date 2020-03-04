@@ -443,42 +443,6 @@ void GrVkOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUpl
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void GrVkOpsRenderPass::bindGeometry(const GrGpuBuffer* indexBuffer,
-                                          const GrGpuBuffer* vertexBuffer,
-                                          const GrGpuBuffer* instanceBuffer) {
-    GrVkCommandBuffer* currCmdBuf = this->currentCommandBuffer();
-    // There is no need to put any memory barriers to make sure host writes have finished here.
-    // When a command buffer is submitted to a queue, there is an implicit memory barrier that
-    // occurs for all host writes. Additionally, BufferMemoryBarriers are not allowed inside of
-    // an active RenderPass.
-
-    // Here our vertex and instance inputs need to match the same 0-based bindings they were
-    // assigned in GrVkPipeline. That is, vertex first (if any) followed by instance.
-    uint32_t binding = 0;
-
-    if (vertexBuffer) {
-        SkASSERT(vertexBuffer);
-        SkASSERT(!vertexBuffer->isMapped());
-
-        currCmdBuf->bindInputBuffer(fGpu, binding++,
-                                    static_cast<const GrVkVertexBuffer*>(vertexBuffer));
-    }
-
-    if (instanceBuffer) {
-        SkASSERT(instanceBuffer);
-        SkASSERT(!instanceBuffer->isMapped());
-
-        currCmdBuf->bindInputBuffer(fGpu, binding++,
-                                    static_cast<const GrVkVertexBuffer*>(instanceBuffer));
-    }
-    if (indexBuffer) {
-        SkASSERT(indexBuffer);
-        SkASSERT(!indexBuffer->isMapped());
-
-        currCmdBuf->bindIndexBuffer(fGpu, static_cast<const GrVkIndexBuffer*>(indexBuffer));
-    }
-}
-
 #ifdef SK_DEBUG
 void check_sampled_texture(GrTexture* tex, GrRenderTarget* rt, GrVkGpu* gpu) {
     SkASSERT(!tex->isProtected() || (rt->isProtected() && gpu->protectedContext()));
@@ -582,47 +546,74 @@ void GrVkOpsRenderPass::onSetScissorRect(const SkIRect& scissor) {
 bool GrVkOpsRenderPass::onBindTextures(const GrPrimitiveProcessor& primProc,
                                        const GrPipeline& pipeline,
                                        const GrSurfaceProxy* const primProcTextures[]) {
+    SkASSERT(fCurrentPipelineState);
     return fCurrentPipelineState->setAndBindTextures(fGpu, primProc, pipeline, primProcTextures,
                                                      this->currentCommandBuffer());
 }
 
-void GrVkOpsRenderPass::onDrawMesh(GrPrimitiveType primitiveType, const GrMesh& mesh) {
+void GrVkOpsRenderPass::onBindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
+                                      const GrBuffer* vertexBuffer,
+                                      GrPrimitiveRestart primRestart) {
+    SkASSERT(GrPrimitiveRestart::kNo == primRestart);
     if (!fCurrentRenderPass) {
         SkASSERT(fGpu->isDeviceLost());
         return;
     }
-
     SkASSERT(fCurrentPipelineState);
-    mesh.sendToGpu(primitiveType, this);
+    SkASSERT(!fGpu->caps()->usePrimitiveRestart());  // Ignore primitiveRestart parameter.
+
+    GrVkCommandBuffer* currCmdBuf = this->currentCommandBuffer();
+    SkASSERT(currCmdBuf);
+
+    // There is no need to put any memory barriers to make sure host writes have finished here.
+    // When a command buffer is submitted to a queue, there is an implicit memory barrier that
+    // occurs for all host writes. Additionally, BufferMemoryBarriers are not allowed inside of
+    // an active RenderPass.
+
+    // Here our vertex and instance inputs need to match the same 0-based bindings they were
+    // assigned in GrVkPipeline. That is, vertex first (if any) followed by instance.
+    uint32_t binding = 0;
+    if (auto* vkVertexBuffer = static_cast<const GrVkVertexBuffer*>(vertexBuffer)) {
+        SkASSERT(!vkVertexBuffer->isCpuBuffer());
+        SkASSERT(!vkVertexBuffer->isMapped());
+        currCmdBuf->bindInputBuffer(fGpu, binding++, vkVertexBuffer);
+    }
+    if (auto* vkInstanceBuffer = static_cast<const GrVkVertexBuffer*>(instanceBuffer)) {
+        SkASSERT(!vkInstanceBuffer->isCpuBuffer());
+        SkASSERT(!vkInstanceBuffer->isMapped());
+        currCmdBuf->bindInputBuffer(fGpu, binding++, vkInstanceBuffer);
+    }
+    if (auto* vkIndexBuffer = static_cast<const GrVkIndexBuffer*>(indexBuffer)) {
+        SkASSERT(!vkIndexBuffer->isCpuBuffer());
+        SkASSERT(!vkIndexBuffer->isMapped());
+        currCmdBuf->bindIndexBuffer(fGpu, vkIndexBuffer);
+    }
+}
+
+void GrVkOpsRenderPass::onDrawInstanced(int instanceCount,
+                                        int baseInstance,
+                                        int vertexCount, int baseVertex) {
+    if (!fCurrentRenderPass) {
+        SkASSERT(fGpu->isDeviceLost());
+        return;
+    }
+    SkASSERT(fCurrentPipelineState);
+    this->currentCommandBuffer()->draw(fGpu, vertexCount, instanceCount, baseVertex, baseInstance);
+    fGpu->stats()->incNumDraws();
     fCurrentCBIsEmpty = false;
 }
 
-void GrVkOpsRenderPass::sendInstancedMeshToGpu(GrPrimitiveType, const GrMesh& mesh, int vertexCount,
-                                               int baseVertex, int instanceCount,
-                                               int baseInstance) {
-    SkASSERT(!mesh.vertexBuffer() || !mesh.vertexBuffer()->isCpuBuffer());
-    SkASSERT(!mesh.instanceBuffer() || !mesh.instanceBuffer()->isCpuBuffer());
-    auto gpuVertexBuffer = static_cast<const GrGpuBuffer*>(mesh.vertexBuffer());
-    auto gpuInstanceBuffer = static_cast<const GrGpuBuffer*>(mesh.instanceBuffer());
-    this->bindGeometry(nullptr, gpuVertexBuffer, gpuInstanceBuffer);
-    this->currentCommandBuffer()->draw(fGpu, vertexCount, instanceCount, baseVertex, baseInstance);
-    fGpu->stats()->incNumDraws();
-}
-
-void GrVkOpsRenderPass::sendIndexedInstancedMeshToGpu(GrPrimitiveType, const GrMesh& mesh,
-                                                      int indexCount, int baseIndex, int baseVertex,
-                                                      int instanceCount, int baseInstance) {
-    SkASSERT(mesh.primitiveRestart() == GrPrimitiveRestart::kNo);
-    SkASSERT(!mesh.vertexBuffer() || !mesh.vertexBuffer()->isCpuBuffer());
-    SkASSERT(!mesh.instanceBuffer() || !mesh.instanceBuffer()->isCpuBuffer());
-    SkASSERT(!mesh.indexBuffer()->isCpuBuffer());
-    auto gpuIndexxBuffer = static_cast<const GrGpuBuffer*>(mesh.indexBuffer());
-    auto gpuVertexBuffer = static_cast<const GrGpuBuffer*>(mesh.vertexBuffer());
-    auto gpuInstanceBuffer = static_cast<const GrGpuBuffer*>(mesh.instanceBuffer());
-    this->bindGeometry(gpuIndexxBuffer, gpuVertexBuffer, gpuInstanceBuffer);
+void GrVkOpsRenderPass::onDrawIndexedInstanced(int indexCount, int baseIndex, int instanceCount,
+                                               int baseInstance, int baseVertex) {
+    if (!fCurrentRenderPass) {
+        SkASSERT(fGpu->isDeviceLost());
+        return;
+    }
+    SkASSERT(fCurrentPipelineState);
     this->currentCommandBuffer()->drawIndexed(fGpu, indexCount, instanceCount,
                                               baseIndex, baseVertex, baseInstance);
     fGpu->stats()->incNumDraws();
+    fCurrentCBIsEmpty = false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

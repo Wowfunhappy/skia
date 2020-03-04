@@ -45,61 +45,14 @@ void GrGpu::disconnect(DisconnectType) {}
 
 ////////////////////////////////////////////////////////////////////////////////
 
-bool GrGpu::IsACopyNeededForRepeatWrapMode(const GrCaps* caps,
-                                           GrTextureProxy* texProxy,
-                                           SkISize dimensions,
-                                           GrSamplerState::Filter filter,
-                                           GrTextureProducer::CopyParams* copyParams,
-                                           SkScalar scaleAdjust[2]) {
-    if (!caps->npotTextureTileSupport() &&
-        (!SkIsPow2(dimensions.width()) || !SkIsPow2(dimensions.height()))) {
-        SkASSERT(scaleAdjust);
-        copyParams->fDimensions = {SkNextPow2(dimensions.width()), SkNextPow2(dimensions.height())};
-        SkASSERT(scaleAdjust);
-        scaleAdjust[0] = ((SkScalar)copyParams->fDimensions.width()) / dimensions.width();
-        scaleAdjust[1] = ((SkScalar)copyParams->fDimensions.height()) / dimensions.height();
-        switch (filter) {
-        case GrSamplerState::Filter::kNearest:
-            copyParams->fFilter = GrSamplerState::Filter::kNearest;
-            break;
-        case GrSamplerState::Filter::kBilerp:
-        case GrSamplerState::Filter::kMipMap:
-            // We are only ever scaling up so no reason to ever indicate kMipMap.
-            copyParams->fFilter = GrSamplerState::Filter::kBilerp;
-            break;
-        }
-        return true;
-    }
-
-    if (texProxy) {
-        // If the texture format itself doesn't support repeat wrap mode or mipmapping (and
-        // those capabilities are required) force a copy.
-        if (texProxy->hasRestrictedSampling()) {
-            copyParams->fFilter = GrSamplerState::Filter::kNearest;
-            copyParams->fDimensions = texProxy->dimensions();
-            return true;
-        }
-    }
-
-    return false;
-}
-
 bool GrGpu::IsACopyNeededForMips(const GrCaps* caps, const GrTextureProxy* texProxy,
-                                 GrSamplerState::Filter filter,
-                                 GrTextureProducer::CopyParams* copyParams) {
+                                 GrSamplerState::Filter filter) {
     SkASSERT(texProxy);
-    int mipCount = SkMipMap::ComputeLevelCount(texProxy->width(), texProxy->height());
-    bool willNeedMips = GrSamplerState::Filter::kMipMap == filter && caps->mipMapSupport() &&
-            mipCount;
-    // If the texture format itself doesn't support mipmapping (and those capabilities are required)
-    // force a copy.
-    if (willNeedMips && texProxy->mipMapped() == GrMipMapped::kNo) {
-        copyParams->fFilter = GrSamplerState::Filter::kNearest;
-        copyParams->fDimensions = texProxy->dimensions();
-        return true;
+    if (filter != GrSamplerState::Filter::kMipMap || texProxy->mipMapped() == GrMipMapped::kYes ||
+        !caps->mipMapSupport()) {
+        return false;
     }
-
-    return false;
+    return SkMipMap::ComputeLevelCount(texProxy->width(), texProxy->height()) > 0;
 }
 
 static bool validate_texel_levels(SkISize dimensions, GrColorType texelColorType,
@@ -749,6 +702,19 @@ void GrGpu::dumpJSON(SkJSONWriter* writer) const { }
 #if GR_TEST_UTILS
 
 #if GR_GPU_STATS
+static const char* cache_result_to_str(int i) {
+    const char* kCacheResultStrings[GrGpu::Stats::kNumProgramCacheResults] = {
+        "hits",
+        "misses",
+        "partials"
+    };
+    static_assert(0 == (int) GrGpu::Stats::ProgramCacheResult::kHit);
+    static_assert(1 == (int) GrGpu::Stats::ProgramCacheResult::kMiss);
+    static_assert(2 == (int) GrGpu::Stats::ProgramCacheResult::kPartial);
+    static_assert(GrGpu::Stats::kNumProgramCacheResults == 3);
+    return kCacheResultStrings[i];
+}
+
 void GrGpu::Stats::dump(SkString* out) {
     out->appendf("Render Target Binds: %d\n", fRenderTargetBinds);
     out->appendf("Shader Compilations: %d\n", fShaderCompilations);
@@ -759,6 +725,26 @@ void GrGpu::Stats::dump(SkString* out) {
     out->appendf("Stencil Buffer Creates: %d\n", fStencilAttachmentCreates);
     out->appendf("Number of draws: %d\n", fNumDraws);
     out->appendf("Number of Scratch Textures reused %d\n", fNumScratchTexturesReused);
+
+    SkASSERT(fNumInlineCompilationFailures == 0);
+    out->appendf("Number of Inline compile failures %d\n", fNumInlineCompilationFailures);
+    for (int i = 0; i < Stats::kNumProgramCacheResults-1; ++i) {
+        out->appendf("Inline Program Cache %s %d\n", cache_result_to_str(i),
+                     fInlineProgramCacheStats[i]);
+    }
+
+    SkASSERT(fNumPreCompilationFailures == 0);
+    out->appendf("Number of precompile failures %d\n", fNumPreCompilationFailures);
+    for (int i = 0; i < Stats::kNumProgramCacheResults-1; ++i) {
+        out->appendf("Precompile Program Cache %s %d\n", cache_result_to_str(i),
+                     fPreProgramCacheStats[i]);
+    }
+
+    SkASSERT(fNumCompilationFailures == 0);
+    out->appendf("Total number of compilation failures %d\n", fNumCompilationFailures);
+    out->appendf("Total number of partial compilation successes %d\n",
+                 fNumPartialCompilationSuccesses);
+    out->appendf("Total number of compilation successes %d\n", fNumCompilationSuccesses);
 }
 
 void GrGpu::Stats::dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values) {

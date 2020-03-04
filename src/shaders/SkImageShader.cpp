@@ -201,8 +201,8 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
         return nullptr;
     }
 
-    GrSamplerState::WrapMode wm[] = {tile_mode_to_wrap_mode(fTileModeX),
-                                     tile_mode_to_wrap_mode(fTileModeY)};
+    GrSamplerState::WrapMode wmX = tile_mode_to_wrap_mode(fTileModeX),
+                             wmY = tile_mode_to_wrap_mode(fTileModeY);
 
     // Must set wrap and filter on the sampler before requesting a texture. In two places below
     // we check the matrix scale factors to determine how to interpret the filter quality setting.
@@ -212,25 +212,26 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
     GrSamplerState::Filter textureFilterMode = GrSkFilterQualityToGrFilterMode(
             fImage->width(), fImage->height(), args.fFilterQuality, *args.fViewMatrix, *lm,
             args.fContext->priv().options().fSharpenMipmappedTextures, &doBicubic);
-    GrSamplerState samplerState(wm, textureFilterMode);
-    SkScalar scaleAdjust[2] = { 1.0f, 1.0f };
-    GrSurfaceProxyView view = as_IB(fImage)->refView(args.fContext, samplerState, scaleAdjust);
+    GrMipMapped mipMapped = GrMipMapped::kNo;
+    if (textureFilterMode == GrSamplerState::Filter::kMipMap) {
+        mipMapped = GrMipMapped::kYes;
+    }
+    GrSurfaceProxyView view = as_IB(fImage)->refView(args.fContext, mipMapped);
     if (!view) {
         return nullptr;
     }
 
     SkAlphaType srcAlphaType = fImage->alphaType();
 
-    lmInverse.postScale(scaleAdjust[0], scaleAdjust[1]);
-
     const auto& caps = *args.fContext->priv().caps();
 
     std::unique_ptr<GrFragmentProcessor> inner;
     if (doBicubic) {
         static constexpr auto kDir = GrBicubicEffect::Direction::kXY;
-        inner = GrBicubicEffect::Make(std::move(view), srcAlphaType, lmInverse, wm[0], wm[1], kDir,
+        inner = GrBicubicEffect::Make(std::move(view), srcAlphaType, lmInverse, wmX, wmY, kDir,
                                       caps);
     } else {
+        GrSamplerState samplerState(wmX, wmY, textureFilterMode);
         inner = GrTextureEffect::Make(std::move(view), srcAlphaType, lmInverse, samplerState, caps);
     }
     inner = GrColorSpaceXformEffect::Make(std::move(inner), fImage->colorSpace(), srcAlphaType,

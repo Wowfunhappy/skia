@@ -101,14 +101,37 @@ private:
                const SkRect& drawRect,
                const SkRect& localRect,
                const SkMatrix& localMatrix);
+
+    GrProgramInfo* createProgramInfo(const GrCaps*,
+                                     SkArenaAlloc*,
+                                     const GrSurfaceProxyView* outputView,
+                                     GrAppliedClip&&,
+                                     const GrXferProcessor::DstProxyView&);
+    GrProgramInfo* createProgramInfo(GrOpFlushState* flushState) {
+        return this->createProgramInfo(&flushState->caps(),
+                                       flushState->allocator(),
+                                       flushState->outputView(),
+                                       flushState->detachAppliedClip(),
+                                       flushState->dstProxyView());
+    }
+
+    void onPrePrepareDraws(GrRecordingContext*,
+                           const GrSurfaceProxyView* outputView,
+                           GrAppliedClip*,
+                           const GrXferProcessor::DstProxyView&) final;
     void onPrepareDraws(Target*) override;
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) override;
 
-    SkRect fDrawRect;
-    SkRect fLocalRect;
-    SkPMColor4f fColor;
-    GP fGP;
+    SkRect         fDrawRect;
+    SkRect         fLocalRect;
+    SkPMColor4f    fColor;
+    GP             fGP;
     GrProcessorSet fProcessorSet;
+
+    // If this op is prePrepared the created programInfo will be stored here for use in
+    // onExecute. In the prePrepared case it will have been stored in the record-time arena.
+    GrProgramInfo* fProgramInfo = nullptr;
+    GrMesh*        fMesh        = nullptr;
 
     friend class ::GrOpMemoryPool;
 };
@@ -150,6 +173,37 @@ TestRectOp::TestRectOp(const GrCaps* caps,
     this->setBounds(drawRect.makeSorted(), HasAABloat::kNo, IsHairline::kNo);
 }
 
+GrProgramInfo* TestRectOp::createProgramInfo(const GrCaps* caps,
+                                             SkArenaAlloc* arena,
+                                             const GrSurfaceProxyView* outputView,
+                                             GrAppliedClip&& appliedClip,
+                                             const GrXferProcessor::DstProxyView& dstProxyView) {
+    return GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps,
+                                                       arena,
+                                                       outputView,
+                                                       std::move(appliedClip),
+                                                       dstProxyView,
+                                                       &fGP,
+                                                       std::move(fProcessorSet),
+                                                       GrPrimitiveType::kTriangles,
+                                                       GrPipeline::InputFlags::kNone);
+}
+
+void TestRectOp::onPrePrepareDraws(GrRecordingContext* context,
+                                   const GrSurfaceProxyView* outputView,
+                                   GrAppliedClip* clip,
+                                   const GrXferProcessor::DstProxyView& dstProxyView) {
+    SkArenaAlloc* arena = context->priv().recordTimeAllocator();
+
+    // This is equivalent to a GrOpFlushState::detachAppliedClip
+    GrAppliedClip appliedClip = clip ? std::move(*clip) : GrAppliedClip();
+
+    fProgramInfo = this->createProgramInfo(context->priv().caps(), arena, outputView,
+                                           std::move(appliedClip), dstProxyView);
+
+    context->priv().recordProgramInfo(fProgramInfo);
+}
+
 void TestRectOp::onPrepareDraws(Target* target) {
     QuadHelper helper(target, fGP.vertexStride(), 1);
     GrVertexWriter writer{helper.vertices()};
@@ -157,15 +211,18 @@ void TestRectOp::onPrepareDraws(Target* target) {
     auto local = GrVertexWriter::TriStripFromRect(fLocalRect);
     GrVertexColor color(fColor, fGP.wideColor());
     writer.writeQuad(pos, local, color);
-    helper.recordDraw(target, &fGP);
+
+    fMesh = helper.mesh();
 }
 
 void TestRectOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) {
-    auto pipeline = GrSimpleMeshDrawOpHelper::CreatePipeline(flushState,
-                                                             std::move(fProcessorSet),
-                                                             GrPipeline::InputFlags::kNone);
+    if (!fProgramInfo) {
+        fProgramInfo = this->createProgramInfo(flushState);
+    }
 
-    flushState->executeDrawsAndUploadsForMeshDrawOp(this, chainBounds, pipeline);
+    static constexpr int kOneMesh = 1;
+    flushState->opsRenderPass()->bindPipeline(*fProgramInfo, chainBounds);
+    flushState->opsRenderPass()->drawMeshes(*fProgramInfo, fMesh, kOneMesh);
 }
 
 }  // anonymous namespace

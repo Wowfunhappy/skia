@@ -50,6 +50,7 @@ protected:
                         const GrPipeline::FixedDynamicState*) const;
 
         void* vertices() const { return fVertices; }
+        GrMesh* mesh() { return fMesh; }
 
     protected:
         PatternHelper() = default;
@@ -71,6 +72,7 @@ protected:
         QuadHelper() = delete;
         QuadHelper(Target* target, size_t vertexStride, int quadsToDraw);
 
+        using PatternHelper::mesh;
         using PatternHelper::recordDraw;
         using PatternHelper::vertices;
 
@@ -89,16 +91,16 @@ protected:
 
 private:
     void onPrePrepare(GrRecordingContext* context,
-                      const GrSurfaceProxyView* dstView,
+                      const GrSurfaceProxyView* outputView,
                       GrAppliedClip* clip,
                       const GrXferProcessor::DstProxyView& dstProxyView) final {
-        this->onPrePrepareDraws(context, dstView, clip, dstProxyView);
+        this->onPrePrepareDraws(context, outputView, clip, dstProxyView);
     }
     void onPrepare(GrOpFlushState* state) final;
 
     // Only the GrTextureOp currently overrides this virtual
     virtual void onPrePrepareDraws(GrRecordingContext*,
-                                   const GrSurfaceProxyView*,
+                                   const GrSurfaceProxyView* outputView,
                                    GrAppliedClip*,
                                    const GrXferProcessor::DstProxyView&) {}
 
@@ -111,16 +113,20 @@ public:
     virtual ~Target() {}
 
     /** Adds a draw of a mesh. */
-    virtual void recordDraw(
-            const GrGeometryProcessor*, const GrMesh[], int meshCnt,
-            const GrPipeline::FixedDynamicState*, const GrPipeline::DynamicStateArrays*,
-            GrPrimitiveType) = 0;
+    virtual void recordDraw(const GrGeometryProcessor*,
+                            const GrMesh[],
+                            int meshCnt,
+                            const GrPipeline::FixedDynamicState*,
+                            const GrPipeline::DynamicStateArrays*,
+                            GrPrimitiveType) = 0;
 
     /**
      * Helper for drawing GrMesh(es) with zero primProc textures and no dynamic state besides the
      * scissor clip.
      */
-    void recordDraw(const GrGeometryProcessor* gp, const GrMesh meshes[], int meshCnt,
+    void recordDraw(const GrGeometryProcessor* gp,
+                    const GrMesh meshes[],
+                    int meshCnt,
                     GrPrimitiveType primitiveType) {
         static constexpr int kZeroPrimProcTextures = 0;
         auto fixedDynamicState = this->makeFixedDynamicState(kZeroPrimProcTextures);
@@ -185,6 +191,7 @@ public:
     }
 
     virtual GrRenderTargetProxy* proxy() const = 0;
+    virtual const GrSurfaceProxyView* outputView() const = 0;
 
     virtual const GrAppliedClip* appliedClip() const = 0;
     virtual GrAppliedClip detachAppliedClip() = 0;

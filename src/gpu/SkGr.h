@@ -163,15 +163,13 @@ static_assert((int)kIDA_GrBlendCoeff == (int)SkBlendModeCoeff::kIDA);
 ////////////////////////////////////////////////////////////////////////////////
 // Texture management
 
-/** Returns a view that wraps a texture representing the bitmap that is compatible with the
- *  GrSamplerState. The texture is inserted into the cache (unless the bitmap is marked volatile)
- *  and can be retrieved again via this function.
- *  The 'scaleAdjust' in/out parameter will be updated to hold any rescaling that needs to be
- *  performed on the absolute texture coordinates (e.g., if the texture is resized out to
- *  the next power of two). It can be null if the caller is sure the bitmap won't be resized.
+/**
+ * Returns a view that wraps a texture representing the bitmap. The texture is inserted into the
+ * cache (unless the bitmap is marked volatile and can be retrieved again via this function.
+ * A MIP mapped texture may be returned even when GrMipMapped is kNo. The function will succeed
+ * with a non-MIP mapped texture if GrMipMapped is kYes but MIP mapping is not supported.
  */
-GrSurfaceProxyView GrRefCachedBitmapView(GrRecordingContext*, const SkBitmap&, GrSamplerState,
-                                         SkScalar scaleAdjust[2]);
+GrSurfaceProxyView GrRefCachedBitmapView(GrRecordingContext*, const SkBitmap&, GrMipMapped);
 
 /**
  * Creates a new texture with mipmap levels and copies the baseProxy into the base layer.
@@ -196,14 +194,15 @@ GrSurfaceProxyView GrMakeCachedBitmapProxyView(GrRecordingContext*, const SkBitm
  *      - SkBitmap/SkPixelRef
  *      - SkImage
  *      - SkImageGenerator
- *
- *  Note: width/height must fit in 16bits for this impl.
  */
 void GrMakeKeyFromImageID(GrUniqueKey* key, uint32_t imageID, const SkIRect& imageBounds);
 
-/** Call this after installing a GrUniqueKey on texture. It will cause the texture's key to be
-    removed should the bitmap's contents change or be destroyed. */
-void GrInstallBitmapUniqueKeyInvalidator(const GrUniqueKey& key, uint32_t contextID,
-                                         SkPixelRef* pixelRef);
+/**
+ * Makes a SkIDChangeListener from a GrUniqueKey. The key will be invalidated in the resource
+ * cache if the ID becomes invalid. This also modifies the key so that it will cause the listener
+ * to be deregistered if the key is destroyed (to prevent unbounded listener growth when resources
+ * are purged before listeners trigger).
+ */
+sk_sp<SkIDChangeListener> GrMakeUniqueKeyInvalidationListener(GrUniqueKey*, uint32_t contextID);
 
 #endif

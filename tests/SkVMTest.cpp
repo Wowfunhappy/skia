@@ -280,6 +280,47 @@ DEF_TEST(SkVM_Pointless, r) {
     }
 }
 
+#if defined(SKVM_LLVM)
+DEF_TEST(SkVM_LLVM_memset, r) {
+    skvm::Builder b;
+    b.store32(b.varying<int>(), b.splat(42));
+
+    skvm::Program p = b.done();
+    REPORTER_ASSERT(r, p.hasJIT());
+
+    int buf[18];
+    buf[17] = 47;
+
+    p.eval(17, buf);
+    for (int i = 0; i < 17; i++) {
+        REPORTER_ASSERT(r, buf[i] == 42);
+    }
+    REPORTER_ASSERT(r, buf[17] == 47);
+}
+
+DEF_TEST(SkVM_LLVM_memcpy, r) {
+    skvm::Builder b;
+    {
+        auto src = b.varying<int>(),
+             dst = b.varying<int>();
+        b.store32(dst, b.load32(src));
+    }
+
+    skvm::Program p = b.done();
+    REPORTER_ASSERT(r, p.hasJIT());
+
+    int src[] = {1,2,3,4,5,6,7,8,9},
+        dst[] = {0,0,0,0,0,0,0,0,0};
+
+    p.eval(SK_ARRAY_COUNT(src)-1, src, dst);
+    for (size_t i = 0; i < SK_ARRAY_COUNT(src)-1; i++) {
+        REPORTER_ASSERT(r, dst[i] == src[i]);
+    }
+    size_t i = SK_ARRAY_COUNT(src)-1;
+    REPORTER_ASSERT(r, dst[i] == 0);
+}
+#endif
+
 DEF_TEST(SkVM_LoopCounts, r) {
     // Make sure we cover all the exact N we want.
 
@@ -376,7 +417,12 @@ DEF_TEST(SkVM_gathers, r) {
         b.store8 (buf8 , b.gather8 (uniforms,0, b.bit_and(x, b.splat(31))));
     }
 
-    test_interpreter_only(r, b.done(), [&](const skvm::Program& program) {
+#if defined(SKVM_LLVM)
+    test_jit_and_interpreter
+#else
+    test_interpreter_only
+#endif
+    (r, b.done(), [&](const skvm::Program& program) {
         const int img[] = {12,34,56,78, 90,98,76,54};
 
         constexpr int N = 20;
@@ -485,8 +531,12 @@ DEF_TEST(SkVM_cmp_i32, r) {
 
         b.store32(b.varying<int>(), m);
     }
-
-    test_interpreter_only(r, b.done(), [&](const skvm::Program& program) {
+#if defined(SKVM_LLVM)
+    test_jit_and_interpreter
+#else
+    test_interpreter_only
+#endif
+    (r, b.done(), [&](const skvm::Program& program) {
         int in[] = { 0,1,2,3,4,5,6,7,8,9 };
         int out[SK_ARRAY_COUNT(in)];
 
@@ -540,6 +590,24 @@ DEF_TEST(SkVM_cmp_f32, r) {
     });
 }
 
+DEF_TEST(SkVM_index, r) {
+    skvm::Builder b;
+    b.store32(b.varying<int>(), b.index());
+
+#if defined(SKVM_LLVM) || defined(SK_CPU_X86)
+    test_jit_and_interpreter
+#else
+    test_interpreter_only
+#endif
+    (r, b.done(), [&](const skvm::Program& program) {
+        int buf[23];
+        program.eval(SK_ARRAY_COUNT(buf), buf);
+        for (int i = 0; i < (int)SK_ARRAY_COUNT(buf); i++) {
+            REPORTER_ASSERT(r, buf[i] == (int)SK_ARRAY_COUNT(buf)-i);
+        }
+    });
+}
+
 DEF_TEST(SkVM_i16x2, r) {
     skvm::Builder b;
     {
@@ -554,7 +622,12 @@ DEF_TEST(SkVM_i16x2, r) {
         b.store32(buf, u);
     }
 
-    test_interpreter_only(r, b.done(), [&](const skvm::Program& program) {
+#if defined(SKVM_LLVM)
+    test_jit_and_interpreter
+#else
+    test_interpreter_only
+#endif
+    (r, b.done(), [&](const skvm::Program& program) {
         uint16_t buf[] = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13 };
 
         program.eval(SK_ARRAY_COUNT(buf)/2, buf);
@@ -587,7 +660,12 @@ DEF_TEST(SkVM_cmp_i16, r) {
         b.store32(buf, m);
     }
 
-    test_interpreter_only(r, b.done(), [&](const skvm::Program& program) {
+#if defined(SKVM_LLVM)
+    test_jit_and_interpreter
+#else
+    test_interpreter_only
+#endif
+    (r, b.done(), [&](const skvm::Program& program) {
         int16_t buf[] = { 0,1, 2,3, 4,5, 6,7, 8,9 };
 
         program.eval(SK_ARRAY_COUNT(buf)/2, buf);
@@ -676,6 +754,70 @@ DEF_TEST(SkVM_floor, r) {
     });
 }
 
+DEF_TEST(SkVM_round, r) {
+    skvm::Builder b;
+    {
+        skvm::Arg src = b.varying<float>();
+        skvm::Arg dst = b.varying<int>();
+        b.store32(dst, b.round(b.bit_cast(b.load32(src))));
+    }
+
+    test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
+          float buf[]  = { 0.0f, 0.2f, 0.6f, 1.0f, 1.4f, 2.0f };
+          int want[] =   { 0,    0,    1,    1,    1,    2    };
+          int dst[SK_ARRAY_COUNT(buf)];
+
+          program.eval(SK_ARRAY_COUNT(buf), buf, dst);
+                  for (int i = 0; i < (int)SK_ARRAY_COUNT(dst); i++) {
+                      REPORTER_ASSERT(r, dst[i] == want[i]);
+                  }
+    });
+}
+
+DEF_TEST(SkVM_min, r) {
+    skvm::Builder b;
+    {
+        skvm::Arg src1 = b.varying<float>();
+        skvm::Arg src2 = b.varying<float>();
+        skvm::Arg dst = b.varying<float>();
+
+        b.store32(dst, b.bit_cast(b.min(b.bit_cast(b.load32(src1)), b.bit_cast(b.load32(src2)))));
+    }
+
+    test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
+        float s1[]  =  { 0.0f, 1.0f, 4.0f, -1.0f, -1.0f};
+        float s2[]  =  { 0.0f, 2.0f, 3.0f,  1.0f, -2.0f};
+        float want[] = { 0.0f, 1.0f, 3.0f, -1.0f, -2.0f};
+        float d[SK_ARRAY_COUNT(s1)];
+        program.eval(SK_ARRAY_COUNT(d), s1, s2, d);
+        for (int i = 0; i < (int)SK_ARRAY_COUNT(d); i++) {
+          REPORTER_ASSERT(r, d[i] == want[i]);
+        }
+    });
+}
+
+DEF_TEST(SkVM_max, r) {
+    skvm::Builder b;
+    {
+        skvm::Arg src1 = b.varying<float>();
+        skvm::Arg src2 = b.varying<float>();
+        skvm::Arg dst = b.varying<float>();
+
+        b.store32(dst, b.bit_cast(b.max(b.bit_cast(b.load32(src1)), b.bit_cast(b.load32(src2)))));
+    }
+
+    test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
+        float s1[]  =  { 0.0f, 1.0f, 4.0f, -1.0f, -1.0f};
+        float s2[]  =  { 0.0f, 2.0f, 3.0f,  1.0f, -2.0f};
+        float want[] = { 0.0f, 2.0f, 4.0f,  1.0f, -1.0f};
+        float d[SK_ARRAY_COUNT(s1)];
+        program.eval(SK_ARRAY_COUNT(d), s1, s2, d);
+        for (int i = 0; i < (int)SK_ARRAY_COUNT(d); i++) {
+          REPORTER_ASSERT(r, d[i] == want[i]);
+        }
+    });
+}
+
 DEF_TEST(SkVM_hoist, r) {
     // This program uses enough constants that it will fail to JIT if we hoist them.
     // The JIT will try again without hoisting, and that'll just need 2 registers.
@@ -750,7 +892,12 @@ DEF_TEST(SkVM_NewOps, r) {
         SkDebugf("%.*s\n", blob->size(), blob->data());
     }
 
-    test_interpreter_only(r, b.done(), [&](const skvm::Program& program) {
+#if defined(SKVM_LLVM)
+    test_jit_and_interpreter
+#else
+    test_interpreter_only
+#endif
+    (r, b.done(), [&](const skvm::Program& program) {
         const int N = 31;
         int16_t buf[N];
         for (int i = 0; i < N; i++) {
@@ -781,6 +928,32 @@ DEF_TEST(SkVM_NewOps, r) {
             if (i < 2) { x =  0; }  // Notice i == 1 hits x == 0 exactly...
             if (i > 5) { x = 15; }  // ...and i == 6 hits x == 15 exactly
             REPORTER_ASSERT(r, buf[i] == img[x]);
+        }
+    });
+}
+
+DEF_TEST(SkVM_sqrt, r) {
+    skvm::Builder b;
+    auto buf = b.varying<int>();
+    b.store32(buf, b.bit_cast(b.sqrt(b.bit_cast(b.load32(buf)))));
+
+#if defined(SKVM_LLVM) || defined(SK_CPU_X86)
+    test_jit_and_interpreter
+#else
+    test_interpreter_only
+#endif
+    (r, b.done(), [&](const skvm::Program& program) {
+        constexpr int K = 17;
+        float buf[K];
+        for (int i = 0; i < K; i++) {
+            buf[i] = (float)(i*i);
+        }
+
+        // x^2 -> x
+        program.eval(K, buf);
+
+        for (int i = 0; i < K; i++) {
+            REPORTER_ASSERT(r, buf[i] == (float)i);
         }
     });
 }

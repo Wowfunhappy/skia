@@ -19,15 +19,130 @@
 #include "src/gpu/glsl/GrGLSLGeometryProcessor.h"
 #include "src/gpu/glsl/GrGLSLVarying.h"
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
+#include "src/gpu/ops/GrDrawOp.h"
+#include "src/gpu/ops/GrSimpleMeshDrawOpHelper.h"
+
+namespace {
+
+class FillRRectOp : public GrDrawOp {
+public:
+    DEFINE_OP_CLASS_ID
+
+    static std::unique_ptr<GrDrawOp> Make(GrRecordingContext*,
+                                          GrAAType,
+                                          const SkMatrix& viewMatrix,
+                                          const SkRRect&,
+                                          const GrCaps&,
+                                          GrPaint&&);
+
+    const char* name() const final { return "GrFillRRectOp"; }
+
+    FixedFunctionFlags fixedFunctionFlags() const final {
+        return (GrAAType::kMSAA == fAAType) ? FixedFunctionFlags::kUsesHWAA
+                                            : FixedFunctionFlags::kNone;
+    }
+    GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*,
+                                      bool hasMixedSampledCoverage, GrClampType) final;
+    CombineResult onCombineIfPossible(GrOp*, GrRecordingContext::Arenas*, const GrCaps&) final;
+    void visitProxies(const VisitProxyFunc& fn) const override {
+        if (fProgramInfo) {
+            fProgramInfo->visitProxies(fn);
+        } else {
+            fProcessors.visitProxies(fn);
+        }
+    }
+
+    void onPrePrepare(GrRecordingContext*,
+                      const GrSurfaceProxyView* outputView,
+                      GrAppliedClip*,
+                      const GrXferProcessor::DstProxyView&) final;
+
+    void onPrepare(GrOpFlushState*) final;
+
+    void onExecute(GrOpFlushState*, const SkRect& chainBounds) final;
+
+private:
+    enum class Flags {
+        kNone             = 0,
+        kUseHWDerivatives = 1 << 0,
+        kHasPerspective   = 1 << 1,
+        kHasLocalCoords   = 1 << 2,
+        kWideColor        = 1 << 3
+    };
+
+    GR_DECL_BITFIELD_CLASS_OPS_FRIENDS(Flags);
+
+    class Processor;
+
+    FillRRectOp(GrAAType, const SkRRect&, Flags, const SkMatrix& totalShapeMatrix,
+                GrPaint&&, const SkRect& devBounds);
+
+    // These methods are used to append data of various POD types to our internal array of instance
+    // data. The actual layout of the instance buffer can vary from Op to Op.
+    template <typename T> inline T* appendInstanceData(int count) {
+        static_assert(std::is_pod<T>::value, "");
+        static_assert(4 == alignof(T), "");
+        return reinterpret_cast<T*>(fInstanceData.push_back_n(sizeof(T) * count));
+    }
+
+    template <typename T, typename... Args>
+    inline void writeInstanceData(const T& val, const Args&... remainder) {
+        memcpy(this->appendInstanceData<T>(1), &val, sizeof(T));
+        this->writeInstanceData(remainder...);
+    }
+
+    void writeInstanceData() {}  // Halt condition.
+
+    // Create a GrProgramInfo object in the provided arena
+    GrProgramInfo* createProgramInfo(const GrCaps*,
+                                     SkArenaAlloc*,
+                                     const GrSurfaceProxyView* outputView,
+                                     GrAppliedClip&&,
+                                     const GrXferProcessor::DstProxyView&);
+    GrProgramInfo* createProgramInfo(GrOpFlushState* flushState) {
+        return this->createProgramInfo(&flushState->caps(),
+                                       flushState->allocator(),
+                                       flushState->outputView(),
+                                       flushState->detachAppliedClip(),
+                                       flushState->dstProxyView());
+    }
+
+    const GrAAType fAAType;
+    const SkPMColor4f fOriginalColor;
+    const SkRect fLocalRect;
+    Flags fFlags;
+    GrProcessorSet fProcessors;
+
+    SkSTArray<sizeof(float) * 16 * 4, char, /*MEM_MOVE=*/ true> fInstanceData;
+    int fInstanceCount = 1;
+    int fInstanceStride = 0;
+
+    sk_sp<const GrBuffer> fInstanceBuffer;
+    sk_sp<const GrBuffer> fVertexBuffer;
+    sk_sp<const GrBuffer> fIndexBuffer;
+    int fBaseInstance = 0;
+    int fIndexCount = 0;
+
+    // If this op is prePrepared the created programInfo will be stored here for use in
+    // onExecute. In the prePrepared case it will have been stored in the record-time arena.
+    GrProgramInfo* fProgramInfo = nullptr;
+
+    friend class ::GrOpMemoryPool;
+};
+
+GR_MAKE_BITFIELD_CLASS_OPS(FillRRectOp::Flags)
 
 // Hardware derivatives are not always accurate enough for highly elliptical corners. This method
 // checks to make sure the corners will still all look good if we use HW derivatives.
 static bool can_use_hw_derivatives_with_coverage(
         const GrShaderCaps&, const SkMatrix&, const SkRRect&);
 
-std::unique_ptr<GrFillRRectOp> GrFillRRectOp::Make(
-        GrRecordingContext* ctx, GrAAType aaType, const SkMatrix& viewMatrix, const SkRRect& rrect,
-        const GrCaps& caps, GrPaint&& paint) {
+std::unique_ptr<GrDrawOp> FillRRectOp::Make(GrRecordingContext* ctx,
+                                            GrAAType aaType,
+                                            const SkMatrix& viewMatrix,
+                                            const SkRRect& rrect,
+                                            const GrCaps& caps,
+                                            GrPaint&& paint) {
     if (!caps.instanceAttribSupport()) {
         return nullptr;
     }
@@ -91,17 +206,17 @@ std::unique_ptr<GrFillRRectOp> GrFillRRectOp::Make(
     }
 
     GrOpMemoryPool* pool = ctx->priv().opMemoryPool();
-    return pool->allocate<GrFillRRectOp>(aaType, rrect, flags, m, std::move(paint), devBounds);
+    return pool->allocate<FillRRectOp>(aaType, rrect, flags, m, std::move(paint), devBounds);
 }
 
-GrFillRRectOp::GrFillRRectOp(GrAAType aaType, const SkRRect& rrect, Flags flags,
-                             const SkMatrix& totalShapeMatrix, GrPaint&& paint,
-                             const SkRect& devBounds)
+FillRRectOp::FillRRectOp(GrAAType aaType, const SkRRect& rrect, Flags flags,
+                         const SkMatrix& totalShapeMatrix, GrPaint&& paint,
+                         const SkRect& devBounds)
         : GrDrawOp(ClassID())
         , fAAType(aaType)
         , fOriginalColor(paint.getColor4f())
         , fLocalRect(rrect.rect())
-        , fFlags(flags)
+        , fFlags(flags & ~(Flags::kHasLocalCoords | Flags::kWideColor))
         , fProcessors(std::move(paint)) {
     SkASSERT((fFlags & Flags::kHasPerspective) == totalShapeMatrix.hasPerspective());
     this->setBounds(devBounds, GrOp::HasAABloat::kYes, GrOp::IsHairline::kNo);
@@ -128,7 +243,7 @@ GrFillRRectOp::GrFillRRectOp(GrAAType aaType, const SkRRect& rrect, Flags flags,
     // We will write the color and local rect attribs during finalize().
 }
 
-GrProcessorSet::Analysis GrFillRRectOp::finalize(
+GrProcessorSet::Analysis FillRRectOp::finalize(
         const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
         GrClampType clampType) {
     SkASSERT(1 == fInstanceCount);
@@ -157,9 +272,10 @@ GrProcessorSet::Analysis GrFillRRectOp::finalize(
     return analysis;
 }
 
-GrDrawOp::CombineResult GrFillRRectOp::onCombineIfPossible(GrOp* op, GrRecordingContext::Arenas*,
-                                                           const GrCaps&) {
-    const auto& that = *op->cast<GrFillRRectOp>();
+GrDrawOp::CombineResult FillRRectOp::onCombineIfPossible(GrOp* op,
+                                                         GrRecordingContext::Arenas*,
+                                                         const GrCaps&) {
+    const auto& that = *op->cast<FillRRectOp>();
     if (fFlags != that.fFlags || fProcessors != that.fProcessors ||
         fInstanceData.count() > std::numeric_limits<int>::max() - that.fInstanceData.count()) {
         return CombineResult::kCannotCombine;
@@ -171,7 +287,7 @@ GrDrawOp::CombineResult GrFillRRectOp::onCombineIfPossible(GrOp* op, GrRecording
     return CombineResult::kMerged;
 }
 
-class GrFillRRectOp::Processor : public GrGeometryProcessor {
+class FillRRectOp::Processor : public GrGeometryProcessor {
 public:
     static GrGeometryProcessor* Make(SkArenaAlloc* arena, GrAAType aaType, Flags flags) {
         return arena->make<Processor>(aaType, flags);
@@ -239,7 +355,7 @@ private:
     typedef GrGeometryProcessor INHERITED;
 };
 
-constexpr GrPrimitiveProcessor::Attribute GrFillRRectOp::Processor::kVertexAttribs[];
+constexpr GrPrimitiveProcessor::Attribute FillRRectOp::Processor::kVertexAttribs[];
 
 // Our coverage geometry consists of an inset octagon with solid coverage, surrounded by linear
 // coverage ramps on the horizontal and vertical edges, and "arc coverage" pieces on the diagonal
@@ -448,10 +564,10 @@ static constexpr uint16_t kMSAAIndexData[] = {
 
 GR_DECLARE_STATIC_UNIQUE_KEY(gMSAAIndexBufferKey);
 
-void GrFillRRectOp::onPrePrepare(GrRecordingContext* context,
-                                 const GrSurfaceProxyView* dstView,
-                                 GrAppliedClip* clip,
-                                 const GrXferProcessor::DstProxyView& dstProxyView) {
+void FillRRectOp::onPrePrepare(GrRecordingContext* context,
+                               const GrSurfaceProxyView* outputView,
+                               GrAppliedClip* clip,
+                               const GrXferProcessor::DstProxyView& dstProxyView) {
     SkArenaAlloc* arena = context->priv().recordTimeAllocator();
 
     // This is equivalent to a GrOpFlushState::detachAppliedClip
@@ -460,14 +576,15 @@ void GrFillRRectOp::onPrePrepare(GrRecordingContext* context,
     // TODO: it would be cool if, right here, we created both the program info and desc
     // in the record-time arena. Then, if the program info had already been seen, we could
     // get pointers back to the prior versions and be able to return the allocated space
-    // back to the arena.
-    fProgramInfo = this->createProgramInfo(context->priv().caps(), arena, dstView,
+    // back to the arena. Note that this would require separating the portions of the
+    // ProgramInfo that represent state from those that are just definitional.
+    fProgramInfo = this->createProgramInfo(context->priv().caps(), arena, outputView,
                                            std::move(appliedClip), dstProxyView);
 
     context->priv().recordProgramInfo(fProgramInfo);
 }
 
-void GrFillRRectOp::onPrepare(GrOpFlushState* flushState) {
+void FillRRectOp::onPrepare(GrOpFlushState* flushState) {
     if (void* instanceData = flushState->makeVertexSpace(fInstanceStride, fInstanceCount,
                                                          &fInstanceBuffer, &fBaseInstance)) {
         SkASSERT(fInstanceStride * fInstanceCount == fInstanceData.count());
@@ -505,7 +622,7 @@ void GrFillRRectOp::onPrepare(GrOpFlushState* flushState) {
     }
 }
 
-class GrFillRRectOp::Processor::CoverageImpl : public GrGLSLGeometryProcessor {
+class FillRRectOp::Processor::CoverageImpl : public GrGLSLGeometryProcessor {
     void onEmitCode(EmitArgs& args, GrGPArgs* gpArgs) override {
         const auto& proc = args.fGP.cast<Processor>();
         bool useHWDerivatives = (proc.fFlags & Flags::kUseHWDerivatives);
@@ -642,7 +759,7 @@ class GrFillRRectOp::Processor::CoverageImpl : public GrGLSLGeometryProcessor {
 };
 
 
-class GrFillRRectOp::Processor::MSAAImpl : public GrGLSLGeometryProcessor {
+class FillRRectOp::Processor::MSAAImpl : public GrGLSLGeometryProcessor {
     void onEmitCode(EmitArgs& args, GrGPArgs* gpArgs) override {
         const auto& proc = args.fGP.cast<Processor>();
         bool useHWDerivatives = (proc.fFlags & Flags::kUseHWDerivatives);
@@ -747,7 +864,7 @@ class GrFillRRectOp::Processor::MSAAImpl : public GrGLSLGeometryProcessor {
     }
 };
 
-GrGLSLPrimitiveProcessor* GrFillRRectOp::Processor::createGLSLInstance(
+GrGLSLPrimitiveProcessor* FillRRectOp::Processor::createGLSLInstance(
         const GrShaderCaps&) const {
     if (GrAAType::kCoverage != fAAType) {
         return new MSAAImpl();
@@ -755,58 +872,32 @@ GrGLSLPrimitiveProcessor* GrFillRRectOp::Processor::createGLSLInstance(
     return new CoverageImpl();
 }
 
-GrProgramInfo* GrFillRRectOp::createProgramInfo(const GrCaps* caps,
-                                                SkArenaAlloc* arena,
-                                                const GrSurfaceProxyView* dstView,
-                                                GrAppliedClip&& appliedClip,
-                                                const GrXferProcessor::DstProxyView& dstProxyView) {
-    GrGeometryProcessor* geomProc = Processor::Make(arena, fAAType, fFlags);
-    SkASSERT(geomProc->instanceStride() == (size_t)fInstanceStride);
+GrProgramInfo* FillRRectOp::createProgramInfo(const GrCaps* caps,
+                                              SkArenaAlloc* arena,
+                                              const GrSurfaceProxyView* outputView,
+                                              GrAppliedClip&& appliedClip,
+                                              const GrXferProcessor::DstProxyView& dstProxyView) {
+    GrGeometryProcessor* gp = Processor::Make(arena, fAAType, fFlags);
+    SkASSERT(gp->instanceStride() == (size_t)fInstanceStride);
 
-    GrPipeline::InitArgs initArgs;
+    GrPipeline::InputFlags flags = GrPipeline::InputFlags::kNone;
     if (GrAAType::kMSAA == fAAType) {
-        initArgs.fInputFlags = GrPipeline::InputFlags::kHWAntialias;
-    }
-    initArgs.fCaps = caps;
-    initArgs.fDstProxyView = dstProxyView;
-    initArgs.fOutputSwizzle = dstView->swizzle();
-
-    GrPipeline::FixedDynamicState* fixedDynamicState = nullptr;
-
-    if (appliedClip.scissorState().enabled()) {
-        fixedDynamicState = arena->make<GrPipeline::FixedDynamicState>(
-                                                        appliedClip.scissorState().rect());
+        flags = GrPipeline::InputFlags::kHWAntialias;
     }
 
-    GrPipeline* pipeline = arena->make<GrPipeline>(initArgs,
-                                                   std::move(fProcessors),
-                                                   std::move(appliedClip));
-
-    GrRenderTargetProxy* dstProxy = dstView->asRenderTargetProxy();
-    return arena->make<GrProgramInfo>(dstProxy->numSamples(),
-                                      dstProxy->numStencilSamples(),
-                                      dstProxy->backendFormat(),
-                                      dstView->origin(),
-                                      pipeline,
-                                      geomProc,
-                                      fixedDynamicState,
-                                      nullptr, 0,
-                                      GrPrimitiveType::kTriangles);
+    return GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps, arena, outputView,
+                                                       std::move(appliedClip), dstProxyView,
+                                                       gp, std::move(fProcessors),
+                                                       GrPrimitiveType::kTriangles, flags);
 }
 
-void GrFillRRectOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) {
+void FillRRectOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) {
     if (!fInstanceBuffer || !fIndexBuffer || !fVertexBuffer) {
         return;  // Setup failed.
     }
 
     if (!fProgramInfo) {
-        const GrSurfaceProxyView* dstView = flushState->view();
-
-        fProgramInfo = this->createProgramInfo(&flushState->caps(),
-                                               flushState->allocator(),
-                                               dstView,
-                                               flushState->detachAppliedClip(),
-                                               flushState->dstProxyView());
+        fProgramInfo = this->createProgramInfo(flushState);
     }
 
     GrMesh* mesh = flushState->allocator()->make<GrMesh>();
@@ -876,3 +967,46 @@ static bool can_use_hw_derivatives_with_coverage(
     }
     SK_ABORT("Invalid round rect type.");
 }
+
+} // anonymous namespace
+
+
+std::unique_ptr<GrDrawOp> GrFillRRectOp::Make(GrRecordingContext* ctx,
+                                              GrAAType aaType,
+                                              const SkMatrix& viewMatrix,
+                                              const SkRRect& rrect,
+                                              const GrCaps& caps,
+                                              GrPaint&& paint) {
+    return FillRRectOp::Make(ctx, aaType, viewMatrix, rrect, caps, std::move(paint));
+}
+
+#if GR_TEST_UTILS
+
+#include "src/gpu/GrDrawOpTest.h"
+
+GR_DRAW_OP_TEST_DEFINE(FillRRectOp) {
+    const GrCaps* caps = context->priv().caps();
+
+    SkMatrix viewMatrix = GrTest::TestMatrix(random);
+    GrAAType aaType = GrAAType::kNone;
+    if (random->nextBool()) {
+        aaType = (numSamples > 1) ? GrAAType::kMSAA : GrAAType::kCoverage;
+    }
+
+    SkRect rect = GrTest::TestRect(random);
+    float w = rect.width();
+    float h = rect.height();
+
+    SkRRect rrect;
+    // TODO: test out other rrect configurations
+    rrect.setNinePatch(rect, w / 3.0f, h / 4.0f, w / 5.0f, h / 6.0);
+
+    return GrFillRRectOp::Make(context,
+                               aaType,
+                               viewMatrix,
+                               rrect,
+                               *caps,
+                               std::move(paint));
+}
+
+#endif

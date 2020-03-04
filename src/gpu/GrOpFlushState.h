@@ -71,7 +71,7 @@ public:
         GrSwizzle outputSwizzle() const { return fSurfaceView->swizzle(); }
 
         GrOp* op() { return fOp; }
-        const GrSurfaceProxyView* view() const { return fSurfaceView; }
+        const GrSurfaceProxyView* outputView() const { return fSurfaceView; }
         GrRenderTargetProxy* proxy() const { return fRenderTargetProxy; }
         GrAppliedClip* appliedClip() { return fAppliedClip; }
         const GrAppliedClip* appliedClip() const { return fAppliedClip; }
@@ -115,9 +115,12 @@ public:
     GrDeferredUploadToken addASAPUpload(GrDeferredTextureUploadFn&&) final;
 
     /** Overrides of GrMeshDrawOp::Target. */
-    void recordDraw(const GrGeometryProcessor*, const GrMesh[], int meshCnt,
+    void recordDraw(const GrGeometryProcessor*,
+                    const GrMesh[],
+                    int meshCnt,
                     const GrPipeline::FixedDynamicState*,
-                    const GrPipeline::DynamicStateArrays*, GrPrimitiveType) final;
+                    const GrPipeline::DynamicStateArrays*,
+                    GrPrimitiveType) final;
     void* makeVertexSpace(size_t vertexSize, int vertexCount, sk_sp<const GrBuffer>*,
                           int* startVertex) final;
     uint16_t* makeIndexSpace(int indexCount, sk_sp<const GrBuffer>*, int* startIndex) final;
@@ -129,7 +132,7 @@ public:
                                     int* actualIndexCount) final;
     void putBackIndices(int indexCount) final;
     void putBackVertices(int vertices, size_t vertexStride) final;
-    const GrSurfaceProxyView* view() const { return this->drawOpArgs().view(); }
+    const GrSurfaceProxyView* outputView() const final { return this->drawOpArgs().outputView(); }
     GrRenderTargetProxy* proxy() const final { return this->drawOpArgs().proxy(); }
     const GrAppliedClip* appliedClip() const final { return this->drawOpArgs().appliedClip(); }
     GrAppliedClip detachAppliedClip() final;

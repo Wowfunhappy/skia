@@ -34,22 +34,22 @@ public:
     int numDraws() const { return fNumDraws; }
 
 private:
-    bool onBindPipeline(const GrProgramInfo&, const SkRect&) override {
-        return true;
-    }
+    bool onBindPipeline(const GrProgramInfo&, const SkRect&) override { return true; }
     void onSetScissorRect(const SkIRect&) override {}
     bool onBindTextures(const GrPrimitiveProcessor&, const GrPipeline&,
-                        const GrSurfaceProxy* const primProcTextures[]) override {
-        return true;
-    }
-    void onDrawMesh(GrPrimitiveType, const GrMesh&) override {
+                        const GrSurfaceProxy* const primProcTextures[]) override { return true; }
+    void onBindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
+                       const GrBuffer* vertexBuffer, GrPrimitiveRestart) override {}
+    void onDraw(int, int) override { this->dummyDraw(); }
+    void onDrawIndexed(int, int, uint16_t, uint16_t, int) override { this->dummyDraw(); }
+    void onDrawInstanced(int, int, int, int) override { this->dummyDraw(); }
+    void onDrawIndexedInstanced(int, int, int, int, int) override { this->dummyDraw(); }
+    void onClear(const GrFixedClip&, const SkPMColor4f&) override { this->markRenderTargetDirty(); }
+    void onClearStencilClip(const GrFixedClip&, bool insideStencilMask) override {}
+    void dummyDraw() {
         this->markRenderTargetDirty();
         ++fNumDraws;
     }
-    void onClear(const GrFixedClip&, const SkPMColor4f&) override {
-        this->markRenderTargetDirty();
-    }
-    void onClearStencilClip(const GrFixedClip&, bool insideStencilMask) override {}
     void markRenderTargetDirty() {
         if (auto* tex = fRenderTarget->asTexture()) {
             tex->texturePriv().markMipMapsDirty();

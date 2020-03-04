@@ -14,24 +14,19 @@
 /** This class manages the conversion of SW-backed bitmaps to GrTextures. If the input bitmap is
     non-volatile the texture is cached using a key created from the pixels' image id and the
     subset of the pixelref specified by the bitmap. */
-class GrBitmapTextureMaker : public GrTextureMaker {
+class GrBitmapTextureMaker final : public GrTextureMaker {
 public:
     enum class Cached { kNo, kYes };
 
     GrBitmapTextureMaker(GrRecordingContext* context, const SkBitmap& bitmap,
-                         Cached cached = Cached::kNo, SkBackingFit = SkBackingFit::kExact,
-                         bool useDecal = false);
+                         Cached cached = Cached::kNo, SkBackingFit = SkBackingFit::kExact);
 
 private:
-    GrSurfaceProxyView refOriginalTextureProxyView(bool willBeMipped,
-                                                   AllowedTexGenType onlyIfFast) override;
-
-    void makeCopyKey(const CopyParams& copyParams, GrUniqueKey* copyKey) override;
-    void didCacheCopy(const GrUniqueKey& copyKey, uint32_t contextUniqueID) override;
+    GrSurfaceProxyView refOriginalTextureProxyView(GrMipMapped) override;
 
     const SkBitmap     fBitmap;
     const SkBackingFit fFit;
-    GrUniqueKey        fOriginalKey;
+    GrUniqueKey        fKey;
 
     typedef GrTextureMaker INHERITED;
 };

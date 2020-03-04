@@ -10,6 +10,7 @@
 
 #include "src/gpu/GrBuffer.h"
 #include "src/gpu/GrGpuBuffer.h"
+#include "src/gpu/GrOpsRenderPass.h"
 
 class GrPrimitiveProcessor;
 
@@ -57,23 +58,7 @@ public:
 
     void setVertexData(sk_sp<const GrBuffer> vertexBuffer, int baseVertex = 0);
 
-    class SendToGpuImpl {
-    public:
-        virtual void sendArrayMeshToGpu(GrPrimitiveType, const GrMesh&, int vertexCount,
-                                        int baseVertex) = 0;
-        virtual void sendIndexedMeshToGpu(GrPrimitiveType, const GrMesh&, int indexCount,
-                                          int baseIndex, uint16_t minIndexValue,
-                                          uint16_t maxIndexValue, int baseVertex) = 0;
-        virtual void sendInstancedMeshToGpu(GrPrimitiveType, const GrMesh&, int vertexCount,
-                                            int baseVertex, int instanceCount,
-                                            int baseInstance) = 0;
-        virtual void sendIndexedInstancedMeshToGpu(GrPrimitiveType, const GrMesh&, int indexCount,
-                                                   int baseIndex, int baseVertex, int instanceCount,
-                                                   int baseInstance) = 0;
-        virtual ~SendToGpuImpl() {}
-    };
-
-    void sendToGpu(GrPrimitiveType, SendToGpuImpl*) const;
+    void draw(GrOpsRenderPass*) const;
 
 private:
     enum class Flags : uint8_t {
@@ -212,30 +197,34 @@ inline void GrMesh::setVertexData(sk_sp<const GrBuffer> vertexBuffer, int baseVe
     fBaseVertex = baseVertex;
 }
 
-inline void GrMesh::sendToGpu(GrPrimitiveType primitiveType, SendToGpuImpl* impl) const {
+inline void GrMesh::draw(GrOpsRenderPass* opsRenderPass) const {
     if (this->isInstanced()) {
         if (!this->isIndexed()) {
-            impl->sendInstancedMeshToGpu(primitiveType, *this, fInstanceNonIndexData.fVertexCount,
-                                         fBaseVertex, fInstanceData.fInstanceCount,
-                                         fInstanceData.fBaseInstance);
+            opsRenderPass->bindBuffers(nullptr, fInstanceBuffer.get(),  fVertexBuffer.get());
+            opsRenderPass->drawInstanced(fInstanceData.fInstanceCount, fInstanceData.fBaseInstance,
+                                         fInstanceNonIndexData.fVertexCount, fBaseVertex);
         } else {
-            impl->sendIndexedInstancedMeshToGpu(
-                    primitiveType, *this, fInstanceIndexData.fIndexCount, 0, fBaseVertex,
-                    fInstanceData.fInstanceCount, fInstanceData.fBaseInstance);
+            opsRenderPass->bindBuffers(fIndexBuffer.get(), fInstanceBuffer.get(),
+                                       fVertexBuffer.get(), this->primitiveRestart());
+            opsRenderPass->drawIndexedInstanced(
+                    fInstanceIndexData.fIndexCount, 0, fInstanceData.fInstanceCount,
+                    fInstanceData.fBaseInstance, fBaseVertex);
         }
         return;
     }
 
     if (!this->isIndexed()) {
         SkASSERT(fNonIndexNonInstanceData.fVertexCount > 0);
-        impl->sendArrayMeshToGpu(primitiveType, *this, fNonIndexNonInstanceData.fVertexCount,
-                                 fBaseVertex);
+        opsRenderPass->bindBuffers(nullptr, nullptr, fVertexBuffer.get());
+        opsRenderPass->draw(fNonIndexNonInstanceData.fVertexCount, fBaseVertex);
         return;
     }
 
+    opsRenderPass->bindBuffers(fIndexBuffer.get(), nullptr, fVertexBuffer.get(),
+                               this->primitiveRestart());
+
     if (0 == fIndexData.fPatternRepeatCount) {
-        impl->sendIndexedMeshToGpu(primitiveType, *this, fIndexData.fIndexCount,
-                                   fNonPatternIndexData.fBaseIndex,
+        opsRenderPass->drawIndexed(fIndexData.fIndexCount, fNonPatternIndexData.fBaseIndex,
                                    fNonPatternIndexData.fMinIndexValue,
                                    fNonPatternIndexData.fMaxIndexValue, fBaseVertex);
         return;
@@ -251,8 +240,7 @@ inline void GrMesh::sendToGpu(GrPrimitiveType primitiveType, SendToGpuImpl* impl
         int minIndexValue = 0;
         int maxIndexValue = fPatternData.fVertexCount * repeatCount - 1;
         SkASSERT(!(fFlags & Flags::kUsePrimitiveRestart));
-        impl->sendIndexedMeshToGpu(primitiveType, *this, indexCount, 0, minIndexValue,
-                                   maxIndexValue,
+        opsRenderPass->drawIndexed(indexCount, 0, minIndexValue, maxIndexValue,
                                    fBaseVertex + fPatternData.fVertexCount * baseRepetition);
         baseRepetition += repeatCount;
     } while (baseRepetition < fIndexData.fPatternRepeatCount);

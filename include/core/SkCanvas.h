@@ -2240,41 +2240,11 @@ public:
     */
     void drawVertices(const sk_sp<SkVertices>& vertices, SkBlendMode mode, const SkPaint& paint);
 
-    /** Draws SkVertices vertices, a triangle mesh, using clip and SkMatrix. Bone data is used to
-        deform vertices with bone weights.
-        If vertices texs and vertices colors are defined in vertices, and SkPaint paint
-        contains SkShader, SkBlendMode mode combines vertices colors with SkShader.
-        The first element of bones should be an object to world space transformation matrix that
-        will be applied before performing mesh deformations. If no such transformation is needed,
-        it should be the identity matrix.
-        boneCount must be at most 80, and thus the size of bones should be at most 80.
-
-        @param vertices   triangle mesh to draw
-        @param bones      bone matrix data
-        @param boneCount  number of bone matrices
-        @param mode       combines vertices colors with SkShader, if both are present
-        @param paint      specifies the SkShader, used as SkVertices texture, may be nullptr
-    */
-    void drawVertices(const SkVertices* vertices, const SkVertices::Bone bones[], int boneCount,
-                      SkBlendMode mode, const SkPaint& paint);
-
-    /** Draws SkVertices vertices, a triangle mesh, using clip and SkMatrix. Bone data is used to
-        deform vertices with bone weights.
-        If vertices texs and vertices colors are defined in vertices, and SkPaint paint
-        contains SkShader, SkBlendMode mode combines vertices colors with SkShader.
-        The first element of bones should be an object to world space transformation matrix that
-        will be applied before performing mesh deformations. If no such transformation is needed,
-        it should be the identity matrix.
-        boneCount must be at most 80, and thus the size of bones should be at most 80.
-
-        @param vertices   triangle mesh to draw
-        @param bones      bone matrix data
-        @param boneCount  number of bone matrices
-        @param mode       combines vertices colors with SkShader, if both are present
-        @param paint      specifies the SkShader, used as SkVertices texture, may be nullptr
-    */
-    void drawVertices(const sk_sp<SkVertices>& vertices, const SkVertices::Bone bones[],
-                      int boneCount, SkBlendMode mode, const SkPaint& paint);
+    // DO NOT CALL -- staging for removal from Android
+    void drawVertices(const sk_sp<SkVertices>& vertices, const SkVertices::Bone[], int,
+                      SkBlendMode mode, const SkPaint& paint) {
+        this->drawVertices(vertices, mode, paint);
+    }
 
     /** Draws a Coons patch: the interpolation of four cubics with shared corners,
         associating a color, and optionally a texture SkPoint, with each corner.
@@ -2613,14 +2583,17 @@ protected:
     virtual void onDrawPoints(PointMode mode, size_t count, const SkPoint pts[],
                               const SkPaint& paint);
 
-    // TODO: Remove old signature
+#ifdef SK_SUPPORT_LEGACY_DRAWVERTS_VIRTUAL
     virtual void onDrawVerticesObject(const SkVertices* vertices, SkBlendMode mode,
                                       const SkPaint& paint) {
         this->onDrawVerticesObject(vertices, nullptr, 0, mode, paint);
     }
     virtual void onDrawVerticesObject(const SkVertices* vertices, const SkVertices::Bone bones[],
                                       int boneCount, SkBlendMode mode, const SkPaint& paint);
-
+#else
+    virtual void onDrawVerticesObject(const SkVertices* vertices, SkBlendMode mode,
+                                      const SkPaint& paint);
+#endif
     virtual void onDrawImage(const SkImage* image, SkScalar dx, SkScalar dy, const SkPaint* paint);
     virtual void onDrawImageRect(const SkImage* image, const SkRect* src, const SkRect& dst,
                                  const SkPaint* paint, SrcRectConstraint constraint);
@@ -2712,6 +2685,7 @@ private:
         intptr_t          fStorage[32];
         class SkDrawIter* fImpl;    // this points at fStorage
         SkPaint           fDefaultPaint;
+        SkIPoint          fDeviceOrigin;
         bool              fDone;
     };
 
@@ -2842,7 +2816,7 @@ private:
     void internalDrawPaint(const SkPaint& paint);
     void internalSaveLayer(const SaveLayerRec&, SaveLayerStrategy);
     void internalSaveBehind(const SkRect*);
-    void internalDrawDevice(SkBaseDevice*, int x, int y, const SkPaint*, SkImage* clipImage,
+    void internalDrawDevice(SkBaseDevice*, const SkPaint*, SkImage* clipImage,
                             const SkMatrix& clipMatrix);
 
     // shared by save() and saveLayer()

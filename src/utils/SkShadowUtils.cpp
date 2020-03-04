@@ -5,6 +5,8 @@
 * found in the LICENSE file.
 */
 
+#include "include/utils/SkShadowUtils.h"
+
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkMaskFilter.h"
@@ -12,8 +14,8 @@
 #include "include/core/SkString.h"
 #include "include/core/SkVertices.h"
 #include "include/private/SkColorData.h"
+#include "include/private/SkIDChangeListener.h"
 #include "include/utils/SkRandom.h"
-#include "include/utils/SkShadowUtils.h"
 #include "src/core/SkBlurMask.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkDrawShadowInfo.h"
@@ -381,7 +383,7 @@ private:
 static void* kNamespace;
 
 // When the SkPathRef genID changes, invalidate a corresponding GrResource described by key.
-class ShadowInvalidator : public SkPathRef::GenIDChangeListener {
+class ShadowInvalidator : public SkIDChangeListener {
 public:
     ShadowInvalidator(const SkResourceCache::Key& key) {
         fKey.reset(new uint8_t[key.size()]);
@@ -398,7 +400,7 @@ private:
         return false;
     }
 
-    void onChange() override {
+    void changed() override {
         SkResourceCache::Find(this->getKey(), ShadowInvalidator::FindVisitor, nullptr);
     }
 
@@ -576,7 +578,7 @@ void SkBaseDevice::drawShadow(const SkPath& path, const SkDrawShadowRec& rec) {
                     hasPerspective ? SkMatrix::I()
                                    : SkMatrix::Concat(this->localToDevice(),
                                                       SkMatrix::MakeTrans(tx, ty)));
-            this->drawVertices(vertices, nullptr, 0, mode, paint);
+            this->drawVertices(vertices, mode, paint);
         }
     };
 
@@ -611,7 +613,7 @@ void SkBaseDevice::drawShadow(const SkPath& path, const SkDrawShadowRec& rec) {
                     SkColorFilters::Blend(rec.fAmbientColor,
                                                   SkBlendMode::kModulate)->makeComposed(
                                                                    SkGaussianColorFilter::Make()));
-                this->drawVertices(vertices.get(), nullptr, 0, SkBlendMode::kModulate, paint);
+                this->drawVertices(vertices.get(), SkBlendMode::kModulate, paint);
                 success = true;
             }
         }
@@ -692,7 +694,7 @@ void SkBaseDevice::drawShadow(const SkPath& path, const SkDrawShadowRec& rec) {
                     SkColorFilters::Blend(rec.fSpotColor,
                                                   SkBlendMode::kModulate)->makeComposed(
                                                       SkGaussianColorFilter::Make()));
-                this->drawVertices(vertices.get(), nullptr, 0, SkBlendMode::kModulate, paint);
+                this->drawVertices(vertices.get(), SkBlendMode::kModulate, paint);
                 success = true;
             }
         }

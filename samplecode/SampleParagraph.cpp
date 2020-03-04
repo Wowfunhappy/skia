@@ -2189,7 +2189,7 @@ protected:
 
     void onDrawContent(SkCanvas* canvas) override {
 
-        const char* text = "去了 qw 其 er 他的 事实 证明自己";
+        auto text = u"\U0001f600\U0001f601\U0001f602\U0001f923\U0001f603\U0001f604\U0001f605\U0001f606\U0001f609\U0001f60a\U0001f60b\U0001f60e\U0001f60d\U0001f618\U0001f970\U0001f617\U0001f619\U0001f61a\u263A\uFE0F\U0001f642\U0001f917";
         canvas->drawColor(SK_ColorWHITE);
 
         auto fontCollection = sk_make_sp<FontCollection>();
@@ -2206,29 +2206,26 @@ protected:
         builder.addText(text);
         auto paragraph = builder.Build();
         paragraph->layout(width());
-        paragraph->paint(canvas, 0, 0);
 
-        for (size_t i = 0; i < strlen(text) - 1; ++i) {
 
+        SkColor colors[] = {
+            SK_ColorRED,
+            SK_ColorGREEN,
+            SK_ColorBLUE,
+            SK_ColorMAGENTA,
+            SK_ColorYELLOW
+        };
+        SkPaint paint;
+        for (size_t i = 0; i < 42; ++i) {
             auto result = paragraph->getRectsForRange(i, i + 1, RectHeightStyle::kTight, RectWidthStyle::kTight);
-            SkDebugf("[%d:%d):\n", i, i+1);
-            for (auto& r : result) {
-                SkDebugf("rect: [%f:%f] %s\n",
-                r.rect.fLeft, r.rect.fRight, r.direction == TextDirection::kRtl ? "rtl" : "ltr");
-
-                auto pos = paragraph->getGlyphPositionAtCoordinate(
-                        r.rect.fLeft + r.rect.width() / 2, r.rect.fTop + r.rect.height());
-                SkDebugf("pos: %d(%s)\n",
-                        pos.position, pos.affinity == Affinity::kUpstream ? "up" : "down");
-
-                auto word = paragraph->getWordBoundary(pos.position);
-                SkDebugf("word: [%d:%d)\n", word.start, word.end);
-
-                if (i < word.start || i >= word.end) {
-                    SkDebugf("Wrong!\n");
-                }
+            if (result.empty()) {
+                continue;
             }
+            auto rect = result[0].rect;
+            paint.setColor(colors[i % 5]);
+            canvas->drawRect(rect, paint);
         }
+        paragraph->paint(canvas, 0, 0);
     }
 
 private:
@@ -2241,7 +2238,6 @@ protected:
 
     void onDrawContent(SkCanvas* canvas) override {
 
-        auto text = u"A\u05D0";
         canvas->drawColor(SK_ColorWHITE);
 
         auto fontCollection = sk_make_sp<FontCollection>();
@@ -2253,24 +2249,202 @@ protected:
         TextStyle text_style;
         text_style.setColor(SK_ColorBLACK);
         text_style.setFontFamilies({SkString("Roboto")});
-        text_style.setFontSize(60);
+        text_style.setFontSize(40);
         builder.pushStyle(text_style);
-        builder.addText(text);
+        auto s = u"েن েূথ";
+        builder.addText(s);
         auto paragraph = builder.Build();
         paragraph->layout(width());
         paragraph->paint(canvas, 0, 0);
-
-        for (auto i = 0; i < 3; ++i) {
-            auto word = paragraph->getWordBoundary(i);
-            SkDebugf("word @%d: [%d:%d)\n", i, word.start, word.end);
-        }
     }
 
 private:
     typedef Sample INHERITED;
 };
 
-//
+class ParagraphView32 : public ParagraphView_Base {
+protected:
+    SkString name() override { return SkString("Paragraph32"); }
+
+    void onDrawContent(SkCanvas* canvas) override {
+
+        canvas->drawColor(SK_ColorWHITE);
+
+        auto fontCollection = sk_make_sp<FontCollection>();
+        fontCollection->setDefaultFontManager(SkFontMgr::RefDefault());
+        fontCollection->enableFontFallback();
+
+        ParagraphStyle paragraph_style;
+        ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+        TextStyle text_style;
+        text_style.setColor(SK_ColorBLACK);
+        text_style.setFontFamilies({SkString("Roboto")});
+        text_style.setFontSize(40);
+        text_style.setLocale(SkString("ko"));
+        builder.pushStyle(text_style);
+        builder.addText(u"\u904d ko ");
+        text_style.setLocale(SkString("zh_Hant"));
+        builder.pushStyle(text_style);
+        builder.addText(u"\u904d zh-Hant ");
+        text_style.setLocale(SkString("zh_Hans"));
+        builder.pushStyle(text_style);
+        builder.addText(u"\u904d zh-Hans ");
+        text_style.setLocale(SkString("zh_HK"));
+        builder.pushStyle(text_style);
+        builder.addText(u"\u904d zh-HK ");
+        auto paragraph = builder.Build();
+        paragraph->layout(width());
+        paragraph->paint(canvas, 0, 0);
+    }
+
+private:
+    typedef Sample INHERITED;
+};
+
+class ParagraphView33 : public ParagraphView_Base {
+protected:
+    SkString name() override { return SkString("Paragraph33"); }
+
+    void onDrawContent(SkCanvas* canvas) override {
+
+        canvas->drawColor(SK_ColorWHITE);
+
+        auto fontCollection = sk_make_sp<FontCollection>();
+        fontCollection->setDefaultFontManager(SkFontMgr::RefDefault());
+        fontCollection->enableFontFallback();
+
+        ParagraphStyle paragraph_style;
+        paragraph_style.setTextAlign(TextAlign::kJustify);
+        ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+        TextStyle text_style;
+        text_style.setColor(SK_ColorBLACK);
+        text_style.setFontFamilies({SkString("Roboto"), SkString("Noto Color Emoji")});
+        text_style.setFontSize(36);
+        builder.pushStyle(text_style);
+        builder.addText(u"AAAAA \U0001f600 BBBBB CCCCC DDDDD EEEEE");
+        auto paragraph = builder.Build();
+        paragraph->layout(width() / 2);
+        SkPaint paint;
+        paint.setColor(SK_ColorLTGRAY);
+        canvas->drawRect(SkRect::MakeXYWH(0, 0, width()/2, paragraph->getHeight()), paint);
+        paragraph->paint(canvas, 0, 0);
+    }
+
+private:
+    typedef Sample INHERITED;
+};
+
+class ParagraphView34 : public ParagraphView_Base {
+protected:
+    SkString name() override { return SkString("Paragraph34"); }
+
+    void onDrawContent(SkCanvas* canvas) override {
+
+        canvas->drawColor(SK_ColorWHITE);
+        auto text = "ضخمة ص ،😁😂🤣ضضض ؤ،،😗😗😍😋شسي،😗😁😁ؤرى،😗😃😄😍ببب،🥰😅🥰🥰🥰ثيلااتن";
+        //auto text = "ى،😗😃😄😍بب";
+        //auto text1 = "World domination is such an ugly phrase - I prefer to call it world optimisation";
+        auto fontCollection = sk_make_sp<FontCollection>();
+        fontCollection->setDefaultFontManager(SkFontMgr::RefDefault());
+        fontCollection->enableFontFallback();
+
+        ParagraphStyle paragraph_style;
+        ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+        TextStyle text_style;
+        text_style.setColor(SK_ColorBLACK);
+        text_style.setFontFamilies({SkString("Noto Color Emoji")});
+        text_style.setFontSize(50);
+        builder.pushStyle(text_style);
+        builder.addText(text);
+        auto paragraph = builder.Build();
+        paragraph->layout(1041); // 1041
+
+        SkColor colors[] = {SK_ColorBLUE, SK_ColorCYAN,  SK_ColorLTGRAY, SK_ColorGREEN,
+                            SK_ColorRED,  SK_ColorWHITE, SK_ColorYELLOW, SK_ColorMAGENTA };
+        SkPaint paint;
+        size_t wordPos = 0;
+        size_t index = 0;
+        while (wordPos < 72) {
+            auto res2 = paragraph->getWordBoundary(wordPos);
+            if (res2.width() == 0) {
+                break;
+            }
+            wordPos = res2.end;
+            auto res3 = paragraph->getRectsForRange(
+                    res2.start, res2.end,
+                    RectHeightStyle::kTight, RectWidthStyle::kTight);
+            paint.setColor(colors[index % 8]);
+            ++index;
+            if (!res3.empty()) {
+                canvas->drawRect(res3[0].rect, paint);
+            }
+        }
+        paragraph->paint(canvas, 0, 0);
+    }
+
+private:
+    typedef Sample INHERITED;
+};
+
+class ParagraphView35 : public ParagraphView_Base {
+protected:
+    SkString name() override { return SkString("Paragraph35"); }
+
+    Click* onFindClickHandler(SkScalar x, SkScalar y, skui::ModifierKey modi) override {
+        return new Click;
+    }
+
+    bool onClick(Click* click) override {
+        fPoint = click->fCurr;
+        return true;
+    }
+
+    void onDrawContent(SkCanvas* canvas) override {
+
+        canvas->drawColor(SK_ColorWHITE);
+
+        auto text = u"hzbzzj sjsjjs sjkkahgafa\u09A4\u09A1\u09A4\u09A0\u09A4\u09A0 jsjzjgvsh sjsjsksbsbsjs sjjajajahhav jssjbxx jsisudg \u09AF\u09A0\u09AF\u09A0\u09A4\u09A0\u09A4\u09A0\u09A5 \u062A\u0624\u062A\u064A\u0646\u0646\u064A\u0621\u0646\u0627\u0644\u0631\u0631\u064A\u0644\u0627 \u062A\u062A\u0644\u0649 \u062A\u0627\u0631\u064A\u062E \u062A\u0633\u0628\u0628 \u0624\u062A\u064A\u062A\u0624\u062A\u0624\u062A\u0624\u062A\u0624 dhishsbs \u7238\u7238\u4E0D\u5BF9\u52B2\u5927\u5BB6\u90FD\u597D\u8BB0\u5F97\u8BB0\u5F97hshs\u099B\u09A1\u099B\u09A1\u099A jdjdj jdjdjd dbbdbdbdbddbnd\u09A2\u099B\u09A1\u09A2\u09A3\u099B\u09B0\u099A\u0998\u09A0\u09A0\u09B8\u09AB\u0997\u09A3\u09A4\u099C\u09B0\u09A5\u099B\u099B\u09A5\u09A6\u099D\u09A6\u09B2\u09A5\u09A4\u09A3\u09A2\u0997\u0996\u09A0\u0998\u0999\u09A3\u099A\u09A5\u09A4\u09A3\u062A\u0628\u0646\u064A\u0646 \u09A5\u09A3\u09A3 \u09A4\u0998\u0998\u0998\u099B\u09A4 \u09A4\u09A3 \u09A3\u0998\u09A2\u09A3\u0999\u0648\u064A\u0648\u0621\u062A\u064A\u0632\u0633\u0646\u0632\u0624\u0624\u0645\u0645\u0624\u0648\u0624\u0648\u0648\u064A\u0646\u0624\u0646\u0624\u0646\u0624\u0624 \u09A4\u09A4\u09A2\u09A2\u09A4\u09A4 \u0999\u0998\u0997\u09C1\u099B\u09A5 \u09A4\u0997\u0998\u09A3\u099A\u099C\u09A6\u09A5\u0632\u0624\u0648\u0624\u0648\u0624 \u09A4\u09A4\u09A3\u0998\u09A2\u09A4\u099B\u09A6\u09A5\u09A4\u0999\u0998\u09A3 \u0648\u0624\u0648\u0624\u0648\u0624\u0632\u0624\u0646\u0633\u0643\u0633\u0643\u0628\u0646\u09A4\u09AD\u0996\u0996\u099F\u09C0\u09C1\u099B\u09A6\u09C0\u09C1\u09C2\u09C7\u0648\u0624\u0646\u0621\u0646\u0624\u0646 \u09C7\u09C2\u09C0\u09C2\u099A\u09A3\u09A2\u09A4\u09A5\u09A5\u0632\u064A\u09C7\u09C2\u09C0\u09C2\u099A\u09A3\u09A2\u09AE\u09A4\u09A5\u09A5 \U0001f34d\U0001f955\U0001f4a7\U0001f4a7\U0001f4a6\U0001f32a";
+        auto fontCollection = sk_make_sp<FontCollection>();
+        fontCollection->setDefaultFontManager(SkFontMgr::RefDefault());
+        fontCollection->enableFontFallback();
+
+        ParagraphStyle paragraph_style;
+        paragraph_style.setTextAlign(TextAlign::kJustify);
+        ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+        TextStyle text_style;
+        text_style.setColor(SK_ColorBLACK);
+        text_style.setFontFamilies({SkString("Roboto"), SkString("Noto Color Emoji")});
+        text_style.setFontSize(40);
+        builder.pushStyle(text_style);
+        builder.addText(text);
+        auto paragraph = builder.Build();
+        paragraph->layout(width());
+        paragraph->paint(canvas, 0, 0);
+        for (size_t i = 0; i < 402; ++i) {
+            //auto res1 = paragraph->getGlyphPositionAtCoordinate(fPoint.fX, fPoint.fY);
+            //auto res2 = paragraph->getWordBoundary(res1.position);
+            auto res3 = paragraph->getRectsForRange(i, i + 1, RectHeightStyle::kTight, RectWidthStyle::kTight);
+            if (res3.empty()) {
+                SkDebugf("empty: %f %d %d\n", width(), i, i + 1);
+            }
+        }
+/*
+        SkPaint paint;
+        paint.setColor(SK_ColorLTGRAY);
+        for (auto& r : res3) {
+            if (SkScalarNearlyZero(r.rect.fLeft) && SkScalarNearlyZero(r.rect.fTop)) {
+                SkDebugf("0, 0: %f %d %d\n", width(), res2.start, res2.end);
+            }
+            canvas->drawRect(r.rect, paint);
+        }
+*/
+    }
+
+private:
+    typedef Sample INHERITED;
+    SkPoint fPoint;
+};
+
 //////////////////////////////////////////////////////////////////////////////
 
 DEF_SAMPLE(return new ParagraphView1();)
@@ -2303,3 +2477,7 @@ DEF_SAMPLE(return new ParagraphView28();)
 DEF_SAMPLE(return new ParagraphView29();)
 DEF_SAMPLE(return new ParagraphView30();)
 DEF_SAMPLE(return new ParagraphView31();)
+DEF_SAMPLE(return new ParagraphView32();)
+DEF_SAMPLE(return new ParagraphView33();)
+DEF_SAMPLE(return new ParagraphView34();)
+DEF_SAMPLE(return new ParagraphView35();)

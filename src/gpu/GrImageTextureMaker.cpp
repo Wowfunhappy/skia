@@ -25,46 +25,27 @@ static GrImageInfo get_image_info(GrRecordingContext* context, const SkImage* cl
 }
 
 GrImageTextureMaker::GrImageTextureMaker(GrRecordingContext* context, const SkImage* client,
-                                         SkImage::CachingHint chint, bool useDecal)
-        : INHERITED(context, get_image_info(context, client), useDecal)
+                                         SkImage::CachingHint chint)
+        : INHERITED(context, get_image_info(context, client))
         , fImage(static_cast<const SkImage_Lazy*>(client))
         , fCachingHint(chint) {
     SkASSERT(client->isLazyGenerated());
-    GrMakeKeyFromImageID(&fOriginalKey, client->uniqueID(), SkIRect::MakeSize(this->dimensions()));
 }
 
-GrSurfaceProxyView GrImageTextureMaker::refOriginalTextureProxyView(bool willBeMipped,
-                                                                    AllowedTexGenType onlyIfFast) {
-    return fImage->lockTextureProxyView(this->context(), fOriginalKey, fCachingHint, willBeMipped,
-                                        onlyIfFast);
+GrSurfaceProxyView GrImageTextureMaker::refOriginalTextureProxyView(GrMipMapped mipMapped) {
+    return fImage->lockTextureProxyView(this->context(), fCachingHint, mipMapped);
 }
-
-void GrImageTextureMaker::makeCopyKey(const CopyParams& stretch, GrUniqueKey* paramsCopyKey) {
-    if (fOriginalKey.isValid() && SkImage::kAllow_CachingHint == fCachingHint) {
-        GrUniqueKey cacheKey;
-        fImage->makeCacheKeyFromOrigKey(fOriginalKey, &cacheKey);
-        MakeCopyKeyFromOrigKey(cacheKey, stretch, paramsCopyKey);
-    }
-}
-
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-GrYUVAImageTextureMaker::GrYUVAImageTextureMaker(GrContext* context, const SkImage* client,
-                                                 bool useDecal)
-        : INHERITED(context, client->imageInfo(), useDecal)
+GrYUVAImageTextureMaker::GrYUVAImageTextureMaker(GrContext* context, const SkImage* client)
+        : INHERITED(context, client->imageInfo())
         , fImage(static_cast<const SkImage_GpuYUVA*>(client)) {
     SkASSERT(as_IB(client)->isYUVA());
-    GrMakeKeyFromImageID(&fOriginalKey, client->uniqueID(), SkIRect::MakeSize(this->dimensions()));
 }
 
-GrSurfaceProxyView GrYUVAImageTextureMaker::refOriginalTextureProxyView(
-        bool willBeMipped, AllowedTexGenType onlyIfFast) {
-    if (AllowedTexGenType::kCheap == onlyIfFast) {
-        return {};
-    }
-
-    if (willBeMipped) {
+GrSurfaceProxyView GrYUVAImageTextureMaker::refOriginalTextureProxyView(GrMipMapped mipMapped) {
+    if (mipMapped == GrMipMapped::kYes) {
         return fImage->refMippedView(this->context());
     } else {
         if (const GrSurfaceProxyView* view = fImage->view(this->context())) {
@@ -75,30 +56,21 @@ GrSurfaceProxyView GrYUVAImageTextureMaker::refOriginalTextureProxyView(
     }
 }
 
-void GrYUVAImageTextureMaker::makeCopyKey(const CopyParams& stretch, GrUniqueKey* paramsCopyKey) {
-    // TODO: Do we ever want to disable caching?
-    if (fOriginalKey.isValid()) {
-        GrUniqueKey cacheKey;
-        static const GrUniqueKey::Domain kDomain = GrUniqueKey::GenerateDomain();
-        GrUniqueKey::Builder builder(&cacheKey, fOriginalKey, kDomain, 0, "Image");
-        MakeCopyKeyFromOrigKey(cacheKey, stretch, paramsCopyKey);
-    }
-}
-
 std::unique_ptr<GrFragmentProcessor> GrYUVAImageTextureMaker::createFragmentProcessor(
-    const SkMatrix& textureMatrix,
-    const SkRect& constraintRect,
-    FilterConstraint filterConstraint,
-    bool coordsLimitedToConstraintRect,
-    const GrSamplerState::Filter* filterOrNullForBicubic) {
-
+        const SkMatrix& textureMatrix,
+        const SkRect& constraintRect,
+        FilterConstraint filterConstraint,
+        bool coordsLimitedToConstraintRect,
+        GrSamplerState::WrapMode wrapX,
+        GrSamplerState::WrapMode wrapY,
+        const GrSamplerState::Filter* filterOrNullForBicubic) {
     // Check simple cases to see if we need to fall back to flattening the image (or whether it's
-    // already been flattened.)
-    if (!filterOrNullForBicubic || this->domainNeedsDecal() || fImage->fRGBView.proxy()) {
-        return this->INHERITED::createFragmentProcessor(textureMatrix, constraintRect,
-                                                        filterConstraint,
-                                                        coordsLimitedToConstraintRect,
-                                                        filterOrNullForBicubic);
+    // already been flattened.) GrYUVtoRGBEffect only supports kClamp (for now.)
+    if (!filterOrNullForBicubic || wrapX != GrSamplerState::WrapMode::kClamp ||
+        wrapY != GrSamplerState::WrapMode::kClamp || fImage->fRGBView.proxy()) {
+        return this->INHERITED::createFragmentProcessor(
+                textureMatrix, constraintRect, filterConstraint, coordsLimitedToConstraintRect,
+                wrapX, wrapY, filterOrNullForBicubic);
     }
 
     // Check to see if the client has given us pre-mipped textures or we can generate them

@@ -46,7 +46,7 @@ void GrOpFlushState::executeDrawsAndUploadsForMeshDrawOp(
         GrProgramInfo programInfo(this->proxy()->numSamples(),
                                   this->proxy()->numStencilSamples(),
                                   this->proxy()->backendFormat(),
-                                  this->view()->origin(),
+                                  this->outputView()->origin(),
                                   pipeline,
                                   fCurrDraw->fGeometryProcessor,
                                   fCurrDraw->fFixedDynamicState,
@@ -130,7 +130,9 @@ GrDeferredUploadToken GrOpFlushState::addASAPUpload(GrDeferredTextureUploadFn&& 
 }
 
 void GrOpFlushState::recordDraw(
-        const GrGeometryProcessor* gp, const GrMesh meshes[], int meshCnt,
+        const GrGeometryProcessor* gp,
+        const GrMesh meshes[],
+        int meshCnt,
         const GrPipeline::FixedDynamicState* fixedDynamicState,
         const GrPipeline::DynamicStateArrays* dynamicStateArrays,
         GrPrimitiveType primitiveType) {

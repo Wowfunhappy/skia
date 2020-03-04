@@ -8,12 +8,12 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkPaint.h"
-#include "include/core/SkPathEffect.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkSurface.h"
+#include "include/private/SkIDChangeListener.h"
 #include "include/private/SkTo.h"
 #include "include/utils/SkNullCanvas.h"
 #include "include/utils/SkParse.h"
@@ -4347,13 +4347,12 @@ static void test_dump(skiatest::Reporter* reporter) {
 
 namespace {
 
-class ChangeListener : public SkPathRef::GenIDChangeListener {
+class ChangeListener : public SkIDChangeListener {
 public:
     ChangeListener(bool *changed) : fChanged(changed) { *fChanged = false; }
     ~ChangeListener() override {}
-    void onChange() override {
-        *fChanged = true;
-    }
+    void changed() override { *fChanged = true; }
+
 private:
     bool* fChanged;
 };

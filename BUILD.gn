@@ -1091,6 +1091,7 @@ static_library("pathkit") {
     "src/core/SkEdgeBuilder.cpp",
     "src/core/SkEdgeClipper.cpp",
     "src/core/SkGeometry.cpp",
+    "src/core/SkIDChangeListener.cpp",
     "src/core/SkLineClipper.cpp",
     "src/core/SkMalloc.cpp",
     "src/core/SkMallocPixelRef.cpp",
@@ -1393,6 +1394,7 @@ if (skia_enable_tools) {
     if (skia_use_dawn) {
       public_deps += [ "//third_party/dawn:dawn_headers" ]
       sources += [ "tools/gpu/dawn/DawnTestContext.cpp" ]
+      cflags_cc = [ "-Wno-microsoft-cast" ]
     }
   }  # test_lib("gpu_tool_utils")
 

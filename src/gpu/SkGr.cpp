@@ -15,6 +15,7 @@
 #include "include/gpu/GrContext.h"
 #include "include/gpu/GrTypes.h"
 #include "include/private/GrRecordingContext.h"
+#include "include/private/SkIDChangeListener.h"
 #include "include/private/SkImageInfoPriv.h"
 #include "include/private/SkTemplates.h"
 #include "src/core/SkAutoMalloc.h"
@@ -101,20 +102,33 @@ void GrMakeKeyFromImageID(GrUniqueKey* key, uint32_t imageID, const SkIRect& ima
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void GrInstallBitmapUniqueKeyInvalidator(const GrUniqueKey& key, uint32_t contextUniqueID,
-                                         SkPixelRef* pixelRef) {
-    class Invalidator : public SkPixelRef::GenIDChangeListener {
+sk_sp<SkIDChangeListener> GrMakeUniqueKeyInvalidationListener(GrUniqueKey* key,
+                                                              uint32_t contextID) {
+    class Listener : public SkIDChangeListener {
     public:
-        explicit Invalidator(const GrUniqueKey& key, uint32_t contextUniqueID)
-                : fMsg(key, contextUniqueID) {}
+        Listener(const GrUniqueKey& key, uint32_t contextUniqueID) : fMsg(key, contextUniqueID) {}
+
+        void changed() override { SkMessageBus<GrUniqueKeyInvalidatedMessage>::Post(fMsg); }
 
     private:
         GrUniqueKeyInvalidatedMessage fMsg;
-
-        void onChange() override { SkMessageBus<GrUniqueKeyInvalidatedMessage>::Post(fMsg); }
     };
 
-    pixelRef->addGenIDChangeListener(new Invalidator(key, contextUniqueID));
+    auto listener = sk_make_sp<Listener>(*key, contextID);
+
+    // We stick a SkData on the key that calls invalidateListener in its destructor.
+    auto invalidateListener = [](const void* ptr, void* /*context*/) {
+        auto listener = reinterpret_cast<const sk_sp<Listener>*>(ptr);
+        (*listener)->markShouldDeregister();
+        delete listener;
+    };
+    auto data = SkData::MakeWithProc(new sk_sp<Listener>(listener),
+                                     sizeof(sk_sp<Listener>),
+                                     invalidateListener,
+                                     nullptr);
+    SkASSERT(!key->getCustomData());
+    key->setCustomData(std::move(data));
+    return std::move(listener);
 }
 
 GrSurfaceProxyView GrCopyBaseMipMapToTextureProxy(GrRecordingContext* ctx,
@@ -134,9 +148,9 @@ GrSurfaceProxyView GrCopyBaseMipMapToTextureProxy(GrRecordingContext* ctx,
 }
 
 GrSurfaceProxyView GrRefCachedBitmapView(GrRecordingContext* ctx, const SkBitmap& bitmap,
-                                         GrSamplerState params, SkScalar scaleAdjust[2]) {
+                                         GrMipMapped mipMapped) {
     GrBitmapTextureMaker maker(ctx, bitmap, GrBitmapTextureMaker::Cached::kYes);
-    return maker.viewForParams(params, scaleAdjust);
+    return maker.view(mipMapped);
 }
 
 GrSurfaceProxyView GrMakeCachedBitmapProxyView(GrRecordingContext* context, const SkBitmap& bitmap,
@@ -146,8 +160,7 @@ GrSurfaceProxyView GrMakeCachedBitmapProxyView(GrRecordingContext* context, cons
     }
 
     GrBitmapTextureMaker maker(context, bitmap, GrBitmapTextureMaker::Cached::kYes, fit);
-    auto[view, grCT] = maker.view(GrMipMapped::kNo);
-    return view;
+    return maker.view(GrMipMapped::kNo);
 }
 
 ///////////////////////////////////////////////////////////////////////////////

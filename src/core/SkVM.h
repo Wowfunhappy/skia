@@ -659,6 +659,7 @@ namespace skvm {
     private:
         void setupInterpreter(const std::vector<OptimizedInstruction>&);
         void setupJIT        (const std::vector<OptimizedInstruction>&, const char* debug_name);
+        void setupLLVM       (const std::vector<OptimizedInstruction>&, const char* debug_name);
 
         void interpret(int n, void* args[]) const;
 
@@ -674,6 +675,9 @@ namespace skvm {
         void*  fJITEntry = nullptr;
         size_t fJITSize  = 0;
         void*  fDylib    = nullptr;
+
+        struct LLVMState;
+        std::unique_ptr<LLVMState> fLLVMState;
     };
 
     // TODO: control flow

@@ -646,16 +646,17 @@ void SkPictureRecord::onDrawDrawable(SkDrawable* drawable, const SkMatrix* matri
 }
 
 void SkPictureRecord::onDrawVerticesObject(const SkVertices* vertices,
+#ifdef SK_SUPPORT_LEGACY_DRAWVERTS_VIRTUAL
                                            const SkVertices::Bone bones[], int boneCount,
+#endif
                                            SkBlendMode mode, const SkPaint& paint) {
-    // op + paint index + vertices index + number of bones + bone matrices + mode
-    size_t size = 5 * kUInt32Size + boneCount * sizeof(SkVertices::Bone);
+    // op + paint index + vertices index + zero_bones + mode
+    size_t size = 5 * kUInt32Size;
     size_t initialOffset = this->addDraw(DRAW_VERTICES_OBJECT, &size);
 
     this->addPaint(paint);
     this->addVertices(vertices);
-    this->addInt(boneCount);
-    fWriter.write(bones, boneCount * sizeof(SkVertices::Bone));
+    this->addInt(0);    // legacy bone count
     this->addInt(static_cast<uint32_t>(mode));
 
     this->validate(initialOffset, size);

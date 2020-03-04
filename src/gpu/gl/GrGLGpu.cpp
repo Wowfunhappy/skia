@@ -45,15 +45,17 @@
 #define GL_CALL(X) GR_GL_CALL(this->glInterface(), X)
 #define GL_CALL_RET(RET, X) GR_GL_CALL_RET(this->glInterface(), RET, X)
 
-#if GR_GL_CHECK_ALLOC_WITH_GET_ERROR
-    #define CLEAR_ERROR_BEFORE_ALLOC(iface)   GrGLClearErr(iface)
-    #define GL_ALLOC_CALL(iface, call)        GR_GL_CALL_NOERRCHECK(iface, call)
-    #define CHECK_ALLOC_ERROR(iface)          GR_GL_GET_ERROR(iface)
-#else
-    #define CLEAR_ERROR_BEFORE_ALLOC(iface)
-    #define GL_ALLOC_CALL(iface, call)        GR_GL_CALL(iface, call)
-    #define CHECK_ALLOC_ERROR(iface)          GR_GL_NO_ERROR
-#endif
+#define GL_ALLOC_CALL(call)                                   \
+    [&] {                                                     \
+        if (this->glCaps().skipErrorChecks()) {               \
+            GR_GL_CALL(this->glInterface(), call);            \
+            return static_cast<GrGLenum>(GR_GL_NO_ERROR);     \
+        } else {                                              \
+            GrGLClearErr(this->glInterface());                \
+            GR_GL_CALL_NOERRCHECK(this->glInterface(), call); \
+            return GR_GL_GET_ERROR(this->glInterface());      \
+        }                                                     \
+    }()
 
 //#define USE_NSIGHT
 
@@ -636,6 +638,7 @@ void GrGLGpu::onResetContext(uint32_t resetBits) {
     if (resetBits & kRenderTarget_GrGLBackendState) {
         fHWBoundRenderTargetUniqueID.makeInvalid();
         fHWSRGBFramebuffer = kUnknown_TriState;
+        fBoundDrawFramebuffer = 0;
     }
 
     if (resetBits & kPathRendering_GrGLBackendState) {
@@ -1102,10 +1105,8 @@ bool GrGLGpu::uploadCompressedTexData(GrGLFormat format,
 
     if (useTexStorage) {
         // We never resize or change formats of textures.
-        GL_ALLOC_CALL(this->glInterface(),
-                      TexStorage2D(target, numMipLevels, internalFormat, dimensions.width(),
-                                   dimensions.height()));
-        GrGLenum error = CHECK_ALLOC_ERROR(this->glInterface());
+        GrGLenum error = GL_ALLOC_CALL(TexStorage2D(target, numMipLevels, internalFormat,
+                                                    dimensions.width(), dimensions.height()));
         if (error != GR_GL_NO_ERROR) {
             return false;
         }
@@ -1116,17 +1117,16 @@ bool GrGLGpu::uploadCompressedTexData(GrGLFormat format,
             size_t levelDataSize = SkCompressedDataSize(compressionType, dimensions,
                                                         nullptr, false);
 
-            GL_CALL(CompressedTexSubImage2D(target,
-                                            level,
-                                            0,  // left
-                                            0,  // top
-                                            dimensions.width(),
-                                            dimensions.height(),
-                                            internalFormat,
-                                            SkToInt(levelDataSize),
-                                            &((char*)data)[offset]));
+            error = GL_ALLOC_CALL(CompressedTexSubImage2D(target,
+                                                          level,
+                                                          0,  // left
+                                                          0,  // top
+                                                          dimensions.width(),
+                                                          dimensions.height(),
+                                                          internalFormat,
+                                                          SkToInt(levelDataSize),
+                                                          &((char*)data)[offset]));
 
-            GrGLenum error = CHECK_ALLOC_ERROR(this->glInterface());
             if (error != GR_GL_NO_ERROR) {
                 return false;
             }
@@ -1142,16 +1142,15 @@ bool GrGLGpu::uploadCompressedTexData(GrGLFormat format,
                                                         nullptr, false);
 
             const char* rawLevelData = &((char*)data)[offset];
-            GL_ALLOC_CALL(this->glInterface(), CompressedTexImage2D(target,
-                                                                    level,
-                                                                    internalFormat,
-                                                                    dimensions.width(),
-                                                                    dimensions.height(),
-                                                                    0,  // border
-                                                                    SkToInt(levelDataSize),
-                                                                    rawLevelData));
+            GrGLenum error = GL_ALLOC_CALL(CompressedTexImage2D(target,
+                                                                level,
+                                                                internalFormat,
+                                                                dimensions.width(),
+                                                                dimensions.height(),
+                                                                0,  // border
+                                                                SkToInt(levelDataSize),
+                                                                rawLevelData));
 
-            GrGLenum error = CHECK_ALLOC_ERROR(this->glInterface());
             if (error != GR_GL_NO_ERROR) {
                 return false;
             }
@@ -1163,40 +1162,29 @@ bool GrGLGpu::uploadCompressedTexData(GrGLFormat format,
     return true;
 }
 
-static bool renderbuffer_storage_msaa(const GrGLContext& ctx,
-                                      int sampleCount,
-                                      GrGLenum format,
+bool GrGLGpu::renderbufferStorageMSAA(const GrGLContext& ctx, int sampleCount, GrGLenum format,
                                       int width, int height) {
-    CLEAR_ERROR_BEFORE_ALLOC(ctx.glInterface());
     SkASSERT(GrGLCaps::kNone_MSFBOType != ctx.caps()->msFBOType());
+    GrGLenum error;
     switch (ctx.caps()->msFBOType()) {
         case GrGLCaps::kStandard_MSFBOType:
-            GL_ALLOC_CALL(ctx.glInterface(),
-                          RenderbufferStorageMultisample(GR_GL_RENDERBUFFER,
-                                                         sampleCount,
-                                                         format,
-                                                         width, height));
+            error = GL_ALLOC_CALL(RenderbufferStorageMultisample(GR_GL_RENDERBUFFER, sampleCount,
+                                                                 format, width, height));
             break;
         case GrGLCaps::kES_Apple_MSFBOType:
-            GL_ALLOC_CALL(ctx.glInterface(),
-                          RenderbufferStorageMultisampleES2APPLE(GR_GL_RENDERBUFFER,
-                                                                 sampleCount,
-                                                                 format,
-                                                                 width, height));
+            error = GL_ALLOC_CALL(RenderbufferStorageMultisampleES2APPLE(
+                    GR_GL_RENDERBUFFER, sampleCount, format, width, height));
             break;
         case GrGLCaps::kES_EXT_MsToTexture_MSFBOType:
         case GrGLCaps::kES_IMG_MsToTexture_MSFBOType:
-            GL_ALLOC_CALL(ctx.glInterface(),
-                          RenderbufferStorageMultisampleES2EXT(GR_GL_RENDERBUFFER,
-                                                               sampleCount,
-                                                               format,
-                                                               width, height));
+            error = GL_ALLOC_CALL(RenderbufferStorageMultisampleES2EXT(
+                    GR_GL_RENDERBUFFER, sampleCount, format, width, height));
             break;
         case GrGLCaps::kNone_MSFBOType:
-            SK_ABORT("Shouldn't be here if we don't support multisampled renderbuffers.");
+            SkUNREACHABLE;
             break;
     }
-    return (GR_GL_NO_ERROR == CHECK_ALLOC_ERROR(ctx.glInterface()));
+    return error == GR_GL_NO_ERROR;
 }
 
 bool GrGLGpu::createRenderTargetObjects(const GrGLTexture::Desc& desc,
@@ -1242,8 +1230,8 @@ bool GrGLGpu::createRenderTargetObjects(const GrGLTexture::Desc& desc,
     if (rtIDs->fRTFBOID != rtIDs->fTexFBOID) {
         SkASSERT(sampleCount > 1);
         GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, rtIDs->fMSColorRenderbufferID));
-        if (!renderbuffer_storage_msaa(*fGLContext, sampleCount, colorRenderbufferFormat,
-                                       desc.fSize.width(), desc.fSize.height())) {
+        if (!this->renderbufferStorageMSAA(*fGLContext, sampleCount, colorRenderbufferFormat,
+                                           desc.fSize.width(), desc.fSize.height())) {
             goto FAILED;
         }
         this->bindFramebuffer(GR_GL_FRAMEBUFFER, rtIDs->fRTFBOID);
@@ -1571,11 +1559,9 @@ int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
             GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, sbRBID));
             for (int i = 0; i < stencilFmtCnt && sbRBID; ++i) {
                 const GrGLCaps::StencilFormat& sFmt = this->glCaps().stencilFormats()[i];
-                CLEAR_ERROR_BEFORE_ALLOC(this->glInterface());
-                GL_ALLOC_CALL(this->glInterface(), RenderbufferStorage(GR_GL_RENDERBUFFER,
-                                                                       sFmt.fInternalFormat,
-                                                                       kSize, kSize));
-                if (GR_GL_NO_ERROR == CHECK_ALLOC_ERROR(this->glInterface())) {
+                GrGLenum error = GL_ALLOC_CALL(RenderbufferStorage(
+                        GR_GL_RENDERBUFFER, sFmt.fInternalFormat, kSize, kSize));
+                if (error == GR_GL_NO_ERROR) {
                     GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER,
                                                     GR_GL_STENCIL_ATTACHMENT,
                                                     GR_GL_RENDERBUFFER, sbRBID));
@@ -1676,12 +1662,12 @@ GrGLuint GrGLGpu::createTexture2D(SkISize dimensions,
 
     bool success = false;
     if (internalFormat) {
-        CLEAR_ERROR_BEFORE_ALLOC(this->glInterface());
         if (this->glCaps().formatSupportsTexStorage(format)) {
-            GL_ALLOC_CALL(this->glInterface(),
-                          TexStorage2D(GR_GL_TEXTURE_2D, std::max(mipLevelCount, 1), internalFormat,
-                                       dimensions.width(), dimensions.height()));
-            success = (GR_GL_NO_ERROR == CHECK_ALLOC_ERROR(this->glInterface()));
+            auto levelCount = std::max(mipLevelCount, 1);
+            GrGLenum error =
+                    GL_ALLOC_CALL(TexStorage2D(GR_GL_TEXTURE_2D, levelCount, internalFormat,
+                                               dimensions.width(), dimensions.height()));
+            success = (error == GR_GL_NO_ERROR);
         } else {
             GrGLenum externalFormat, externalType;
             this->glCaps().getTexImageExternalFormatAndType(format, &externalFormat, &externalType);
@@ -1691,13 +1677,11 @@ GrGLuint GrGLGpu::createTexture2D(SkISize dimensions,
                     const int twoToTheMipLevel = 1 << level;
                     const int currentWidth = std::max(1, dimensions.width() / twoToTheMipLevel);
                     const int currentHeight = std::max(1, dimensions.height() / twoToTheMipLevel);
-                    GL_ALLOC_CALL(
-                            this->glInterface(),
-                            TexImage2D(GR_GL_TEXTURE_2D, level, internalFormat, currentWidth,
-                                       currentHeight, 0, externalFormat, externalType, nullptr));
-                    error = CHECK_ALLOC_ERROR(this->glInterface());
+                    error = GL_ALLOC_CALL(TexImage2D(GR_GL_TEXTURE_2D, level, internalFormat,
+                                                     currentWidth, currentHeight, 0, externalFormat,
+                                                     externalType, nullptr));
                 }
-                success = (GR_GL_NO_ERROR == error);
+                success = (error == GR_GL_NO_ERROR);
             }
         }
     }
@@ -1728,19 +1712,21 @@ GrStencilAttachment* GrGLGpu::createStencilAttachmentForRenderTarget(
     }
     GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, sbDesc.fRenderbufferID));
     const GrGLCaps::StencilFormat& sFmt = this->glCaps().stencilFormats()[sIdx];
-    CLEAR_ERROR_BEFORE_ALLOC(this->glInterface());
     // we do this "if" so that we don't call the multisample
     // version on a GL that doesn't have an MSAA extension.
     if (numStencilSamples > 1) {
-        SkAssertResult(renderbuffer_storage_msaa(*fGLContext,
-                                                 numStencilSamples,
-                                                 sFmt.fInternalFormat,
-                                                 width, height));
+        if (!this->renderbufferStorageMSAA(*fGLContext, numStencilSamples, sFmt.fInternalFormat,
+                                           width, height)) {
+            GL_CALL(DeleteRenderbuffers(1, &sbDesc.fRenderbufferID));
+            return nullptr;
+        }
     } else {
-        GL_ALLOC_CALL(this->glInterface(), RenderbufferStorage(GR_GL_RENDERBUFFER,
-                                                               sFmt.fInternalFormat,
-                                                               width, height));
-        SkASSERT(GR_GL_NO_ERROR == CHECK_ALLOC_ERROR(this->glInterface()));
+        GrGLenum error = GL_ALLOC_CALL(
+                RenderbufferStorage(GR_GL_RENDERBUFFER, sFmt.fInternalFormat, width, height));
+        if (error != GR_GL_NO_ERROR) {
+            GL_CALL(DeleteRenderbuffers(1, &sbDesc.fRenderbufferID));
+            return nullptr;
+        }
     }
     fStats.incStencilAttachmentCreates();
     // After sized formats we attempt an unsized format and take
@@ -1779,6 +1765,7 @@ void GrGLGpu::flushScissorTest(GrScissorTest scissorTest) {
 
 void GrGLGpu::flushScissorRect(const SkIRect& scissor, int rtWidth, int rtHeight,
                                GrSurfaceOrigin rtOrigin) {
+    SkASSERT(fHWScissorSettings.fEnabled == TriState::kYes_TriState);
     auto nativeScissor = GrNativeRect::MakeRelativeTo(rtOrigin, rtHeight, scissor);
     if (fHWScissorSettings.fRect != nativeScissor) {
         GL_CALL(Scissor(nativeScissor.fX, nativeScissor.fY, nativeScissor.fWidth,
@@ -1827,20 +1814,21 @@ void GrGLGpu::disableWindowRectangles() {
 #endif
 }
 
-bool GrGLGpu::flushGLState(GrRenderTarget* renderTarget, const GrProgramInfo& programInfo) {
+bool GrGLGpu::flushGLState(GrRenderTarget* renderTarget,
+                                         const GrProgramInfo& programInfo) {
     this->handleDirtyContext();
 
-    if (GrPrimitiveType::kPatches == programInfo.primitiveType()) {
-        this->flushPatchVertexCount(programInfo.tessellationPatchVertexCount());
-    }
-
-    sk_sp<GrGLProgram> program(fProgramCache->findOrCreateProgram(renderTarget, programInfo));
+    sk_sp<GrGLProgram> program = fProgramCache->findOrCreateProgram(renderTarget, programInfo);
     if (!program) {
         GrCapsDebugf(this->caps(), "Failed to create program!\n");
         return false;
     }
 
     this->flushProgram(std::move(program));
+
+    if (GrPrimitiveType::kPatches == programInfo.primitiveType()) {
+        this->flushPatchVertexCount(programInfo.tessellationPatchVertexCount());
+    }
 
     // Swizzle the blend to match what the shader will output.
     this->flushBlendAndColorWrite(programInfo.pipeline().getXferProcessor().getBlendInfo(),
@@ -1897,54 +1885,6 @@ void GrGLGpu::flushProgram(GrGLuint id) {
     fHWProgram.reset();
     GL_CALL(UseProgram(id));
     fHWProgramID = id;
-}
-
-void GrGLGpu::setupGeometry(const GrBuffer* indexBuffer,
-                            const GrBuffer* vertexBuffer,
-                            int baseVertex,
-                            const GrBuffer* instanceBuffer,
-                            int baseInstance,
-                            GrPrimitiveRestart enablePrimitiveRestart) {
-    SkASSERT((enablePrimitiveRestart == GrPrimitiveRestart::kNo) || indexBuffer);
-
-    GrGLAttribArrayState* attribState;
-    if (indexBuffer) {
-        SkASSERT(indexBuffer->isCpuBuffer() ||
-                 !static_cast<const GrGpuBuffer*>(indexBuffer)->isMapped());
-        attribState = fHWVertexArrayState.bindInternalVertexArray(this, indexBuffer);
-    } else {
-        attribState = fHWVertexArrayState.bindInternalVertexArray(this);
-    }
-
-    int numAttribs = fHWProgram->numVertexAttributes() + fHWProgram->numInstanceAttributes();
-    attribState->enableVertexArrays(this, numAttribs, enablePrimitiveRestart);
-
-    if (int vertexStride = fHWProgram->vertexStride()) {
-        SkASSERT(vertexBuffer);
-        SkASSERT(vertexBuffer->isCpuBuffer() ||
-                 !static_cast<const GrGpuBuffer*>(vertexBuffer)->isMapped());
-        size_t bufferOffset = baseVertex * static_cast<size_t>(vertexStride);
-        for (int i = 0; i < fHWProgram->numVertexAttributes(); ++i) {
-            const auto& attrib = fHWProgram->vertexAttribute(i);
-            static constexpr int kDivisor = 0;
-            attribState->set(this, attrib.fLocation, vertexBuffer, attrib.fCPUType, attrib.fGPUType,
-                             vertexStride, bufferOffset + attrib.fOffset, kDivisor);
-        }
-    }
-    if (int instanceStride = fHWProgram->instanceStride()) {
-        SkASSERT(instanceBuffer);
-        SkASSERT(instanceBuffer->isCpuBuffer() ||
-                 !static_cast<const GrGpuBuffer*>(instanceBuffer)->isMapped());
-        size_t bufferOffset = baseInstance * static_cast<size_t>(instanceStride);
-        int attribIdx = fHWProgram->numVertexAttributes();
-        for (int i = 0; i < fHWProgram->numInstanceAttributes(); ++i, ++attribIdx) {
-            const auto& attrib = fHWProgram->instanceAttribute(i);
-            static constexpr int kDivisor = 1;
-            attribState->set(this, attrib.fLocation, instanceBuffer, attrib.fCPUType,
-                             attrib.fGPUType, instanceStride, bufferOffset + attrib.fOffset,
-                             kDivisor);
-        }
-    }
 }
 
 GrGLenum GrGLGpu::bindBuffer(GrGpuBufferType type, const GrBuffer* buffer) {
@@ -2295,7 +2235,7 @@ void GrGLGpu::flushRenderTargetNoColorWrites(GrGLRenderTarget* target) {
         // lots of repeated command buffer flushes when the compositor is
         // rendering with Ganesh, which is really slow; even too slow for
         // Debug mode.
-        if (kChromium_GrGLDriver != this->glContext().driver()) {
+        if (!this->glCaps().skipErrorChecks()) {
             GrGLenum status;
             GL_CALL_RET(status, CheckFramebufferStatus(GR_GL_FRAMEBUFFER));
             if (status != GR_GL_FRAMEBUFFER_COMPLETE) {
@@ -2338,19 +2278,16 @@ void GrGLGpu::flushViewport(int width, int height) {
     }
 }
 
-void GrGLGpu::drawMesh(GrRenderTarget* renderTarget, GrPrimitiveType primitiveType,
-                       const GrMesh& mesh) {
+GrGLenum GrGLGpu::prepareToDraw(GrPrimitiveType primitiveType) {
+    fStats.incNumDraws();
+
     if (this->glCaps().requiresCullFaceEnableDisableWhenDrawingLinesAfterNonLines() &&
         GrIsPrimTypeLines(primitiveType) && !GrIsPrimTypeLines(fLastPrimitiveType)) {
         GL_CALL(Enable(GR_GL_CULL_FACE));
         GL_CALL(Disable(GR_GL_CULL_FACE));
     }
-
-    mesh.sendToGpu(primitiveType, this);
     fLastPrimitiveType = primitiveType;
-}
 
-static GrGLenum gr_primitive_type_to_gl_mode(GrPrimitiveType primitiveType) {
     switch (primitiveType) {
         case GrPrimitiveType::kTriangles:
             return GR_GL_TRIANGLES;
@@ -2371,74 +2308,40 @@ static GrGLenum gr_primitive_type_to_gl_mode(GrPrimitiveType primitiveType) {
     SK_ABORT("invalid GrPrimitiveType");
 }
 
-void GrGLGpu::sendArrayMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh, int vertexCount,
-                                 int baseVertex) {
-    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
-    if (this->glCaps().drawArraysBaseVertexIsBroken()) {
-        this->setupGeometry(nullptr, mesh.vertexBuffer(), baseVertex, nullptr, 0,
-                            GrPrimitiveRestart::kNo);
-        GL_CALL(DrawArrays(glPrimType, 0, vertexCount));
-    } else {
-        this->setupGeometry(nullptr, mesh.vertexBuffer(), 0, nullptr, 0, GrPrimitiveRestart::kNo);
-        GL_CALL(DrawArrays(glPrimType, baseVertex, vertexCount));
-    }
-    fStats.incNumDraws();
+void GrGLGpu::drawArrays(GrPrimitiveType primitiveType, GrGLint baseVertex, GrGLsizei vertexCount) {
+    SkASSERT(!this->glCaps().drawArraysBaseVertexIsBroken() || 0 == baseVertex);
+    GrGLenum glPrimType = this->prepareToDraw(primitiveType);
+    GL_CALL(DrawArrays(glPrimType, baseVertex, vertexCount));
 }
 
-static const GrGLvoid* element_ptr(const GrBuffer* indexBuffer, int baseIndex) {
-    size_t baseOffset = baseIndex * sizeof(uint16_t);
-    if (indexBuffer->isCpuBuffer()) {
-        return static_cast<const GrCpuBuffer*>(indexBuffer)->data() + baseOffset;
-    } else {
-        return reinterpret_cast<const GrGLvoid*>(baseOffset);
-    }
+void GrGLGpu::drawElements(GrPrimitiveType primitiveType, GrGLsizei indexCount, GrGLenum indexType,
+                           const void* indices) {
+    GrGLenum glPrimType = this->prepareToDraw(primitiveType);
+    GL_CALL(DrawElements(glPrimType, indexCount, indexType, indices));
 }
 
-void GrGLGpu::sendIndexedMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh,
-                                   int indexCount, int baseIndex, uint16_t minIndexValue,
-                                   uint16_t maxIndexValue, int baseVertex) {
-    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
-    const GrGLvoid* elementPtr = element_ptr(mesh.indexBuffer(), baseIndex);
-
-    this->setupGeometry(mesh.indexBuffer(), mesh.vertexBuffer(), baseVertex, nullptr, 0,
-                        mesh.primitiveRestart());
-
-    if (this->glCaps().drawRangeElementsSupport()) {
-        GL_CALL(DrawRangeElements(glPrimType, minIndexValue, maxIndexValue, indexCount,
-                                  GR_GL_UNSIGNED_SHORT, elementPtr));
-    } else {
-        GL_CALL(DrawElements(glPrimType, indexCount, GR_GL_UNSIGNED_SHORT, elementPtr));
-    }
-    fStats.incNumDraws();
+void GrGLGpu::drawRangeElements(GrPrimitiveType primitiveType, GrGLuint minIndexValue,
+                                GrGLuint maxIndexValue, GrGLsizei indexCount, GrGLenum indexType,
+                                const void* indices) {
+    SkASSERT(this->glCaps().drawRangeElementsSupport());
+    GrGLenum glPrimType = this->prepareToDraw(primitiveType);
+    GL_CALL(DrawRangeElements(glPrimType, minIndexValue, maxIndexValue, indexCount, indexType,
+                              indices));
 }
 
-void GrGLGpu::sendInstancedMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh,
-                                     int vertexCount, int baseVertex, int instanceCount,
-                                     int baseInstance) {
-    GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
-    int maxInstances = this->glCaps().maxInstancesPerDrawWithoutCrashing(instanceCount);
-    for (int i = 0; i < instanceCount; i += maxInstances) {
-        this->setupGeometry(nullptr, mesh.vertexBuffer(), 0, mesh.instanceBuffer(),
-                            baseInstance + i, GrPrimitiveRestart::kNo);
-        GL_CALL(DrawArraysInstanced(glPrimType, baseVertex, vertexCount,
-                                    std::min(instanceCount - i, maxInstances)));
-        fStats.incNumDraws();
-    }
+void GrGLGpu::drawArraysInstanced(GrPrimitiveType primitiveType, GrGLint baseVertex,
+                                  GrGLsizei vertexCount, GrGLsizei instanceCount) {
+    SkASSERT(instanceCount <= this->glCaps().maxInstancesPerDrawWithoutCrashing(instanceCount));
+    GrGLenum glPrimType = this->prepareToDraw(primitiveType);
+    GL_CALL(DrawArraysInstanced(glPrimType, baseVertex, vertexCount, instanceCount));
 }
 
-void GrGLGpu::sendIndexedInstancedMeshToGpu(GrPrimitiveType primitiveType, const GrMesh& mesh,
-                                            int indexCount, int baseIndex, int baseVertex,
-                                            int instanceCount, int baseInstance) {
-    const GrGLenum glPrimType = gr_primitive_type_to_gl_mode(primitiveType);
-    const GrGLvoid* elementPtr = element_ptr(mesh.indexBuffer(), baseIndex);
-    int maxInstances = this->glCaps().maxInstancesPerDrawWithoutCrashing(instanceCount);
-    for (int i = 0; i < instanceCount; i += maxInstances) {
-        this->setupGeometry(mesh.indexBuffer(), mesh.vertexBuffer(), baseVertex,
-                            mesh.instanceBuffer(), baseInstance + i, mesh.primitiveRestart());
-        GL_CALL(DrawElementsInstanced(glPrimType, indexCount, GR_GL_UNSIGNED_SHORT, elementPtr,
-                                      std::min(instanceCount - i, maxInstances)));
-        fStats.incNumDraws();
-    }
+void GrGLGpu::drawElementsInstanced(GrPrimitiveType primitiveType, GrGLsizei indexCount,
+                                    GrGLenum indexType, const void* indices,
+                                    GrGLsizei instanceCount) {
+    SkASSERT(instanceCount <= this->glCaps().maxInstancesPerDrawWithoutCrashing(instanceCount));
+    GrGLenum glPrimType = this->prepareToDraw(primitiveType);
+    GL_CALL(DrawElementsInstanced(glPrimType, indexCount, indexType, indices, instanceCount));
 }
 
 void GrGLGpu::onResolveRenderTarget(GrRenderTarget* target, const SkIRect& resolveRect,
@@ -3086,6 +2989,9 @@ void GrGLGpu::bindFramebuffer(GrGLenum target, GrGLuint fboid) {
 }
 
 void GrGLGpu::deleteFramebuffer(GrGLuint fboid) {
+    // We're relying on the GL state shadowing being correct in the workaround code below so we
+    // need to handle a dirty context.
+    this->handleDirtyContext();
     if (fboid == fBoundDrawFramebuffer &&
         this->caps()->workarounds().unbind_attachments_on_bound_render_fbo_delete) {
         // This workaround only applies to deleting currently bound framebuffers
@@ -3886,15 +3792,13 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(int w, int h
     } else {
         GrGLenum renderBufferFormat = this->glCaps().getRenderbufferInternalFormat(format);
         GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, colorID));
-        GL_ALLOC_CALL(this->glInterface(),
-                      RenderbufferStorage(GR_GL_RENDERBUFFER, renderBufferFormat, w, h));
+        GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, renderBufferFormat, w, h));
         GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0,
                                         GR_GL_RENDERBUFFER, colorID));
     }
     GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, stencilID));
     auto stencilBufferFormat = this->glCaps().stencilFormats()[sFormatIdx].fInternalFormat;
-    GL_ALLOC_CALL(this->glInterface(),
-                  RenderbufferStorage(GR_GL_RENDERBUFFER, stencilBufferFormat, w, h));
+    GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, stencilBufferFormat, w, h));
     GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER, GR_GL_STENCIL_ATTACHMENT, GR_GL_RENDERBUFFER,
                                     stencilID));
     if (this->glCaps().stencilFormats()[sFormatIdx].fPacked) {
@@ -3942,6 +3846,7 @@ void GrGLGpu::testingOnly_flushGpuAndSync() {
 
 GrGLAttribArrayState* GrGLGpu::HWVertexArrayState::bindInternalVertexArray(GrGLGpu* gpu,
                                                                            const GrBuffer* ibuf) {
+    SkASSERT(!ibuf || ibuf->isCpuBuffer() || !static_cast<const GrGpuBuffer*>(ibuf)->isMapped());
     GrGLAttribArrayState* attribState;
 
     if (gpu->glCaps().isCoreProfile()) {

@@ -49,36 +49,42 @@ public:
 private:
     GrGpu* gpu() override { return fGpu; }
 
-    bool onBindPipeline(const GrProgramInfo& programInfo, const SkRect& drawBounds) override {
-        return fGpu->flushGLState(fRenderTarget, programInfo);
-    }
+    void setupGeometry(const GrBuffer* vertexBuffer, int baseVertex, const GrBuffer* instanceBuffer,
+                       int baseInstance);
 
-    void onSetScissorRect(const SkIRect& scissor) override {
-        fGpu->flushScissorRect(scissor, fRenderTarget->width(), fRenderTarget->height(), fOrigin);
-    }
-
+    bool onBindPipeline(const GrProgramInfo& programInfo, const SkRect& drawBounds) override;
+    void onSetScissorRect(const SkIRect& scissor) override;
     bool onBindTextures(const GrPrimitiveProcessor& primProc, const GrPipeline& pipeline,
-                        const GrSurfaceProxy* const primProcTextures[]) override {
-        fGpu->bindTextures(primProc, pipeline, primProcTextures);
-        return true;
-    }
+                        const GrSurfaceProxy* const primProcTextures[]) override;
+    void onBindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
+                       const GrBuffer* vertexBuffer, GrPrimitiveRestart) override;
+    void onDraw(int vertexCount, int baseVertex) override;
+    void onDrawIndexed(int indexCount, int baseIndex, uint16_t minIndexValue,
+                       uint16_t maxIndexValue, int baseVertex) override;
+    void onDrawInstanced(int instanceCount, int baseInstance, int vertexCount,
+                         int baseVertex) override;
+    void onDrawIndexedInstanced(int indexCount, int baseIndex, int instanceCount, int baseInstance,
+                                int baseVertex) override;
+    void onClear(const GrFixedClip& clip, const SkPMColor4f& color) override;
+    void onClearStencilClip(const GrFixedClip& clip, bool insideStencilMask) override;
 
-    void onDrawMesh(GrPrimitiveType primitiveType, const GrMesh& mesh) override {
-        fGpu->drawMesh(fRenderTarget, primitiveType, mesh);
-    }
-
-    void onClear(const GrFixedClip& clip, const SkPMColor4f& color) override {
-        fGpu->clear(clip, color, fRenderTarget, fOrigin);
-    }
-
-    void onClearStencilClip(const GrFixedClip& clip, bool insideStencilMask) override {
-        fGpu->clearStencilClip(clip, insideStencilMask, fRenderTarget, fOrigin);
-    }
-
-    GrGLGpu*                fGpu;
-    SkIRect                 fContentBounds;
-    LoadAndStoreInfo        fColorLoadAndStoreInfo;
+    GrGLGpu* fGpu;
+    SkIRect fContentBounds;
+    LoadAndStoreInfo fColorLoadAndStoreInfo;
     StencilLoadAndStoreInfo fStencilLoadAndStoreInfo;
+
+    // Per-pipeline state.
+    GrPrimitiveType fPrimitiveType;
+    GrGLAttribArrayState* fAttribArrayState = nullptr;
+
+    // If using an index buffer, this gets set during onBindBuffers. It is either the CPU address of
+    // the indices, or nullptr if they reside physically in GPU memory.
+    const uint16_t* fIndexPointer;
+
+    // We may defer binding of instance and vertex buffers because GL does not always support a base
+    // instance and/or vertex.
+    sk_sp<const GrBuffer> fDeferredInstanceBuffer;
+    sk_sp<const GrBuffer> fDeferredVertexBuffer;
 
     typedef GrOpsRenderPass INHERITED;
 };
