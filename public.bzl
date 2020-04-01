@@ -306,7 +306,6 @@ PORTS_SRCS_UNIX = struct(
         "src/ports/SkFontMgr_fontconfig_factory.cpp",
         "src/ports/SkFontMgr_fuchsia.cpp",
         "src/ports/SkImageGenerator_none.cpp",
-        "src/ports/SkTLS_none.cpp",
     ],
 )
 
@@ -338,7 +337,6 @@ PORTS_SRCS_ANDROID = struct(
         "src/ports/SkFontMgr_empty_factory.cpp",
         "src/ports/SkFontMgr_fuchsia.cpp",
         "src/ports/SkImageGenerator_none.cpp",
-        "src/ports/SkTLS_none.cpp",
     ],
 )
 
@@ -374,7 +372,6 @@ PORTS_SRCS_IOS = struct(
         "src/ports/SkFontMgr_empty_factory.cpp",
         "src/ports/SkFontMgr_fuchsia.cpp",
         "src/ports/SkImageGenerator_none.cpp",
-        "src/ports/SkTLS_none.cpp",
     ],
 )
 
@@ -416,7 +413,6 @@ PORTS_SRCS_WASM = struct(
         "src/ports/SkFontMgr_fontconfig_factory.cpp",
         "src/ports/SkFontMgr_fuchsia.cpp",
         "src/ports/SkImageGenerator_none.cpp",
-        "src/ports/SkTLS_none.cpp",
     ],
 )
 
@@ -677,7 +673,8 @@ def base_defines(os_conditions):
         # Experiment to diagnose image diffs in Google3
         "SK_DISABLE_LOWP_RASTER_PIPELINE",
         # JPEG is in codec_limited
-        "SK_HAS_JPEG_LIBRARY",
+        "SK_CODEC_DECODES_JPEG",
+        "SK_ENCODE_JPEG",
         # Needed for some tests in dm
         "SK_ENABLE_SKSL_INTERPRETER",
     ] + skia_select(
@@ -687,21 +684,26 @@ def base_defines(os_conditions):
             [
                 "PNG_SKIP_SETJMP_CHECK",
                 "SK_BUILD_FOR_UNIX",
+                "SK_CODEC_DECODES_PNG",
+                "SK_CODEC_DECODES_WEBP",
+                "SK_ENCODE_PNG",
+                "SK_ENCODE_WEBP",
                 "SK_R32_SHIFT=16",
-                "SK_HAS_PNG_LIBRARY",
-                "SK_HAS_WEBP_LIBRARY",
             ],
             # ANDROID
             [
                 "SK_BUILD_FOR_ANDROID",
-                "SK_HAS_PNG_LIBRARY",
-                "SK_HAS_WEBP_LIBRARY",
+                "SK_CODEC_DECODES_PNG",
+                "SK_CODEC_DECODES_WEBP",
+                "SK_ENCODE_PNG",
+                "SK_ENCODE_WEBP",
             ],
             # IOS
             [
                 "SK_BUILD_FOR_IOS",
                 "SK_BUILD_NO_OPTS",
                 "SKNX_NO_SIMD",
+                "SK_NO_COMMAND_BUFFER",  # Test tools that use thread_local.
             ],
             # WASM
             [
@@ -802,6 +804,8 @@ def skottie_lib_srcs():
         [
             "modules/skottie/src/*.cpp",
             "modules/skottie/src/*.h",
+            "modules/skottie/src/animator/*.cpp",
+            "modules/skottie/src/animator/*.h",
             "modules/skottie/src/effects/*.cpp",
             "modules/skottie/src/effects/*.h",
             "modules/skottie/src/layers/*.cpp",

@@ -49,6 +49,7 @@ struct SkRect;
 class SkRegion;
 class SkRRect;
 struct SkRSXform;
+class SkRuntimeEffect;
 class SkTextBlob;
 class SkVertices;
 
@@ -87,6 +88,9 @@ public:
             GrSurfaceOrigin = kBottomLeft_GrSurfaceOrigin,
             SkBudgeted = SkBudgeted::kYes,
             const SkSurfaceProps* = nullptr);
+
+    static std::tuple<GrColorType, GrBackendFormat> GetFallbackColorTypeAndFormat(GrImageContext*,
+                                                                                  GrColorType);
 
     // Same as previous factory but will try to use fallback GrColorTypes if the one passed in
     // fails. The fallback GrColorType will have at least the number of channels and precision per
@@ -411,12 +415,14 @@ public:
      * @param   viewMatrix       transformation matrix
      * @param   vertices         specifies the mesh to draw.
      * @param   overridePrimType primitive type to draw. If NULL, derive prim type from vertices.
+     * @param   effect           runtime effect that will handle custom vertex attributes.
      */
     void drawVertices(const GrClip&,
                       GrPaint&& paint,
                       const SkMatrix& viewMatrix,
                       sk_sp<SkVertices> vertices,
-                      GrPrimitiveType* overridePrimType = nullptr);
+                      GrPrimitiveType* overridePrimType = nullptr,
+                      const SkRuntimeEffect* effect = nullptr);
 
     /**
      * Draws textured sprites from an atlas with a paint. This currently does not support AA for the
@@ -599,11 +605,11 @@ private:
     friend class GrSmallPathRenderer;                // for access to add[Mesh]DrawOp
     friend class GrDefaultPathRenderer;              // for access to add[Mesh]DrawOp
     friend class GrStencilAndCoverPathRenderer;      // for access to add[Mesh]DrawOp
-    friend class GrTessellatingPathRenderer;         // for access to add[Mesh]DrawOp
+    friend class GrTriangulatingPathRenderer;        // for access to add[Mesh]DrawOp
     friend class GrCCPerFlushResources;              // for access to addDrawOp
     friend class GrCoverageCountingPathRenderer;     // for access to addDrawOp
     friend class GrFillRectOp;                       // for access to addDrawOp
-    friend class GrGpuTessellationPathRenderer;      // for access to addDrawOp
+    friend class GrTessellationPathRenderer;         // for access to addDrawOp
     friend class GrTextureOp;                        // for access to addDrawOp
 
     SkDEBUGCODE(void onValidate() const override;)

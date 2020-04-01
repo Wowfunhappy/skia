@@ -12,7 +12,6 @@
 #include "include/gpu/GrBackendDrawableInfo.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrFixedClip.h"
-#include "src/gpu/GrMesh.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrPipeline.h"
 #include "src/gpu/GrRenderTargetPriv.h"
@@ -172,12 +171,6 @@ GrVkCommandBuffer* GrVkOpsRenderPass::currentCommandBuffer() {
     return fGpu->currentCommandBuffer();
 }
 
-void GrVkOpsRenderPass::end() {
-    if (fCurrentSecondaryCommandBuffer) {
-        fCurrentSecondaryCommandBuffer->end(fGpu);
-    }
-}
-
 void GrVkOpsRenderPass::submit() {
     if (!fRenderTarget) {
         return;
@@ -191,7 +184,7 @@ void GrVkOpsRenderPass::submit() {
     if (this->wrapsSecondaryCommandBuffer()) {
         // We pass the ownership of the GrVkSecondaryCommandBuffer to the special wrapped
         // GrVkRenderTarget since it's lifetime matches the lifetime we need to keep the
-        // GrVkResources on the GrVkSecondaryCommandBuffer alive.
+        // GrManagedResources on the GrVkSecondaryCommandBuffer alive.
         static_cast<GrVkRenderTarget*>(fRenderTarget)->addWrappedGrSecondaryCommandBuffer(
                 std::move(fCurrentSecondaryCommandBuffer));
         return;
@@ -245,7 +238,7 @@ void GrVkOpsRenderPass::reset() {
         fCurrentSecondaryCommandBuffer.release()->recycle(fGpu->cmdPool());
     }
     if (fCurrentRenderPass) {
-        fCurrentRenderPass->unref(fGpu);
+        fCurrentRenderPass->unref();
         fCurrentRenderPass = nullptr;
     }
     fCurrentCBIsEmpty = true;
@@ -384,7 +377,7 @@ void GrVkOpsRenderPass::addAdditionalRenderPass(bool mustUseSecondaryCommandBuff
     const GrVkResourceProvider::CompatibleRPHandle& rpHandle =
             vkRT->compatibleRenderPassHandle();
     SkASSERT(fCurrentRenderPass);
-    fCurrentRenderPass->unref(fGpu);
+    fCurrentRenderPass->unref();
     if (rpHandle.isValid()) {
         fCurrentRenderPass = fGpu->resourceProvider().findRenderPass(rpHandle,
                                                                      vkColorOps,
@@ -443,55 +436,17 @@ void GrVkOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUpl
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef SK_DEBUG
-void check_sampled_texture(GrTexture* tex, GrRenderTarget* rt, GrVkGpu* gpu) {
-    SkASSERT(!tex->isProtected() || (rt->isProtected() && gpu->protectedContext()));
-    GrVkTexture* vkTex = static_cast<GrVkTexture*>(tex);
-    SkASSERT(vkTex->currentLayout() == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-}
-
-void check_sampled_textures(const GrProgramInfo& programInfo, GrRenderTarget* rt, GrVkGpu* gpu) {
-    if (programInfo.hasDynamicPrimProcTextures()) {
-        for (int m = 0; m < programInfo.numDynamicStateArrays(); ++m) {
-            auto dynamicPrimProcTextures = programInfo.dynamicPrimProcTextures(m);
-
-            for (int s = 0; s < programInfo.primProc().numTextureSamplers(); ++s) {
-                auto texture = dynamicPrimProcTextures[s]->peekTexture();
-                check_sampled_texture(texture, rt, gpu);
-            }
-        }
-    } else if (programInfo.hasFixedPrimProcTextures()) {
-        auto fixedPrimProcTextures = programInfo.fixedPrimProcTextures();
-
-        for (int s = 0; s < programInfo.primProc().numTextureSamplers(); ++s) {
-            auto texture = fixedPrimProcTextures[s]->peekTexture();
-            check_sampled_texture(texture, rt, gpu);
-        }
-    }
-
-    GrFragmentProcessor::PipelineTextureSamplerRange textureSamplerRange(programInfo.pipeline());
-    for (auto [sampler, fp] : textureSamplerRange) {
-        check_sampled_texture(sampler.peekTexture(), rt, gpu);
-    }
-    if (GrTexture* dstTexture = programInfo.pipeline().peekDstTexture()) {
-        check_sampled_texture(dstTexture, rt, gpu);
+void GrVkOpsRenderPass::onEnd() {
+    if (fCurrentSecondaryCommandBuffer) {
+        fCurrentSecondaryCommandBuffer->end(fGpu);
     }
 }
-#endif
 
 bool GrVkOpsRenderPass::onBindPipeline(const GrProgramInfo& programInfo, const SkRect& drawBounds) {
     if (!fCurrentRenderPass) {
         SkASSERT(fGpu->isDeviceLost());
         return false;
     }
-
-#ifdef SK_DEBUG
-    check_sampled_textures(programInfo, fRenderTarget, fGpu);
-
-    // Both the 'programInfo' and this renderPass have an origin. Since they come from the
-    // same place (i.e., the target renderTargetProxy) they had best agree.
-    SkASSERT(programInfo.origin() == fOrigin);
-#endif
 
     SkRect rtRect = SkRect::Make(fBounds);
     if (rtRect.intersect(drawBounds)) {
@@ -528,7 +483,7 @@ bool GrVkOpsRenderPass::onBindPipeline(const GrProgramInfo& programInfo, const S
     }
     GrVkPipeline::SetDynamicViewportState(fGpu, currentCB, fRenderTarget);
     GrVkPipeline::SetDynamicBlendConstantState(fGpu, currentCB,
-                                               programInfo.pipeline().outputSwizzle(),
+                                               programInfo.pipeline().writeSwizzle(),
                                                programInfo.pipeline().getXferProcessor());
 
     return true;
@@ -543,10 +498,30 @@ void GrVkOpsRenderPass::onSetScissorRect(const SkIRect& scissor) {
                                              fOrigin, combinedScissorRect);
 }
 
+#ifdef SK_DEBUG
+void check_sampled_texture(GrTexture* tex, GrRenderTarget* rt, GrVkGpu* gpu) {
+    SkASSERT(!tex->isProtected() || (rt->isProtected() && gpu->protectedContext()));
+    GrVkTexture* vkTex = static_cast<GrVkTexture*>(tex);
+    SkASSERT(vkTex->currentLayout() == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+#endif
+
 bool GrVkOpsRenderPass::onBindTextures(const GrPrimitiveProcessor& primProc,
-                                       const GrPipeline& pipeline,
-                                       const GrSurfaceProxy* const primProcTextures[]) {
+                                       const GrSurfaceProxy* const primProcTextures[],
+                                       const GrPipeline& pipeline) {
+#ifdef SK_DEBUG
     SkASSERT(fCurrentPipelineState);
+    for (int i = 0; i < primProc.numTextureSamplers(); ++i) {
+        check_sampled_texture(primProcTextures[i]->peekTexture(), fRenderTarget, fGpu);
+    }
+    GrFragmentProcessor::PipelineTextureSamplerRange textureSamplerRange(pipeline);
+    for (auto [sampler, fp] : textureSamplerRange) {
+        check_sampled_texture(sampler.peekTexture(), fRenderTarget, fGpu);
+    }
+    if (GrTexture* dstTexture = pipeline.peekDstTexture()) {
+        check_sampled_texture(dstTexture, fRenderTarget, fGpu);
+    }
+#endif
     return fCurrentPipelineState->setAndBindTextures(fGpu, primProc, pipeline, primProcTextures,
                                                      this->currentCommandBuffer());
 }

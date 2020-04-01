@@ -22,7 +22,22 @@ public:
 
     using GrSimpleMeshDrawOpHelper::visitProxies;
 
+    const GrPipeline* createPipelineWithStencil(const GrCaps*,
+                                                SkArenaAlloc*,
+                                                GrSwizzle outputViewSwizzle,
+                                                GrAppliedClip&&,
+                                                const GrXferProcessor::DstProxyView&);
+
     const GrPipeline* createPipelineWithStencil(GrOpFlushState* flushState);
+
+    GrProgramInfo* createProgramInfoWithStencil(const GrCaps*,
+                                                SkArenaAlloc*,
+                                                const GrSurfaceProxyView* outputView,
+                                                GrAppliedClip&&,
+                                                const GrXferProcessor::DstProxyView&,
+                                                GrGeometryProcessor*,
+                                                GrPrimitiveType);
+
 
     // using declarations can't be templated, so this is a pass through function instead.
     template <typename Op, typename... OpArgs>

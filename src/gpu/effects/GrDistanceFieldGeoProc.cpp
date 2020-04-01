@@ -5,17 +5,16 @@
  * found in the LICENSE file.
  */
 
-#include "include/gpu/GrTexture.h"
 #include "src/core/SkDistanceFieldGen.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrShaderCaps.h"
+#include "src/gpu/GrTexture.h"
 #include "src/gpu/effects/GrAtlasedShaderHelpers.h"
 #include "src/gpu/effects/GrDistanceFieldGeoProc.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLGeometryProcessor.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
 #include "src/gpu/glsl/GrGLSLUniformHandler.h"
-#include "src/gpu/glsl/GrGLSLUtil.h"
 #include "src/gpu/glsl/GrGLSLVarying.h"
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
 
@@ -463,9 +462,7 @@ public:
 
         if (dfpgp.matrix().hasPerspective() && !SkMatrixPriv::CheapEqual(fMatrix, dfpgp.matrix())) {
             fMatrix = dfpgp.matrix();
-            float matrix[3 * 3];
-            GrGLSLGetMatrix<3>(matrix, fMatrix);
-            pdman.setMatrix3f(fMatrixUniform, matrix);
+            pdman.setSkMatrix(fMatrixUniform, fMatrix);
         }
 
         const SkISize& atlasDimensions = dfpgp.atlasDimensions();

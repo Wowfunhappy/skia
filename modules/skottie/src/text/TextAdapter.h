@@ -8,7 +8,7 @@
 #ifndef SkottieTextAdapter_DEFINED
 #define SkottieTextAdapter_DEFINED
 
-#include "modules/skottie/src/Animator.h"
+#include "modules/skottie/src/animator/Animator.h"
 #include "modules/skottie/src/text/SkottieShaper.h"
 #include "modules/skottie/src/text/TextAnimator.h"
 #include "modules/skottie/src/text/TextValue.h"
@@ -69,13 +69,13 @@ private:
     void buildDomainMaps(const Shaper::Result&);
 
     void pushPropsToFragment(const TextAnimator::ResolvedProps&, const FragmentRec&,
-                             const SkVector&, const TextAnimator::DomainSpan*) const;
+                             const SkV2&, const TextAnimator::DomainSpan*) const;
 
     void adjustLineTracking(const TextAnimator::ModulatorBuffer&,
                             const TextAnimator::DomainSpan&,
                             float line_tracking) const;
 
-    SkV2 fragmentAnchorPoint(const FragmentRec&, const SkVector&,
+    SkV2 fragmentAnchorPoint(const FragmentRec&, const SkV2&,
                              const TextAnimator::DomainSpan*) const;
     uint32_t shaperFlags() const;
 
@@ -107,7 +107,7 @@ private:
     };
 
     TextValueTracker fText;
-    VectorValue      fGroupingAlignment;
+    Vec2Value        fGroupingAlignment = {0,0};
 
     bool             fHasBlurAnimator     : 1,
                      fRequiresAnchorPoint : 1;

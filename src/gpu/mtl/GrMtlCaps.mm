@@ -331,15 +331,6 @@ SkImage::CompressionType GrMtlCaps::compressionType(const GrBackendFormat& forma
     SkUNREACHABLE;
 }
 
-bool GrMtlCaps::isFormatTexturableAndUploadable(GrColorType ct,
-                                                const GrBackendFormat& format) const {
-    MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
-
-    uint32_t ctFlags = this->getFormatInfo(mtlFormat).colorTypeFlags(ct);
-    return this->isFormatTexturable(mtlFormat) &&
-           SkToBool(ctFlags & ColorTypeInfo::kUploadData_Flag);
-}
-
 bool GrMtlCaps::isFormatTexturable(const GrBackendFormat& format) const {
     MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
     return this->isFormatTexturable(mtlFormat);
@@ -548,7 +539,7 @@ void GrMtlCaps::initFormatTable() {
             ctInfo.fColorType = GrColorType::kAlpha_8;
             ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
             ctInfo.fReadSwizzle = GrSwizzle::RRRR();
-            ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
+            ctInfo.fWriteSwizzle = GrSwizzle::AAAA();
         }
         // Format: R8Unorm, Surface: kGray_8
         {
@@ -715,7 +706,7 @@ void GrMtlCaps::initFormatTable() {
             ctInfo.fColorType = GrColorType::kAlpha_F16;
             ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
             ctInfo.fReadSwizzle = GrSwizzle::RRRR();
-            ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
+            ctInfo.fWriteSwizzle = GrSwizzle::AAAA();
         }
     }
 
@@ -759,7 +750,7 @@ void GrMtlCaps::initFormatTable() {
             ctInfo.fColorType = GrColorType::kAlpha_16;
             ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
             ctInfo.fReadSwizzle = GrSwizzle::RRRR();
-            ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
+            ctInfo.fWriteSwizzle = GrSwizzle::AAAA();
         }
     }
 
@@ -909,11 +900,10 @@ GrColorType GrMtlCaps::getYUVAColorTypeFromBackendFormat(const GrBackendFormat& 
     }
 }
 
-GrBackendFormat GrMtlCaps::onGetDefaultBackendFormat(GrColorType ct,
-                                                     GrRenderable renderable) const {
+GrBackendFormat GrMtlCaps::onGetDefaultBackendFormat(GrColorType ct) const {
     MTLPixelFormat format = this->getFormatFromColorType(ct);
     if (!format) {
-        return GrBackendFormat();
+        return {};
     }
     return GrBackendFormat::MakeMtl(format);
 }
@@ -953,19 +943,22 @@ GrSwizzle GrMtlCaps::getReadSwizzle(const GrBackendFormat& format, GrColorType c
             return ctInfo.fReadSwizzle;
         }
     }
-    return GrSwizzle::RGBA();
+    SkDEBUGFAIL("Illegal color type/format combination.");
+    return {};
 }
-GrSwizzle GrMtlCaps::getOutputSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
+
+GrSwizzle GrMtlCaps::getWriteSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
     MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
     SkASSERT(mtlFormat != MTLPixelFormatInvalid);
     const auto& info = this->getFormatInfo(mtlFormat);
     for (int i = 0; i < info.fColorTypeInfoCount; ++i) {
         const auto& ctInfo = info.fColorTypeInfos[i];
         if (ctInfo.fColorType == colorType) {
-            return ctInfo.fOutputSwizzle;
+            return ctInfo.fWriteSwizzle;
         }
     }
-    return GrSwizzle::RGBA();
+    SkDEBUGFAIL("Illegal color type/format combination.");
+    return {};
 }
 
 uint64_t GrMtlCaps::computeFormatKey(const GrBackendFormat& format) const {
@@ -1103,4 +1096,44 @@ std::vector<GrCaps::TestFormatColorTypeCombination> GrMtlCaps::getTestingCombina
 
     return combos;
 }
+#endif
+
+#ifdef SK_ENABLE_DUMP_GPU
+#include "src/utils/SkJSONWriter.h"
+void GrMtlCaps::onDumpJSON(SkJSONWriter* writer) const {
+
+    // We are called by the base class, which has already called beginObject(). We choose to nest
+    // all of our caps information in a named sub-object.
+    writer->beginObject("Metal caps");
+
+    writer->beginObject("Preferred Stencil Format");
+    writer->appendS32("stencil bits", fPreferredStencilFormat.fStencilBits);
+    writer->appendS32("total bits", fPreferredStencilFormat.fTotalBits);
+    writer->endObject();
+
+    switch (fPlatform) {
+        case Platform::kMac:
+            writer->appendString("Platform", "Mac");
+            break;
+        case Platform::kIOS:
+            writer->appendString("Platform", "iOS");
+            break;
+        default:
+            writer->appendString("Platform", "unknown");
+            break;
+    }
+
+    writer->appendS32("Family Group", fFamilyGroup);
+    writer->appendS32("Version", fVersion);
+
+    writer->beginArray("Sample Counts");
+    for (int v : fSampleCounts) {
+        writer->appendS32(nullptr, v);
+    }
+    writer->endArray();
+
+    writer->endObject();
+}
+#else
+void GrMtlCaps::onDumpJSON(SkJSONWriter* writer) const { }
 #endif

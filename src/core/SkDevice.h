@@ -12,8 +12,10 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkRegion.h"
+#include "include/core/SkShader.h"
 #include "include/core/SkSurfaceProps.h"
 #include "include/private/SkNoncopyable.h"
+#include "src/shaders/SkShaderBase.h"
 
 class SkBitmap;
 struct SkDrawShadowRec;
@@ -150,6 +152,13 @@ public:
     void clipPath(const SkPath& path, SkClipOp op, bool aa) {
         this->onClipPath(path, op, aa);
     }
+    void clipShader(sk_sp<SkShader> sh, SkClipOp op) {
+        sh = as_SB(sh)->makeWithCTM(this->localToDevice());
+        if (op == SkClipOp::kDifference) {
+            sh = as_SB(sh)->makeInvertAlpha();
+        }
+        this->onClipShader(std::move(sh));
+    }
     void clipRegion(const SkRegion& region, SkClipOp op) {
         this->onClipRegion(region, op);
     }
@@ -184,6 +193,7 @@ protected:
     virtual void onClipRect(const SkRect& rect, SkClipOp, bool aa) {}
     virtual void onClipRRect(const SkRRect& rrect, SkClipOp, bool aa) {}
     virtual void onClipPath(const SkPath& path, SkClipOp, bool aa) {}
+    virtual void onClipShader(sk_sp<SkShader>) {}
     virtual void onClipRegion(const SkRegion& deviceRgn, SkClipOp) {}
     virtual void onSetDeviceClipRestriction(SkIRect* mutableClipRestriction) {}
     virtual bool onClipIsAA() const = 0;
@@ -232,24 +242,9 @@ protected:
     virtual void drawPath(const SkPath& path,
                           const SkPaint& paint,
                           bool pathIsMutable = false) = 0;
-    virtual void drawSprite(const SkBitmap& bitmap,
-                            int x, int y, const SkPaint& paint) = 0;
-
-    /**
-     *  The default impl. will create a bitmap-shader from the bitmap,
-     *  and call drawRect with it.
-     */
-    virtual void drawBitmapRect(const SkBitmap&,
-                                const SkRect* srcOrNull, const SkRect& dst,
-                                const SkPaint& paint,
-                                SkCanvas::SrcRectConstraint) = 0;
-    virtual void drawBitmapNine(const SkBitmap&, const SkIRect& center,
-                                const SkRect& dst, const SkPaint&);
-    virtual void drawBitmapLattice(const SkBitmap&, const SkCanvas::Lattice&,
-                                   const SkRect& dst, const SkPaint&);
 
     virtual void drawImageRect(const SkImage*, const SkRect* src, const SkRect& dst,
-                               const SkPaint&, SkCanvas::SrcRectConstraint);
+                               const SkPaint&, SkCanvas::SrcRectConstraint) = 0;
     virtual void drawImageNine(const SkImage*, const SkIRect& center,
                                const SkRect& dst, const SkPaint&);
     virtual void drawImageLattice(const SkImage*, const SkCanvas::Lattice&,
@@ -484,13 +479,12 @@ protected:
 
     void drawPaint(const SkPaint& paint) override {}
     void drawPoints(SkCanvas::PointMode, size_t, const SkPoint[], const SkPaint&) override {}
+    void drawImageRect(const SkImage*, const SkRect*, const SkRect&,
+                       const SkPaint&, SkCanvas::SrcRectConstraint) override {}
     void drawRect(const SkRect&, const SkPaint&) override {}
     void drawOval(const SkRect&, const SkPaint&) override {}
     void drawRRect(const SkRRect&, const SkPaint&) override {}
     void drawPath(const SkPath&, const SkPaint&, bool) override {}
-    void drawSprite(const SkBitmap&, int, int, const SkPaint&) override {}
-    void drawBitmapRect(const SkBitmap&, const SkRect*, const SkRect&, const SkPaint&,
-                        SkCanvas::SrcRectConstraint) override {}
     void drawDevice(SkBaseDevice*, int, int, const SkPaint&) override {}
     void drawGlyphRunList(const SkGlyphRunList& glyphRunList) override {}
     void drawVertices(const SkVertices*, SkBlendMode, const SkPaint&) override {}

@@ -13,12 +13,31 @@
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrGpu.h"
-#include "src/gpu/GrMesh.h"
 #include "src/gpu/GrPrimitiveProcessor.h"
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrRenderTargetPriv.h"
+#include "src/gpu/GrSimpleMesh.h"
 #include "src/gpu/GrTexturePriv.h"
+
+void GrOpsRenderPass::begin() {
+    fDrawPipelineStatus = DrawPipelineStatus::kNotConfigured;
+#ifdef SK_DEBUG
+    fScissorStatus = DynamicStateStatus::kDisabled;
+    fTextureBindingStatus = DynamicStateStatus::kDisabled;
+    fHasIndexBuffer = false;
+    fInstanceBufferStatus = DynamicStateStatus::kDisabled;
+    fVertexBufferStatus = DynamicStateStatus::kDisabled;
+#endif
+    this->onBegin();
+}
+
+void GrOpsRenderPass::end() {
+    this->onEnd();
+    fActiveIndexBuffer.reset();
+    fActiveInstanceBuffer.reset();
+    fActiveVertexBuffer.reset();
+}
 
 void GrOpsRenderPass::clear(const GrFixedClip& clip, const SkPMColor4f& color) {
     SkASSERT(fRenderTarget);
@@ -44,6 +63,9 @@ void GrOpsRenderPass::executeDrawable(std::unique_ptr<SkDrawable::GpuDrawHandler
 
 void GrOpsRenderPass::bindPipeline(const GrProgramInfo& programInfo, const SkRect& drawBounds) {
 #ifdef SK_DEBUG
+    // Both the 'programInfo' and this renderPass have an origin. Since they come from the same
+    // place (i.e., the target renderTargetProxy) they had best agree.
+    SkASSERT(programInfo.origin() == fOrigin);
     if (programInfo.primProc().hasInstanceAttributes()) {
          SkASSERT(this->gpu()->caps()->instanceAttribSupport());
     }
@@ -113,43 +135,44 @@ void GrOpsRenderPass::setScissorRect(const SkIRect& scissor) {
     SkDEBUGCODE(fScissorStatus = DynamicStateStatus::kConfigured);
 }
 
-void GrOpsRenderPass::bindTextures(const GrPrimitiveProcessor& primProc, const GrPipeline& pipeline,
-                                   const GrSurfaceProxy* const primProcTextures[]) {
+void GrOpsRenderPass::bindTextures(const GrPrimitiveProcessor& primProc,
+                                   const GrSurfaceProxy* const primProcTextures[],
+                                   const GrPipeline& pipeline) {
+#ifdef SK_DEBUG
+    SkASSERT((primProc.numTextureSamplers() > 0) == SkToBool(primProcTextures));
+    for (int i = 0; i < primProc.numTextureSamplers(); ++i) {
+        const auto& sampler = primProc.textureSampler(i);
+        const GrSurfaceProxy* proxy = primProcTextures[i];
+        SkASSERT(proxy);
+        SkASSERT(proxy->backendFormat() == sampler.backendFormat());
+        SkASSERT(proxy->backendFormat().textureType() == sampler.backendFormat().textureType());
+
+        const GrTexture* tex = proxy->peekTexture();
+        SkASSERT(tex);
+        if (GrSamplerState::Filter::kMipMap == sampler.samplerState().filter() &&
+            (tex->width() != 1 || tex->height() != 1)) {
+            // There are some cases where we might be given a non-mipmapped texture with a mipmap
+            // filter. See skbug.com/7094.
+            SkASSERT(tex->texturePriv().mipMapped() != GrMipMapped::kYes ||
+                     !tex->texturePriv().mipMapsAreDirty());
+        }
+    }
+#endif
+
     if (DrawPipelineStatus::kOk != fDrawPipelineStatus) {
         SkASSERT(DrawPipelineStatus::kNotConfigured != fDrawPipelineStatus);
         return;
     }
-    SkASSERT((primProc.numTextureSamplers() > 0) == SkToBool(primProcTextures));
+
     // Don't assert on fTextureBindingStatus. onBindTextures() just turns into a no-op when there
     // aren't any textures, and it's hard to tell from the GrPipeline whether there are any. For
     // many clients it is easier to just always call this method.
-    if (!this->onBindTextures(primProc, pipeline, primProcTextures)) {
+    if (!this->onBindTextures(primProc, primProcTextures, pipeline)) {
         fDrawPipelineStatus = DrawPipelineStatus::kFailedToBind;
         return;
     }
-    SkDEBUGCODE(fTextureBindingStatus = DynamicStateStatus::kConfigured);
-}
 
-void GrOpsRenderPass::drawMeshes(const GrProgramInfo& programInfo, const GrMesh meshes[],
-                                 int meshCount) {
-    if (programInfo.hasFixedScissor()) {
-        this->setScissorRect(programInfo.fixedScissor());
-    }
-    if (!programInfo.hasDynamicPrimProcTextures()) {
-        auto primProcTextures = (programInfo.hasFixedPrimProcTextures()) ?
-                programInfo.fixedPrimProcTextures() : nullptr;
-        this->bindTextures(programInfo.primProc(), programInfo.pipeline(), primProcTextures);
-    }
-    for (int i = 0; i < meshCount; ++i) {
-        if (programInfo.hasDynamicScissors()) {
-            this->setScissorRect(programInfo.dynamicScissor(i));
-        }
-        if (programInfo.hasDynamicPrimProcTextures()) {
-            this->bindTextures(programInfo.primProc(), programInfo.pipeline(),
-                               programInfo.dynamicPrimProcTextures(i));
-        }
-        meshes[i].draw(this);
-    }
+    SkDEBUGCODE(fTextureBindingStatus = DynamicStateStatus::kConfigured);
 }
 
 void GrOpsRenderPass::bindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
@@ -238,4 +261,21 @@ void GrOpsRenderPass::drawIndexedInstanced(int indexCount, int baseIndex, int in
     SkASSERT(DynamicStateStatus::kUninitialized != fInstanceBufferStatus);
     SkASSERT(DynamicStateStatus::kUninitialized != fVertexBufferStatus);
     this->onDrawIndexedInstanced(indexCount, baseIndex, instanceCount, baseInstance, baseVertex);
+}
+
+void GrOpsRenderPass::drawIndexPattern(int patternIndexCount, int patternRepeatCount,
+                                       int maxPatternRepetitionsInIndexBuffer,
+                                       int patternVertexCount, int baseVertex) {
+    int baseRepetition = 0;
+    while (baseRepetition < patternRepeatCount) {
+        int repeatCount = std::min(patternRepeatCount - baseRepetition,
+                                   maxPatternRepetitionsInIndexBuffer);
+        int drawIndexCount = repeatCount * patternIndexCount;
+        // A patterned index buffer must contain indices in the range [0..vertexCount].
+        int minIndexValue = 0;
+        int maxIndexValue = patternVertexCount * repeatCount - 1;
+        this->drawIndexed(drawIndexCount, 0, minIndexValue, maxIndexValue,
+                          patternVertexCount * baseRepetition + baseVertex);
+        baseRepetition += repeatCount;
+    }
 }

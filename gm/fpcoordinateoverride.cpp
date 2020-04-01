@@ -82,8 +82,11 @@ DEF_SIMPLE_GPU_GM_BG(fpcoordinateoverride, ctx, rtCtx, canvas, 512, 512,
 
     SkBitmap bmp;
     GetResourceAsBitmap("images/mandrill_512_q075.jpg", &bmp);
-    GrBitmapTextureMaker maker(ctx, bmp);
+    GrBitmapTextureMaker maker(ctx, bmp, GrImageTexGenPolicy::kDraw);
     auto view = maker.view(GrMipMapped::kNo);
+    if (!view) {
+        return;
+    }
     std::unique_ptr<GrFragmentProcessor> imgFP =
             GrTextureEffect::Make(std::move(view), bmp.alphaType(), SkMatrix());
     auto fp = std::unique_ptr<GrFragmentProcessor>(new SampleCoordEffect(std::move(imgFP)));

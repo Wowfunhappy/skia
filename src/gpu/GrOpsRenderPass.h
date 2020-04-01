@@ -15,7 +15,6 @@
 class GrOpFlushState;
 class GrFixedClip;
 class GrGpu;
-class GrMesh;
 class GrPipeline;
 class GrPrimitiveProcessor;
 class GrProgramInfo;
@@ -46,12 +45,12 @@ public:
         GrStoreOp fStoreOp;
     };
 
-    virtual void begin() = 0;
+    void begin();
     // Signals the end of recording to the GrOpsRenderPass and that it can now be submitted.
-    virtual void end() = 0;
+    void end();
 
-    // Updates the internal pipeline state for drawing with the provided GrProgramInfo.
-    // Enters an internal "bad" state if the pipeline could not be set.
+    // Updates the internal pipeline state for drawing with the provided GrProgramInfo. Enters an
+    // internal "bad" state if the pipeline could not be set.
     void bindPipeline(const GrProgramInfo&, const SkRect& drawBounds);
 
     // The scissor rect is always dynamic state and therefore not stored on GrPipeline. If scissor
@@ -60,26 +59,20 @@ public:
     // pipeline.
     void setScissorRect(const SkIRect&);
 
-    // Texture bindings are dynamic state and therefore not set during bindPipeline(). If the
-    // current program uses textures, then the client must call bindTextures() before drawing.
-    // The primitive processor textures may also be updated between draws by calling bindTextures()
-    // again with a different array for primProcTextures. (On subsequent calls, if the backend is
-    // capable of updating the primitive processor textures independently, then it will
-    // automatically skip binding textures from GrPipeline.)
+    // Binds textures for the primitive processor and any FP on the GrPipeline. Texture bindings are
+    // dynamic state and therefore not set during bindPipeline(). If the current program uses
+    // textures, then the client must call bindTextures() before drawing. The primitive processor
+    // textures may also be updated between draws by calling bindTextures() again with a different
+    // array for primProcTextures. (On subsequent calls, if the backend is capable of updating the
+    // primitive processor textures independently, then it will automatically skip re-binding
+    // FP textures from GrPipeline.)
     //
     // If the current program does not use textures, this is a no-op.
-    void bindTextures(const GrPrimitiveProcessor&, const GrPipeline&,
-                      const GrSurfaceProxy* const primProcTextures[]);
+    void bindTextures(const GrPrimitiveProcessor&, const GrSurfaceProxy* const primProcTextures[],
+                      const GrPipeline&);
 
     void bindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
                      const GrBuffer* vertexBuffer, GrPrimitiveRestart = GrPrimitiveRestart::kNo);
-
-    // Draws the given array of meshes using the current pipeline state. The client must call
-    // bindPipeline() before using this method.
-    //
-    // NOTE: This method will soon be deleted. While it continues to exist, it takes care of calling
-    // setScissor() and bindTextures() on the client's behalf.
-    void drawMeshes(const GrProgramInfo&, const GrMesh[], int meshCount);
 
     // These methods issue draws using the current pipeline state. Before drawing, the caller must
     // configure the pipeline and dynamic state:
@@ -94,6 +87,13 @@ public:
     void drawInstanced(int instanceCount, int baseInstance, int vertexCount, int baseVertex);
     void drawIndexedInstanced(int indexCount, int baseIndex, int instanceCount, int baseInstance,
                               int baseVertex);
+
+    // This is a helper method for drawing a repeating pattern of vertices. The bound index buffer
+    // is understood to contain 'maxPatternRepetitionsInIndexBuffer' repetitions of the pattern.
+    // If more repetitions are required, then we loop.
+    void drawIndexPattern(int patternIndexCount, int patternRepeatCount,
+                          int maxPatternRepetitionsInIndexBuffer, int patternVertexCount,
+                          int baseVertex);
 
     // Performs an upload of vertex data in the middle of a set of a set of draws
     virtual void inlineUpload(GrOpFlushState*, GrDeferredTextureUploadFn&) = 0;
@@ -128,16 +128,25 @@ protected:
     GrSurfaceOrigin fOrigin;
     GrRenderTarget* fRenderTarget;
 
+    // Backends may defer binding of certain buffers if their draw API requires a buffer, or if
+    // their bind methods don't support base values.
+    sk_sp<const GrBuffer> fActiveIndexBuffer;
+    sk_sp<const GrBuffer> fActiveVertexBuffer;
+    sk_sp<const GrBuffer> fActiveInstanceBuffer;
+
 private:
     virtual GrGpu* gpu() = 0;
 
     bool prepareToDraw();
 
     // overridden by backend-specific derived class to perform the rendering command.
+    virtual void onBegin() {}
+    virtual void onEnd() {}
     virtual bool onBindPipeline(const GrProgramInfo&, const SkRect& drawBounds) = 0;
     virtual void onSetScissorRect(const SkIRect&) = 0;
-    virtual bool onBindTextures(const GrPrimitiveProcessor&, const GrPipeline&,
-                                const GrSurfaceProxy* const primProcTextures[]) = 0;
+    virtual bool onBindTextures(const GrPrimitiveProcessor&,
+                                const GrSurfaceProxy* const primProcTextures[],
+                                const GrPipeline&) = 0;
     virtual void onBindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
                                const GrBuffer* vertexBuffer, GrPrimitiveRestart) = 0;
     virtual void onDraw(int vertexCount, int baseVertex) = 0;
@@ -167,11 +176,11 @@ private:
         kConfigured
     };
 
-    DynamicStateStatus fScissorStatus = DynamicStateStatus::kDisabled;
-    DynamicStateStatus fTextureBindingStatus = DynamicStateStatus::kDisabled;
-    bool fHasIndexBuffer = false;
-    DynamicStateStatus fInstanceBufferStatus = DynamicStateStatus::kDisabled;
-    DynamicStateStatus fVertexBufferStatus = DynamicStateStatus::kDisabled;
+    DynamicStateStatus fScissorStatus;
+    DynamicStateStatus fTextureBindingStatus;
+    bool fHasIndexBuffer;
+    DynamicStateStatus fInstanceBufferStatus;
+    DynamicStateStatus fVertexBufferStatus;
 #endif
 
     typedef GrOpsRenderPass INHERITED;

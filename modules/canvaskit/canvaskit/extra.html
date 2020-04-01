@@ -31,7 +31,7 @@
 
 
 <h2> CanvasKit can serialize/deserialize .skp files</h2>
-<canvas id=skp width=300 height=300></canvas>
+<canvas id=skp width=500 height=500></canvas>
 
 <h2> 3D perspective transformations </h2>
 <canvas id=camera3d width=500 height=500></canvas>
@@ -51,7 +51,6 @@
   var robotoData = null;
   var notoserifData = null;
 
-  var bonesImageData = null;
   var flightAnimGif = null;
   var skpData = null;
   var cdn = 'https://storage.googleapis.com/skia-cdn/misc/';
@@ -133,7 +132,7 @@
     });
   });
 
-  fetch(cdn + 'red_line.skp').then((response) => response.arrayBuffer()).then((buffer) => {
+  fetch(cdn + 'picture2.skp').then((response) => response.arrayBuffer()).then((buffer) => {
     skpData = buffer;
     SkpExample(CanvasKit, skpData);
   });
@@ -541,6 +540,11 @@ const curves = {
 
     function drawFrame(canvas) {
       canvas.clear(CanvasKit.TRANSPARENT);
+      // this particular file has a path drawing at (68,582) that's 1300x1300 pixels
+      // scale it down to 500x500 and translate it to fit.
+      const scale = 500.0/1300;
+      canvas.scale(scale, scale);
+      canvas.translate(-68, -582);
       canvas.drawPicture(pic);
     }
     // Intentionally just draw frame once
@@ -717,25 +721,25 @@ const curves = {
 
       // want "world" to be in our big coordinates (e.g. area), so apply this inverse
       // as part of our "camera".
-      canvas.experimental_saveCamera(
+      canvas.saveCamera(
         CanvasKit.SkM44.multiply(viewport, perspective),
         CanvasKit.SkM44.multiply(camera, mustInvert(viewport)));
     }
 
     function setClickToWorld(canvas, matrix) {
-      const l2d = canvas.experimental_getLocalToDevice();
+      const l2d = canvas.getLocalToDevice();
       worldToClick = CanvasKit.SkM44.multiply(mustInvert(matrix), l2d);
       clickToWorld = mustInvert(worldToClick);
     }
 
     function drawCubeFace(canvas, m, color) {
       const trans = new CanvasKit.SkM44.translated([vSphereRadius/2, vSphereRadius/2, 0]);
-      canvas.experimental_concat44(CanvasKit.SkM44.multiply(trans, m, mustInvert(trans)));
-      const znormal = front(canvas.experimental_getLocalToDevice());
+      canvas.concat44(CanvasKit.SkM44.multiply(trans, m, mustInvert(trans)));
+      const znormal = front(canvas.getLocalToDevice());
       if (znormal < 0) {
         return; // skip faces facing backwards
       }
-      const ltw = canvas.experimental_getLocalToWorld();
+      const ltw = canvas.getLocalToWorld();
       // shader expects the 4x4 matrices in column major order.
       const uniforms = [...CanvasKit.SkM44.transpose(ltw), ...mustInvert(ltw), ...lightWorldPos];
       const paint = new CanvasKit.SkPaint();
@@ -747,9 +751,7 @@ const curves = {
     }
 
     function drawFrame(canvas) {
-      // TODO if not GPU backend, print an error to the console and return.
-      // this demo only works in GL.
-      const clickM = canvas.experimental_getLocalToDevice();
+      const clickM = canvas.getLocalToDevice();
       canvas.save();
       canvas.translate(vSphereCenter[0] - vSphereRadius/2, vSphereCenter[1] - vSphereRadius/2);
       // pass surface dimensions as viewport size.

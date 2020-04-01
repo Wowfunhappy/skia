@@ -70,7 +70,11 @@ public:
     }
 
     void visitProxies(const VisitProxyFunc& func) const override {
-        fProcessorSet.visitProxies(func);
+        if (fProgramInfo) {
+            fProgramInfo->visitFPProxies(func);
+        } else {
+            fProcessorSet.visitProxies(func);
+        }
     }
 
 protected:
@@ -85,59 +89,40 @@ protected:
 
     virtual GrGeometryProcessor* makeGP(const GrCaps& caps, SkArenaAlloc* arena) = 0;
 
-    GrProgramInfo* createProgramInfo(const GrCaps* caps,
-                                     SkArenaAlloc* arena,
-                                     const GrSurfaceProxyView* outputView,
-                                     GrAppliedClip&& appliedClip,
-                                     const GrXferProcessor::DstProxyView& dstProxyView) {
+    GrProgramInfo* programInfo() override { return fProgramInfo; }
+
+    void onCreateProgramInfo(const GrCaps* caps,
+                             SkArenaAlloc* arena,
+                             const GrSurfaceProxyView* outputView,
+                             GrAppliedClip&& appliedClip,
+                             const GrXferProcessor::DstProxyView& dstProxyView) override {
         auto gp = this->makeGP(*caps, arena);
         if (!gp) {
-            return nullptr;
+            return;
         }
 
         GrPipeline::InputFlags flags = GrPipeline::InputFlags::kNone;
 
-        return GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps, arena, outputView,
-                                                           std::move(appliedClip), dstProxyView,
-                                                           gp, std::move(fProcessorSet),
-                                                           GrPrimitiveType::kTriangles, flags);
-    }
-
-    GrProgramInfo* createProgramInfo(GrOpFlushState* flushState) {
-        return this->createProgramInfo(&flushState->caps(),
-                                       flushState->allocator(),
-                                       flushState->outputView(),
-                                       flushState->detachAppliedClip(),
-                                       flushState->dstProxyView());
-    }
-
-    void onPrePrepareDraws(GrRecordingContext* context,
-                           const GrSurfaceProxyView* outputView,
-                           GrAppliedClip* clip,
-                           const GrXferProcessor::DstProxyView& dstProxyView) final {
-        SkArenaAlloc* arena = context->priv().recordTimeAllocator();
-
-        // This is equivalent to a GrOpFlushState::detachAppliedClip
-        GrAppliedClip appliedClip = clip ? std::move(*clip) : GrAppliedClip();
-
-        fProgramInfo = this->createProgramInfo(context->priv().caps(), arena, outputView,
-                                               std::move(appliedClip), dstProxyView);
-
-        context->priv().recordProgramInfo(fProgramInfo);
+        fProgramInfo = GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps, arena, outputView,
+                                                                   std::move(appliedClip),
+                                                                   dstProxyView, gp,
+                                                                   std::move(fProcessorSet),
+                                                                   GrPrimitiveType::kTriangles,
+                                                                   flags);
     }
 
     void onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) final {
         if (!fProgramInfo) {
-            fProgramInfo = this->createProgramInfo(flushState);
+            this->createProgramInfo(flushState);
         }
 
         if (!fProgramInfo) {
             return;
         }
 
-        static constexpr int kOneMesh = 1;
-        flushState->opsRenderPass()->bindPipeline(*fProgramInfo, chainBounds);
-        flushState->opsRenderPass()->drawMeshes(*fProgramInfo, fMesh, kOneMesh);
+        flushState->bindPipelineAndScissorClip(*fProgramInfo, chainBounds);
+        flushState->bindTextures(fProgramInfo->primProc(), nullptr, fProgramInfo->pipeline());
+        flushState->drawMesh(*fMesh);
     }
 
     GrClipEdgeType edgeType() const { return fEdgeType; }
@@ -146,7 +131,7 @@ protected:
     const SkPMColor4f& color() const { return fColor; }
 
 protected:
-    GrMesh*              fMesh = nullptr;  // filled in by the derived classes
+    GrSimpleMesh*        fMesh = nullptr;  // filled in by the derived classes
 
 private:
     SkRect               fRect;

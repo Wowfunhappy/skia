@@ -27,7 +27,7 @@ GrVkTexture::GrVkTexture(GrVkGpu* gpu,
                          const GrVkImageView* view,
                          GrMipMapsStatus mipMapsStatus)
         : GrSurface(gpu, dimensions, info.fProtected)
-        , GrVkImage(info, std::move(layout), GrBackendObjectOwnership::kOwned)
+        , GrVkImage(gpu, info, std::move(layout), GrBackendObjectOwnership::kOwned)
         , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipMapsStatus)
         , fTextureView(view)
         , fDescSetCache(kMaxCachedDescSets) {
@@ -45,7 +45,7 @@ GrVkTexture::GrVkTexture(GrVkGpu* gpu, SkISize dimensions, const GrVkImageInfo& 
                          GrMipMapsStatus mipMapsStatus, GrBackendObjectOwnership ownership,
                          GrWrapCacheable cacheable, GrIOType ioType, bool isExternal)
         : GrSurface(gpu, dimensions, info.fProtected)
-        , GrVkImage(info, std::move(layout), ownership)
+        , GrVkImage(gpu, info, std::move(layout), ownership)
         , INHERITED(gpu, dimensions, info.fProtected,
                     isExternal ? GrTextureType::kExternal : GrTextureType::k2D, mipMapsStatus)
         , fTextureView(view)
@@ -66,7 +66,7 @@ GrVkTexture::GrVkTexture(GrVkGpu* gpu,
                          GrMipMapsStatus mipMapsStatus,
                          GrBackendObjectOwnership ownership)
         : GrSurface(gpu, dimensions, info.fProtected)
-        , GrVkImage(info, layout, ownership)
+        , GrVkImage(gpu, info, layout, ownership)
         , INHERITED(gpu, dimensions, info.fProtected, GrTextureType::k2D, mipMapsStatus)
         , fTextureView(view)
         , fDescSetCache(kMaxCachedDescSets) {
@@ -136,16 +136,16 @@ GrVkTexture::~GrVkTexture() {
 }
 
 void GrVkTexture::onRelease() {
-    // We're about to be severed from our GrVkResource. If there are "finish" idle procs we have to
-    // decide who will handle them. If the resource is still tied to a command buffer we let it
-    // handle them. Otherwise, we handle them.
-    if (this->hasResource() && this->resource()->isOwnedByCommandBuffer()) {
+    // We're about to be severed from our GrManagedResource. If there are "finish" idle procs we
+    // have to decide who will handle them. If the resource is still tied to a command buffer we let
+    // it handle them. Otherwise, we handle them.
+    if (this->hasResource() && this->resource()->isQueuedForWorkOnGpu()) {
         this->removeFinishIdleProcs();
     }
 
     // we create this and don't hand it off, so we should always destroy it
     if (fTextureView) {
-        fTextureView->unref(this->getVkGpu());
+        fTextureView->unref();
         fTextureView = nullptr;
     }
 
@@ -161,7 +161,7 @@ struct GrVkTexture::DescriptorCacheEntry {
             : fDescriptorSet(fDescSet), fGpu(gpu) {}
     ~DescriptorCacheEntry() {
         if (fDescriptorSet) {
-            fDescriptorSet->recycle(fGpu);
+            fDescriptorSet->recycle();
         }
     }
 
@@ -170,16 +170,16 @@ struct GrVkTexture::DescriptorCacheEntry {
 };
 
 void GrVkTexture::onAbandon() {
-    // We're about to be severed from our GrVkResource. If there are "finish" idle procs we have to
-    // decide who will handle them. If the resource is still tied to a command buffer we let it
-    // handle them. Otherwise, we handle them.
-    if (this->hasResource() && this->resource()->isOwnedByCommandBuffer()) {
+    // We're about to be severed from our GrManagedResource. If there are "finish" idle procs we
+    // have to decide who will handle them. If the resource is still tied to a command buffer we let
+    // it handle them. Otherwise, we handle them.
+    if (this->hasResource() && this->resource()->isQueuedForWorkOnGpu()) {
         this->removeFinishIdleProcs();
     }
 
     // we create this and don't hand it off, so we should always destroy it
     if (fTextureView) {
-        fTextureView->unref(this->getVkGpu());
+        fTextureView->unref();
         fTextureView = nullptr;
     }
 
@@ -233,11 +233,13 @@ void GrVkTexture::willRemoveLastRef() {
     // This is called when the GrTexture is purgeable. However, we need to check whether the
     // Resource is still owned by any command buffers. If it is then it will call the proc.
     auto* resource = this->hasResource() ? this->resource() : nullptr;
-    bool callFinishProcs = !resource || !resource->isOwnedByCommandBuffer();
+    bool callFinishProcs = !resource || !resource->isQueuedForWorkOnGpu();
     if (callFinishProcs) {
         // Everything must go!
         fIdleProcs.reset();
-        resource->resetIdleProcs();
+        if (resource) {
+            resource->resetIdleProcs();
+        }
     } else {
         // The procs that should be called on flush but not finish are those that are owned
         // by the GrVkTexture and not the Resource. We do this by copying the resource's array

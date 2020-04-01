@@ -77,7 +77,7 @@ public:
     bool hasEffect() const {
         return !this->isStatic()
             || fOpacity < 100
-            || ValueTraits<VectorValue>::As<SkVector>(fFeather) != SkVector{ 0, 0 };
+            || fFeather != SkV2{0,0};
     }
 
     sk_sp<sksg::RenderNode> makeMask(sk_sp<sksg::Path> mask_path) const {
@@ -91,18 +91,17 @@ private:
     void onSync() override {
         fMaskPaint->setOpacity(fOpacity * 0.01f);
         if (fMaskFilter) {
-            const auto f = ValueTraits<VectorValue>::As<SkVector>(fFeather);
-
             // Close enough to AE.
             static constexpr SkScalar kFeatherToSigma = 0.38f;
-            fMaskFilter->setSigma(f * kFeatherToSigma);
+            fMaskFilter->setSigma({fFeather.x * kFeatherToSigma,
+                                   fFeather.y * kFeatherToSigma});
         }
     }
 
     const sk_sp<sksg::PaintNode> fMaskPaint;
     sk_sp<sksg::BlurImageFilter> fMaskFilter; // optional "feather"
 
-    VectorValue fFeather;
+    Vec2Value   fFeather = {0,0};
     ScalarValue fOpacity = 100;
 };
 
@@ -212,9 +211,9 @@ sk_sp<sksg::RenderNode> AttachMask(const skjson::ArrayValue* jmask,
     return sksg::MaskEffect::Make(std::move(childNode), std::move(maskNode));
 }
 
-class LayerController final : public sksg::Animator {
+class LayerController final : public Animator {
 public:
-    LayerController(sksg::AnimatorList&& layer_animators,
+    LayerController(AnimatorScope&& layer_animators,
                     sk_sp<sksg::RenderNode> layer,
                     size_t tanim_count, float in, float out)
         : fLayerAnimators(std::move(layer_animators))
@@ -224,11 +223,13 @@ public:
         , fOut(out) {}
 
 protected:
-    void onTick(float t) override {
+    StateChanged onSeek(float t) override {
         // in/out may be inverted for time-reversed layers
         const auto active = (t >= fIn && t < fOut) || (t > fOut && t <= fIn);
 
+        bool changed = false;
         if (fLayerNode) {
+            changed |= (fLayerNode->isVisible() != active);
             fLayerNode->setVisible(active);
         }
 
@@ -238,19 +239,21 @@ protected:
         const auto dispatch_count = active ? fLayerAnimators.size()
                                            : fTransformAnimatorsCount;
         for (size_t i = 0; i < dispatch_count; ++i) {
-            fLayerAnimators[i]->tick(t);
+            changed |= fLayerAnimators[i]->seek(t);
         }
+
+        return changed;
     }
 
 private:
-    const sksg::AnimatorList      fLayerAnimators;
+    const AnimatorScope           fLayerAnimators;
     const sk_sp<sksg::RenderNode> fLayerNode;
     const size_t                  fTransformAnimatorsCount;
     const float                   fIn,
                                   fOut;
 };
 
-class MotionBlurController final : public sksg::Animator {
+class MotionBlurController final : public Animator {
 public:
     explicit MotionBlurController(sk_sp<MotionBlurEffect> mbe)
         : fMotionBlurEffect(std::move(mbe)) {}
@@ -259,8 +262,9 @@ protected:
     // When motion blur is present, time ticks are not passed to layer animators
     // but to the motion blur effect. The effect then drives the animators/scene-graph
     // during reval and render phases.
-    void onTick(float t) override {
+    StateChanged onSeek(float t) override {
         fMotionBlurEffect->setT(t);
+        return true;
     }
 
 private:
@@ -456,6 +460,11 @@ sk_sp<sksg::RenderNode> LayerBuilder::buildRenderTree(const AnimationBuilder& ab
         layer = sksg::TransformEffect::Make(std::move(layer), std::move(fLayerTransform));
     }
 
+    // Optional layer styles.
+    if (const skjson::ArrayValue* jstyles = fJlayer["sy"]) {
+        layer = EffectBuilder(&abuilder, layer_info.fSize).attachStyles(*jstyles, std::move(layer));
+    }
+
     // Optional layer opacity.
     // TODO: de-dupe this "ks" lookup with matrix above.
     if (const skjson::ObjectValue* jtransform = fJlayer["ks"]) {
@@ -464,11 +473,11 @@ sk_sp<sksg::RenderNode> LayerBuilder::buildRenderTree(const AnimationBuilder& ab
 
     const auto has_animators = !abuilder.fCurrentAnimatorScope->empty();
 
-    sk_sp<sksg::Animator> controller = sk_make_sp<LayerController>(ascope.release(),
-                                                                   layer,
-                                                                   fTransformAnimatorCount,
-                                                                   layer_info.fInPoint,
-                                                                   layer_info.fOutPoint);
+    sk_sp<Animator> controller = sk_make_sp<LayerController>(ascope.release(),
+                                                             layer,
+                                                             fTransformAnimatorCount,
+                                                             layer_info.fInPoint,
+                                                             layer_info.fOutPoint);
 
     // Optional motion blur.
     if (layer && has_animators && this->hasMotionBlur(cbuilder)) {

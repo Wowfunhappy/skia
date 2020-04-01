@@ -24,7 +24,6 @@
 #include "src/gpu/GrDataUtils.h"
 #include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrGpuResourcePriv.h"
-#include "src/gpu/GrMesh.h"
 #include "src/gpu/GrPipeline.h"
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrRenderTargetPriv.h"
@@ -120,8 +119,6 @@ static const GrGLenum gXfermodeCoeff2Blend[] = {
     GR_GL_ONE_MINUS_DST_ALPHA,
     GR_GL_CONSTANT_COLOR,
     GR_GL_ONE_MINUS_CONSTANT_COLOR,
-    GR_GL_CONSTANT_ALPHA,
-    GR_GL_ONE_MINUS_CONSTANT_ALPHA,
 
     // extended blend coeffs
     GR_GL_SRC1_COLOR,
@@ -132,59 +129,6 @@ static const GrGLenum gXfermodeCoeff2Blend[] = {
     // Illegal... needs to map to something.
     GR_GL_ZERO,
 };
-
-bool GrGLGpu::BlendCoeffReferencesConstant(GrBlendCoeff coeff) {
-    static const bool gCoeffReferencesBlendConst[] = {
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        false,
-        true,
-        true,
-        true,
-        true,
-
-        // extended blend coeffs
-        false,
-        false,
-        false,
-        false,
-
-        // Illegal.
-        false,
-    };
-    return gCoeffReferencesBlendConst[coeff];
-    static_assert(kGrBlendCoeffCnt == SK_ARRAY_COUNT(gCoeffReferencesBlendConst));
-
-    static_assert(0 == kZero_GrBlendCoeff);
-    static_assert(1 == kOne_GrBlendCoeff);
-    static_assert(2 == kSC_GrBlendCoeff);
-    static_assert(3 == kISC_GrBlendCoeff);
-    static_assert(4 == kDC_GrBlendCoeff);
-    static_assert(5 == kIDC_GrBlendCoeff);
-    static_assert(6 == kSA_GrBlendCoeff);
-    static_assert(7 == kISA_GrBlendCoeff);
-    static_assert(8 == kDA_GrBlendCoeff);
-    static_assert(9 == kIDA_GrBlendCoeff);
-    static_assert(10 == kConstC_GrBlendCoeff);
-    static_assert(11 == kIConstC_GrBlendCoeff);
-    static_assert(12 == kConstA_GrBlendCoeff);
-    static_assert(13 == kIConstA_GrBlendCoeff);
-
-    static_assert(14 == kS2C_GrBlendCoeff);
-    static_assert(15 == kIS2C_GrBlendCoeff);
-    static_assert(16 == kS2A_GrBlendCoeff);
-    static_assert(17 == kIS2A_GrBlendCoeff);
-
-    // assertion for gXfermodeCoeff2Blend have to be in GrGpu scope
-    static_assert(kGrBlendCoeffCnt == SK_ARRAY_COUNT(gXfermodeCoeff2Blend));
-}
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -667,8 +611,9 @@ void GrGLGpu::onResetContext(uint32_t resetBits) {
     ++fResetTimestampForTextureParameters;
 }
 
-static bool check_backend_texture(const GrBackendTexture& backendTex, const GrColorType colorType,
-                                  const GrGLCaps& caps, GrGLTexture::Desc* desc,
+static bool check_backend_texture(const GrBackendTexture& backendTex,
+                                  const GrGLCaps& caps,
+                                  GrGLTexture::Desc* desc,
                                   bool skipRectTexSupportCheck = false) {
     GrGLTextureInfo info;
     if (!backendTex.getGLTextureInfo(&info) || !info.fID || !info.fFormat) {
@@ -703,10 +648,11 @@ static bool check_backend_texture(const GrBackendTexture& backendTex, const GrCo
 }
 
 sk_sp<GrTexture> GrGLGpu::onWrapBackendTexture(const GrBackendTexture& backendTex,
-                                               GrColorType colorType, GrWrapOwnership ownership,
-                                               GrWrapCacheable cacheable, GrIOType ioType) {
+                                               GrWrapOwnership ownership,
+                                               GrWrapCacheable cacheable,
+                                               GrIOType ioType) {
     GrGLTexture::Desc desc;
-    if (!check_backend_texture(backendTex, colorType, this->glCaps(), &desc)) {
+    if (!check_backend_texture(backendTex, this->glCaps(), &desc)) {
         return nullptr;
     }
 
@@ -781,13 +727,12 @@ sk_sp<GrTexture> GrGLGpu::onWrapCompressedBackendTexture(const GrBackendTexture&
 
 sk_sp<GrTexture> GrGLGpu::onWrapRenderableBackendTexture(const GrBackendTexture& backendTex,
                                                          int sampleCnt,
-                                                         GrColorType colorType,
                                                          GrWrapOwnership ownership,
                                                          GrWrapCacheable cacheable) {
     const GrGLCaps& caps = this->glCaps();
 
     GrGLTexture::Desc desc;
-    if (!check_backend_texture(backendTex, colorType, this->glCaps(), &desc)) {
+    if (!check_backend_texture(backendTex, this->glCaps(), &desc)) {
         return nullptr;
     }
     SkASSERT(caps.isFormatRenderable(desc.fFormat, sampleCnt));
@@ -825,8 +770,7 @@ sk_sp<GrTexture> GrGLGpu::onWrapRenderableBackendTexture(const GrBackendTexture&
     return std::move(texRT);
 }
 
-sk_sp<GrRenderTarget> GrGLGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& backendRT,
-                                                         GrColorType grColorType) {
+sk_sp<GrRenderTarget> GrGLGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& backendRT) {
     GrGLFramebufferInfo info;
     if (!backendRT.getGLFramebufferInfo(&info)) {
         return nullptr;
@@ -855,12 +799,11 @@ sk_sp<GrRenderTarget> GrGLGpu::onWrapBackendRenderTarget(const GrBackendRenderTa
 }
 
 sk_sp<GrRenderTarget> GrGLGpu::onWrapBackendTextureAsRenderTarget(const GrBackendTexture& tex,
-                                                                  int sampleCnt,
-                                                                  GrColorType colorType) {
+                                                                  int sampleCnt) {
     GrGLTexture::Desc desc;
     // We do not check whether texture rectangle is supported by Skia - if the caller provided us
     // with a texture rectangle,we assume the necessary support exists.
-    if (!check_backend_texture(tex, colorType, this->glCaps(), &desc, true)) {
+    if (!check_backend_texture(tex, this->glCaps(), &desc, true)) {
         return nullptr;
     }
 
@@ -1832,7 +1775,7 @@ bool GrGLGpu::flushGLState(GrRenderTarget* renderTarget,
 
     // Swizzle the blend to match what the shader will output.
     this->flushBlendAndColorWrite(programInfo.pipeline().getXferProcessor().getBlendInfo(),
-                                  programInfo.pipeline().outputSwizzle());
+                                  programInfo.pipeline().writeSwizzle());
 
     fHWProgram->updateUniforms(renderTarget, programInfo);
 
@@ -2549,10 +2492,8 @@ void GrGLGpu::flushBlendAndColorWrite(
 
     // Any optimization to disable blending should have already been applied and
     // tweaked the equation to "add" or "subtract", and the coeffs to (1, 0).
-    bool blendOff =
-        ((kAdd_GrBlendEquation == equation || kSubtract_GrBlendEquation == equation) &&
-        kOne_GrBlendCoeff == srcCoeff && kZero_GrBlendCoeff == dstCoeff) ||
-        !blendInfo.fWriteColor;
+    bool blendOff = GrBlendShouldDisable(equation, srcCoeff, dstCoeff) ||
+                    !blendInfo.fWriteColor;
 
     if (blendOff) {
         if (kNo_TriState != fHWBlendState.fEnabled) {
@@ -2596,7 +2537,7 @@ void GrGLGpu::flushBlendAndColorWrite(
             fHWBlendState.fDstCoeff = dstCoeff;
         }
 
-        if ((BlendCoeffReferencesConstant(srcCoeff) || BlendCoeffReferencesConstant(dstCoeff))) {
+        if ((GrBlendCoeffRefsConstant(srcCoeff) || GrBlendCoeffRefsConstant(dstCoeff))) {
             SkPMColor4f blendConst = swizzle.applyTo(blendInfo.fBlendConstant);
             if (!fHWBlendState.fConstColorValid || fHWBlendState.fConstColor != blendConst) {
                 GL_CALL(BlendColor(blendConst.fR, blendConst.fG, blendConst.fB, blendConst.fA));
@@ -3072,13 +3013,13 @@ bool GrGLGpu::createCopyProgram(GrTexture* srcTex) {
         return false;
     }
 
-    GrShaderVar aVertex("a_vertex", kHalf2_GrSLType, GrShaderVar::kIn_TypeModifier);
+    GrShaderVar aVertex("a_vertex", kHalf2_GrSLType, GrShaderVar::TypeModifier::In);
     GrShaderVar uTexCoordXform("u_texCoordXform", kHalf4_GrSLType,
-                               GrShaderVar::kUniform_TypeModifier);
-    GrShaderVar uPosXform("u_posXform", kHalf4_GrSLType, GrShaderVar::kUniform_TypeModifier);
-    GrShaderVar uTexture("u_texture", samplerType, GrShaderVar::kUniform_TypeModifier);
-    GrShaderVar vTexCoord("v_texCoord", kHalf2_GrSLType, GrShaderVar::kOut_TypeModifier);
-    GrShaderVar oFragColor("o_FragColor", kHalf4_GrSLType, GrShaderVar::kOut_TypeModifier);
+                               GrShaderVar::TypeModifier::Uniform);
+    GrShaderVar uPosXform("u_posXform", kHalf4_GrSLType, GrShaderVar::TypeModifier::Uniform);
+    GrShaderVar uTexture("u_texture", samplerType, GrShaderVar::TypeModifier::Uniform);
+    GrShaderVar vTexCoord("v_texCoord", kHalf2_GrSLType, GrShaderVar::TypeModifier::Out);
+    GrShaderVar oFragColor("o_FragColor", kHalf4_GrSLType, GrShaderVar::TypeModifier::Out);
 
     SkString vshaderTxt;
     if (shaderCaps->noperspectiveInterpolationSupport()) {
@@ -3112,7 +3053,7 @@ bool GrGLGpu::createCopyProgram(GrTexture* srcTex) {
             fshaderTxt.appendf("#extension %s : require\n", extension);
         }
     }
-    vTexCoord.setTypeModifier(GrShaderVar::kIn_TypeModifier);
+    vTexCoord.setTypeModifier(GrShaderVar::TypeModifier::In);
     vTexCoord.appendDecl(shaderCaps, &fshaderTxt);
     fshaderTxt.append(";");
     uTexture.appendDecl(shaderCaps, &fshaderTxt);
@@ -3173,19 +3114,19 @@ bool GrGLGpu::createMipmapProgram(int progIdx) {
         return false;
     }
 
-    GrShaderVar aVertex("a_vertex", kHalf2_GrSLType, GrShaderVar::kIn_TypeModifier);
+    GrShaderVar aVertex("a_vertex", kHalf2_GrSLType, GrShaderVar::TypeModifier::In);
     GrShaderVar uTexCoordXform("u_texCoordXform", kHalf4_GrSLType,
-                               GrShaderVar::kUniform_TypeModifier);
+                               GrShaderVar::TypeModifier::Uniform);
     GrShaderVar uTexture("u_texture", kTexture2DSampler_GrSLType,
-                         GrShaderVar::kUniform_TypeModifier);
+                         GrShaderVar::TypeModifier::Uniform);
     // We need 1, 2, or 4 texture coordinates (depending on parity of each dimension):
     GrShaderVar vTexCoords[] = {
-        GrShaderVar("v_texCoord0", kHalf2_GrSLType, GrShaderVar::kOut_TypeModifier),
-        GrShaderVar("v_texCoord1", kHalf2_GrSLType, GrShaderVar::kOut_TypeModifier),
-        GrShaderVar("v_texCoord2", kHalf2_GrSLType, GrShaderVar::kOut_TypeModifier),
-        GrShaderVar("v_texCoord3", kHalf2_GrSLType, GrShaderVar::kOut_TypeModifier),
+        GrShaderVar("v_texCoord0", kHalf2_GrSLType, GrShaderVar::TypeModifier::Out),
+        GrShaderVar("v_texCoord1", kHalf2_GrSLType, GrShaderVar::TypeModifier::Out),
+        GrShaderVar("v_texCoord2", kHalf2_GrSLType, GrShaderVar::TypeModifier::Out),
+        GrShaderVar("v_texCoord3", kHalf2_GrSLType, GrShaderVar::TypeModifier::Out),
     };
-    GrShaderVar oFragColor("o_FragColor", kHalf4_GrSLType,GrShaderVar::kOut_TypeModifier);
+    GrShaderVar oFragColor("o_FragColor", kHalf4_GrSLType,GrShaderVar::TypeModifier::Out);
 
     SkString vshaderTxt;
     if (shaderCaps->noperspectiveInterpolationSupport()) {
@@ -3247,7 +3188,7 @@ bool GrGLGpu::createMipmapProgram(int progIdx) {
         }
     }
     for (int i = 0; i < numTaps; ++i) {
-        vTexCoords[i].setTypeModifier(GrShaderVar::kIn_TypeModifier);
+        vTexCoords[i].setTypeModifier(GrShaderVar::TypeModifier::In);
         vTexCoords[i].appendDecl(shaderCaps, &fshaderTxt);
         fshaderTxt.append(";");
     }

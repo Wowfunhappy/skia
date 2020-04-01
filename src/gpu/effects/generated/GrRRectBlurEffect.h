@@ -49,17 +49,17 @@ public:
         }
         builder.finish();
 
+        static constexpr auto kMaskOrigin = kBottomLeft_GrSurfaceOrigin;
         GrProxyProvider* proxyProvider = context->priv().proxyProvider();
 
-        if (sk_sp<GrTextureProxy> mask =
-                    proxyProvider->findOrCreateProxyByUniqueKey(key, GrColorType::kAlpha_8)) {
-            GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(mask->backendFormat(),
-                                                                       GrColorType::kAlpha_8);
-            return {std::move(mask), kBottomLeft_GrSurfaceOrigin, swizzle};
+        if (auto view = proxyProvider->findCachedProxyWithColorTypeFallback(
+                    key, kMaskOrigin, GrColorType::kAlpha_8)) {
+            return view;
         }
 
-        auto rtc = GrRenderTargetContext::MakeWithFallback(context, GrColorType::kAlpha_8, nullptr,
-                                                           SkBackingFit::kExact, dimensions);
+        auto rtc = GrRenderTargetContext::MakeWithFallback(
+                context, GrColorType::kAlpha_8, nullptr, SkBackingFit::kExact, dimensions, 1,
+                GrMipMapped::kNo, GrProtected::kNo, kMaskOrigin);
         if (!rtc) {
             return {};
         }
@@ -116,7 +116,9 @@ public:
     TextureSampler ninePatchSampler;
 
 private:
-    GrRRectBlurEffect(float sigma, SkRect rect, float cornerRadius,
+    GrRRectBlurEffect(float sigma,
+                      SkRect rect,
+                      float cornerRadius,
                       GrSurfaceProxyView ninePatchSampler)
             : INHERITED(kGrRRectBlurEffect_ClassID,
                         (OptimizationFlags)kCompatibleWithCoverageAsAlpha_OptimizationFlag)

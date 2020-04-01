@@ -5,12 +5,12 @@
  * found in the LICENSE file.
  */
 
-#include "src/gpu/GrAllocator.h"
 #include "src/gpu/GrCoordTransform.h"
 #include "src/gpu/GrPathProcessor.h"
 #include "src/gpu/GrPipeline.h"
 #include "src/gpu/GrProcessor.h"
 #include "src/gpu/GrProgramInfo.h"
+#include "src/gpu/GrTAllocator.h"
 #include "src/gpu/GrTexturePriv.h"
 #include "src/gpu/GrXferProcessor.h"
 #include "src/gpu/gl/GrGLBuffer.h"
@@ -100,8 +100,9 @@ void GrGLProgram::updateUniforms(const GrRenderTarget* renderTarget,
     fXferProcessor->setData(fProgramDataManager, xp, dstTexture, offset);
 }
 
-void GrGLProgram::bindTextures(const GrPrimitiveProcessor& primProc, const GrPipeline& pipeline,
-                               const GrSurfaceProxy* const primProcTextures[]) {
+void GrGLProgram::bindTextures(const GrPrimitiveProcessor& primProc,
+                               const GrSurfaceProxy* const primProcTextures[],
+                               const GrPipeline& pipeline) {
     for (int i = 0; i < primProc.numTextureSamplers(); ++i) {
         SkASSERT(primProcTextures[i]->asTextureProxy());
         auto* overrideTexture = static_cast<GrGLTexture*>(primProcTextures[i]->peekTexture());

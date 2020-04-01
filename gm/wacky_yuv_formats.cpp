@@ -159,6 +159,7 @@ static void setup_yuv_indices(YUVFormat yuvFormat, bool addExtraAlpha, SkYUVAInd
                 yuvaIndices[3].fChannel = SkColorChannel::kA; // bc 16bit is stored in A16 or AF16
             } else {
                 yuvaIndices[3].fIndex = -1; // No alpha channel
+                yuvaIndices[3].fChannel = SkColorChannel::kA;
             }
             break;
         case kY416_YUVFormat:
@@ -206,6 +207,7 @@ static void setup_yuv_indices(YUVFormat yuvFormat, bool addExtraAlpha, SkYUVAInd
                 yuvaIndices[3].fChannel = SkColorChannel::kA;
             } else {
                 yuvaIndices[3].fIndex = -1; // No alpha channel
+                yuvaIndices[3].fChannel = SkColorChannel::kA;
             }
             break;
         case kNV21_YUVFormat:
@@ -220,6 +222,7 @@ static void setup_yuv_indices(YUVFormat yuvFormat, bool addExtraAlpha, SkYUVAInd
                 yuvaIndices[3].fChannel = SkColorChannel::kA;
             } else {
                 yuvaIndices[3].fIndex = -1; // No alpha channel
+                yuvaIndices[3].fChannel = SkColorChannel::kA;
             }
             break;
         case kI420_YUVFormat:
@@ -234,6 +237,7 @@ static void setup_yuv_indices(YUVFormat yuvFormat, bool addExtraAlpha, SkYUVAInd
                 yuvaIndices[3].fChannel = SkColorChannel::kA;
             } else {
                 yuvaIndices[3].fIndex = -1; // No alpha channel
+                yuvaIndices[3].fChannel = SkColorChannel::kA;
             }
             break;
         case kYV12_YUVFormat:
@@ -248,6 +252,7 @@ static void setup_yuv_indices(YUVFormat yuvFormat, bool addExtraAlpha, SkYUVAInd
                 yuvaIndices[3].fChannel = SkColorChannel::kA;
             } else {
                 yuvaIndices[3].fIndex = -1; // No alpha channel
+                yuvaIndices[3].fChannel = SkColorChannel::kA;
             }
             break;
     }
@@ -1517,25 +1522,26 @@ protected:
                 canvas->drawImage(raster, x, y);
                 y += kTileWidthHeight + kPad;
 
-                auto yuv = fImages[opaque][tagged]->makeColorSpace(fTargetColorSpace);
-                SkASSERT(SkColorSpace::Equals(yuv->colorSpace(), fTargetColorSpace.get()));
-                canvas->drawImage(yuv, x, y);
-                y += kTileWidthHeight + kPad;
+                if (fImages[opaque][tagged]) {
+                    auto yuv = fImages[opaque][tagged]->makeColorSpace(fTargetColorSpace);
+                    SkASSERT(SkColorSpace::Equals(yuv->colorSpace(), fTargetColorSpace.get()));
+                    canvas->drawImage(yuv, x, y);
+                    y += kTileWidthHeight + kPad;
 
-                auto subset = yuv->makeSubset(SkIRect::MakeWH(kTileWidthHeight / 2,
-                                                              kTileWidthHeight / 2));
-                canvas->drawImage(subset, x, y);
-                y += kTileWidthHeight + kPad;
+                    auto subset = yuv->makeSubset(SkIRect::MakeWH(kTileWidthHeight / 2,
+                        kTileWidthHeight / 2));
+                    canvas->drawImage(subset, x, y);
+                    y += kTileWidthHeight + kPad;
 
-                auto nonTexture = yuv->makeNonTextureImage();
-                canvas->drawImage(nonTexture, x, y);
-                y += kTileWidthHeight + kPad;
+                    auto nonTexture = yuv->makeNonTextureImage();
+                    canvas->drawImage(nonTexture, x, y);
+                    y += kTileWidthHeight + kPad;
 
-                SkBitmap readBack;
-                readBack.allocPixels(yuv->imageInfo());
-                yuv->readPixels(readBack.pixmap(), 0, 0);
-                canvas->drawBitmap(readBack, x, y);
-
+                    SkBitmap readBack;
+                    readBack.allocPixels(yuv->imageInfo());
+                    yuv->readPixels(readBack.pixmap(), 0, 0);
+                    canvas->drawBitmap(readBack, x, y);
+                }
                 x += kTileWidthHeight + kPad;
             }
         }

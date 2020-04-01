@@ -12,10 +12,12 @@
 #include "include/private/SkMutex.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
+#include "src/core/SkVM.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/sksl/SkSLByteCode.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLInterpreter.h"
+#include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 
 #if SK_SUPPORT_GPU
@@ -66,7 +68,24 @@ SkRuntimeEffect::EffectResult SkRuntimeEffect::Make(SkString sksl) {
     size_t offset = 0, uniformSize = 0;
     std::vector<Variable> inAndUniformVars;
     std::vector<SkString> children;
+    std::vector<Varying> varyings;
     const SkSL::Context& ctx(compiler->context());
+
+    // Scrape the varyings
+    for (const auto& e : *program) {
+        if (e.fKind == SkSL::ProgramElement::kVar_Kind) {
+            SkSL::VarDeclarations& v = (SkSL::VarDeclarations&) e;
+            for (const auto& varStatement : v.fVars) {
+                const SkSL::Variable& var = *((SkSL::VarDeclaration&) *varStatement).fVar;
+
+                if (var.fModifiers.fFlags & SkSL::Modifiers::kVarying_Flag) {
+                    varyings.push_back({var.fName, var.fType.kind() == SkSL::Type::kVector_Kind
+                                                           ? var.fType.columns()
+                                                           : 1});
+                }
+            }
+        }
+    }
 
     // Gather the inputs in two passes, to de-interleave them in our input layout.
     // We put the uniforms *first*, so that the CPU backend can alias the combined input block as
@@ -200,6 +219,7 @@ SkRuntimeEffect::EffectResult SkRuntimeEffect::Make(SkString sksl) {
                                                       std::move(program),
                                                       std::move(inAndUniformVars),
                                                       std::move(children),
+                                                      std::move(varyings),
                                                       uniformSize));
     return std::make_pair(std::move(effect), SkString());
 }
@@ -227,12 +247,14 @@ SkRuntimeEffect::SkRuntimeEffect(SkString sksl,
                                  std::unique_ptr<SkSL::Program> baseProgram,
                                  std::vector<Variable>&& inAndUniformVars,
                                  std::vector<SkString>&& children,
+                                 std::vector<Varying>&& varyings,
                                  size_t uniformSize)
         : fHash(SkGoodHash()(sksl))
         , fSkSL(std::move(sksl))
         , fBaseProgram(std::move(baseProgram))
         , fInAndUniformVars(std::move(inAndUniformVars))
         , fChildren(std::move(children))
+        , fVaryings(std::move(varyings))
         , fUniformSize(uniformSize) {
     SkASSERT(fBaseProgram);
     SkASSERT(SkIsAlign4(fUniformSize));
@@ -245,6 +267,14 @@ size_t SkRuntimeEffect::inputSize() const {
     return fInAndUniformVars.empty() ? 0
                                      : SkAlign4(fInAndUniformVars.back().fOffset +
                                                 fInAndUniformVars.back().sizeInBytes());
+}
+
+int SkRuntimeEffect::varyingCount() const {
+    int count = 0;
+    for (const auto& v : fVaryings) {
+        count += v.fWidth;
+    }
+    return count;
 }
 
 SkRuntimeEffect::SpecializeResult SkRuntimeEffect::specialize(SkSL::Program& baseProgram,
@@ -290,6 +320,7 @@ SkRuntimeEffect::SpecializeResult SkRuntimeEffect::specialize(SkSL::Program& bas
 
 #if SK_SUPPORT_GPU
 bool SkRuntimeEffect::toPipelineStage(const void* inputs, const GrShaderCaps* shaderCaps,
+                                      GrContextOptions::ShaderErrorHandler* errorHandler,
                                       SkSL::PipelineStageArgs* outArgs) {
     SkSL::SharedCompiler compiler;
 
@@ -302,19 +333,18 @@ bool SkRuntimeEffect::toPipelineStage(const void* inputs, const GrShaderCaps* sh
                                                 SkSL::String(fSkSL.c_str(), fSkSL.size()),
                                                 settings);
     if (!baseProgram) {
-        SkDebugf("%s\n", compiler->errorText().c_str());
-        SkASSERT(false);
+        errorHandler->compileError(fSkSL.c_str(), compiler->errorText().c_str());
         return false;
     }
 
-    auto specialized = std::get<0>(this->specialize(*baseProgram, inputs, compiler));
+    auto [specialized, errorText] = this->specialize(*baseProgram, inputs, compiler);
     if (!specialized) {
+        errorHandler->compileError(fSkSL.c_str(), errorText.c_str());
         return false;
     }
 
     if (!compiler->toPipelineStage(*specialized, outArgs)) {
-        SkDebugf("%s\n", compiler->errorText().c_str());
-        SkASSERT(false);
+        errorHandler->compileError(fSkSL.c_str(), compiler->errorText().c_str());
         return false;
     }
 
@@ -382,6 +412,11 @@ public:
         ctx->interpreter = fInterpreter.get();
         rec.fPipeline->append(SkRasterPipeline::interpreter, ctx);
         return true;
+    }
+
+    skvm::Color onProgram(skvm::Builder*, skvm::Color, SkColorSpace* dstCS, skvm::Uniforms*,
+                          SkArenaAlloc*) const override {
+        return {};  // <-- this signals failure -- TODO
     }
 
     void flatten(SkWriteBuffer& buffer) const override {
@@ -452,7 +487,7 @@ public:
 #if SK_SUPPORT_GPU
     std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(const GrFPArgs& args) const override {
         SkMatrix matrix;
-        if (!this->totalLocalMatrix(args.fPreLocalMatrix, args.fPostLocalMatrix)->invert(&matrix)) {
+        if (!this->totalLocalMatrix(args.fPreLocalMatrix)->invert(&matrix)) {
             return nullptr;
         }
         auto fp = GrSkSLFP::Make(args.fContext, fEffect, "runtime-shader", fInputs, &matrix);
@@ -527,6 +562,8 @@ public:
             buffer.writeFlattenable(child.get());
         }
     }
+
+    SkRuntimeEffect* asRuntimeEffect() const override { return fEffect.get(); }
 
     SK_FLATTENABLE_HOOKS(SkRTShader)
 

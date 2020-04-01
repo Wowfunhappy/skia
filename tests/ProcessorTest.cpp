@@ -8,10 +8,10 @@
 #include "tests/Test.h"
 
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrGpuResource.h"
 #include "src/gpu/GrBitmapTextureMaker.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrGpuResource.h"
 #include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrProxyProvider.h"
@@ -64,6 +64,16 @@ private:
         this->setBounds(SkRect::MakeWH(100, 100), HasAABloat::kNo, IsHairline::kNo);
     }
 
+    GrProgramInfo* programInfo() override { return nullptr; }
+    void onCreateProgramInfo(const GrCaps*,
+                             SkArenaAlloc*,
+                             const GrSurfaceProxyView* outputView,
+                             GrAppliedClip&&,
+                             const GrXferProcessor::DstProxyView&) override { return; }
+    void onPrePrepareDraws(GrRecordingContext*,
+                           const GrSurfaceProxyView* outputView,
+                           GrAppliedClip*,
+                           const GrXferProcessor::DstProxyView&) override { return; }
     void onPrepareDraws(Target* target) override { return; }
     void onExecute(GrOpFlushState*, const SkRect&) override { return; }
 
@@ -140,7 +150,7 @@ private:
     bool onIsEqual(const GrFragmentProcessor&) const override { return false; }
     const TextureSampler& onTextureSampler(int i) const override { return fSamplers[i]; }
 
-    GrTAllocator<TextureSampler> fSamplers;
+    SkSTArray<4, TextureSampler> fSamplers;
     typedef GrFragmentProcessor INHERITED;
 };
 }
@@ -162,8 +172,8 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ProcessorRefTest, reporter, ctxInfo) {
                     context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox, {1, 1});
             {
                 sk_sp<GrTextureProxy> proxy = proxyProvider->createProxy(
-                        format, kDims, swizzle, GrRenderable::kNo, 1, GrMipMapped::kNo,
-                        SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
+                        format, kDims, GrRenderable::kNo, 1, GrMipMapped::kNo, SkBackingFit::kExact,
+                        SkBudgeted::kYes, GrProtected::kNo);
 
                 {
                     SkTArray<GrSurfaceProxyView> views;
@@ -280,7 +290,7 @@ bool init_test_textures(GrResourceProvider* resourceProvider,
         bitmap.installPixels(ii, rgbaData, ii.minRowBytes(),
                              [](void* addr, void* context) { delete[] (GrColor*)addr; }, nullptr);
         bitmap.setImmutable();
-        GrBitmapTextureMaker maker(context, bitmap);
+        GrBitmapTextureMaker maker(context, bitmap, GrImageTexGenPolicy::kNew_Uncached_Budgeted);
         auto view = maker.view(GrMipMapped::kNo);
         if (!view.proxy() || !view.proxy()->instantiate(resourceProvider)) {
             return false;
@@ -303,7 +313,7 @@ bool init_test_textures(GrResourceProvider* resourceProvider,
         bitmap.installPixels(ii, alphaData, ii.minRowBytes(),
                              [](void* addr, void* context) { delete[] (uint8_t*)addr; }, nullptr);
         bitmap.setImmutable();
-        GrBitmapTextureMaker maker(context, bitmap);
+        GrBitmapTextureMaker maker(context, bitmap, GrImageTexGenPolicy::kNew_Uncached_Budgeted);
         auto view = maker.view(GrMipMapped::kNo);
         if (!view.proxy() || !view.proxy()->instantiate(resourceProvider)) {
             return false;
@@ -330,7 +340,7 @@ GrSurfaceProxyView make_input_texture(GrRecordingContext* context, int width, in
     bitmap.installPixels(ii, data, ii.minRowBytes(),
                          [](void* addr, void* context) { delete[] (GrColor*)addr; }, nullptr);
     bitmap.setImmutable();
-    GrBitmapTextureMaker maker(context, bitmap);
+    GrBitmapTextureMaker maker(context, bitmap, GrImageTexGenPolicy::kNew_Uncached_Budgeted);
     return maker.view(GrMipMapped::kNo);
 }
 

@@ -122,6 +122,11 @@ private:
                         HasAABloat::kNo, IsHairline::kNo);
     }
 
+    void onPrePrepare(GrRecordingContext*,
+                      const GrSurfaceProxyView* outputView,
+                      GrAppliedClip*,
+                      const GrXferProcessor::DstProxyView&) override {}
+
     void onPrepare(GrOpFlushState*) override {}
 
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) override {
@@ -171,17 +176,15 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
     const GrBackendFormat format =
         context->priv().caps()->getDefaultBackendFormat(GrColorType::kRGBA_8888,
                                                         GrRenderable::kYes);
-    GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(format, GrColorType::kRGBA_8888);
 
     static const GrSurfaceOrigin kOrigin = kTopLeft_GrSurfaceOrigin;
     auto proxy = context->priv().proxyProvider()->createProxy(
-            format, kDims, swizzle, GrRenderable::kYes, 1, GrMipMapped::kNo, SkBackingFit::kExact,
+            format, kDims, GrRenderable::kYes, 1, GrMipMapped::kNo, SkBackingFit::kExact,
             SkBudgeted::kNo, GrProtected::kNo, GrInternalSurfaceFlags::kNone);
     SkASSERT(proxy);
     proxy->instantiate(context->priv().resourceProvider());
 
-    GrSwizzle outSwizzle = context->priv().caps()->getOutputSwizzle(format,
-                                                                    GrColorType::kRGBA_8888);
+    GrSwizzle outSwizzle = context->priv().caps()->getWriteSwizzle(format, GrColorType::kRGBA_8888);
 
     int result[result_width()];
     int validResult[result_width()];

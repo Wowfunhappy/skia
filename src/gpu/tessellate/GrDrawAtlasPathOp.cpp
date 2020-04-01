@@ -140,6 +140,12 @@ GrOp::CombineResult GrDrawAtlasPathOp::onCombineIfPossible(
     return CombineResult::kMerged;
 }
 
+void GrDrawAtlasPathOp::onPrePrepare(GrRecordingContext*,
+                                     const GrSurfaceProxyView* outputView,
+                                     GrAppliedClip*,
+                                     const GrXferProcessor::DstProxyView&) {
+}
+
 void GrDrawAtlasPathOp::onPrepare(GrOpFlushState* state) {
     size_t instanceStride = Instance::Stride(fUsesLocalCoords);
     if (char* instanceData = (char*)state->makeVertexSpace(
@@ -162,30 +168,21 @@ void GrDrawAtlasPathOp::onExecute(GrOpFlushState* state, const SkRect& chainBoun
     }
     initArgs.fCaps = &state->caps();
     initArgs.fDstProxyView = state->drawOpArgs().dstProxyView();
-    initArgs.fOutputSwizzle = state->drawOpArgs().outputSwizzle();
-
-    GrAppliedClip clip = state->detachAppliedClip();
-    GrPipeline::FixedDynamicState fixedDynamicState;
-    if (clip.scissorState().enabled()) {
-        fixedDynamicState.fScissorRect = clip.scissorState().rect();
-    }
-    GrSurfaceProxy* atlasSurfaceProxy = fAtlasProxy.get();
-    fixedDynamicState.fPrimitiveProcessorTextures = &atlasSurfaceProxy;
-
-    GrPipeline pipeline(initArgs, std::move(fProcessors), std::move(clip));
+    initArgs.fWriteSwizzle = state->drawOpArgs().writeSwizzle();
+    GrPipeline pipeline(initArgs, std::move(fProcessors), state->detachAppliedClip());
 
     GrSwizzle swizzle = state->caps().getReadSwizzle(fAtlasProxy->backendFormat(),
                                                      GrColorType::kAlpha_8);
+
     DrawAtlasPathShader shader(fAtlasProxy.get(), swizzle, fUsesLocalCoords);
     SkASSERT(shader.instanceStride() == Instance::Stride(fUsesLocalCoords));
 
     GrProgramInfo programInfo(state->proxy()->numSamples(), state->proxy()->numStencilSamples(),
                               state->proxy()->backendFormat(), state->outputView()->origin(),
-                              &pipeline, &shader, &fixedDynamicState, nullptr, 0,
-                              GrPrimitiveType::kTriangleStrip);
+                              &pipeline, &shader, GrPrimitiveType::kTriangleStrip);
 
-    GrMesh mesh;
-    mesh.setInstanced(fInstanceBuffer, fInstanceCount, fBaseInstance, 4);
-    state->opsRenderPass()->bindPipeline(programInfo, this->bounds());
-    state->opsRenderPass()->drawMeshes(programInfo, &mesh, 1);
+    state->bindPipelineAndScissorClip(programInfo, this->bounds());
+    state->bindTextures(shader, *fAtlasProxy, pipeline);
+    state->bindBuffers(nullptr, fInstanceBuffer.get(), nullptr);
+    state->drawInstanced(fInstanceCount, fBaseInstance, 4, 0);
 }

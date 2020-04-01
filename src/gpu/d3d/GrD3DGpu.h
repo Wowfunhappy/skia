@@ -9,10 +9,13 @@
 #define GrD3DGpu_DEFINED
 
 #include "include/gpu/d3d/GrD3DBackendContext.h"
+#include "include/private/SkDeque.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrSemaphore.h"
 #include "src/gpu/d3d/GrD3DCaps.h"
+#include "src/gpu/d3d/GrD3DCommandList.h"
+#include "src/gpu/d3d/GrD3DResourceProvider.h"
 
 class GrD3DOpsRenderPass;
 struct GrD3DOptions;
@@ -24,6 +27,11 @@ public:
                              GrContext*);
 
     ~GrD3DGpu() override;
+
+    const GrD3DCaps& d3dCaps() const { return static_cast<const GrD3DCaps&>(*fCaps); }
+
+    ID3D12Device* device() const { return fDevice.Get(); }
+    ID3D12CommandQueue* queue() const { return fQueue.Get(); }
 
     void querySampleLocations(GrRenderTarget*, SkTArray<SkPoint>* sampleLocations) override;
 
@@ -77,6 +85,8 @@ public:
 private:
     GrD3DGpu(GrContext* context, const GrContextOptions&, const GrD3DBackendContext&);
 
+    void destroyResources();
+
     void onResetContext(uint32_t resetBits) override {}
 
     sk_sp<GrTexture> onCreateTexture(SkISize,
@@ -95,22 +105,23 @@ private:
                                                GrProtected,
                                                const void* data, size_t dataSize) override;
 
-    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&, GrColorType, GrWrapOwnership,
-                                          GrWrapCacheable, GrIOType) override;
-    sk_sp<GrTexture> onWrapCompressedBackendTexture(const GrBackendTexture&, GrWrapOwnership,
+    sk_sp<GrTexture> onWrapBackendTexture(const GrBackendTexture&,
+                                          GrWrapOwnership,
+                                          GrWrapCacheable,
+                                          GrIOType) override;
+    sk_sp<GrTexture> onWrapCompressedBackendTexture(const GrBackendTexture&,
+                                                    GrWrapOwnership,
                                                     GrWrapCacheable) override;
 
     sk_sp<GrTexture> onWrapRenderableBackendTexture(const GrBackendTexture&,
                                                     int sampleCnt,
-                                                    GrColorType,
                                                     GrWrapOwnership,
                                                     GrWrapCacheable) override;
 
-    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&,
-                                                    GrColorType) override;
+    sk_sp<GrRenderTarget> onWrapBackendRenderTarget(const GrBackendRenderTarget&) override;
 
     sk_sp<GrRenderTarget> onWrapBackendTextureAsRenderTarget(const GrBackendTexture&,
-                                                             int sampleCnt, GrColorType) override;
+                                                             int sampleCnt) override;
 
     sk_sp<GrGpuBuffer> onCreateBuffer(size_t sizeInBytes, GrGpuBufferType, GrAccessPattern,
                                       const void*) override;
@@ -167,10 +178,30 @@ private:
                                                       GrProtected,
                                                       const BackendTextureData*) override;
 
+    void submitDirectCommandList();
+
+    void checkForFinishedCommandLists();
+
     gr_cp<ID3D12Device> fDevice;
     gr_cp<ID3D12CommandQueue> fQueue;
 
-    GrProtected fProtectedContext;
+    GrD3DResourceProvider fResourceProvider;
+
+    gr_cp<ID3D12Fence> fFence;
+    uint64_t fCurrentFenceValue = 0;
+
+    std::unique_ptr<GrD3DDirectCommandList> fCurrentDirectCommandList;
+
+    struct OutstandingCommandList {
+        OutstandingCommandList(std::unique_ptr<GrD3DDirectCommandList> commandList,
+                               uint64_t fenceValue)
+            : fCommandList(std::move(commandList)), fFenceValue(fenceValue) {
+        }
+        std::unique_ptr<GrD3DDirectCommandList> fCommandList;
+        uint64_t fFenceValue;
+    };
+
+    SkDeque fOutstandingCommandLists;
 
     std::unique_ptr<GrD3DOpsRenderPass> fCachedOpsRenderPass;
 

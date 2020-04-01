@@ -126,7 +126,7 @@ public:
     static const GrPipeline* CreatePipeline(
                                 const GrCaps*,
                                 SkArenaAlloc*,
-                                const GrSurfaceProxyView* outputView,
+                                GrSwizzle outputViewSwizzle,
                                 GrAppliedClip&&,
                                 const GrXferProcessor::DstProxyView&,
                                 GrProcessorSet&&,
@@ -140,10 +140,15 @@ public:
 
     const GrPipeline* createPipeline(GrOpFlushState* flushState);
 
+    static GrProgramInfo* CreateProgramInfo(SkArenaAlloc*,
+                                            const GrPipeline*,
+                                            const GrSurfaceProxyView* outputView,
+                                            GrGeometryProcessor*,
+                                            GrPrimitiveType);
+
     // Create a programInfo with the following properties:
     //     its primitive processor uses no textures
     //     it has no dynamic state besides the scissor clip
-    //     it is only applied to a single mesh
     static GrProgramInfo* CreateProgramInfo(const GrCaps*,
                                             SkArenaAlloc*,
                                             const GrSurfaceProxyView* outputView,

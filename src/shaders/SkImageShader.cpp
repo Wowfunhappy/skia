@@ -195,7 +195,7 @@ static GrSamplerState::WrapMode tile_mode_to_wrap_mode(const SkTileMode tileMode
 
 std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
         const GrFPArgs& args) const {
-    const auto lm = this->totalLocalMatrix(args.fPreLocalMatrix, args.fPostLocalMatrix);
+    const auto lm = this->totalLocalMatrix(args.fPreLocalMatrix);
     SkMatrix lmInverse;
     if (!lm->invert(&lmInverse)) {
         return nullptr;
@@ -278,7 +278,8 @@ void SkShaderBase::RegisterFlattenables() { SK_REGISTER_FLATTENABLE(SkImageShade
 class SkImageStageUpdater : public SkStageUpdater {
 public:
     SkImageStageUpdater(const SkImageShader* shader, bool usePersp)
-        : fShader(shader), fUsePersp(usePersp)
+        : fShader(shader)
+        , fUsePersp(usePersp || as_SB(shader)->getLocalMatrix().hasPerspective())
     {}
 
     const SkImageShader* fShader;
@@ -308,7 +309,17 @@ public:
             if (fUsePersp) {
                 matrix.get9(fMatrixStorage);
             } else {
-               SkAssertResult(matrix.asAffine(fMatrixStorage));
+                // if we get here, matrix should be affine. If it isn't, then defensively we
+                // won't draw (by returning false), but we should work to never let this
+                // happen (i.e. better preflight by the caller to know ahead of time that we
+                // may encounter perspective, either in the CTM, or in the localM).
+                //
+                // See https://bugs.chromium.org/p/skia/issues/detail?id=10004
+                //
+                if (!matrix.asAffine(fMatrixStorage)) {
+                    SkASSERT(false);
+                    return false;
+                }
             }
             return true;
         }
@@ -627,22 +638,20 @@ SkStageUpdater* SkImageShader::onAppendUpdatableStages(const SkStageRec& rec) co
     return this->doStages(rec, updater) ? updater : nullptr;
 }
 
-bool SkImageShader::onProgram(skvm::Builder* p,
-                              const SkMatrix& ctm, const SkMatrix* localM,
-                              SkFilterQuality quality, SkColorSpace* dstCS,
-                              skvm::Uniforms* uniforms, SkArenaAlloc* alloc,
-                              skvm::F32 x, skvm::F32 y,
-                              skvm::F32* r, skvm::F32* g, skvm::F32* b, skvm::F32* a) const {
+skvm::Color SkImageShader::onProgram(skvm::Builder* p, skvm::F32 x, skvm::F32 y, skvm::Color paint,
+                                     const SkMatrix& ctm, const SkMatrix* localM,
+                                     SkFilterQuality quality, const SkColorInfo& dst,
+                                     skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const {
     SkMatrix inv;
     if (!this->computeTotalInverse(ctm, localM, &inv)) {
-        return false;
+        return {};
     }
 
     // We use RequestBitmap() to make sure our SkBitmapController::State lives in the alloc.
     // This lets the SkVMBlitter hang on to this state and keep our image alive.
     auto state = SkBitmapController::RequestBitmap(as_IB(fImage.get()), inv, quality, alloc);
     if (!state) {
-        return false;
+        return {};
     }
     const SkPixmap& pm = state->pixmap();
     inv     = state->invMatrix();
@@ -655,7 +664,9 @@ bool SkImageShader::onProgram(skvm::Builder* p,
 
     // Bail out if sample() can't yet handle our image's color type.
     switch (pm.colorType()) {
-        default: return false;
+        default: return {};
+        case    kGray_8_SkColorType:
+        case   kAlpha_8_SkColorType:
         case   kRGB_565_SkColorType:
         case  kRGB_888x_SkColorType:
         case kRGBA_8888_SkColorType:
@@ -719,13 +730,22 @@ bool SkImageShader::onProgram(skvm::Builder* p,
                   clamped_y = clamp(sy, pm.height());
 
         // Load pixels from pm.addr()[(int)sx + (int)sy*stride].
-        skvm::Builder::Uniform img = uniforms->pushPtr(pm.addr());
+        skvm::Uniform img = uniforms->pushPtr(pm.addr());
         skvm::I32 index = p->add(p->trunc(clamped_x),
                           p->mul(p->trunc(clamped_y),
                                  p->uniform32(uniforms->push(pm.rowBytesAsPixels()))));
         skvm::Color c;
         switch (pm.colorType()) {
             default: SkUNREACHABLE;
+
+            case kGray_8_SkColorType: c.r = c.g = c.b = p->from_unorm(8, p->gather8(img, index));
+                                      c.a = p->splat(1.0f);
+                                      break;
+
+            case kAlpha_8_SkColorType: c.r = c.g = c.b = p->splat(0.0f);
+                                       c.a = p->from_unorm(8, p->gather8(img, index));
+                                       break;
+
             case   kRGB_565_SkColorType: c = p->unpack_565 (p->gather16(img, index)); break;
 
             case  kRGB_888x_SkColorType: [[fallthrough]];
@@ -764,12 +784,10 @@ bool SkImageShader::onProgram(skvm::Builder* p,
         return c;
     };
 
+    skvm::Color c;
+
     if (quality == kNone_SkFilterQuality) {
-        skvm::Color c = sample(x,y);
-        *r = c.r;
-        *g = c.g;
-        *b = c.b;
-        *a = c.a;
+        c = sample(x,y);
     } else if (quality == kLow_SkFilterQuality) {
         // Our four sample points are the corners of a logical 1x1 pixel
         // box surrounding (x,y) at (0.5,0.5) off-center.
@@ -782,12 +800,8 @@ bool SkImageShader::onProgram(skvm::Builder* p,
         skvm::F32 fx = p->fract(right ),
                   fy = p->fract(bottom);
 
-        skvm::Color c = p->lerp(p->lerp(sample(left,top   ), sample(right,top   ), fx),
-                                p->lerp(sample(left,bottom), sample(right,bottom), fx), fy);
-        *r = c.r;
-        *g = c.g;
-        *b = c.b;
-        *a = c.a;
+        c = p->lerp(p->lerp(sample(left,top   ), sample(right,top   ), fx),
+                    p->lerp(sample(left,bottom), sample(right,bottom), fx), fy);
     } else {
         SkASSERT(quality == kHigh_SkFilterQuality);
 
@@ -825,19 +839,19 @@ bool SkImageShader::onProgram(skvm::Builder* p,
             far (                       fy ),
         };
 
-        *r = *g = *b = *a = p->splat(0.0f);
+        c.r = c.g = c.b = c.a = p->splat(0.0f);
 
         skvm::F32 sy = p->add(y, p->splat(-1.5f));
         for (int j = 0; j < 4; j++, sy = p->add(sy, p->splat(1.0f))) {
             skvm::F32 sx = p->add(x, p->splat(-1.5f));
             for (int i = 0; i < 4; i++, sx = p->add(sx, p->splat(1.0f))) {
-                skvm::Color c = sample(sx,sy);
-                skvm::F32 w = p->mul(wx[i], wy[j]);
+                skvm::Color s = sample(sx,sy);
+                skvm::F32   w = p->mul(wx[i], wy[j]);
 
-                *r = p->mad(c.r,w, *r);
-                *g = p->mad(c.g,w, *g);
-                *b = p->mad(c.b,w, *b);
-                *a = p->mad(c.a,w, *a);
+                c.r = p->mad(s.r,w, c.r);
+                c.g = p->mad(s.g,w, c.g);
+                c.b = p->mad(s.b,w, c.b);
+                c.a = p->mad(s.a,w, c.a);
             }
         }
     }
@@ -847,32 +861,34 @@ bool SkImageShader::onProgram(skvm::Builder* p,
     if (input_is_opaque
             && fTileModeX != SkTileMode::kDecal
             && fTileModeY != SkTileMode::kDecal) {
-        *a = p->splat(1.0f);
+        c.a = p->splat(1.0f);
+    }
+
+    // Alpha-only images get their color from the paint (already converted to dst color space).
+    SkColorSpace* cs = pm.colorSpace();
+    SkAlphaType   at = pm.alphaType();
+    if (SkColorTypeIsAlphaOnly(pm.colorType())) {
+        c.r = paint.r;
+        c.g = paint.g;
+        c.b = paint.b;
+
+        cs = dst.colorSpace();
+        at = kUnpremul_SkAlphaType;
     }
 
     if (quality == kHigh_SkFilterQuality) {
         // Bicubic filtering naturally produces out of range values on both sides of [0,1].
-        *a = p->clamp(*a, p->splat(0.0f), p->splat(1.0f));
+        c.a = p->clamp(c.a, p->splat(0.0f), p->splat(1.0f));
 
-        skvm::F32 limit = (pm.alphaType() == kUnpremul_SkAlphaType || fClampAsIfUnpremul)
+        skvm::F32 limit = (at == kUnpremul_SkAlphaType || fClampAsIfUnpremul)
                         ? p->splat(1.0f)
-                        : *a;
-        *r = p->clamp(*r, p->splat(0.0f), limit);
-        *g = p->clamp(*g, p->splat(0.0f), limit);
-        *b = p->clamp(*b, p->splat(0.0f), limit);
+                        : c.a;
+        c.r = p->clamp(c.r, p->splat(0.0f), limit);
+        c.g = p->clamp(c.g, p->splat(0.0f), limit);
+        c.b = p->clamp(c.b, p->splat(0.0f), limit);
     }
 
-    // Follow SkColorSpaceXformSteps to match shader output convention (dstCS, premul).
-    // TODO: may need to extend lifetime once doing actual transforms?  maybe all in uniforms.
-    auto flags = SkColorSpaceXformSteps{pm.colorSpace(), pm.alphaType(),
-                                        dstCS, kPremul_SkAlphaType}.flags;
-
-    // TODO: once this all works, move it to SkColorSpaceXformSteps
-    if (flags.unpremul)        { p->unpremul(r,g,b,*a); }
-    if (flags.linearize)       { return false; }
-    if (flags.gamut_transform) { return false; }
-    if (flags.encode)          { return false; }
-    if (flags.premul)          { p->premul(r,g,b,*a); }
-    return true;
+    SkColorSpaceXformSteps steps{cs,at, dst.colorSpace(),kPremul_SkAlphaType};
+    return steps.program(p, uniforms, c);
 }
 

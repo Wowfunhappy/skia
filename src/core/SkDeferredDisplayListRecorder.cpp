@@ -61,10 +61,10 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
 
 #include "include/core/SkPromiseImageTexture.h"
 #include "include/core/SkYUVASizeInfo.h"
-#include "include/gpu/GrTexture.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrTexture.h"
 #include "src/gpu/SkGr.h"
 #include "src/image/SkImage_Gpu.h"
 #include "src/image/SkImage_GpuYUVA.h"
@@ -162,7 +162,6 @@ bool SkDeferredDisplayListRecorder::init() {
             },
             fCharacterization.backendFormat(),
             fCharacterization.dimensions(),
-            readSwizzle,
             fCharacterization.sampleCount(),
             surfaceFlags,
             optionalTextureInfo,
@@ -177,11 +176,10 @@ bool SkDeferredDisplayListRecorder::init() {
         return false;
     }
 
-    GrSwizzle outputSwizzle = caps->getOutputSwizzle(fCharacterization.backendFormat(),
-                                                     grColorType);
+    GrSwizzle writeSwizzle = caps->getWriteSwizzle(fCharacterization.backendFormat(), grColorType);
 
     GrSurfaceProxyView readView(proxy, fCharacterization.origin(), readSwizzle);
-    GrSurfaceProxyView outputView(std::move(proxy), fCharacterization.origin(), outputSwizzle);
+    GrSurfaceProxyView outputView(std::move(proxy), fCharacterization.origin(), writeSwizzle);
 
     auto rtc = std::make_unique<GrRenderTargetContext>(fContext.get(), std::move(readView),
                                                        std::move(outputView), grColorType,

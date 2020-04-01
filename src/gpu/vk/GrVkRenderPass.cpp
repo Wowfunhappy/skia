@@ -168,23 +168,24 @@ GrVkRenderPass* GrVkRenderPass::Create(GrVkGpu* gpu,
                                                             renderPass,
                                                             &granularity));
 
-    return new GrVkRenderPass(renderPass, attachmentFlags, attachmentsDescriptor, granularity,
+    return new GrVkRenderPass(gpu, renderPass, attachmentFlags, attachmentsDescriptor, granularity,
                               clearValueCount);
 }
 
-GrVkRenderPass::GrVkRenderPass(VkRenderPass renderPass, AttachmentFlags flags,
+GrVkRenderPass::GrVkRenderPass(const GrVkGpu* gpu, VkRenderPass renderPass, AttachmentFlags flags,
                                const AttachmentsDescriptor& descriptor,
                                const VkExtent2D& granularity, uint32_t clearValueCount)
-        : fRenderPass(renderPass)
+        : INHERITED(gpu)
+        , fRenderPass(renderPass)
         , fAttachmentFlags(flags)
         , fAttachmentsDescriptor(descriptor)
         , fGranularity(granularity)
         , fClearValueCount(clearValueCount) {
 }
 
-void GrVkRenderPass::freeGPUData(GrVkGpu* gpu) const {
+void GrVkRenderPass::freeGPUData() const {
     if (!(fAttachmentFlags & kExternal_AttachmentFlag)) {
-        GR_VK_CALL(gpu->vkInterface(), DestroyRenderPass(gpu->device(), fRenderPass, nullptr));
+        GR_VK_CALL(fGpu->vkInterface(), DestroyRenderPass(fGpu->device(), fRenderPass, nullptr));
     }
 }
 

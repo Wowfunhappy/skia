@@ -26,15 +26,6 @@ class GrGLOpsRenderPass : public GrOpsRenderPass {
 public:
     GrGLOpsRenderPass(GrGLGpu* gpu) : fGpu(gpu) {}
 
-    void begin() override {
-        fGpu->beginCommandBuffer(fRenderTarget, fContentBounds, fOrigin, fColorLoadAndStoreInfo,
-                                 fStencilLoadAndStoreInfo);
-    }
-
-    void end() override {
-        fGpu->endCommandBuffer(fRenderTarget, fColorLoadAndStoreInfo, fStencilLoadAndStoreInfo);
-    }
-
     void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override {
         state->doUpload(upload);
     }
@@ -52,10 +43,20 @@ private:
     void setupGeometry(const GrBuffer* vertexBuffer, int baseVertex, const GrBuffer* instanceBuffer,
                        int baseInstance);
 
+    const void* offsetForBaseIndex(int baseIndex) const {
+        if (!fIndexPointer) {
+            // nullptr != 0. Adding an offset to a nullptr is undefined.
+            return (void*)(baseIndex * sizeof(uint16_t));
+        }
+        return fIndexPointer + baseIndex;
+    }
+
+    void onBegin() override;
+    void onEnd() override;
     bool onBindPipeline(const GrProgramInfo& programInfo, const SkRect& drawBounds) override;
     void onSetScissorRect(const SkIRect& scissor) override;
-    bool onBindTextures(const GrPrimitiveProcessor& primProc, const GrPipeline& pipeline,
-                        const GrSurfaceProxy* const primProcTextures[]) override;
+    bool onBindTextures(const GrPrimitiveProcessor&, const GrSurfaceProxy* const primProcTextures[],
+                        const GrPipeline& pipeline) override;
     void onBindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
                        const GrBuffer* vertexBuffer, GrPrimitiveRestart) override;
     void onDraw(int vertexCount, int baseVertex) override;
@@ -80,11 +81,6 @@ private:
     // If using an index buffer, this gets set during onBindBuffers. It is either the CPU address of
     // the indices, or nullptr if they reside physically in GPU memory.
     const uint16_t* fIndexPointer;
-
-    // We may defer binding of instance and vertex buffers because GL does not always support a base
-    // instance and/or vertex.
-    sk_sp<const GrBuffer> fDeferredInstanceBuffer;
-    sk_sp<const GrBuffer> fDeferredVertexBuffer;
 
     typedef GrOpsRenderPass INHERITED;
 };

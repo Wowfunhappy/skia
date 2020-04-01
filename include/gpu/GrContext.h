@@ -40,6 +40,7 @@ class GrTextureProxy;
 struct GrVkBackendContext;
 
 class SkImage;
+class SkString;
 class SkSurfaceCharacterization;
 class SkSurfaceProps;
 class SkTaskGroup;
@@ -47,6 +48,7 @@ class SkTraceMemoryDump;
 
 class SK_API GrContext : public GrRecordingContext {
 public:
+#ifdef SK_GL
     /**
      * Creates a GrContext for a backend context. If no GrGLInterface is provided then the result of
      * GrGLMakeNativeInterface() is used if it succeeds.
@@ -55,6 +57,7 @@ public:
     static sk_sp<GrContext> MakeGL(sk_sp<const GrGLInterface>);
     static sk_sp<GrContext> MakeGL(const GrContextOptions&);
     static sk_sp<GrContext> MakeGL();
+#endif
 
     /**
      * The Vulkan context (VkQueue, VkDevice, VkInstance) must be kept alive until the returned

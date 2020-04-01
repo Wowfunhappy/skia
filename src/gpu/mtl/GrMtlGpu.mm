@@ -226,6 +226,11 @@ void GrMtlGpu::checkFinishProcs() {
     }
 }
 
+std::unique_ptr<GrSemaphore> GrMtlGpu::prepareTextureForCrossContextUsage(GrTexture*) {
+    submitCommandBuffer(SyncQueue::kSkip_SyncQueue);
+    return nullptr;
+}
+
 sk_sp<GrGpuBuffer> GrMtlGpu::onCreateBuffer(size_t size, GrGpuBufferType type,
                                             GrAccessPattern accessPattern, const void* data) {
     return GrMtlBuffer::Make(this, size, type, accessPattern, data);
@@ -257,9 +262,9 @@ bool GrMtlGpu::uploadToTexture(GrMtlTexture* tex, int left, int top, int width, 
     if (width == 0 || height == 0) {
         return false;
     }
-    if (!this->mtlCaps().isFormatTexturableAndUploadable(dataColorType, tex->backendFormat())) {
-        return false;
-    }
+
+    SkASSERT(this->mtlCaps().surfaceSupportsWritePixels(tex));
+    SkASSERT(this->mtlCaps().areColorTypeAndFormatCompatible(dataColorType, tex->backendFormat()));
 
     id<MTLTexture> mtlTexture = tex->mtlTexture();
     SkASSERT(mtlTexture);
@@ -628,7 +633,6 @@ static id<MTLTexture> get_texture_from_backend(const GrBackendRenderTarget& back
 }
 
 sk_sp<GrTexture> GrMtlGpu::onWrapBackendTexture(const GrBackendTexture& backendTex,
-                                                GrColorType grColorType,
                                                 GrWrapOwnership,
                                                 GrWrapCacheable cacheable,
                                                 GrIOType ioType) {
@@ -655,7 +659,6 @@ sk_sp<GrTexture> GrMtlGpu::onWrapCompressedBackendTexture(const GrBackendTexture
 
 sk_sp<GrTexture> GrMtlGpu::onWrapRenderableBackendTexture(const GrBackendTexture& backendTex,
                                                           int sampleCnt,
-                                                          GrColorType colorType,
                                                           GrWrapOwnership,
                                                           GrWrapCacheable cacheable) {
     id<MTLTexture> mtlTexture = get_texture_from_backend(backendTex);
@@ -681,8 +684,7 @@ sk_sp<GrTexture> GrMtlGpu::onWrapRenderableBackendTexture(const GrBackendTexture
             this, backendTex.dimensions(), sampleCnt, mtlTexture, cacheable);
 }
 
-sk_sp<GrRenderTarget> GrMtlGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& backendRT,
-                                                          GrColorType grColorType) {
+sk_sp<GrRenderTarget> GrMtlGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& backendRT) {
     // TODO: Revisit this when the Metal backend is completed. It may support MSAA render targets.
     if (backendRT.sampleCnt() > 1) {
         return nullptr;
@@ -701,7 +703,7 @@ sk_sp<GrRenderTarget> GrMtlGpu::onWrapBackendRenderTarget(const GrBackendRenderT
 }
 
 sk_sp<GrRenderTarget> GrMtlGpu::onWrapBackendTextureAsRenderTarget(
-        const GrBackendTexture& backendTex, int sampleCnt, GrColorType grColorType) {
+        const GrBackendTexture& backendTex, int sampleCnt) {
     id<MTLTexture> mtlTexture = get_texture_from_backend(backendTex);
     if (!mtlTexture) {
         return nullptr;
@@ -1414,5 +1416,141 @@ void GrMtlGpu::testingOnly_endCapture() {
         MTLCaptureManager* captureManager = [MTLCaptureManager sharedCaptureManager];
         [captureManager stopCapture];
     }
+}
+#endif
+
+#ifdef SK_ENABLE_DUMP_GPU
+#include "src/utils/SkJSONWriter.h"
+void GrMtlGpu::onDumpJSON(SkJSONWriter* writer) const {
+    // We are called by the base class, which has already called beginObject(). We choose to nest
+    // all of our caps information in a named sub-object.
+    writer->beginObject("Metal GPU");
+
+    writer->beginObject("Device");
+    writer->appendString("name", fDevice.name.UTF8String);
+#ifdef SK_BUILD_FOR_MAC
+    if (@available(macOS 10.11, *)) {
+        writer->appendBool("isHeadless", fDevice.isHeadless);
+        writer->appendBool("isLowPower", fDevice.isLowPower);
+    }
+    if (@available(macOS 10.13, *)) {
+        writer->appendBool("isRemovable", fDevice.isRemovable);
+    }
+#endif
+    if (@available(macOS 10.13, iOS 11.0, *)) {
+        writer->appendU64("registryID", fDevice.registryID);
+    }
+#ifdef SK_BUILD_FOR_MAC
+    if (@available(macOS 10.15, *)) {
+        switch (fDevice.location) {
+            case MTLDeviceLocationBuiltIn:
+                writer->appendString("location", "builtIn");
+                break;
+            case MTLDeviceLocationSlot:
+                writer->appendString("location", "slot");
+                break;
+            case MTLDeviceLocationExternal:
+                writer->appendString("location", "external");
+                break;
+            case MTLDeviceLocationUnspecified:
+                writer->appendString("location", "unspecified");
+                break;
+            default:
+                writer->appendString("location", "unknown");
+                break;
+        }
+        writer->appendU64("locationNumber", fDevice.locationNumber);
+        writer->appendU64("maxTransferRate", fDevice.maxTransferRate);
+    }
+#endif  // SK_BUILD_FOR_MAC
+    if (@available(macOS 10.15, iOS 13.0, *)) {
+        writer->appendBool("hasUnifiedMemory", fDevice.hasUnifiedMemory);
+    }
+#ifdef SK_BUILD_FOR_MAC
+    if (@available(macOS 10.15, *)) {
+        writer->appendU64("peerGroupID", fDevice.peerGroupID);
+        writer->appendU32("peerCount", fDevice.peerCount);
+        writer->appendU32("peerIndex", fDevice.peerIndex);
+    }
+    if (@available(macOS 10.12, *)) {
+        writer->appendU64("recommendedMaxWorkingSetSize", fDevice.recommendedMaxWorkingSetSize);
+    }
+#endif  // SK_BUILD_FOR_MAC
+    if (@available(macOS 10.13, iOS 11.0, *)) {
+        writer->appendU64("currentAllocatedSize", fDevice.currentAllocatedSize);
+        writer->appendU64("maxThreadgroupMemoryLength", fDevice.maxThreadgroupMemoryLength);
+    }
+
+    if (@available(macOS 10.11, iOS 9.0, *)) {
+        writer->beginObject("maxThreadsPerThreadgroup");
+        writer->appendU64("width", fDevice.maxThreadsPerThreadgroup.width);
+        writer->appendU64("height", fDevice.maxThreadsPerThreadgroup.height);
+        writer->appendU64("depth", fDevice.maxThreadsPerThreadgroup.depth);
+        writer->endObject();
+    }
+
+    if (@available(macOS 10.13, iOS 11.0, *)) {
+        writer->appendBool("areProgrammableSamplePositionsSupported",
+                           fDevice.areProgrammableSamplePositionsSupported);
+        writer->appendBool("areRasterOrderGroupsSupported",
+                           fDevice.areRasterOrderGroupsSupported);
+    }
+#ifdef SK_BUILD_FOR_MAC
+    if (@available(macOS 10.11, *)) {
+        writer->appendBool("isDepth24Stencil8PixelFormatSupported",
+                           fDevice.isDepth24Stencil8PixelFormatSupported);
+
+    }
+    if (@available(macOS 10.15, *)) {
+        writer->appendBool("areBarycentricCoordsSupported",
+                           fDevice.areBarycentricCoordsSupported);
+        writer->appendBool("supportsShaderBarycentricCoordinates",
+                           fDevice.supportsShaderBarycentricCoordinates);
+    }
+#endif  // SK_BUILD_FOR_MAC
+    if (@available(macOS 10.14, iOS 12.0, *)) {
+        writer->appendU64("maxBufferLength", fDevice.maxBufferLength);
+    }
+    if (@available(macOS 10.13, iOS 11.0, *)) {
+        switch (fDevice.readWriteTextureSupport) {
+            case MTLReadWriteTextureTier1:
+                writer->appendString("readWriteTextureSupport", "tier1");
+                break;
+            case MTLReadWriteTextureTier2:
+                writer->appendString("readWriteTextureSupport", "tier2");
+                break;
+            case MTLReadWriteTextureTierNone:
+                writer->appendString("readWriteTextureSupport", "tierNone");
+                break;
+            default:
+                writer->appendString("readWriteTextureSupport", "unknown");
+                break;
+        }
+        switch (fDevice.argumentBuffersSupport) {
+            case MTLArgumentBuffersTier1:
+                writer->appendString("argumentBuffersSupport", "tier1");
+                break;
+            case MTLArgumentBuffersTier2:
+                writer->appendString("argumentBuffersSupport", "tier2");
+                break;
+            default:
+                writer->appendString("argumentBuffersSupport", "unknown");
+                break;
+        }
+    }
+    if (@available(macOS 10.14, iOS 12.0, *)) {
+        writer->appendU64("maxArgumentBufferSamplerCount", fDevice.maxArgumentBufferSamplerCount);
+    }
+#ifdef SK_BUILD_FOR_IOS
+    if (@available(iOS 13.0, *)) {
+        writer->appendU64("sparseTileSizeInBytes", fDevice.sparseTileSizeInBytes);
+    }
+#endif
+    writer->endObject();
+
+    writer->appendString("queue", fQueue.label.UTF8String);
+    writer->appendBool("disconnected", fDisconnected);
+
+    writer->endObject();
 }
 #endif

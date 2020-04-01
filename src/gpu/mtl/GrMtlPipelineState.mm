@@ -116,11 +116,11 @@ void GrMtlPipelineState::setTextures(const GrPrimitiveProcessor& primProc,
 }
 
 void GrMtlPipelineState::setDrawState(id<MTLRenderCommandEncoder> renderCmdEncoder,
-                                      const GrSwizzle& outputSwizzle,
+                                      const GrSwizzle& writeSwizzle,
                                       const GrXferProcessor& xferProcessor) {
     [renderCmdEncoder pushDebugGroup:@"setDrawState"];
     this->bindUniforms(renderCmdEncoder);
-    this->setBlendConstants(renderCmdEncoder, outputSwizzle, xferProcessor);
+    this->setBlendConstants(renderCmdEncoder, writeSwizzle, xferProcessor);
     this->setDepthStencilState(renderCmdEncoder);
     [renderCmdEncoder popDebugGroup];
 }
@@ -160,18 +160,6 @@ void GrMtlPipelineState::setRenderTargetState(const GrRenderTarget* rt, GrSurfac
     }
 }
 
-static bool blend_coeff_refs_constant(GrBlendCoeff coeff) {
-    switch (coeff) {
-        case kConstC_GrBlendCoeff:
-        case kIConstC_GrBlendCoeff:
-        case kConstA_GrBlendCoeff:
-        case kIConstA_GrBlendCoeff:
-            return true;
-        default:
-            return false;
-    }
-}
-
 void GrMtlPipelineState::setBlendConstants(id<MTLRenderCommandEncoder> renderCmdEncoder,
                                            const GrSwizzle& swizzle,
                                            const GrXferProcessor& xferProcessor) {
@@ -182,7 +170,7 @@ void GrMtlPipelineState::setBlendConstants(id<MTLRenderCommandEncoder> renderCmd
     const GrXferProcessor::BlendInfo& blendInfo = xferProcessor.getBlendInfo();
     GrBlendCoeff srcCoeff = blendInfo.fSrcBlend;
     GrBlendCoeff dstCoeff = blendInfo.fDstBlend;
-    if (blend_coeff_refs_constant(srcCoeff) || blend_coeff_refs_constant(dstCoeff)) {
+    if (GrBlendCoeffRefsConstant(srcCoeff) || GrBlendCoeffRefsConstant(dstCoeff)) {
         // Swizzle the blend to match what the shader will output.
         SkPMColor4f blendConst = swizzle.applyTo(blendInfo.fBlendConstant);
 

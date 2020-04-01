@@ -32,7 +32,6 @@ class SkSurface;
 class GrBackendTexture;
 class GrContext;
 class GrContextThreadSafeProxy;
-class GrTexture;
 
 struct SkYUVAIndex;
 
@@ -805,10 +804,6 @@ public:
     */
     bool peekPixels(SkPixmap* pixmap) const;
 
-    /** Deprecated.
-    */
-    GrTexture* getTexture() const;
-
     /** Returns true the contents of SkImage was created on or uploaded to GPU memory,
         and is available as a GPU texture.
 
@@ -979,7 +974,7 @@ public:
         Returns nullptr if encoding fails, or if encodedImageFormat is not supported.
 
         SkImage encoding in a format requires both building with one or more of:
-        SK_HAS_JPEG_LIBRARY, SK_HAS_PNG_LIBRARY, SK_HAS_WEBP_LIBRARY; and platform support
+        SK_ENCODE_JPEG, SK_ENCODE_PNG, SK_ENCODE_WEBP; and platform support
         for the encoded format.
 
         If SK_BUILD_FOR_MAC or SK_BUILD_FOR_IOS is defined, encodedImageFormat can
@@ -1001,7 +996,7 @@ public:
 
     /** Encodes SkImage pixels, returning result as SkData. Returns existing encoded data
         if present; otherwise, SkImage is encoded with SkEncodedImageFormat::kPNG. Skia
-        must be built with SK_HAS_PNG_LIBRARY to encode SkImage.
+        must be built with SK_ENCODE_PNG to encode SkImage.
 
         Returns nullptr if existing encoded data is missing or invalid, and
         encoding fails.
@@ -1014,7 +1009,7 @@ public:
 
     /** Returns encoded SkImage pixels as SkData, if SkImage was created from supported
         encoded stream format. Platform support for formats vary and may require building
-        with one or more of: SK_HAS_JPEG_LIBRARY, SK_HAS_PNG_LIBRARY, SK_HAS_WEBP_LIBRARY.
+        with one or more of: SK_ENCODE_JPEG, SK_ENCODE_PNG, SK_ENCODE_WEBP.
 
         Returns nullptr if SkImage contents are not encoded.
 
@@ -1040,18 +1035,26 @@ public:
     /** Returns SkImage backed by GPU texture associated with context. Returned SkImage is
         compatible with SkSurface created with dstColorSpace. The returned SkImage respects
         mipMapped setting; if mipMapped equals GrMipMapped::kYes, the backing texture
-        allocates mip map levels. Returns original SkImage if context
-        and dstColorSpace match and mipMapped is compatible with backing GPU texture.
+        allocates mip map levels.
+
+        The mipMapped parameter is effectively treated as kNo if MIP maps are not supported by the
+        GPU.
+
+        Returns original SkImage if the image is already texture-backed, the context matches, and
+        mipMapped is compatible with the backing GPU texture. SkBudgeted is ignored in this case.
 
         Returns nullptr if context is nullptr, or if SkImage was created with another
         GrContext.
 
-        @param context        GPU context
-        @param dstColorSpace  range of colors of matching SkSurface on GPU
-        @param mipMapped      whether created SkImage texture must allocate mip map levels
+        @param GrContext      GPU context
+        @param GrMipMapped    whether created SkImage texture must allocate mip map levels
+        @param SkBudgeted     whether to count a newly created texture for the returned image
+                              counts against the GrContext's budget.
         @return               created SkImage, or nullptr
     */
-    sk_sp<SkImage> makeTextureImage(GrContext* context, GrMipMapped = GrMipMapped::kNo) const;
+    sk_sp<SkImage> makeTextureImage(GrContext*,
+                                    GrMipMapped = GrMipMapped::kNo,
+                                    SkBudgeted = SkBudgeted::kYes) const;
 
     /** Returns raster image or lazy image. Copies SkImage backed by GPU texture into
         CPU memory if needed. Returns original SkImage if decoded in raster bitmap,

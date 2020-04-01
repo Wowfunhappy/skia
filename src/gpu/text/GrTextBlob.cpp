@@ -74,6 +74,35 @@ GrTextBlob::SubRun::SubRun(GrTextBlob* textBlob, const SkStrikeSpec& strikeSpec)
     textBlob->insertSubRun(this);
 }
 
+
+static SkRect dest_rect(const SkGlyph& g, SkPoint origin) {
+    return SkRect::MakeXYWH(
+            SkIntToScalar(g.left()) + origin.x(),
+            SkIntToScalar(g.top())  + origin.y(),
+            SkIntToScalar(g.width()),
+            SkIntToScalar(g.height()));
+}
+
+static bool is_SDF(const SkGlyph& skGlyph) {
+    return skGlyph.maskFormat() == SkMask::kSDF_Format;
+}
+
+static SkRect dest_rect(const SkGlyph& g, SkPoint origin, SkScalar textScale) {
+    if (!is_SDF(g)) {
+        return SkRect::MakeXYWH(
+                SkIntToScalar(g.left())   * textScale + origin.x(),
+                SkIntToScalar(g.top())    * textScale + origin.y(),
+                SkIntToScalar(g.width())  * textScale,
+                SkIntToScalar(g.height()) * textScale);
+    } else {
+        return SkRect::MakeXYWH(
+                (SkIntToScalar(g.left()) + SK_DistanceFieldInset) * textScale + origin.x(),
+                (SkIntToScalar(g.top())  + SK_DistanceFieldInset) * textScale + origin.y(),
+                (SkIntToScalar(g.width())  - 2 * SK_DistanceFieldInset) * textScale,
+                (SkIntToScalar(g.height()) - 2 * SK_DistanceFieldInset) * textScale);
+    }
+}
+
 void GrTextBlob::SubRun::appendGlyphs(const SkZip<SkGlyphVariant, SkPoint>& drawables) {
     GrTextStrike* grStrike = fStrike.get();
     SkScalar strikeToSource = fStrikeSpec.strikeToSourceRatio();
@@ -91,9 +120,9 @@ void GrTextBlob::SubRun::appendGlyphs(const SkZip<SkGlyphVariant, SkPoint>& draw
         SkRect dstRect;
         if (!this->needsTransform()) {
             pos = {SkScalarFloorToScalar(pos.x()), SkScalarFloorToScalar(pos.y())};
-            dstRect = grGlyph->destRect(pos);
+            dstRect = dest_rect(*skGlyph, pos);
         } else {
-            dstRect = grGlyph->destRect(pos, strikeToSource);
+            dstRect = dest_rect(*skGlyph, pos, strikeToSource);
         }
 
         this->joinGlyphBounds(dstRect);
@@ -236,8 +265,8 @@ void GrTextBlob::SubRun::updateTexCoords(int begin, int end) {
         GrGlyph* glyph = this->fGlyphs[i];
         SkASSERT(glyph != nullptr);
 
-        int width = glyph->fBounds.width();
-        int height = glyph->fBounds.height();
+        int width = glyph->width();
+        int height = glyph->height();
         uint16_t u0, v0, u1, v1;
         if (this->drawAsDistanceFields()) {
             u0 = glyph->fAtlasLocation.fX + SK_DistanceFieldInset;
@@ -456,7 +485,6 @@ bool GrTextBlob::mustRegenerate(const SkPaint& paint, bool anyRunHasSubpixelPosi
 }
 
 void GrTextBlob::flush(GrTextTarget* target, const SkSurfaceProps& props,
-                       const GrDistanceFieldAdjustTable* distanceAdjustTable,
                        const SkPaint& paint, const SkPMColor4f& filteredColor, const GrClip& clip,
                        const SkMatrix& drawMatrix, SkPoint drawOrigin) {
 
@@ -537,8 +565,7 @@ void GrTextBlob::flush(GrTextTarget* target, const SkSurfaceProps& props,
 
             if (submitOp) {
                 auto op = this->makeOp(*subRun, glyphCount, drawMatrix, drawOrigin,
-                                       clipRect, paint, filteredColor, props, distanceAdjustTable,
-                                       target);
+                                       clipRect, paint, filteredColor, props, target);
                 if (op) {
                     if (skipClip) {
                         target->addDrawOp(GrNoClip(), std::move(op));
@@ -589,12 +616,11 @@ size_t GrTextBlob::size() const { return fSize; }
 std::unique_ptr<GrDrawOp> GrTextBlob::test_makeOp(
         int glyphCount, const SkMatrix& drawMatrix,
         SkPoint drawOrigin, const SkPaint& paint, const SkPMColor4f& filteredColor,
-        const SkSurfaceProps& props, const GrDistanceFieldAdjustTable* distanceAdjustTable,
-        GrTextTarget* target) {
+        const SkSurfaceProps& props, GrTextTarget* target) {
     SubRun* info = fFirstSubRun;
     SkIRect emptyRect = SkIRect::MakeEmpty();
     return this->makeOp(*info, glyphCount, drawMatrix, drawOrigin, emptyRect,
-                        paint, filteredColor, props, distanceAdjustTable, target);
+                        paint, filteredColor, props, target);
 }
 
 bool GrTextBlob::hasW(GrTextBlob::SubRunType type) const {
@@ -705,10 +731,9 @@ void GrTextBlob::insertSubRun(SubRun* subRun) {
 }
 
 std::unique_ptr<GrAtlasTextOp> GrTextBlob::makeOp(
-        SubRun& info, int glyphCount,
-        const SkMatrix& drawMatrix, SkPoint drawOrigin, const SkIRect& clipRect,
-        const SkPaint& paint, const SkPMColor4f& filteredColor, const SkSurfaceProps& props,
-        const GrDistanceFieldAdjustTable* distanceAdjustTable, GrTextTarget* target) {
+        SubRun& info, int glyphCount, const SkMatrix& drawMatrix, SkPoint drawOrigin,
+        const SkIRect& clipRect, const SkPaint& paint, const SkPMColor4f& filteredColor,
+        const SkSurfaceProps& props, GrTextTarget* target) {
     GrMaskFormat format = info.maskFormat();
 
     GrPaint grPaint;
@@ -717,7 +742,7 @@ std::unique_ptr<GrAtlasTextOp> GrTextBlob::makeOp(
     if (info.drawAsDistanceFields()) {
         // TODO: Can we be even smarter based on the dest transfer function?
         op = GrAtlasTextOp::MakeDistanceField(
-                target->getContext(), std::move(grPaint), glyphCount, distanceAdjustTable,
+                target->getContext(), std::move(grPaint), glyphCount,
                 target->colorInfo().isLinearlyBlended(), SkPaintPriv::ComputeLuminanceColor(paint),
                 props, info.isAntiAliased(), info.hasUseLCDText());
     } else {
@@ -791,11 +816,13 @@ std::tuple<bool, int> GrTextBlob::VertexRegenerator::updateTextureCoordinates(
     int i = begin;
     for (; i < end; i++) {
         GrGlyph* grGlyph = fSubRun->fGlyphs[i];
-        SkASSERT(grGlyph && grGlyph->fMaskFormat == fSubRun->maskFormat());
+        SkASSERT(grGlyph);
 
-        if (!fFullAtlasManager->hasGlyph(grGlyph)) {
+        if (!fFullAtlasManager->hasGlyph(fSubRun->maskFormat(), grGlyph)) {
             const SkGlyph& skGlyph = *fMetricsAndImages->glyph(grGlyph->fPackedID);
-            if (skGlyph.image() == nullptr) { return {false, 0}; }
+            if (skGlyph.image() == nullptr) {
+                return {false, 0};
+            }
             code = grStrike->addGlyphToAtlas(skGlyph,
                     fSubRun->maskFormat(),
                     fSubRun->needsTransform(),
@@ -805,7 +832,8 @@ std::tuple<bool, int> GrTextBlob::VertexRegenerator::updateTextureCoordinates(
             }
         }
         fFullAtlasManager->addGlyphToBulkAndSetUseToken(
-                fSubRun->bulkUseToken(), grGlyph, tokenTracker->nextDrawToken());
+                fSubRun->bulkUseToken(),  fSubRun->maskFormat(), grGlyph,
+                tokenTracker->nextDrawToken());
     }
     int glyphsPlacedInAtlas = i - begin;
 

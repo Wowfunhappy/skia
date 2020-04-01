@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkShader.h"
 #include "include/utils/SkNWayCanvas.h"
 #include "src/core/SkCanvasPriv.h"
 
@@ -151,6 +152,14 @@ void SkNWayCanvas::onClipPath(const SkPath& path, SkClipOp op, ClipEdgeStyle edg
     this->INHERITED::onClipPath(path, op, edgeStyle);
 }
 
+void SkNWayCanvas::onClipShader(sk_sp<SkShader> sh, SkClipOp op) {
+    Iter iter(fList);
+    while (iter.next()) {
+        iter->clipShader(sh, op);
+    }
+    this->INHERITED::onClipShader(std::move(sh), op);
+}
+
 void SkNWayCanvas::onClipRegion(const SkRegion& deviceRgn, SkClipOp op) {
     Iter iter(fList);
     while (iter.next()) {
@@ -228,38 +237,6 @@ void SkNWayCanvas::onDrawPath(const SkPath& path, const SkPaint& paint) {
     Iter iter(fList);
     while (iter.next()) {
         iter->drawPath(path, paint);
-    }
-}
-
-void SkNWayCanvas::onDrawBitmap(const SkBitmap& bitmap, SkScalar x, SkScalar y,
-                                const SkPaint* paint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->drawBitmap(bitmap, x, y, paint);
-    }
-}
-
-void SkNWayCanvas::onDrawBitmapRect(const SkBitmap& bitmap, const SkRect* src, const SkRect& dst,
-                                    const SkPaint* paint, SrcRectConstraint constraint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->legacy_drawBitmapRect(bitmap, src, dst, paint, (SrcRectConstraint)constraint);
-    }
-}
-
-void SkNWayCanvas::onDrawBitmapNine(const SkBitmap& bitmap, const SkIRect& center,
-                                    const SkRect& dst, const SkPaint* paint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->drawBitmapNine(bitmap, center, dst, paint);
-    }
-}
-
-void SkNWayCanvas::onDrawBitmapLattice(const SkBitmap& bitmap, const Lattice& lattice,
-                                       const SkRect& dst, const SkPaint* paint) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->drawBitmapLattice(bitmap, lattice, dst, paint);
     }
 }
 

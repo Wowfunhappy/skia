@@ -19,7 +19,7 @@
 
 #if SK_SUPPORT_GPU
 
-#include "include/gpu/GrSurface.h"
+#include "src/gpu/GrSurface.h"
 #include "src/gpu/mtl/GrMtlTextureRenderTarget.h"
 
 #ifdef SK_METAL
@@ -49,8 +49,6 @@ sk_sp<SkSurface> SkSurface::MakeFromCAMetalLayer(GrContext* context,
     texInfo.fMipMapped = GrMipMapped::kNo;
     texInfo.fTextureType = GrTextureType::k2D;
 
-    GrSwizzle readSwizzle = caps->getReadSwizzle(backendFormat, grColorType);
-
     sk_sp<GrRenderTargetProxy> proxy = proxyProvider->createLazyRenderTargetProxy(
             [layer, drawable, sampleCnt](GrResourceProvider* resourceProvider) {
                 CAMetalLayer* metalLayer = (__bridge CAMetalLayer*)layer;
@@ -77,7 +75,6 @@ sk_sp<SkSurface> SkSurface::MakeFromCAMetalLayer(GrContext* context,
             },
             backendFormat,
             dims,
-            readSwizzle,
             sampleCnt,
             sampleCnt > 1 ? GrInternalSurfaceFlags::kRequiresManualMSAAResolve
                           : GrInternalSurfaceFlags::kNone,
@@ -89,13 +86,14 @@ sk_sp<SkSurface> SkSurface::MakeFromCAMetalLayer(GrContext* context,
             false,
             GrSurfaceProxy::UseAllocator::kYes);
 
-    GrSwizzle outputSwizzle = caps->getOutputSwizzle(backendFormat, grColorType);
+    GrSwizzle readSwizzle = caps->getReadSwizzle(backendFormat, grColorType);
+    GrSwizzle writeSwizzle = caps->getWriteSwizzle(backendFormat, grColorType);
 
     GrSurfaceProxyView readView(proxy, origin, readSwizzle);
-    GrSurfaceProxyView outputView(std::move(proxy), origin, outputSwizzle);
+    GrSurfaceProxyView writeView(std::move(proxy), origin, writeSwizzle);
 
     auto rtc = std::make_unique<GrRenderTargetContext>(context, std::move(readView),
-                                                       std::move(outputView), grColorType,
+                                                       std::move(writeView), grColorType,
                                                        colorSpace, surfaceProps);
 
     sk_sp<SkSurface> surface = SkSurface_Gpu::MakeWrappedRenderTarget(context, std::move(rtc));
@@ -123,8 +121,6 @@ sk_sp<SkSurface> SkSurface::MakeFromMTKView(GrContext* context,
     texInfo.fMipMapped = GrMipMapped::kNo;
     texInfo.fTextureType = GrTextureType::k2D;
 
-    GrSwizzle readSwizzle = caps->getReadSwizzle(backendFormat, grColorType);
-
     sk_sp<GrRenderTargetProxy> proxy = proxyProvider->createLazyRenderTargetProxy(
             [view, sampleCnt](GrResourceProvider* resourceProvider) {
                 MTKView* mtkView = (__bridge MTKView*)view;
@@ -149,7 +145,6 @@ sk_sp<SkSurface> SkSurface::MakeFromMTKView(GrContext* context,
             },
             backendFormat,
             dims,
-            readSwizzle,
             sampleCnt,
             sampleCnt > 1 ? GrInternalSurfaceFlags::kRequiresManualMSAAResolve
                           : GrInternalSurfaceFlags::kNone,
@@ -161,13 +156,14 @@ sk_sp<SkSurface> SkSurface::MakeFromMTKView(GrContext* context,
             false,
             GrSurfaceProxy::UseAllocator::kYes);
 
-    GrSwizzle outputSwizzle = caps->getOutputSwizzle(backendFormat, grColorType);
+    GrSwizzle readSwizzle = caps->getReadSwizzle(backendFormat, grColorType);
+    GrSwizzle writeSwizzle = caps->getWriteSwizzle(backendFormat, grColorType);
 
     GrSurfaceProxyView readView(proxy, origin, readSwizzle);
-    GrSurfaceProxyView outputView(std::move(proxy), origin, outputSwizzle);
+    GrSurfaceProxyView writeView(std::move(proxy), origin, writeSwizzle);
 
     auto rtc = std::make_unique<GrRenderTargetContext>(context, std::move(readView),
-                                                       std::move(outputView), grColorType,
+                                                       std::move(writeView), grColorType,
                                                        colorSpace, surfaceProps);
 
     sk_sp<SkSurface> surface = SkSurface_Gpu::MakeWrappedRenderTarget(context, std::move(rtc));

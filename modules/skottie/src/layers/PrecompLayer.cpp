@@ -7,10 +7,10 @@
 
 #include "modules/skottie/src/SkottiePriv.h"
 
-#include "modules/skottie/src/Animator.h"
 #include "modules/skottie/src/Composition.h"
 #include "modules/skottie/src/SkottieJson.h"
 #include "modules/skottie/src/SkottieValue.h"
+#include "modules/skottie/src/animator/Animator.h"
 #include "modules/sksg/include/SkSGRenderNode.h"
 #include "modules/sksg/include/SkSGScene.h"
 #include "src/core/SkTLazy.h"
@@ -42,34 +42,39 @@ private:
 };
 
 // Applies a bias/scale/remap t-adjustment to child animators.
-class CompTimeMapper final : public sksg::GroupAnimator {
+class CompTimeMapper final : public Animator {
 public:
-    CompTimeMapper(sksg::AnimatorList&& layer_animators,
+    CompTimeMapper(AnimatorScope&& layer_animators,
                    sk_sp<TimeRemapper> remapper,
                    float time_bias, float time_scale)
-        : INHERITED(std::move(layer_animators))
+        : fAnimators(std::move(layer_animators))
         , fRemapper(std::move(remapper))
         , fTimeBias(time_bias)
         , fTimeScale(time_scale) {}
 
-    void onTick(float t) override {
+    StateChanged onSeek(float t) override {
         if (fRemapper) {
             // When time remapping is active, |t| is fully driven externally.
-            fRemapper->tick(t);
+            fRemapper->seek(t);
             t = fRemapper->t();
         } else {
             t = (t + fTimeBias) * fTimeScale;
         }
 
-        this->INHERITED::onTick(t);
+        bool changed = false;
+
+        for (const auto& anim : fAnimators) {
+            changed |= anim->seek(t);
+        }
+
+        return changed;
     }
 
 private:
+    const AnimatorScope       fAnimators;
     const sk_sp<TimeRemapper> fRemapper;
     const float               fTimeBias,
                               fTimeScale;
-
-    using INHERITED = sksg::GroupAnimator;
 };
 
 } // namespace

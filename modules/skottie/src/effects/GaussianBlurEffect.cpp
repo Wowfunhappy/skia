@@ -7,7 +7,6 @@
 
 #include "modules/skottie/src/effects/Effects.h"
 
-#include "modules/skottie/src/Animator.h"
 #include "modules/skottie/src/SkottieValue.h"
 #include "modules/sksg/include/SkSGRenderEffect.h"
 #include "src/utils/SkJSON.h"
@@ -41,9 +40,10 @@ private:
             kRepeatEdge_Index = 2,
         };
 
-        this->bind(*abuilder, EffectBuilder::GetPropValue(jprops, kBlurriness_Index), &fBlurriness);
-        this->bind(*abuilder, EffectBuilder::GetPropValue(jprops, kDimensions_Index), &fDimensions);
-        this->bind(*abuilder, EffectBuilder::GetPropValue(jprops, kRepeatEdge_Index), &fRepeatEdge);
+        EffectBinder(jprops, *abuilder, this)
+                .bind(kBlurriness_Index, fBlurriness)
+                .bind(kDimensions_Index, fDimensions)
+                .bind(kRepeatEdge_Index, fRepeatEdge);
     }
 
     void onSync() override {

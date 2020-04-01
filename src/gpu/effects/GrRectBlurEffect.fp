@@ -62,8 +62,7 @@ static GrSurfaceProxyView CreateIntegralTexture(GrRecordingContext* context, flo
     builder.finish();
 
     GrProxyProvider* proxyProvider = context->priv().proxyProvider();
-    if (sk_sp<GrTextureProxy> proxy = proxyProvider->findOrCreateProxyByUniqueKey(
-            key, GrColorType::kAlpha_8)) {
+    if (sk_sp<GrTextureProxy> proxy = proxyProvider->findOrCreateProxyByUniqueKey(key)) {
         GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(proxy->backendFormat(),
                                                                    GrColorType::kAlpha_8);
         return {std::move(proxy), kTopLeft_GrSurfaceOrigin, swizzle};
@@ -84,7 +83,7 @@ static GrSurfaceProxyView CreateIntegralTexture(GrRecordingContext* context, flo
     *bitmap.getAddr8(width - 1, 0) = 0;
     bitmap.setImmutable();
 
-    GrBitmapTextureMaker maker(context, bitmap);
+    GrBitmapTextureMaker maker(context, bitmap, GrImageTexGenPolicy::kNew_Uncached_Budgeted);
     auto view = maker.view(GrMipMapped::kNo);
     if (!view) {
         return {};

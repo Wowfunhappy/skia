@@ -43,7 +43,7 @@
 #include "tools/viewer/SvgSlide.h"
 #include "tools/viewer/Viewer.h"
 
-#include <stdlib.h>
+#include <cstdlib>
 #include <map>
 
 #include "imgui.h"
@@ -130,6 +130,11 @@ static DEFINE_int_2(threads, j, -1,
 static DEFINE_bool(redraw, false, "Toggle continuous redraw.");
 
 static DEFINE_bool(offscreen, false, "Force rendering to an offscreen surface.");
+static DEFINE_bool(skvm, false, "Try to use skvm blitters for raster.");
+
+#ifndef SK_GL
+static_assert(false, "viewer requires GL backend for raster.")
+#endif
 
 const char* kBackendTypeStrings[sk_app::Window::kBackendTypeCount] = {
     "OpenGL",
@@ -247,6 +252,8 @@ const char* kON = "ON";
 const char* kOFF = "OFF";
 const char* kRefreshStateName = "Refresh";
 
+extern bool gUseSkVMBlitter;
+
 Viewer::Viewer(int argc, char** argv, void* platformData)
     : fCurrentSlide(-1)
     , fRefresh(false)
@@ -277,11 +284,11 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
     SkGraphics::Init();
 
     gPathRendererNames[GpuPathRenderers::kDefault] = "Default Path Renderers";
-    gPathRendererNames[GpuPathRenderers::kGpuTessellation] = "GPU Tessellation";
+    gPathRendererNames[GpuPathRenderers::kTessellation] = "Tessellation";
     gPathRendererNames[GpuPathRenderers::kStencilAndCover] = "NV_path_rendering";
     gPathRendererNames[GpuPathRenderers::kSmall] = "Small paths (cached sdf or alpha masks)";
     gPathRendererNames[GpuPathRenderers::kCoverageCounting] = "CCPR";
-    gPathRendererNames[GpuPathRenderers::kTessellating] = "Tessellating";
+    gPathRendererNames[GpuPathRenderers::kTriangulating] = "Triangulating";
     gPathRendererNames[GpuPathRenderers::kNone] = "Software masks";
 
     SkDebugf("Command line arguments: ");
@@ -294,6 +301,8 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
 #ifdef SK_BUILD_FOR_ANDROID
     SetResourcePath("/data/local/tmp/resources");
 #endif
+
+    gUseSkVMBlitter = FLAGS_skvm;
 
     ToolUtils::SetDefaultFontMgr();
 
@@ -598,6 +607,16 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
         fStatsLayer.setDisplayScale(fZoomUI ? 2.0f : 1.0f);
         fWindow->inval();
     });
+    fCommands.addCommand('$', "ViaSerialize", "Toggle ViaSerialize", [this]() {
+        fDrawViaSerialize = !fDrawViaSerialize;
+        this->updateTitle();
+        fWindow->inval();
+    });
+    fCommands.addCommand('!', "SkVM", "Toggle SkVM", [this]() {
+        gUseSkVMBlitter = !gUseSkVMBlitter;
+        this->updateTitle();
+        fWindow->inval();
+    });
 
     // set up slides
     this->initSlides();
@@ -810,6 +829,12 @@ void Viewer::updateTitle() {
         } else {
             title.append(" <AAA>");
         }
+    }
+    if (fDrawViaSerialize) {
+        title.append(" <serialize>");
+    }
+    if (gUseSkVMBlitter) {
+        title.append(" <skvm>");
     }
 
     SkPaintTitleUpdater paintTitle(&title);
@@ -1329,6 +1354,14 @@ void Viewer::drawSlide(SkSurface* surface) {
         slideCanvas = offscreenSurface->getCanvas();
     }
 
+    SkPictureRecorder recorder;
+    SkCanvas* recorderRestoreCanvas = nullptr;
+    if (fDrawViaSerialize) {
+        recorderRestoreCanvas = slideCanvas;
+        slideCanvas = recorder.beginRecording(
+                SkRect::Make(fSlides[fCurrentSlide]->getDimensions()));
+    }
+
     int count = slideCanvas->save();
     slideCanvas->clear(SK_ColorWHITE);
     // Time the painting logic of the slide
@@ -1365,6 +1398,13 @@ void Viewer::drawSlide(SkSurface* surface) {
     }
     fStatsLayer.endTiming(fPaintTimer);
     slideCanvas->restoreToCount(count);
+
+    if (recorderRestoreCanvas) {
+        sk_sp<SkPicture> picture(recorder.finishRecordingAsPicture());
+        auto data = picture->serialize();
+        slideCanvas = recorderRestoreCanvas;
+        slideCanvas->drawPicture(SkPicture::MakeFromData(data.get()));
+    }
 
     // Force a flush so we can time that, too
     fStatsLayer.beginTiming(fFlushTimer);
@@ -1705,7 +1745,7 @@ void Viewer::drawImGui() {
                         prButton(GpuPathRenderers::kDefault);
                         if (fWindow->sampleCount() > 1 || caps->mixedSamplesSupport()) {
                             if (caps->shaderCaps()->tessellationSupport()) {
-                                prButton(GpuPathRenderers::kGpuTessellation);
+                                prButton(GpuPathRenderers::kTessellation);
                             }
                             if (caps->shaderCaps()->pathRenderingSupport()) {
                                 prButton(GpuPathRenderers::kStencilAndCover);
@@ -1717,7 +1757,7 @@ void Viewer::drawImGui() {
                             }
                             prButton(GpuPathRenderers::kSmall);
                         }
-                        prButton(GpuPathRenderers::kTessellating);
+                        prButton(GpuPathRenderers::kTriangulating);
                         prButton(GpuPathRenderers::kNone);
                     }
                     ImGui::TreePop();
@@ -2111,7 +2151,7 @@ void Viewer::drawImGui() {
                         }
 
                         SkReader32 reader(data->data(), data->size());
-                        entry.fShaderType = reader.readU32();
+                        entry.fShaderType = GrPersistentCacheUtils::GetType(&reader);
                         GrPersistentCacheUtils::UnpackCachedShaders(&reader, entry.fShader,
                                                                     entry.fInputs,
                                                                     kGrShaderTypeCount);
@@ -2372,7 +2412,7 @@ void Viewer::updateUIState() {
                 if (fWindow->sampleCount() > 1 || caps->mixedSamplesSupport()) {
                     if (caps->shaderCaps()->tessellationSupport()) {
                         writer.appendString(
-                                gPathRendererNames[GpuPathRenderers::kGpuTessellation].c_str());
+                                gPathRendererNames[GpuPathRenderers::kTessellation].c_str());
                     }
                     if (caps->shaderCaps()->pathRenderingSupport()) {
                         writer.appendString(
@@ -2386,7 +2426,7 @@ void Viewer::updateUIState() {
                     }
                     writer.appendString(gPathRendererNames[GpuPathRenderers::kSmall].c_str());
                 }
-                writer.appendString(gPathRendererNames[GpuPathRenderers::kTessellating].c_str());
+                writer.appendString(gPathRendererNames[GpuPathRenderers::kTriangulating].c_str());
                 writer.appendString(gPathRendererNames[GpuPathRenderers::kNone].c_str());
             }
         });

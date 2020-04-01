@@ -271,6 +271,9 @@ void ParagraphImpl::buildClusterTable() {
                 auto& cluster = fClusters.emplace_back(this, runIndex, glyphStart, glyphEnd, text,
                                                        width, height);
                 cluster.setIsWhiteSpaces();
+                if (fGraphemes.find(cluster.fTextRange.end) != nullptr) {
+                    cluster.setBreakType(Cluster::BreakType::GraphemeBreak);
+                }
             });
         }
 
@@ -288,6 +291,8 @@ void ParagraphImpl::markLineBreaks() {
         return;
     }
 
+    // Mark all soft line breaks
+    // Remove soft line breaks that are not on grapheme cluster edge
     Cluster* current = fClusters.begin();
     while (!breaker.eof() && current < fClusters.end()) {
         size_t currentPos = breaker.next();
@@ -295,16 +300,21 @@ void ParagraphImpl::markLineBreaks() {
             if (current->textRange().end > currentPos) {
                 break;
             } else if (current->textRange().end == currentPos) {
-                current->setBreakType(breaker.status() == UBRK_LINE_HARD
-                                      ? Cluster::BreakType::HardLineBreak
-                                      : Cluster::BreakType::SoftLineBreak);
+                if (breaker.status() == UBRK_LINE_HARD) {
+                    // Hard line break stronger than anything
+                    current->setBreakType(Cluster::BreakType::HardLineBreak);
+                } else if (current->isGraphemeBreak()) {
+                    // Only allow soft line break if it's grapheme break
+                    current->setBreakType(Cluster::BreakType::SoftLineBreak);
+                } else {
+                    // Leave it as is (either it's no break or a placeholder)
+                }
                 ++current;
                 break;
             }
             ++current;
         }
     }
-
 
     // Walk through all the clusters in the direction of shaped text
     // (we have to walk through the styles in the same order, too)
@@ -617,37 +627,25 @@ std::vector<TextBox> ParagraphImpl::getRectsForRange(unsigned start,
         return results;
     }
 
-    // Snap text edges to the code points/grapheme edges
+    // Adjust the text to grapheme edges
+    // Apparently, text editor CAN move inside graphemes but CANNOT select a part of it.
+    // I don't know why - the solution I have here returns an empty box for every query that
+    // does not contain an end of a grapheme.
+    // Once a cursor is inside a complex grapheme I can press backspace and cause trouble.
+    // To avoid any problems, I will not allow any selection of a part of a grapheme.
+    // One flutter test fails because of it but the editing experience is correct
+    // (although you have to press the cursor many times before it moves to the next grapheme).
     TextRange text(fText.size(), fText.size());
-
     if (start < fCodePoints.size()) {
-        auto startGrapheme = fGraphemes16[fCodePoints[start].fGrapheme];
-        auto lastGrapheme = fCodePoints[start].fGrapheme == fGraphemes16.size() - 1;
-        if (start > startGrapheme.fCodepointRange.start) {
-            if (end == startGrapheme.fCodepointRange.end &&
-                start == startGrapheme.fCodepointRange.end - 1) {
-                // This is a fix to make test GetRectsForRangeIncludeCombiningCharacter work
-                // Must be removed...
-                text.start = startGrapheme.fTextRange.start;
-            } else {
-                text.start  = lastGrapheme && end >= fCodePoints.size()
-                        ? fCodePoints.back().fTextIndex
-                        : startGrapheme.fTextRange.end;
-            }
-        } else {
-            text.start = startGrapheme.fTextRange.start;
-        }
+        auto codepoint = fCodePoints[start];
+        auto grapheme = fGraphemes16[codepoint.fGrapheme];
+        text.start = grapheme.fTextRange.start;
     }
 
     if (end < fCodePoints.size()) {
         auto codepoint = fCodePoints[end];
-        auto endGrapheme = fGraphemes16[fCodePoints[end].fGrapheme];
-        if (text.start == endGrapheme.fTextRange.start &&
-            end + codepoint.fIndex == fCodePoints.size()) {
-            text.end = endGrapheme.fTextRange.end;
-        } else {
-            text.end  = endGrapheme.fTextRange.start;
-        }
+        auto grapheme = fGraphemes16[codepoint.fGrapheme];
+        text.end = grapheme.fTextRange.start;
     }
 
     auto firstBoxOnTheLine = results.size();
@@ -815,6 +813,16 @@ std::vector<TextBox> ParagraphImpl::getRectsForRange(unsigned start,
             r.rect.fBottom = littleRound(r.rect.fBottom);
         }
     }
+/*
+    SkDebugf("getRectsForRange(%d, %d)\n", start, end);
+    for (auto& r : results) {
+        r.rect.fLeft = littleRound(r.rect.fLeft);
+        r.rect.fRight = littleRound(r.rect.fRight);
+        r.rect.fTop = littleRound(r.rect.fTop);
+        r.rect.fBottom = littleRound(r.rect.fBottom);
+        SkDebugf("[%f:%f * %f:%f]\n", r.rect.fLeft, r.rect.fRight, r.rect.fTop, r.rect.fBottom);
+    }
+*/
     return results;
 }
 
@@ -975,6 +983,8 @@ PositionWithAffinity ParagraphImpl::getGlyphPositionAtCoordinate(SkScalar dx, Sk
             });
         break;
     }
+    //SkDebugf("getGlyphPositionAtCoordinate(%f, %f): %d %s\n", dx, dy, result.position,
+    //   result.affinity == Affinity::kUpstream ? "up" : "down");
     return result;
 }
 
@@ -1025,7 +1035,7 @@ SkRange<size_t> ParagraphImpl::getWordBoundary(unsigned offset) {
         break;
       }
     }
-
+    //SkDebugf("getWordBoundary(%d): %d - %d\n", offset, start, end);
     return { SkToU32(start), SkToU32(end) };
 }
 

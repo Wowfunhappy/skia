@@ -195,25 +195,12 @@ GrGLSLPrimitiveProcessor* GrCCCoverageProcessor::createGLSLInstance(const GrShad
     return this->onCreateGLSLInstance(std::move(shader));
 }
 
-void GrCCCoverageProcessor::draw(
-        GrOpFlushState* flushState, const GrPipeline& pipeline, const SkIRect scissorRects[],
-        const GrMesh meshes[], int meshCount, const SkRect& drawBounds) const {
-    GrPipeline::DynamicStateArrays dynamicStateArrays;
-    dynamicStateArrays.fScissorRects = scissorRects;
-    GrOpsRenderPass* renderPass = flushState->opsRenderPass();
-
-    GrPrimitiveType primitiveType = this->primType();
-
+void GrCCCoverageProcessor::bindPipeline(GrOpFlushState* flushState, const GrPipeline& pipeline,
+                                         const SkRect& drawBounds) const {
     GrProgramInfo programInfo(flushState->proxy()->numSamples(),
                               flushState->proxy()->numStencilSamples(),
                               flushState->proxy()->backendFormat(),
-                              flushState->outputView()->origin(),
-                              &pipeline,
-                              this,
-                              nullptr,
-                              &dynamicStateArrays, 0, primitiveType);
-
-
-    renderPass->bindPipeline(programInfo, drawBounds);
-    renderPass->drawMeshes(programInfo, meshes, meshCount);
+                              flushState->outputView()->origin(), &pipeline, this,
+                              this->primType());
+    flushState->bindPipeline(programInfo, drawBounds);
 }

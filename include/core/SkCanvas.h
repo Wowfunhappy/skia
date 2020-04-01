@@ -568,6 +568,7 @@ public:
         @return        depth of saved stack
 
         example: https://fiddle.skia.org/c/@Canvas_saveLayer
+        example: https://fiddle.skia.org/c/@Canvas_saveLayer_4
     */
     int saveLayer(const SkRect* bounds, const SkPaint* paint);
 
@@ -882,15 +883,6 @@ public:
     void concat44(const SkM44&);
     void concat44(const SkScalar[]); // column-major
 
-#ifdef SK_SUPPORT_EXPERIMENTAL_CANVAS44
-    void experimental_concat44(const SkM44& m) {
-        this->concat44(m);
-    }
-    void experimental_concat44(const SkScalar colMajor[]) {
-        this->concat44(colMajor);
-    }
-#endif
-
     /** Replaces SkMatrix with matrix.
         Unlike concat(), any prior matrix state is overwritten.
 
@@ -1031,6 +1023,8 @@ public:
     void clipPath(const SkPath& path, bool doAntiAlias = false) {
         this->clipPath(path, SkClipOp::kIntersect, doAntiAlias);
     }
+
+    void clipShader(sk_sp<SkShader>, SkClipOp = SkClipOp::kIntersect);
 
     /** Replaces clip with the intersection or difference of clip and SkRegion deviceRgn.
         Resulting clip is aliased; pixels are fully contained by the clip.
@@ -1811,35 +1805,6 @@ public:
     void drawBitmapRect(const SkBitmap& bitmap, const SkRect& dst, const SkPaint* paint,
                         SrcRectConstraint constraint = kStrict_SrcRectConstraint);
 
-    /** Draws SkBitmap bitmap stretched proportionally to fit into SkRect dst.
-        SkIRect center divides the bitmap into nine sections: four sides, four corners,
-        and the center. Corners are not scaled, or scaled down proportionately if their
-        sides are larger than dst; center and four sides are scaled to fit remaining
-        space, if any.
-
-        Additionally transform draw using clip, SkMatrix, and optional SkPaint paint.
-
-        If SkPaint paint is supplied, apply SkColorFilter, alpha, SkImageFilter,
-        SkBlendMode, and SkDrawLooper. If bitmap is kAlpha_8_SkColorType, apply SkShader.
-        If paint contains SkMaskFilter, generate mask from bitmap bounds. If paint
-        SkFilterQuality set to kNone_SkFilterQuality, disable pixel filtering. For all
-        other values of paint SkFilterQuality, use kLow_SkFilterQuality to filter pixels.
-        Any SkMaskFilter on paint is ignored as is paint anti-aliasing state.
-
-        If generated mask extends beyond bitmap bounds, replicate bitmap edge colors,
-        just as SkShader made from SkShader::MakeBitmapShader with
-        SkShader::kClamp_TileMode set replicates the bitmap edge color when it samples
-        outside of its bounds.
-
-        @param bitmap  SkBitmap containing pixels, dimensions, and format
-        @param center  SkIRect edge of image corners and sides
-        @param dst     destination SkRect of image to draw to
-        @param paint   SkPaint containing SkBlendMode, SkColorFilter, SkImageFilter,
-                       and so on; or nullptr
-    */
-    void drawBitmapNine(const SkBitmap& bitmap, const SkIRect& center, const SkRect& dst,
-                        const SkPaint* paint = nullptr);
-
     /** \struct SkCanvas::Lattice
         SkCanvas::Lattice divides SkBitmap or SkImage into a rectangular grid.
         Grid entries on even columns and even rows are fixed; these entries are
@@ -1869,37 +1834,6 @@ public:
         const SkIRect*  fBounds;    //!< source bounds to draw from
         const SkColor*  fColors;    //!< array of colors
     };
-
-    /** Draws SkBitmap bitmap stretched proportionally to fit into SkRect dst.
-
-        SkCanvas::Lattice lattice divides bitmap into a rectangular grid.
-        Each intersection of an even-numbered row and column is fixed; like the corners
-        of drawBitmapNine(), fixed lattice elements never scale larger than their initial
-        size and shrink proportionately when all fixed elements exceed the bitmap
-        dimension. All other grid elements scale to fill the available space, if any.
-
-        Additionally transform draw using clip, SkMatrix, and optional SkPaint paint.
-
-        If SkPaint paint is supplied, apply SkColorFilter, alpha, SkImageFilter,
-        SkBlendMode, and SkDrawLooper. If bitmap is kAlpha_8_SkColorType, apply SkShader.
-        If paint contains SkMaskFilter, generate mask from bitmap bounds. If paint
-        SkFilterQuality set to kNone_SkFilterQuality, disable pixel filtering. For all
-        other values of paint SkFilterQuality, use kLow_SkFilterQuality to filter pixels.
-        Any SkMaskFilter on paint is ignored as is paint anti-aliasing state.
-
-        If generated mask extends beyond bitmap bounds, replicate bitmap edge colors,
-        just as SkShader made from SkShader::MakeBitmapShader with
-        SkShader::kClamp_TileMode set replicates the bitmap edge color when it samples
-        outside of its bounds.
-
-        @param bitmap   SkBitmap containing pixels, dimensions, and format
-        @param lattice  division of bitmap into fixed and variable rectangles
-        @param dst      destination SkRect of image to draw to
-        @param paint    SkPaint containing SkBlendMode, SkColorFilter, SkImageFilter,
-                        and so on; or nullptr
-    */
-    void drawBitmapLattice(const SkBitmap& bitmap, const Lattice& lattice, const SkRect& dst,
-                           const SkPaint* paint = nullptr);
 
     /** Draws SkImage image stretched proportionally to fit into SkRect dst.
 
@@ -2228,6 +2162,13 @@ public:
     */
     void drawVertices(const SkVertices* vertices, SkBlendMode mode, const SkPaint& paint);
 
+    /** Variant of 3-parameter drawVertices, using the default of Modulate for the blend
+     *  parameter. Note that SkVertices that include per-vertex-data ignore this mode parameter.
+     */
+    void drawVertices(const SkVertices* vertices, const SkPaint& paint) {
+        this->drawVertices(vertices, SkBlendMode::kModulate, paint);
+    }
+
     /** Draws SkVertices vertices, a triangle mesh, using clip and SkMatrix.
         If vertices texs and vertices colors are defined in vertices, and SkPaint paint
         contains SkShader, SkBlendMode mode combines vertices colors with SkShader.
@@ -2240,10 +2181,11 @@ public:
     */
     void drawVertices(const sk_sp<SkVertices>& vertices, SkBlendMode mode, const SkPaint& paint);
 
-    // DO NOT CALL -- staging for removal from Android
-    void drawVertices(const sk_sp<SkVertices>& vertices, const SkVertices::Bone[], int,
-                      SkBlendMode mode, const SkPaint& paint) {
-        this->drawVertices(vertices, mode, paint);
+    /** Variant of 3-parameter drawVertices, using the default of Modulate for the blend
+     *  parameter. Note that SkVertices that include per-vertex-data ignore this mode parameter.
+     */
+    void drawVertices(const sk_sp<SkVertices>& vertices, const SkPaint& paint) {
+        this->drawVertices(vertices, SkBlendMode::kModulate, paint);
     }
 
     /** Draws a Coons patch: the interpolation of four cubics with shared corners,
@@ -2488,15 +2430,6 @@ public:
     SkM44 getLocalToDevice() const; // entire matrix stack
     void getLocalToDevice(SkScalar colMajor[16]) const;
 
-#ifdef SK_SUPPORT_EXPERIMENTAL_CANVAS44
-    SkM44 experimental_getLocalToDevice() const {
-        return this->getLocalToDevice();
-    }
-    void experimental_getLocalToDevice(SkScalar colMajor[16]) const {
-        this->getLocalToDevice(colMajor);
-    }
-#endif
-
     SkM44 experimental_getLocalToWorld() const;  // up to but not including top-most camera
     SkM44 experimental_getLocalToCamera() const; // up to and including top-most camera
 
@@ -2513,9 +2446,6 @@ public:
     void legacy_drawImageRect(const SkImage* image, const SkRect* src, const SkRect& dst,
                               const SkPaint* paint,
                               SrcRectConstraint constraint = kStrict_SrcRectConstraint);
-    void legacy_drawBitmapRect(const SkBitmap& bitmap, const SkRect* src, const SkRect& dst,
-                               const SkPaint* paint,
-                               SrcRectConstraint constraint = kStrict_SrcRectConstraint);
 
     /**
      *  Returns the global clip as a region. If the clip contains AA, then only the bounds
@@ -2602,14 +2532,15 @@ protected:
     virtual void onDrawImageLattice(const SkImage* image, const Lattice& lattice, const SkRect& dst,
                                     const SkPaint* paint);
 
-    virtual void onDrawBitmap(const SkBitmap& bitmap, SkScalar dx, SkScalar dy,
-                              const SkPaint* paint);
-    virtual void onDrawBitmapRect(const SkBitmap& bitmap, const SkRect* src, const SkRect& dst,
-                                  const SkPaint* paint, SrcRectConstraint constraint);
-    virtual void onDrawBitmapNine(const SkBitmap& bitmap, const SkIRect& center, const SkRect& dst,
-                                  const SkPaint* paint);
-    virtual void onDrawBitmapLattice(const SkBitmap& bitmap, const Lattice& lattice,
-                                     const SkRect& dst, const SkPaint* paint);
+#ifdef SK_SUPPORT_LEGACY_ONDRAWBITMAP_VIRTUALS
+    // these are no longer called, so clients should stop overriding them
+    virtual void onDrawBitmap(const SkBitmap&, SkScalar, SkScalar, const SkPaint*) {}
+    virtual void onDrawBitmapRect(const SkBitmap&, const SkRect*, const SkRect&, const SkPaint*,
+                                  SkCanvas::SrcRectConstraint) {}
+    virtual void onDrawBitmapNine(const SkBitmap&, const SkIRect&, const SkRect&, const SkPaint*) {}
+    virtual void onDrawBitmapLattice(const SkBitmap&, const SkCanvas::Lattice&, const SkRect&,
+                                     const SkPaint*) {}
+#endif
 
     virtual void onDrawAtlas(const SkImage* atlas, const SkRSXform xform[], const SkRect rect[],
                              const SkColor colors[], int count, SkBlendMode mode,
@@ -2636,6 +2567,7 @@ protected:
     virtual void onClipRect(const SkRect& rect, SkClipOp op, ClipEdgeStyle edgeStyle);
     virtual void onClipRRect(const SkRRect& rrect, SkClipOp op, ClipEdgeStyle edgeStyle);
     virtual void onClipPath(const SkPath& path, SkClipOp op, ClipEdgeStyle edgeStyle);
+    virtual void onClipShader(sk_sp<SkShader>, SkClipOp);
     virtual void onClipRegion(const SkRegion& deviceRgn, SkClipOp op);
 
     virtual void onDiscard();
@@ -2810,9 +2742,6 @@ private:
      */
     SkIRect getTopLayerBounds() const;
 
-    void internalDrawBitmapRect(const SkBitmap& bitmap, const SkRect* src,
-                                const SkRect& dst, const SkPaint* paint,
-                                SrcRectConstraint);
     void internalDrawPaint(const SkPaint& paint);
     void internalSaveLayer(const SaveLayerRec&, SaveLayerStrategy);
     void internalSaveBehind(const SkRect*);

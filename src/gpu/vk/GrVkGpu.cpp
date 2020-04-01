@@ -18,7 +18,6 @@
 #include "src/gpu/GrDataUtils.h"
 #include "src/gpu/GrGeometryProcessor.h"
 #include "src/gpu/GrGpuResourceCacheAccess.h"
-#include "src/gpu/GrMesh.h"
 #include "src/gpu/GrNativeRect.h"
 #include "src/gpu/GrPipeline.h"
 #include "src/gpu/GrRenderTargetContext.h"
@@ -257,17 +256,17 @@ void GrVkGpu::destroyResources() {
 #endif
 
     if (fCmdPool) {
-        fCmdPool->unref(this);
+        fCmdPool->unref();
         fCmdPool = nullptr;
     }
 
     for (int i = 0; i < fSemaphoresToWaitOn.count(); ++i) {
-        fSemaphoresToWaitOn[i]->unref(this);
+        fSemaphoresToWaitOn[i]->unref();
     }
     fSemaphoresToWaitOn.reset();
 
     for (int i = 0; i < fSemaphoresToSignal.count(); ++i) {
-        fSemaphoresToSignal[i]->unref(this);
+        fSemaphoresToSignal[i]->unref();
     }
     fSemaphoresToSignal.reset();
 
@@ -353,7 +352,7 @@ bool GrVkGpu::submitCommandBuffer(SyncQueue sync, GrGpuFinishedProc finishedProc
     // submission.
     if (didSubmit) {
         for (int i = 0; i < fSemaphoresToWaitOn.count(); ++i) {
-            fSemaphoresToWaitOn[i]->unref(this);
+            fSemaphoresToWaitOn[i]->unref();
         }
         fSemaphoresToWaitOn.reset();
     }
@@ -363,18 +362,25 @@ bool GrVkGpu::submitCommandBuffer(SyncQueue sync, GrGpuFinishedProc finishedProc
     // will be notified that the semaphores were not submit so that they will not try to wait on
     // them.
     for (int i = 0; i < fSemaphoresToSignal.count(); ++i) {
-        fSemaphoresToSignal[i]->unref(this);
+        fSemaphoresToSignal[i]->unref();
     }
     fSemaphoresToSignal.reset();
 
     // Release old command pool and create a new one
-    fCmdPool->unref(this);
-    fResourceProvider.checkCommandBuffers();
+    fCmdPool->unref();
     fCmdPool = fResourceProvider.findOrCreateCommandPool();
     if (fCmdPool) {
         fCurrentCmdBuffer = fCmdPool->getPrimaryCommandBuffer();
+        SkASSERT(fCurrentCmdBuffer);
         fCurrentCmdBuffer->begin(this);
+    } else {
+        fCurrentCmdBuffer = nullptr;
     }
+    // We must wait to call checkCommandBuffers until after we get a new command buffer. The
+    // checkCommandBuffers may trigger a releaseProc which may cause us to insert a barrier for a
+    // released GrVkImage. That barrier needs to be put into a new command buffer and not the old
+    // one that was just submitted.
+    fResourceProvider.checkCommandBuffers();
     return didSubmit;
 }
 
@@ -756,9 +762,8 @@ bool GrVkGpu::uploadTexDataOptimal(GrVkTexture* tex, int left, int top, int widt
         return false;
     }
 
-    if (!this->vkCaps().isFormatTexturableAndUploadable(dataColorType, tex->backendFormat())) {
-        return false;
-    }
+    SkASSERT(this->vkCaps().surfaceSupportsWritePixels(tex));
+    SkASSERT(this->vkCaps().areColorTypeAndFormatCompatible(dataColorType, tex->backendFormat()));
 
     // For RGB_888x src data we are uploading it first to an RGBA texture and then copying it to the
     // dst RGB texture. Thus we do not upload mip levels for that.
@@ -1152,7 +1157,6 @@ bool GrVkGpu::updateBuffer(GrVkBuffer* buffer, const void* src,
 
 static bool check_image_info(const GrVkCaps& caps,
                              const GrVkImageInfo& info,
-                             GrColorType colorType,
                              bool needsAllocation) {
     if (VK_NULL_HANDLE == info.fImage) {
         return false;
@@ -1175,10 +1179,6 @@ static bool check_image_info(const GrVkCaps& caps,
         }
     }
 
-    SkASSERTF(colorType == GrColorType::kUnknown ||
-              GrVkFormatColorTypePairIsValid(info.fFormat, colorType),
-              "Vulkan format/colorType mismatch - format %d colorType %d\n",
-              info.fFormat, colorType);
     return true;
 }
 
@@ -1207,15 +1207,15 @@ static bool check_rt_image_info(const GrVkCaps& caps, const GrVkImageInfo& info,
 }
 
 sk_sp<GrTexture> GrVkGpu::onWrapBackendTexture(const GrBackendTexture& backendTex,
-                                               GrColorType colorType, GrWrapOwnership ownership,
-                                               GrWrapCacheable cacheable, GrIOType ioType) {
+                                               GrWrapOwnership ownership,
+                                               GrWrapCacheable cacheable,
+                                               GrIOType ioType) {
     GrVkImageInfo imageInfo;
     if (!backendTex.getVkImageInfo(&imageInfo)) {
         return nullptr;
     }
 
-    if (!check_image_info(this->vkCaps(), imageInfo,
-                          colorType, kAdopt_GrWrapOwnership == ownership)) {
+    if (!check_image_info(this->vkCaps(), imageInfo, kAdopt_GrWrapOwnership == ownership)) {
         return nullptr;
     }
 
@@ -1241,8 +1241,7 @@ sk_sp<GrTexture> GrVkGpu::onWrapCompressedBackendTexture(const GrBackendTexture&
         return nullptr;
     }
 
-    if (!check_image_info(this->vkCaps(), imageInfo,
-                          GrColorType::kUnknown, kAdopt_GrWrapOwnership == ownership)) {
+    if (!check_image_info(this->vkCaps(), imageInfo, kAdopt_GrWrapOwnership == ownership)) {
         return nullptr;
     }
 
@@ -1262,7 +1261,6 @@ sk_sp<GrTexture> GrVkGpu::onWrapCompressedBackendTexture(const GrBackendTexture&
 
 sk_sp<GrTexture> GrVkGpu::onWrapRenderableBackendTexture(const GrBackendTexture& backendTex,
                                                          int sampleCnt,
-                                                         GrColorType colorType,
                                                          GrWrapOwnership ownership,
                                                          GrWrapCacheable cacheable) {
     GrVkImageInfo imageInfo;
@@ -1270,8 +1268,7 @@ sk_sp<GrTexture> GrVkGpu::onWrapRenderableBackendTexture(const GrBackendTexture&
         return nullptr;
     }
 
-    if (!check_image_info(this->vkCaps(), imageInfo, colorType,
-                          kAdopt_GrWrapOwnership == ownership)) {
+    if (!check_image_info(this->vkCaps(), imageInfo, kAdopt_GrWrapOwnership == ownership)) {
         return nullptr;
     }
 
@@ -1296,8 +1293,7 @@ sk_sp<GrTexture> GrVkGpu::onWrapRenderableBackendTexture(const GrBackendTexture&
                                                                    imageInfo, std::move(layout));
 }
 
-sk_sp<GrRenderTarget> GrVkGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& backendRT,
-                                                         GrColorType colorType) {
+sk_sp<GrRenderTarget> GrVkGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& backendRT) {
     // Currently the Vulkan backend does not support wrapping of msaa render targets directly. In
     // general this is not an issue since swapchain images in vulkan are never multisampled. Thus if
     // you want a multisampled RT it is best to wrap the swapchain images and then let Skia handle
@@ -1311,7 +1307,7 @@ sk_sp<GrRenderTarget> GrVkGpu::onWrapBackendRenderTarget(const GrBackendRenderTa
         return nullptr;
     }
 
-    if (!check_image_info(this->vkCaps(), info, colorType, false)) {
+    if (!check_image_info(this->vkCaps(), info, false)) {
         return nullptr;
     }
 
@@ -1338,14 +1334,12 @@ sk_sp<GrRenderTarget> GrVkGpu::onWrapBackendRenderTarget(const GrBackendRenderTa
 }
 
 sk_sp<GrRenderTarget> GrVkGpu::onWrapBackendTextureAsRenderTarget(const GrBackendTexture& tex,
-                                                                  int sampleCnt,
-                                                                  GrColorType grColorType) {
-
+                                                                  int sampleCnt) {
     GrVkImageInfo imageInfo;
     if (!tex.getVkImageInfo(&imageInfo)) {
         return nullptr;
     }
-    if (!check_image_info(this->vkCaps(), imageInfo, grColorType, false)) {
+    if (!check_image_info(this->vkCaps(), imageInfo, false)) {
         return nullptr;
     }
 
@@ -2070,7 +2064,7 @@ void GrVkGpu::testingOnly_flushGpuAndSync() {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void GrVkGpu::addBufferMemoryBarrier(const GrVkResource* resource,
+void GrVkGpu::addBufferMemoryBarrier(const GrManagedResource* resource,
                                      VkPipelineStageFlags srcStageMask,
                                      VkPipelineStageFlags dstStageMask,
                                      bool byRegion,
@@ -2086,12 +2080,18 @@ void GrVkGpu::addBufferMemoryBarrier(const GrVkResource* resource,
                                        barrier);
 }
 
-void GrVkGpu::addImageMemoryBarrier(const GrVkResource* resource,
+void GrVkGpu::addImageMemoryBarrier(const GrManagedResource* resource,
                                     VkPipelineStageFlags srcStageMask,
                                     VkPipelineStageFlags dstStageMask,
                                     bool byRegion,
                                     VkImageMemoryBarrier* barrier) const {
-    SkASSERT(fCurrentCmdBuffer);
+    // If we are in the middle of destroying or abandoning the GrContext we may hit a release proc
+    // that triggers the destruction of a GrVkImage. This could cause us to try and transfer the
+    // VkImage back to the original queue. In this state we don't submit anymore work and we may not
+    // have a current command buffer. Thus we won't do the queue transfer.
+    if (!fCurrentCmdBuffer) {
+        return;
+    }
     SkASSERT(resource);
     fCurrentCmdBuffer->pipelineBarrier(this,
                                        resource,

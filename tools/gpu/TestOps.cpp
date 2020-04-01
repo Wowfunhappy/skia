@@ -12,6 +12,7 @@
 #include "src/gpu/GrGeometryProcessor.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrOpFlushState.h"
+#include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrVertexWriter.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLGeometryProcessor.h"
@@ -90,7 +91,11 @@ public:
                                       GrClampType) override;
 
     void visitProxies(const VisitProxyFunc& func) const override {
-        fProcessorSet.visitProxies(func);
+        if (fProgramInfo) {
+            fProgramInfo->visitFPProxies(func);
+        } else {
+            fProcessorSet.visitProxies(func);
+        }
     }
 
 private:
@@ -102,23 +107,13 @@ private:
                const SkRect& localRect,
                const SkMatrix& localMatrix);
 
-    GrProgramInfo* createProgramInfo(const GrCaps*,
-                                     SkArenaAlloc*,
-                                     const GrSurfaceProxyView* outputView,
-                                     GrAppliedClip&&,
-                                     const GrXferProcessor::DstProxyView&);
-    GrProgramInfo* createProgramInfo(GrOpFlushState* flushState) {
-        return this->createProgramInfo(&flushState->caps(),
-                                       flushState->allocator(),
-                                       flushState->outputView(),
-                                       flushState->detachAppliedClip(),
-                                       flushState->dstProxyView());
-    }
+    GrProgramInfo* programInfo() override { return fProgramInfo; }
+    void onCreateProgramInfo(const GrCaps*,
+                             SkArenaAlloc*,
+                             const GrSurfaceProxyView* outputView,
+                             GrAppliedClip&&,
+                             const GrXferProcessor::DstProxyView&) override;
 
-    void onPrePrepareDraws(GrRecordingContext*,
-                           const GrSurfaceProxyView* outputView,
-                           GrAppliedClip*,
-                           const GrXferProcessor::DstProxyView&) final;
     void onPrepareDraws(Target*) override;
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) override;
 
@@ -131,7 +126,7 @@ private:
     // If this op is prePrepared the created programInfo will be stored here for use in
     // onExecute. In the prePrepared case it will have been stored in the record-time arena.
     GrProgramInfo* fProgramInfo = nullptr;
-    GrMesh*        fMesh        = nullptr;
+    GrSimpleMesh*  fMesh        = nullptr;
 
     friend class ::GrOpMemoryPool;
 };
@@ -173,35 +168,20 @@ TestRectOp::TestRectOp(const GrCaps* caps,
     this->setBounds(drawRect.makeSorted(), HasAABloat::kNo, IsHairline::kNo);
 }
 
-GrProgramInfo* TestRectOp::createProgramInfo(const GrCaps* caps,
-                                             SkArenaAlloc* arena,
-                                             const GrSurfaceProxyView* outputView,
-                                             GrAppliedClip&& appliedClip,
-                                             const GrXferProcessor::DstProxyView& dstProxyView) {
-    return GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps,
-                                                       arena,
-                                                       outputView,
-                                                       std::move(appliedClip),
-                                                       dstProxyView,
-                                                       &fGP,
-                                                       std::move(fProcessorSet),
-                                                       GrPrimitiveType::kTriangles,
-                                                       GrPipeline::InputFlags::kNone);
-}
-
-void TestRectOp::onPrePrepareDraws(GrRecordingContext* context,
-                                   const GrSurfaceProxyView* outputView,
-                                   GrAppliedClip* clip,
-                                   const GrXferProcessor::DstProxyView& dstProxyView) {
-    SkArenaAlloc* arena = context->priv().recordTimeAllocator();
-
-    // This is equivalent to a GrOpFlushState::detachAppliedClip
-    GrAppliedClip appliedClip = clip ? std::move(*clip) : GrAppliedClip();
-
-    fProgramInfo = this->createProgramInfo(context->priv().caps(), arena, outputView,
-                                           std::move(appliedClip), dstProxyView);
-
-    context->priv().recordProgramInfo(fProgramInfo);
+void TestRectOp::onCreateProgramInfo(const GrCaps* caps,
+                                     SkArenaAlloc* arena,
+                                     const GrSurfaceProxyView* outputView,
+                                     GrAppliedClip&& appliedClip,
+                                     const GrXferProcessor::DstProxyView& dstProxyView) {
+    fProgramInfo = GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps,
+                                                               arena,
+                                                               outputView,
+                                                               std::move(appliedClip),
+                                                               dstProxyView,
+                                                               &fGP,
+                                                               std::move(fProcessorSet),
+                                                               GrPrimitiveType::kTriangles,
+                                                               GrPipeline::InputFlags::kNone);
 }
 
 void TestRectOp::onPrepareDraws(Target* target) {
@@ -217,12 +197,12 @@ void TestRectOp::onPrepareDraws(Target* target) {
 
 void TestRectOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBounds) {
     if (!fProgramInfo) {
-        fProgramInfo = this->createProgramInfo(flushState);
+        this->createProgramInfo(flushState);
     }
 
-    static constexpr int kOneMesh = 1;
-    flushState->opsRenderPass()->bindPipeline(*fProgramInfo, chainBounds);
-    flushState->opsRenderPass()->drawMeshes(*fProgramInfo, fMesh, kOneMesh);
+    flushState->bindPipelineAndScissorClip(*fProgramInfo, chainBounds);
+    flushState->bindTextures(fProgramInfo->primProc(), nullptr, fProgramInfo->pipeline());
+    flushState->drawMesh(*fMesh);
 }
 
 }  // anonymous namespace

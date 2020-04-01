@@ -12,7 +12,6 @@
 
 #include "include/gpu/GrTypes.h"
 #include "include/private/GrTypesPriv.h"
-#include "src/gpu/GrMesh.h"
 
 class GrD3DGpu;
 
@@ -21,9 +20,6 @@ public:
     GrD3DOpsRenderPass(GrD3DGpu*);
 
     ~GrD3DOpsRenderPass() override;
-
-    void begin() override {}
-    void end() override {}
 
     void inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) override {}
 
@@ -39,21 +35,19 @@ private:
 
     bool onBindPipeline(const GrProgramInfo&, const SkRect& drawBounds) override { return true; }
     void onSetScissorRect(const SkIRect&) override {}
-    bool onBindTextures(const GrPrimitiveProcessor&, const GrPipeline&,
-        const GrSurfaceProxy* const primProcTextures[]) override {
+    bool onBindTextures(const GrPrimitiveProcessor&, const GrSurfaceProxy* const primProcTextures[],
+                        const GrPipeline&) override {
         return true;
     }
-    void onDraw(const GrBuffer* vertexBuffer, int vertexCount, int baseVertex) override {}
-    void onDrawIndexed(const GrBuffer* indexBuffer, int indexCount, int baseIndex,
-        GrPrimitiveRestart primitiveRestart, uint16_t minIndexValue,
-        uint16_t maxIndexValue, const GrBuffer* vertexBuffer,
-        int baseVertex) override {}
-    void onDrawInstanced(const GrBuffer* instanceBuffer, int instanceCount, int baseInstance,
-        const GrBuffer* vertexBuffer, int vertexCount, int baseVertex) override {}
-    void onDrawIndexedInstanced(const GrBuffer* indexBuffer, int indexCount, int baseIndex,
-        GrPrimitiveRestart, const GrBuffer* instanceBuffer,
-        int instanceCount, int baseInstance, const GrBuffer* vertexBuffer,
-        int baseVertex) override {}
+    void onBindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
+                       const GrBuffer* vertexBuffer, GrPrimitiveRestart) override {}
+    void onDraw(int vertexCount, int baseVertex) override {}
+    void onDrawIndexed(int indexCount, int baseIndex, uint16_t minIndexValue,
+                       uint16_t maxIndexValue, int baseVertex) override {}
+    void onDrawInstanced(int instanceCount, int baseInstance, int vertexCount,
+                         int baseVertex) override {}
+    void onDrawIndexedInstanced(int indexCount, int baseIndex, int instanceCount, int baseInstance,
+                                int baseVertex) override {}
 
     void onClear(const GrFixedClip&, const SkPMColor4f& color) override {}
 

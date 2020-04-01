@@ -17,16 +17,17 @@
 
 #include "include/core/SkImage.h"
 #include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrTexture.h"
 #include "include/gpu/vk/GrVkTypes.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/SkGpuDevice.h"
 #include "src/gpu/vk/GrVkGpu.h"
 #include "src/gpu/vk/GrVkImageLayout.h"
 #include "src/gpu/vk/GrVkTexture.h"
 #include "src/image/SkImage_Base.h"
+#include "src/image/SkImage_GpuBase.h"
 #include "src/image/SkSurface_Gpu.h"
 
 DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkImageLayoutTest, reporter, ctxInfo) {
@@ -180,7 +181,8 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkReleaseExternalQueueTest, reporter, ctxInfo) {
 
         REPORTER_ASSERT(reporter, !count);
 
-        GrTexture* texture = image->getTexture();
+        SkImage_GpuBase* gpuImage = static_cast<SkImage_GpuBase*>(as_IB(image));
+        GrTexture* texture = gpuImage->getTexture();
         REPORTER_ASSERT(reporter, texture);
         GrVkTexture* vkTex = static_cast<GrVkTexture*>(texture);
 
@@ -272,7 +274,8 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkPrepareForExternalIOQueueTransitionTest, report
                     continue;
                 }
 
-                texture = image->getTexture();
+                SkImage_GpuBase* gpuImage = static_cast<SkImage_GpuBase*>(as_IB(image));
+                texture = gpuImage->getTexture();
             }
 
             REPORTER_ASSERT(reporter, texture);

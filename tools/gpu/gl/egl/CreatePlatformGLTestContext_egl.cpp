@@ -1,21 +1,17 @@
-
 /*
  * Copyright 2011 Google Inc.
  *
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
-#include "tools/gpu/gl/GLTestContext.h"
-
-#define GL_GLEXT_PROTOTYPES
-
-#include <GLES2/gl2.h>
-
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
 
 #include "src/gpu/gl/GrGLDefines.h"
 #include "src/gpu/gl/GrGLUtil.h"
+#include "tools/gpu/gl/GLTestContext.h"
+
+#define GL_GLEXT_PROTOTYPES
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
 
 namespace {
 
@@ -180,6 +176,7 @@ EGLGLTestContext::EGLGLTestContext(GrGLStandard forcedGpuAPI, EGLGLTestContext* 
             continue;
         }
 
+#ifdef SK_GL
         gl = GrGLMakeNativeInterface();
         if (!gl) {
             SkDebugf("Failed to create gl interface.\n");
@@ -202,6 +199,12 @@ EGLGLTestContext::EGLGLTestContext(GrGLStandard forcedGpuAPI, EGLGLTestContext* 
         }
 
         this->init(std::move(gl));
+#else
+        // Allow the GLTestContext creation to succeed without a GrGLInterface to support
+        // GrContextFactory's persistent GL context workaround for Vulkan. We won't need the
+        // GrGLInterface since we're not running the GL backend.
+        this->init(nullptr);
+#endif
         break;
     }
 }
@@ -353,12 +356,17 @@ void EGLGLTestContext::destroyGLContext() {
 }
 
 GrEGLImage EGLGLTestContext::texture2DToEGLImage(GrGLuint texID) const {
+#ifdef SK_GL
     if (!this->gl()->hasExtension("EGL_KHR_gl_texture_2D_image") || !fEglCreateImageProc) {
         return GR_EGL_NO_IMAGE;
     }
     EGLint attribs[] = { GR_EGL_GL_TEXTURE_LEVEL, 0, GR_EGL_NONE };
     GrEGLClientBuffer clientBuffer = reinterpret_cast<GrEGLClientBuffer>(texID);
     return fEglCreateImageProc(fDisplay, fContext, GR_EGL_GL_TEXTURE_2D, clientBuffer, attribs);
+#else
+    (void)fEglCreateImageProc;
+    return nullptr;
+#endif
 }
 
 void EGLGLTestContext::destroyEGLImage(GrEGLImage image) const {
@@ -366,6 +374,7 @@ void EGLGLTestContext::destroyEGLImage(GrEGLImage image) const {
 }
 
 GrGLuint EGLGLTestContext::eglImageToExternalTexture(GrEGLImage image) const {
+#ifdef SK_GL
     GrGLClearErr(this->gl());
     if (!this->gl()->hasExtension("GL_OES_EGL_image_external")) {
         return 0;
@@ -393,6 +402,9 @@ GrGLuint EGLGLTestContext::eglImageToExternalTexture(GrEGLImage image) const {
         return 0;
     }
     return texID;
+#else
+    return 0;
+#endif
 }
 
 std::unique_ptr<sk_gpu_test::GLTestContext> EGLGLTestContext::makeNew() const {

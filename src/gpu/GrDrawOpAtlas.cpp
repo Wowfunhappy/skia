@@ -8,7 +8,6 @@
 #include "src/gpu/GrDrawOpAtlas.h"
 
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrTexture.h"
 #include "src/core/SkOpts.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpu.h"
@@ -18,6 +17,7 @@
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrResourceProviderPriv.h"
 #include "src/gpu/GrSurfaceProxyPriv.h"
+#include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTracing.h"
 
 #ifdef DUMP_ATLAS_DATA
@@ -221,6 +221,7 @@ GrDrawOpAtlas::GrDrawOpAtlas(
         , fGenerationCounter(generationCounter)
         , fAtlasGeneration(fGenerationCounter->next())
         , fPrevFlushToken(GrDeferredUploadToken::AlreadyFlushedToken())
+        , fFlushesSinceLastUse(0)
         , fMaxPages(AllowMultitexturing::kYes == allowMultitexturing ? kMaxMultitexturePages : 1)
         , fNumActivePages(0) {
     int numPlotsX = width/plotWidth;
@@ -293,7 +294,8 @@ bool GrDrawOpAtlas::uploadToPage(const GrCaps& caps, unsigned int pageIdx, PlotL
 // a page with unused plots will get removed reasonably quickly, but allow it
 // to hang around for a bit in case it's needed. The assumption is that flushes
 // are rare; i.e., we are not continually refreshing the frame.
-static constexpr auto kRecentlyUsedCount = 256;
+static constexpr auto kPlotRecentlyUsedCount = 256;
+static constexpr auto kAtlasRecentlyUsedCount = 1024;
 
 GrDrawOpAtlas::ErrorCode GrDrawOpAtlas::addToAtlas(GrResourceProvider* resourceProvider,
                                                    PlotLocator* plotLocator,
@@ -407,7 +409,7 @@ GrDrawOpAtlas::ErrorCode GrDrawOpAtlas::addToAtlas(GrResourceProvider* resourceP
 }
 
 void GrDrawOpAtlas::compact(GrDeferredUploadToken startTokenForNextFlush) {
-    if (fNumActivePages <= 1) {
+    if (fNumActivePages < 1) {
         fPrevFlushToken = startTokenForNextFlush;
         return;
     }
@@ -428,11 +430,17 @@ void GrDrawOpAtlas::compact(GrDeferredUploadToken startTokenForNextFlush) {
         }
     }
 
-    // We only try to compact if the atlas was used in the recently completed flush.
+    if (atlasUsedThisFlush) {
+        fFlushesSinceLastUse = 0;
+    } else {
+        ++fFlushesSinceLastUse;
+    }
+
+    // We only try to compact if the atlas was used in the recently completed flush or
+    // hasn't been used in a long time.
     // This is to handle the case where a lot of text or path rendering has occurred but then just
     // a blinking cursor is drawn.
-    // TODO: consider if we should also do this if it's been a long time since the last atlas use
-    if (atlasUsedThisFlush) {
+    if (atlasUsedThisFlush || fFlushesSinceLastUse > kAtlasRecentlyUsedCount) {
         SkTArray<Plot*> availablePlots;
         uint32_t lastPageIndex = fNumActivePages - 1;
 
@@ -461,7 +469,7 @@ void GrDrawOpAtlas::compact(GrDeferredUploadToken startTokenForNextFlush) {
 #endif
                 // Count plots we can potentially upload to in all pages except the last one
                 // (the potential compactee).
-                if (plot->flushesSinceLastUsed() > kRecentlyUsedCount) {
+                if (plot->flushesSinceLastUsed() > kPlotRecentlyUsedCount) {
                     availablePlots.push_back() = plot;
                 }
 
@@ -496,7 +504,7 @@ void GrDrawOpAtlas::compact(GrDeferredUploadToken startTokenForNextFlush) {
             }
 #endif
             // If this plot was used recently
-            if (plot->flushesSinceLastUsed() <= kRecentlyUsedCount) {
+            if (plot->flushesSinceLastUsed() <= kPlotRecentlyUsedCount) {
                 usedPlots++;
             } else if (plot->lastUseToken() != GrDeferredUploadToken::AlreadyFlushedToken()) {
                 // otherwise if aged out just evict it.
@@ -518,7 +526,7 @@ void GrDrawOpAtlas::compact(GrDeferredUploadToken startTokenForNextFlush) {
             plotIter.init(fPages[lastPageIndex].fPlotList, PlotList::Iter::kHead_IterStart);
             while (Plot* plot = plotIter.get()) {
                 // If this plot was used recently
-                if (plot->flushesSinceLastUsed() <= kRecentlyUsedCount) {
+                if (plot->flushesSinceLastUsed() <= kPlotRecentlyUsedCount) {
                     // See if there's room in an earlier page and if so evict.
                     // We need to be somewhat harsh here so that a handful of plots that are
                     // consistently in use don't end up locking the page in memory.
@@ -540,10 +548,11 @@ void GrDrawOpAtlas::compact(GrDeferredUploadToken startTokenForNextFlush) {
         if (!usedPlots) {
 #ifdef DUMP_ATLAS_DATA
             if (gDumpAtlasData) {
-                SkDebugf("delete %d\n", fNumPages-1);
+                SkDebugf("delete %d\n", fNumActivePages-1);
             }
 #endif
             this->deactivateLastPage();
+            fFlushesSinceLastUse = 0;
         }
     }
 
@@ -562,9 +571,9 @@ bool GrDrawOpAtlas::createPages(
     for (uint32_t i = 0; i < this->maxPages(); ++i) {
         GrSwizzle swizzle = proxyProvider->caps()->getReadSwizzle(fFormat, fColorType);
         sk_sp<GrSurfaceProxy> proxy = proxyProvider->createProxy(
-                fFormat, dims, swizzle, GrRenderable::kNo, 1, GrMipMapped::kNo,
-                SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo,
-                GrInternalSurfaceFlags::kNone, GrSurfaceProxy::UseAllocator::kNo);
+                fFormat, dims, GrRenderable::kNo, 1, GrMipMapped::kNo, SkBackingFit::kExact,
+                SkBudgeted::kYes, GrProtected::kNo, GrInternalSurfaceFlags::kNone,
+                GrSurfaceProxy::UseAllocator::kNo);
         if (!proxy) {
             return false;
         }

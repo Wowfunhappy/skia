@@ -9,6 +9,7 @@
 
 #include "include/core/SkDrawable.h"
 #include "include/gpu/GrBackendSemaphore.h"
+#include "include/private/GrImageContext.h"
 #include "include/private/GrRecordingContext.h"
 #include "include/private/SkShadowFlags.h"
 #include "include/utils/SkShadowUtils.h"
@@ -32,6 +33,7 @@
 #include "src/gpu/GrDrawingManager.h"
 #include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrGpuResourcePriv.h"
+#include "src/gpu/GrImageContextPriv.h"
 #include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrPathRenderer.h"
@@ -150,7 +152,7 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::Make(
 
     const GrBackendFormat& format = proxy->backendFormat();
     GrSwizzle readSwizzle = context->priv().caps()->getReadSwizzle(format, colorType);
-    GrSwizzle outSwizzle = context->priv().caps()->getOutputSwizzle(format, colorType);
+    GrSwizzle outSwizzle = context->priv().caps()->getWriteSwizzle(format, colorType);
 
     GrSurfaceProxyView readView(proxy, origin, readSwizzle);
     GrSurfaceProxyView outputView(std::move(proxy), origin, outSwizzle);
@@ -181,10 +183,8 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::Make(
         return nullptr;
     }
 
-    GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(format, colorType);
-
     sk_sp<GrTextureProxy> proxy = context->priv().proxyProvider()->createProxy(
-            format, dimensions, swizzle, GrRenderable::kYes, sampleCnt, mipMapped, fit, budgeted,
+            format, dimensions, GrRenderable::kYes, sampleCnt, mipMapped, fit, budgeted,
             isProtected);
     if (!proxy) {
         return nullptr;
@@ -242,6 +242,19 @@ static inline GrColorType color_type_fallback(GrColorType ct) {
     }
 }
 
+std::tuple<GrColorType, GrBackendFormat> GrRenderTargetContext::GetFallbackColorTypeAndFormat(
+        GrImageContext* context, GrColorType colorType) {
+    do {
+        auto format =
+                context->priv().caps()->getDefaultBackendFormat(colorType, GrRenderable::kYes);
+        if (format.isValid()) {
+            return {colorType, format};
+        }
+        colorType = color_type_fallback(colorType);
+    } while (colorType != GrColorType::kUnknown);
+    return {GrColorType::kUnknown, {}};
+}
+
 std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeWithFallback(
         GrRecordingContext* context,
         GrColorType colorType,
@@ -254,14 +267,12 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeWithFallback(
         GrSurfaceOrigin origin,
         SkBudgeted budgeted,
         const SkSurfaceProps* surfaceProps) {
-    std::unique_ptr<GrRenderTargetContext> rtc;
-    do {
-        rtc = GrRenderTargetContext::Make(context, colorType, colorSpace, fit, dimensions,
-                                          sampleCnt, mipMapped, isProtected, origin, budgeted,
-                                          surfaceProps);
-        colorType = color_type_fallback(colorType);
-    } while (!rtc && colorType != GrColorType::kUnknown);
-    return rtc;
+    auto [ct, format] = GetFallbackColorTypeAndFormat(context, colorType);
+    if (ct == GrColorType::kUnknown) {
+        return nullptr;
+    }
+    return GrRenderTargetContext::Make(context, ct, colorSpace, fit, dimensions, sampleCnt,
+                                       mipMapped, isProtected, origin, budgeted, surfaceProps);
 }
 
 std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeFromBackendTexture(
@@ -276,7 +287,7 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeFromBackendTex
         ReleaseContext releaseCtx) {
     SkASSERT(sampleCnt > 0);
     sk_sp<GrTextureProxy> proxy(context->priv().proxyProvider()->wrapRenderableBackendTexture(
-            tex, sampleCnt, colorType, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, releaseProc,
+            tex, sampleCnt, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, releaseProc,
             releaseCtx));
     if (!proxy) {
         return nullptr;
@@ -295,8 +306,8 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeFromBackendTex
         GrSurfaceOrigin origin,
         const SkSurfaceProps* surfaceProps) {
     SkASSERT(sampleCnt > 0);
-    sk_sp<GrSurfaceProxy> proxy(context->priv().proxyProvider()->wrapBackendTextureAsRenderTarget(
-            tex, colorType, sampleCnt));
+    sk_sp<GrSurfaceProxy> proxy(
+            context->priv().proxyProvider()->wrapBackendTextureAsRenderTarget(tex, sampleCnt));
     if (!proxy) {
         return nullptr;
     }
@@ -314,8 +325,8 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeFromBackendRen
         const SkSurfaceProps* surfaceProps,
         ReleaseProc releaseProc,
         ReleaseContext releaseCtx) {
-    sk_sp<GrSurfaceProxy> proxy(context->priv().proxyProvider()->wrapBackendRenderTarget(
-            rt, colorType, releaseProc, releaseCtx));
+    sk_sp<GrSurfaceProxy> proxy(
+            context->priv().proxyProvider()->wrapBackendRenderTarget(rt, releaseProc, releaseCtx));
     if (!proxy) {
         return nullptr;
     }
@@ -1064,7 +1075,8 @@ void GrRenderTargetContext::drawVertices(const GrClip& clip,
                                          GrPaint&& paint,
                                          const SkMatrix& viewMatrix,
                                          sk_sp<SkVertices> vertices,
-                                         GrPrimitiveType* overridePrimType) {
+                                         GrPrimitiveType* overridePrimType,
+                                         const SkRuntimeEffect* effect) {
     ASSERT_SINGLE_OWNER
     RETURN_IF_ABANDONED
     SkDEBUGCODE(this->validate();)
@@ -1076,7 +1088,7 @@ void GrRenderTargetContext::drawVertices(const GrClip& clip,
     GrAAType aaType = this->chooseAAType(GrAA::kNo);
     std::unique_ptr<GrDrawOp> op = GrDrawVerticesOp::Make(
             fContext, std::move(paint), std::move(vertices), viewMatrix, aaType,
-            this->colorInfo().refColorSpaceXformFromSRGB(), overridePrimType);
+            this->colorInfo().refColorSpaceXformFromSRGB(), overridePrimType, effect);
     this->addDrawOp(clip, std::move(op));
 }
 
@@ -1153,8 +1165,7 @@ void GrRenderTargetContext::drawRRect(const GrClip& origClip,
     }
     if (!op && style.isSimpleFill()) {
         assert_alive(paint);
-        op = GrFillRRectOp::Make(
-                fContext, aaType, viewMatrix, rrect, *this->caps(), std::move(paint));
+        op = GrFillRRectOp::Make(fContext, std::move(paint), viewMatrix, rrect, aaType);
     }
     if (!op && GrAAType::kCoverage == aaType) {
         assert_alive(paint);
@@ -1573,8 +1584,8 @@ void GrRenderTargetContext::drawOval(const GrClip& clip,
         // inside the oval's inner diamond). Given these optimizations, it's a clear win to draw
         // ovals the exact same way we do round rects.
         assert_alive(paint);
-        op = GrFillRRectOp::Make(fContext, aaType, viewMatrix, SkRRect::MakeOval(oval),
-                                 *this->caps(), std::move(paint));
+        op = GrFillRRectOp::Make(fContext, std::move(paint), viewMatrix, SkRRect::MakeOval(oval),
+                                 aaType);
     }
     if (!op && GrAAType::kCoverage == aaType) {
         assert_alive(paint);
@@ -1698,10 +1709,10 @@ void GrRenderTargetContext::asyncRescaleAndReadPixels(
     }
     // Fail if read color type does not have all of dstCT's color channels and those missing color
     // channels are in the src.
-    uint32_t dstComponents = GrColorTypeComponentFlags(dstCT);
-    uint32_t legalReadComponents = GrColorTypeComponentFlags(readInfo.fColorType);
-    uint32_t srcComponents = GrColorTypeComponentFlags(this->colorInfo().colorType());
-    if ((~legalReadComponents & dstComponents) & srcComponents) {
+    uint32_t dstChannels = GrColorTypeChannelFlags(dstCT);
+    uint32_t legalReadChannels = GrColorTypeChannelFlags(readInfo.fColorType);
+    uint32_t srcChannels = GrColorTypeChannelFlags(this->colorInfo().colorType());
+    if ((~legalReadChannels & dstChannels) & srcChannels) {
         callback(context, nullptr);
         return;
     }

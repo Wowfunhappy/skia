@@ -17,6 +17,12 @@
 #include "src/gpu/glsl/GrGLSLVarying.h"
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
 
+static_assert((int)GrQuadAAFlags::kLeft   == SkCanvas::kLeft_QuadAAFlag);
+static_assert((int)GrQuadAAFlags::kTop    == SkCanvas::kTop_QuadAAFlag);
+static_assert((int)GrQuadAAFlags::kRight  == SkCanvas::kRight_QuadAAFlag);
+static_assert((int)GrQuadAAFlags::kBottom == SkCanvas::kBottom_QuadAAFlag);
+static_assert((int)GrQuadAAFlags::kNone   == SkCanvas::kNone_QuadAAFlags);
+static_assert((int)GrQuadAAFlags::kAll    == SkCanvas::kAll_QuadAAFlags);
 
 namespace {
 
@@ -392,25 +398,17 @@ int QuadLimit(IndexBufferOption option) {
     SkUNREACHABLE;
 }
 
-void ConfigureMesh(const GrCaps& caps, GrMesh* mesh, const VertexSpec& spec,
-                   int runningQuadCount, int quadsInDraw, int maxVerts,
-                   sk_sp<const GrBuffer> vertexBuffer,
-                   sk_sp<const GrBuffer> indexBuffer, int absVertBufferOffset) {
-    SkASSERT(vertexBuffer);
-
+void IssueDraw(const GrCaps& caps, GrOpsRenderPass* renderPass, const VertexSpec& spec,
+               int runningQuadCount, int quadsInDraw, int maxVerts, int absVertBufferOffset) {
     if (spec.indexBufferOption() == IndexBufferOption::kTriStrips) {
-        SkASSERT(!indexBuffer);
-
-        mesh->setNonIndexedNonInstanced(4);
         int offset = absVertBufferOffset +
                                     runningQuadCount * GrResourceProvider::NumVertsPerNonAAQuad();
-        mesh->setVertexData(std::move(vertexBuffer), offset);
+        renderPass->draw(4, offset);
         return;
     }
 
     SkASSERT(spec.indexBufferOption() == IndexBufferOption::kPictureFramed ||
              spec.indexBufferOption() == IndexBufferOption::kIndexedRects);
-    SkASSERT(indexBuffer);
 
     int maxNumQuads, numIndicesPerQuad, numVertsPerQuad;
 
@@ -434,9 +432,8 @@ void ConfigureMesh(const GrCaps& caps, GrMesh* mesh, const VertexSpec& spec,
         // preferred.
         int offset = absVertBufferOffset + runningQuadCount * numVertsPerQuad;
 
-        mesh->setIndexedPatterned(std::move(indexBuffer), numIndicesPerQuad,
-                                  numVertsPerQuad, quadsInDraw, maxNumQuads);
-        mesh->setVertexData(std::move(vertexBuffer), offset);
+        renderPass->drawIndexPattern(numIndicesPerQuad, quadsInDraw, maxNumQuads, numVertsPerQuad,
+                                     offset);
     } else {
         int baseIndex = runningQuadCount * numIndicesPerQuad;
         int numIndicesToDraw = quadsInDraw * numIndicesPerQuad;
@@ -444,9 +441,8 @@ void ConfigureMesh(const GrCaps& caps, GrMesh* mesh, const VertexSpec& spec,
         int minVertex = runningQuadCount * numVertsPerQuad;
         int maxVertex = (runningQuadCount + quadsInDraw) * numVertsPerQuad;
 
-        mesh->setIndexed(std::move(indexBuffer), numIndicesToDraw,
-                         baseIndex, minVertex, maxVertex, GrPrimitiveRestart::kNo);
-        mesh->setVertexData(std::move(vertexBuffer), absVertBufferOffset);
+        renderPass->drawIndexed(numIndicesToDraw, baseIndex, minVertex, maxVertex,
+                                absVertBufferOffset);
     }
 }
 
@@ -602,7 +598,7 @@ public:
                     gpArgs->fPositionVar = {"position",
                                             gp.fNeedsPerspective ? kFloat3_GrSLType
                                                                  : kFloat2_GrSLType,
-                                            GrShaderVar::kNone_TypeModifier};
+                                            GrShaderVar::TypeModifier::None};
                 } else {
                     // No coverage to eliminate
                     gpArgs->fPositionVar = gp.fPosition.asShaderVar();

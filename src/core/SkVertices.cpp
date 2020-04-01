@@ -27,27 +27,43 @@ static int32_t next_id() {
     return id;
 }
 
+struct SkVertices::Desc {
+    VertexMode  fMode;
+    int         fVertexCount,
+                fIndexCount,
+                fPerVertexDataCount;
+    bool        fHasTexs,
+                fHasColors;
+
+    void validate() const {
+        SkASSERT(fPerVertexDataCount == 0 || (!fHasTexs && !fHasColors));
+    }
+};
+
 struct SkVertices::Sizes {
-    Sizes(SkVertices::VertexMode mode, int vertexCount, int indexCount, bool hasTexs,
-          bool hasColors) {
+    Sizes(const Desc& desc) {
+        desc.validate();
         SkSafeMath safe;
 
-        fVSize = safe.mul(vertexCount, sizeof(SkPoint));
-        fTSize = hasTexs ? safe.mul(vertexCount, sizeof(SkPoint)) : 0;
-        fCSize = hasColors ? safe.mul(vertexCount, sizeof(SkColor)) : 0;
+        fVSize = safe.mul(desc.fVertexCount, sizeof(SkPoint));
+        fDSize = safe.mul(safe.mul(desc.fPerVertexDataCount,
+                                   sizeof(float)),
+                                   desc.fVertexCount);
+        fTSize = desc.fHasTexs ? safe.mul(desc.fVertexCount, sizeof(SkPoint)) : 0;
+        fCSize = desc.fHasColors ? safe.mul(desc.fVertexCount, sizeof(SkColor)) : 0;
 
         fBuilderTriFanISize = 0;
-        fISize = safe.mul(indexCount, sizeof(uint16_t));
-        if (kTriangleFan_VertexMode == mode) {
+        fISize = safe.mul(desc.fIndexCount, sizeof(uint16_t));
+        if (kTriangleFan_VertexMode == desc.fMode) {
             int numFanTris = 0;
-            if (indexCount) {
+            if (desc.fIndexCount) {
                 fBuilderTriFanISize = fISize;
-                numFanTris = indexCount - 2;
+                numFanTris = desc.fIndexCount - 2;
             } else {
-                numFanTris = vertexCount - 2;
+                numFanTris = desc.fVertexCount - 2;
                 // By forcing this to become indexed we are adding a constraint to the maximum
                 // number of vertices.
-                if (vertexCount > (SkTo<int>(UINT16_MAX) + 1)) {
+                if (desc.fVertexCount > (SkTo<int>(UINT16_MAX) + 1)) {
                     sk_bzero(this, sizeof(*this));
                     return;
                 }
@@ -61,9 +77,10 @@ struct SkVertices::Sizes {
 
         fTotal = safe.add(sizeof(SkVertices),
                  safe.add(fVSize,
+                 safe.add(fDSize,
                  safe.add(fTSize,
                  safe.add(fCSize,
-                          fISize))));
+                          fISize)))));
 
         if (safe.ok()) {
             fArrays = fTotal - sizeof(SkVertices);  // just the sum of the arrays
@@ -75,8 +92,9 @@ struct SkVertices::Sizes {
     bool isValid() const { return fTotal != 0; }
 
     size_t fTotal;  // size of entire SkVertices allocation (obj + arrays)
-    size_t fArrays; // size of all the arrays (V + T + C + BI + BW + I)
+    size_t fArrays; // size of all the arrays (V + D + T + C + I)
     size_t fVSize;
+    size_t fDSize;  // size of all perVertexData = [fPerVertexDataCount * fVertexCount]
     size_t fTSize;
     size_t fCSize;
     size_t fISize;
@@ -90,20 +108,23 @@ SkVertices::Builder::Builder(VertexMode mode, int vertexCount, int indexCount,
                              uint32_t builderFlags) {
     bool hasTexs = SkToBool(builderFlags & SkVertices::kHasTexCoords_BuilderFlag);
     bool hasColors = SkToBool(builderFlags & SkVertices::kHasColors_BuilderFlag);
-    bool isVolatile = !SkToBool(builderFlags & SkVertices::kIsNonVolatile_BuilderFlag);
-    this->init(mode, vertexCount, indexCount, isVolatile,
-               SkVertices::Sizes(mode, vertexCount, indexCount, hasTexs, hasColors));
+    this->init({mode, vertexCount, indexCount, 0, hasTexs, hasColors});
 }
 
-SkVertices::Builder::Builder(VertexMode mode, int vertexCount, int indexCount, bool isVolatile,
-                             const SkVertices::Sizes& sizes) {
-    this->init(mode, vertexCount, indexCount, isVolatile, sizes);
+SkVertices::Builder::Builder(VertexMode mode, int vertexCount, int indexCount,
+                             SkVertices::CustomLayout customLayout) {
+    this->init({mode, vertexCount, indexCount, customLayout.fPerVertexDataCount, false, false});
 }
 
-void SkVertices::Builder::init(VertexMode mode, int vertexCount, int indexCount, bool isVolatile,
-                               const SkVertices::Sizes& sizes) {
+SkVertices::Builder::Builder(const Desc& desc) {
+    this->init(desc);
+}
+
+void SkVertices::Builder::init(const Desc& desc) {
+    Sizes sizes(desc);
     if (!sizes.isValid()) {
-        return; // fVertices will already be null
+        SkASSERT(!this->isValid());
+        return;
     }
 
     void* storage = ::operator new (sizes.fTotal);
@@ -116,39 +137,49 @@ void SkVertices::Builder::init(VertexMode mode, int vertexCount, int indexCount,
     // need to point past the object to store the arrays
     char* ptr = (char*)storage + sizeof(SkVertices);
 
-    fVertices->fPositions = (SkPoint*)ptr;                                  ptr += sizes.fVSize;
-    fVertices->fTexs = sizes.fTSize ? (SkPoint*)ptr : nullptr;              ptr += sizes.fTSize;
-    fVertices->fColors = sizes.fCSize ? (SkColor*)ptr : nullptr;            ptr += sizes.fCSize;
-    fVertices->fIndices = sizes.fISize ? (uint16_t*)ptr : nullptr;
-    fVertices->fVertexCnt = vertexCount;
-    fVertices->fIndexCnt = indexCount;
-    fVertices->fIsVolatile = isVolatile;
-    fVertices->fMode = mode;
+    // return the original ptr (or null), but then advance it by size
+    auto advance = [&ptr](size_t size) {
+        char* new_ptr = size ? ptr : nullptr;
+        ptr += size;
+        return new_ptr;
+    };
+
+    fVertices->fPositions     = (SkPoint*) advance(sizes.fVSize);
+    fVertices->fPerVertexData = (float*)   advance(sizes.fDSize);
+    fVertices->fTexs          = (SkPoint*) advance(sizes.fTSize);
+    fVertices->fColors        = (SkColor*) advance(sizes.fCSize);
+    fVertices->fIndices       = (uint16_t*)advance(sizes.fISize);
+
+    fVertices->fVertexCount        = desc.fVertexCount;
+    fVertices->fPerVertexDataCount = desc.fPerVertexDataCount;
+    fVertices->fIndexCount         = desc.fIndexCount;
+
+    fVertices->fMode = desc.fMode;
 
     // We defer assigning fBounds and fUniqueID until detach() is called
 }
 
 sk_sp<SkVertices> SkVertices::Builder::detach() {
     if (fVertices) {
-        fVertices->fBounds.setBounds(fVertices->fPositions, fVertices->fVertexCnt);
+        fVertices->fBounds.setBounds(fVertices->fPositions, fVertices->fVertexCount);
         if (fVertices->fMode == kTriangleFan_VertexMode) {
             if (fIntermediateFanIndices.get()) {
-                SkASSERT(fVertices->fIndexCnt);
+                SkASSERT(fVertices->fIndexCount);
                 auto tempIndices = this->indices();
-                for (int t = 0; t < fVertices->fIndexCnt - 2; ++t) {
+                for (int t = 0; t < fVertices->fIndexCount - 2; ++t) {
                     fVertices->fIndices[3 * t + 0] = tempIndices[0];
                     fVertices->fIndices[3 * t + 1] = tempIndices[t + 1];
                     fVertices->fIndices[3 * t + 2] = tempIndices[t + 2];
                 }
-                fVertices->fIndexCnt = 3 * (fVertices->fIndexCnt - 2);
+                fVertices->fIndexCount = 3 * (fVertices->fIndexCount - 2);
             } else {
-                SkASSERT(!fVertices->fIndexCnt);
-                for (int t = 0; t < fVertices->fVertexCnt - 2; ++t) {
+                SkASSERT(!fVertices->fIndexCount);
+                for (int t = 0; t < fVertices->fVertexCount - 2; ++t) {
                     fVertices->fIndices[3 * t + 0] = 0;
                     fVertices->fIndices[3 * t + 1] = SkToU16(t + 1);
                     fVertices->fIndices[3 * t + 2] = SkToU16(t + 2);
                 }
-                fVertices->fIndexCnt = 3 * (fVertices->fVertexCnt - 2);
+                fVertices->fIndexCount = 3 * (fVertices->fVertexCount - 2);
             }
             fVertices->fMode = kTriangles_VertexMode;
         }
@@ -159,27 +190,31 @@ sk_sp<SkVertices> SkVertices::Builder::detach() {
 }
 
 int SkVertices::Builder::vertexCount() const {
-    return fVertices ? fVertices->vertexCount() : 0;
+    return fVertices ? fVertices->fVertexCount : 0;
 }
 
 int SkVertices::Builder::indexCount() const {
-    return fVertices ? fVertices->indexCount() : 0;
+    return fVertices ? fVertices->fIndexCount : 0;
 }
 
-bool SkVertices::Builder::isVolatile() const {
-    return fVertices ? fVertices->isVolatile() : true;
+int SkVertices::Builder::perVertexDataCount() const {
+    return fVertices ? fVertices->fPerVertexDataCount : 0;
 }
 
 SkPoint* SkVertices::Builder::positions() {
-    return fVertices ? const_cast<SkPoint*>(fVertices->positions()) : nullptr;
+    return fVertices ? const_cast<SkPoint*>(fVertices->fPositions) : nullptr;
+}
+
+float* SkVertices::Builder::perVertexData() {
+    return fVertices ? const_cast<float*>(fVertices->fPerVertexData) : nullptr;
 }
 
 SkPoint* SkVertices::Builder::texCoords() {
-    return fVertices ? const_cast<SkPoint*>(fVertices->texCoords()) : nullptr;
+    return fVertices ? const_cast<SkPoint*>(fVertices->fTexs) : nullptr;
 }
 
 SkColor* SkVertices::Builder::colors() {
-    return fVertices ? const_cast<SkColor*>(fVertices->colors()) : nullptr;
+    return fVertices ? const_cast<SkColor*>(fVertices->fColors) : nullptr;
 }
 
 uint16_t* SkVertices::Builder::indices() {
@@ -189,7 +224,7 @@ uint16_t* SkVertices::Builder::indices() {
     if (fIntermediateFanIndices) {
         return reinterpret_cast<uint16_t*>(fIntermediateFanIndices.get());
     }
-    return const_cast<uint16_t*>(fVertices->indices());
+    return const_cast<uint16_t*>(fVertices->fIndices);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -197,20 +232,15 @@ uint16_t* SkVertices::Builder::indices() {
 sk_sp<SkVertices> SkVertices::MakeCopy(VertexMode mode, int vertexCount,
                                        const SkPoint pos[], const SkPoint texs[],
                                        const SkColor colors[],
-                                       int indexCount, const uint16_t indices[],
-                                       bool isVolatile) {
-    Sizes sizes(mode,
-                vertexCount,
-                indexCount,
-                texs != nullptr,
-                colors != nullptr);
-    if (!sizes.isValid()) {
+                                       int indexCount, const uint16_t indices[]) {
+    auto desc = Desc{mode, vertexCount, indexCount, 0, !!texs, !!colors};
+    Builder builder(desc);
+    if (!builder.isValid()) {
         return nullptr;
     }
 
-    Builder builder(mode, vertexCount, indexCount, isVolatile, sizes);
-    SkASSERT(builder.isValid());
-
+    Sizes sizes(desc);
+    SkASSERT(sizes.isValid());
     sk_careful_memcpy(builder.positions(), pos, sizes.fVSize);
     sk_careful_memcpy(builder.texCoords(), texs, sizes.fTSize);
     sk_careful_memcpy(builder.colors(), colors, sizes.fCSize);
@@ -221,23 +251,41 @@ sk_sp<SkVertices> SkVertices::MakeCopy(VertexMode mode, int vertexCount,
 }
 
 size_t SkVertices::approximateSize() const {
-    Sizes sizes(fMode,
-                fVertexCnt,
-                fIndexCnt,
-                this->hasTexCoords(),
-                this->hasColors());
+    return sizeof(SkVertices) + this->getSizes().fArrays;
+}
+
+SkVertices::Sizes SkVertices::getSizes() const {
+    Sizes sizes({fMode, fVertexCount, fIndexCount, fPerVertexDataCount, !!fTexs, !!fColors});
     SkASSERT(sizes.isValid());
-    return sizeof(SkVertices) + sizes.fArrays;
+    return sizes;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 enum EncodedVerticesVersions {
-    kOriginal_Version   = 0,    // before we called out the mask for versions
-    kNoBones_Version    = 1,    // we explicitly ignore the bones-flag (0x400)
+    kOriginal_Version       = 0,    // before we called out the mask for versions
+    kNoBones_Version        = 1,    // we explicitly ignore the bones-flag (0x400)
+    kPerVertexData_Version  = 2,    // add new count (and array)
 
-    kCurrent_Version    = kNoBones_Version
+    kCurrent_Version    = kPerVertexData_Version
 };
+
+struct Header_v1 {
+    uint32_t    fPacked;
+    int32_t     fVertexCount;
+    int32_t     fIndexCount;
+    // [pos] + [texs] + [colors] + [indices]
+};
+
+struct Header_v2 {
+    uint32_t    fPacked;
+    int32_t     fVertexCount;
+    int32_t     fIndexCount;
+    int32_t     fPerVertexDataCount;
+    // [pos] + [vertexData] + [texs] + [colors] + [indices]
+};
+
+#define kCurrentHeaderSize    sizeof(Header_v2)
 
 // storage = packed | vertex_count | index_count | pos[] | texs[] | colors[] | boneIndices[] |
 //           boneWeights[] | indices[]
@@ -247,45 +295,38 @@ enum EncodedVerticesVersions {
 #define kHasTexs_Mask       0x100
 #define kHasColors_Mask     0x200
 #define kHasBones_Mask_V0   0x400
-#define kIsNonVolatile_Mask 0x800
+#define kIsNonVolatile_Mask 0x800  // Deprecated flag
 // new as of 3/2020
 #define kVersion_Shift      24
 #define kVersion_Mask       (0xFF << kVersion_Shift)
-
-#define kHeaderSize         (3 * sizeof(uint32_t))
 
 sk_sp<SkData> SkVertices::encode() const {
     // packed has room for addtional flags in the future (e.g. versioning)
     uint32_t packed = static_cast<uint32_t>(fMode);
     SkASSERT((packed & ~kMode_Mask) == 0);  // our mode fits in the mask bits
-    if (this->hasTexCoords()) {
+    if (fTexs) {
         packed |= kHasTexs_Mask;
     }
-    if (this->hasColors()) {
+    if (fColors) {
         packed |= kHasColors_Mask;
-    }
-    if (!this->isVolatile()) {
-        packed |= kIsNonVolatile_Mask;
     }
     packed |= kCurrent_Version << kVersion_Shift;
 
-    Sizes sizes(fMode,
-                fVertexCnt,
-                fIndexCnt,
-                this->hasTexCoords(),
-                this->hasColors());
-    SkASSERT(sizes.isValid());
+    Sizes sizes = this->getSizes();
     SkASSERT(!sizes.fBuilderTriFanISize);
     // need to force alignment to 4 for SkWriter32 -- will pad w/ 0s as needed
-    const size_t size = SkAlign4(kHeaderSize + sizes.fArrays);
+    const size_t size = SkAlign4(kCurrentHeaderSize + sizes.fArrays);
 
     sk_sp<SkData> data = SkData::MakeUninitialized(size);
     SkWriter32 writer(data->writable_data(), data->size());
 
     writer.write32(packed);
-    writer.write32(fVertexCnt);
-    writer.write32(fIndexCnt);
+    writer.write32(fVertexCount);
+    writer.write32(fIndexCount);
+    writer.write32(fPerVertexDataCount);
+
     writer.write(fPositions, sizes.fVSize);
+    writer.write(fPerVertexData, sizes.fDSize);
     writer.write(fTexs, sizes.fTSize);
     writer.write(fColors, sizes.fCSize);
     // if index-count is odd, we won't be 4-bytes aligned, so we call the pad version
@@ -295,7 +336,7 @@ sk_sp<SkData> SkVertices::encode() const {
 }
 
 sk_sp<SkVertices> SkVertices::Decode(const void* data, size_t length) {
-    if (length < kHeaderSize) {
+    if (length < sizeof(Header_v1)) {
         return nullptr;
     }
 
@@ -303,7 +344,8 @@ sk_sp<SkVertices> SkVertices::Decode(const void* data, size_t length) {
     SkSafeRange safe;
 
     const uint32_t packed = reader.readInt();
-    const int version = (packed & kVersion_Mask) >> kVersion_Shift;
+    const unsigned version = safe.checkLE<unsigned>((packed & kVersion_Mask) >> kVersion_Shift,
+                                                    kCurrent_Version);
     const int vertexCount = safe.checkGE(reader.readInt(), 0);
     const int indexCount = safe.checkGE(reader.readInt(), 0);
     const VertexMode mode = safe.checkLE<VertexMode>(packed & kMode_Mask,
@@ -311,23 +353,40 @@ sk_sp<SkVertices> SkVertices::Decode(const void* data, size_t length) {
     if (!safe) {
         return nullptr;
     }
+    if (version >= kPerVertexData_Version && length < sizeof(Header_v2)) {
+        return nullptr;
+    }
+    const int perVertexDataCount = (version >= kPerVertexData_Version) ? reader.readS32() : 0;
+
+    // now we finish unpacking the packed field
     const bool hasTexs = SkToBool(packed & kHasTexs_Mask);
     const bool hasColors = SkToBool(packed & kHasColors_Mask);
-    const bool hasBones = (version <= kOriginal_Version) && SkToBool(packed & kHasBones_Mask_V0);
-    const bool isVolatile = !SkToBool(packed & kIsNonVolatile_Mask);
-    Sizes sizes(mode, vertexCount, indexCount, hasTexs, hasColors);
+    const bool hasBones = SkToBool(packed & kHasBones_Mask_V0);
+
+    // check if we're overspecified for v2+
+    if (perVertexDataCount > 0 && (hasTexs || hasColors || hasBones)) {
+        return nullptr;
+    }
+    const Desc desc{
+        mode, vertexCount, indexCount, perVertexDataCount, hasTexs, hasColors
+    };
+    Sizes sizes(desc);
     if (!sizes.isValid()) {
         return nullptr;
     }
     // logically we can be only 2-byte aligned, but our buffer is always 4-byte aligned
-    if (SkAlign4(kHeaderSize + sizes.fArrays) != length) {
+    if (reader.available() != SkAlign4(sizes.fArrays)) {
         return nullptr;
     }
 
-    Builder builder(mode, vertexCount, indexCount, isVolatile, sizes);
+    Builder builder(desc);
+    if (!builder.isValid()) {
+        return nullptr;
+    }
     SkSafeMath safe_math;
 
     reader.read(builder.positions(), sizes.fVSize);
+    reader.read(builder.perVertexData(), sizes.fDSize);
     reader.read(builder.texCoords(), sizes.fTSize);
     reader.read(builder.colors(), sizes.fCSize);
     if (hasBones) {
@@ -353,7 +412,6 @@ sk_sp<SkVertices> SkVertices::Decode(const void* data, size_t length) {
     return builder.detach();
 }
 
-void SkVertices::operator delete(void* p)
-{
+void SkVertices::operator delete(void* p) {
     ::operator delete(p);
 }

@@ -15,6 +15,8 @@
 #include "modules/skottie/src/SkottieJson.h"
 #include "modules/skottie/src/SkottiePriv.h"
 
+#include <algorithm>
+
 namespace  skottie {
 
 template <>
@@ -24,43 +26,15 @@ bool ValueTraits<ScalarValue>::FromJSON(const skjson::Value& jv, const internal:
 }
 
 template <>
-bool ValueTraits<ScalarValue>::CanLerp(const ScalarValue&, const ScalarValue&) {
-    return true;
-}
-
-template <>
-void ValueTraits<ScalarValue>::Lerp(const ScalarValue& v0, const ScalarValue& v1, float t,
-                                    ScalarValue* result) {
-    *result = v0 + (v1 - v0) * t;
+bool ValueTraits<Vec2Value>::FromJSON(const skjson::Value& jv, const internal::AnimationBuilder*,
+                                      Vec2Value* v) {
+    return Parse(jv, v);
 }
 
 template <>
 template <>
 SkScalar ValueTraits<ScalarValue>::As<SkScalar>(const ScalarValue& v) {
     return v;
-}
-
-template <>
-bool ValueTraits<VectorValue>::FromJSON(const skjson::Value& jv, const internal::AnimationBuilder*,
-                                        VectorValue* v) {
-    return Parse(jv, v);
-}
-
-template <>
-bool ValueTraits<VectorValue>::CanLerp(const VectorValue& v1, const VectorValue& v2) {
-    return v1.size() == v2.size();
-}
-
-template <>
-void ValueTraits<VectorValue>::Lerp(const VectorValue& v0, const VectorValue& v1, float t,
-                                    VectorValue* result) {
-    SkASSERT(v0.size() == v1.size());
-
-    result->resize(v0.size());
-
-    for (size_t i = 0; i < v0.size(); ++i) {
-        ValueTraits<ScalarValue>::Lerp(v0[i], v1[i], t, &(*result)[i]);
-    }
 }
 
 // DEPRECATED: remove after converting everything to SkColor4f
@@ -206,24 +180,31 @@ static SkPoint lerp_point(const SkPoint& v0, const SkPoint& v1, const Sk2f& t) {
 }
 
 template <>
-void ValueTraits<ShapeValue>::Lerp(const ShapeValue& v0, const ShapeValue& v1, float t,
+bool ValueTraits<ShapeValue>::Lerp(const ShapeValue& v0, const ShapeValue& v1, float t,
                                    ShapeValue* result) {
     SkASSERT(v0.fVertices.size() == v1.fVertices.size());
     SkASSERT(v0.fClosed == v1.fClosed);
 
-    result->fClosed = v0.fClosed;
+    auto updated = (result->fClosed != v0.fClosed || !result->fVolatile);
+
+    result->fClosed   = v0.fClosed;
     result->fVolatile = true; // interpolated values are volatile
 
     const auto t2f = Sk2f(t);
     result->fVertices.resize(v0.fVertices.size());
 
     for (size_t i = 0; i < v0.fVertices.size(); ++i) {
-        result->fVertices[i] = BezierVertex({
+        const auto v = BezierVertex({
             lerp_point(v0.fVertices[i].fInPoint , v1.fVertices[i].fInPoint , t2f),
             lerp_point(v0.fVertices[i].fOutPoint, v1.fVertices[i].fOutPoint, t2f),
             lerp_point(v0.fVertices[i].fVertex  , v1.fVertices[i].fVertex  , t2f)
         });
+
+        updated |= (v != result->fVertices[i]);
+        result->fVertices[i] = v;
     }
+
+    return updated;
 }
 
 template <>

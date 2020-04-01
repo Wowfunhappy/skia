@@ -11,7 +11,7 @@
 #include "src/core/SkArenaAlloc.h"
 #include "src/gpu/GrAppliedClip.h"
 #include "src/gpu/GrGeometryProcessor.h"
-#include "src/gpu/GrMesh.h"
+#include "src/gpu/GrSimpleMesh.h"
 #include "src/gpu/ops/GrDrawOp.h"
 #include <type_traits>
 
@@ -36,6 +36,16 @@ public:
 protected:
     GrMeshDrawOp(uint32_t classID);
 
+    void createProgramInfo(const GrCaps* caps,
+                           SkArenaAlloc* arena,
+                           const GrSurfaceProxyView* outputView,
+                           GrAppliedClip&& appliedClip,
+                           const GrXferProcessor::DstProxyView& dstProxyView) {
+        this->onCreateProgramInfo(caps, arena, outputView, std::move(appliedClip), dstProxyView);
+    }
+
+    void createProgramInfo(Target* target);
+
     /** Helper for rendering repeating meshes using a patterned index buffer. This class creates the
         space for the vertices and flushes the draws to the GrMeshDrawOp::Target. */
     class PatternHelper {
@@ -47,10 +57,10 @@ protected:
         /** Called to issue draws to the GrMeshDrawOp::Target.*/
         void recordDraw(Target*, const GrGeometryProcessor*) const;
         void recordDraw(Target*, const GrGeometryProcessor*,
-                        const GrPipeline::FixedDynamicState*) const;
+                        const GrSurfaceProxy* const primProcProxies[]) const;
 
         void* vertices() const { return fVertices; }
-        GrMesh* mesh() { return fMesh; }
+        GrSimpleMesh* mesh() { return fMesh; }
 
     protected:
         PatternHelper() = default;
@@ -60,7 +70,7 @@ protected:
 
     private:
         void* fVertices = nullptr;
-        GrMesh* fMesh = nullptr;
+        GrSimpleMesh* fMesh = nullptr;
         GrPrimitiveType fPrimitiveType;
     };
 
@@ -89,7 +99,21 @@ protected:
                                              : GrResourceProvider::MaxNumNonAAQuads());
     }
 
+    virtual void onPrePrepareDraws(GrRecordingContext*,
+                                   const GrSurfaceProxyView* outputView,
+                                   GrAppliedClip*,
+                                   const GrXferProcessor::DstProxyView&);
+
 private:
+    virtual GrProgramInfo* programInfo() = 0;
+    // This method is responsible for creating all the programInfos required
+    // by this op.
+    virtual void onCreateProgramInfo(const GrCaps*,
+                                     SkArenaAlloc*,
+                                     const GrSurfaceProxyView* outputView,
+                                     GrAppliedClip&&,
+                                     const GrXferProcessor::DstProxyView&) = 0;
+
     void onPrePrepare(GrRecordingContext* context,
                       const GrSurfaceProxyView* outputView,
                       GrAppliedClip* clip,
@@ -97,12 +121,6 @@ private:
         this->onPrePrepareDraws(context, outputView, clip, dstProxyView);
     }
     void onPrepare(GrOpFlushState* state) final;
-
-    // Only the GrTextureOp currently overrides this virtual
-    virtual void onPrePrepareDraws(GrRecordingContext*,
-                                   const GrSurfaceProxyView* outputView,
-                                   GrAppliedClip*,
-                                   const GrXferProcessor::DstProxyView&) {}
 
     virtual void onPrepareDraws(Target*) = 0;
     typedef GrDrawOp INHERITED;
@@ -112,25 +130,23 @@ class GrMeshDrawOp::Target {
 public:
     virtual ~Target() {}
 
-    /** Adds a draw of a mesh. */
+    /** Adds a draw of a mesh. 'primProcProxies' must have
+     * GrPrimitiveProcessor::numTextureSamplers() entries. Can be null if no samplers.
+     */
     virtual void recordDraw(const GrGeometryProcessor*,
-                            const GrMesh[],
+                            const GrSimpleMesh[],
                             int meshCnt,
-                            const GrPipeline::FixedDynamicState*,
-                            const GrPipeline::DynamicStateArrays*,
+                            const GrSurfaceProxy* const primProcProxies[],
                             GrPrimitiveType) = 0;
 
     /**
-     * Helper for drawing GrMesh(es) with zero primProc textures and no dynamic state besides the
-     * scissor clip.
+     * Helper for drawing GrSimpleMesh(es) with zero primProc textures.
      */
     void recordDraw(const GrGeometryProcessor* gp,
-                    const GrMesh meshes[],
+                    const GrSimpleMesh meshes[],
                     int meshCnt,
                     GrPrimitiveType primitiveType) {
-        static constexpr int kZeroPrimProcTextures = 0;
-        auto fixedDynamicState = this->makeFixedDynamicState(kZeroPrimProcTextures);
-        this->recordDraw(gp, meshes, meshCnt, fixedDynamicState, nullptr, primitiveType);
+        this->recordDraw(gp, meshes, meshCnt, nullptr, primitiveType);
     }
 
     /**
@@ -172,22 +188,10 @@ public:
     virtual void putBackIndices(int indices) = 0;
     virtual void putBackVertices(int vertices, size_t vertexStride) = 0;
 
-    GrMesh* allocMesh() { return this->allocator()->make<GrMesh>(); }
-    GrMesh* allocMeshes(int n) { return this->allocator()->makeArray<GrMesh>(n); }
-
-    static GrPipeline::DynamicStateArrays* AllocDynamicStateArrays(SkArenaAlloc*,
-                                                                   int numMeshes,
-                                                                   int numPrimitiveProcTextures,
-                                                                   bool allocScissors);
-
-    static GrPipeline::FixedDynamicState* MakeFixedDynamicState(SkArenaAlloc*,
-                                                                const GrAppliedClip* clip,
-                                                                int numPrimitiveProcessorTextures);
-
-
-    GrPipeline::FixedDynamicState* makeFixedDynamicState(int numPrimitiveProcessorTextures) {
-        return MakeFixedDynamicState(this->allocator(), this->appliedClip(),
-                                     numPrimitiveProcessorTextures);
+    GrSimpleMesh* allocMesh() { return this->allocator()->make<GrSimpleMesh>(); }
+    GrSimpleMesh* allocMeshes(int n) { return this->allocator()->makeArray<GrSimpleMesh>(n); }
+    const GrSurfaceProxy** allocPrimProcProxyPtrs(int n) {
+        return this->allocator()->makeArray<const GrSurfaceProxy*>(n);
     }
 
     virtual GrRenderTargetProxy* proxy() const = 0;

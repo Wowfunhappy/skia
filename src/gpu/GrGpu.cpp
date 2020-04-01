@@ -19,7 +19,6 @@
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrDataUtils.h"
 #include "src/gpu/GrGpuResourcePriv.h"
-#include "src/gpu/GrMesh.h"
 #include "src/gpu/GrNativeRect.h"
 #include "src/gpu/GrPathRendering.h"
 #include "src/gpu/GrPipeline.h"
@@ -261,8 +260,8 @@ sk_sp<GrTexture> GrGpu::createCompressedTexture(SkISize dimensions,
 }
 
 sk_sp<GrTexture> GrGpu::wrapBackendTexture(const GrBackendTexture& backendTex,
-                                           GrColorType colorType,
-                                           GrWrapOwnership ownership, GrWrapCacheable cacheable,
+                                           GrWrapOwnership ownership,
+                                           GrWrapCacheable cacheable,
                                            GrIOType ioType) {
     SkASSERT(ioType != kWrite_GrIOType);
     this->handleDirtyContext();
@@ -278,7 +277,7 @@ sk_sp<GrTexture> GrGpu::wrapBackendTexture(const GrBackendTexture& backendTex,
         return nullptr;
     }
 
-    return this->onWrapBackendTexture(backendTex, colorType, ownership, cacheable, ioType);
+    return this->onWrapBackendTexture(backendTex, ownership, cacheable, ioType);
 }
 
 sk_sp<GrTexture> GrGpu::wrapCompressedBackendTexture(const GrBackendTexture& backendTex,
@@ -300,9 +299,8 @@ sk_sp<GrTexture> GrGpu::wrapCompressedBackendTexture(const GrBackendTexture& bac
     return this->onWrapCompressedBackendTexture(backendTex, ownership, cacheable);
 }
 
-
 sk_sp<GrTexture> GrGpu::wrapRenderableBackendTexture(const GrBackendTexture& backendTex,
-                                                     int sampleCnt, GrColorType colorType,
+                                                     int sampleCnt,
                                                      GrWrapOwnership ownership,
                                                      GrWrapCacheable cacheable) {
     this->handleDirtyContext();
@@ -321,8 +319,8 @@ sk_sp<GrTexture> GrGpu::wrapRenderableBackendTexture(const GrBackendTexture& bac
         backendTex.height() > caps->maxRenderTargetSize()) {
         return nullptr;
     }
-    sk_sp<GrTexture> tex = this->onWrapRenderableBackendTexture(backendTex, sampleCnt, colorType,
-                                                                ownership, cacheable);
+    sk_sp<GrTexture> tex =
+            this->onWrapRenderableBackendTexture(backendTex, sampleCnt, ownership, cacheable);
     SkASSERT(!tex || tex->asRenderTarget());
     if (tex && sampleCnt > 1 && !caps->msaaResolvesAutomatically()) {
         tex->asRenderTarget()->setRequiresManualMSAAResolve();
@@ -330,8 +328,7 @@ sk_sp<GrTexture> GrGpu::wrapRenderableBackendTexture(const GrBackendTexture& bac
     return tex;
 }
 
-sk_sp<GrRenderTarget> GrGpu::wrapBackendRenderTarget(const GrBackendRenderTarget& backendRT,
-                                                     GrColorType colorType) {
+sk_sp<GrRenderTarget> GrGpu::wrapBackendRenderTarget(const GrBackendRenderTarget& backendRT) {
     this->handleDirtyContext();
 
     const GrCaps* caps = this->caps();
@@ -340,7 +337,7 @@ sk_sp<GrRenderTarget> GrGpu::wrapBackendRenderTarget(const GrBackendRenderTarget
         return nullptr;
     }
 
-    sk_sp<GrRenderTarget> rt = this->onWrapBackendRenderTarget(backendRT, colorType);
+    sk_sp<GrRenderTarget> rt = this->onWrapBackendRenderTarget(backendRT);
     if (backendRT.isFramebufferOnly()) {
         rt->setFramebufferOnly();
     }
@@ -348,8 +345,7 @@ sk_sp<GrRenderTarget> GrGpu::wrapBackendRenderTarget(const GrBackendRenderTarget
 }
 
 sk_sp<GrRenderTarget> GrGpu::wrapBackendTextureAsRenderTarget(const GrBackendTexture& backendTex,
-                                                              int sampleCnt,
-                                                              GrColorType colorType) {
+                                                              int sampleCnt) {
     this->handleDirtyContext();
 
     const GrCaps* caps = this->caps();
@@ -363,7 +359,7 @@ sk_sp<GrRenderTarget> GrGpu::wrapBackendTextureAsRenderTarget(const GrBackendTex
         return nullptr;
     }
 
-    auto rt = this->onWrapBackendTextureAsRenderTarget(backendTex, sampleCnt, colorType);
+    auto rt = this->onWrapBackendTextureAsRenderTarget(backendTex, sampleCnt);
     if (rt && sampleCnt > 1 && !this->caps()->msaaResolvesAutomatically()) {
         rt->setRequiresManualMSAAResolve();
     }
@@ -447,8 +443,6 @@ bool GrGpu::writePixels(GrSurface* surface, int left, int top, int width, int he
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
     SkASSERT(surface);
     SkASSERT(!surface->framebufferOnly());
-    SkASSERT(this->caps()->isFormatTexturableAndUploadable(surfaceColorType,
-                                                           surface->backendFormat()));
 
     if (surface->readOnly()) {
         return false;
@@ -490,8 +484,6 @@ bool GrGpu::transferPixelsTo(GrTexture* texture, int left, int top, int width, i
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
     SkASSERT(texture);
     SkASSERT(transferBuffer);
-    SkASSERT(this->caps()->isFormatTexturableAndUploadable(textureColorType,
-                                                           texture->backendFormat()));
 
     if (texture->readOnly()) {
         return false;
@@ -745,6 +737,21 @@ void GrGpu::Stats::dump(SkString* out) {
     out->appendf("Total number of partial compilation successes %d\n",
                  fNumPartialCompilationSuccesses);
     out->appendf("Total number of compilation successes %d\n", fNumCompilationSuccesses);
+
+    // enable this block to output CSV-style stats for program pre-compilation
+#if 0
+    SkASSERT(fNumInlineCompilationFailures == 0);
+    SkASSERT(fNumPreCompilationFailures == 0);
+    SkASSERT(fNumCompilationFailures == 0);
+    SkASSERT(fNumPartialCompilationSuccesses == 0);
+
+    SkDebugf("%d, %d, %d, %d, %d\n",
+             fInlineProgramCacheStats[(int) Stats::ProgramCacheResult::kHit],
+             fInlineProgramCacheStats[(int) Stats::ProgramCacheResult::kMiss],
+             fPreProgramCacheStats[(int) Stats::ProgramCacheResult::kHit],
+             fPreProgramCacheStats[(int) Stats::ProgramCacheResult::kMiss],
+             fNumCompilationSuccesses);
+#endif
 }
 
 void GrGpu::Stats::dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values) {

@@ -8,20 +8,35 @@
 #include "src/gpu/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
 
 const GrPipeline* GrSimpleMeshDrawOpHelperWithStencil::createPipelineWithStencil(
-        GrOpFlushState* flushState) {
-    return GrSimpleMeshDrawOpHelper::CreatePipeline(&flushState->caps(),
-                                                    flushState->allocator(),
-                                                    flushState->outputView(),
-                                                    flushState->detachAppliedClip(),
-                                                    flushState->dstProxyView(),
+                                            const GrCaps* caps,
+                                            SkArenaAlloc* arena,
+                                            GrSwizzle outputViewSwizzle,
+                                            GrAppliedClip&& appliedClip,
+                                            const GrXferProcessor::DstProxyView& dstProxyView) {
+    return GrSimpleMeshDrawOpHelper::CreatePipeline(caps,
+                                                    arena,
+                                                    outputViewSwizzle,
+                                                    std::move(appliedClip),
+                                                    dstProxyView,
                                                     this->detachProcessorSet(),
                                                     this->pipelineFlags(),
                                                     this->stencilSettings());
 }
 
+const GrPipeline* GrSimpleMeshDrawOpHelperWithStencil::createPipelineWithStencil(
+        GrOpFlushState* flushState) {
+    return this->createPipelineWithStencil(&flushState->caps(),
+                                           flushState->allocator(),
+                                           flushState->outputView()->swizzle(),
+                                           flushState->detachAppliedClip(),
+                                           flushState->dstProxyView());
+}
+
 GrSimpleMeshDrawOpHelperWithStencil::GrSimpleMeshDrawOpHelperWithStencil(
-        const MakeArgs& args, GrAAType aaType, const GrUserStencilSettings* stencilSettings,
-        InputFlags inputFlags)
+                                                    const MakeArgs& args,
+                                                    GrAAType aaType,
+                                                    const GrUserStencilSettings* stencilSettings,
+                                                    InputFlags inputFlags)
         : INHERITED(args, aaType, inputFlags)
         , fStencilSettings(stencilSettings ? stencilSettings : &GrUserStencilSettings::kUnused) {}
 
@@ -52,6 +67,26 @@ bool GrSimpleMeshDrawOpHelperWithStencil::isCompatible(
         const SkRect& thisBounds, const SkRect& thatBounds, bool ignoreAAType) const {
     return INHERITED::isCompatible(that, caps, thisBounds, thatBounds, ignoreAAType) &&
            fStencilSettings == that.fStencilSettings;
+}
+
+GrProgramInfo* GrSimpleMeshDrawOpHelperWithStencil::createProgramInfoWithStencil(
+                                            const GrCaps* caps,
+                                            SkArenaAlloc* arena,
+                                            const GrSurfaceProxyView* outputView,
+                                            GrAppliedClip&& appliedClip,
+                                            const GrXferProcessor::DstProxyView& dstProxyView,
+                                            GrGeometryProcessor* gp,
+                                            GrPrimitiveType primType) {
+    return CreateProgramInfo(caps,
+                             arena,
+                             outputView,
+                             std::move(appliedClip),
+                             dstProxyView,
+                             gp,
+                             this->detachProcessorSet(),
+                             primType,
+                             this->pipelineFlags(),
+                             this->stencilSettings());
 }
 
 #ifdef SK_DEBUG

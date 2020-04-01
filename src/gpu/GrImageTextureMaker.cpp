@@ -11,6 +11,7 @@
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/SkGr.h"
+#include "src/gpu/effects/GrBicubicEffect.h"
 #include "src/gpu/effects/GrYUVtoRGBEffect.h"
 #include "src/image/SkImage_GpuYUVA.h"
 #include "src/image/SkImage_Lazy.h"
@@ -24,16 +25,17 @@ static GrImageInfo get_image_info(GrRecordingContext* context, const SkImage* cl
     return {ct, client->alphaType(), client->refColorSpace(), client->dimensions()};
 }
 
-GrImageTextureMaker::GrImageTextureMaker(GrRecordingContext* context, const SkImage* client,
-                                         SkImage::CachingHint chint)
+GrImageTextureMaker::GrImageTextureMaker(GrRecordingContext* context,
+                                         const SkImage* client,
+                                         GrImageTexGenPolicy texGenPolicy)
         : INHERITED(context, get_image_info(context, client))
         , fImage(static_cast<const SkImage_Lazy*>(client))
-        , fCachingHint(chint) {
+        , fTexGenPolicy(texGenPolicy) {
     SkASSERT(client->isLazyGenerated());
 }
 
 GrSurfaceProxyView GrImageTextureMaker::refOriginalTextureProxyView(GrMipMapped mipMapped) {
-    return fImage->lockTextureProxyView(this->context(), fCachingHint, mipMapped);
+    return fImage->lockTextureProxyView(this->context(), fTexGenPolicy, mipMapped);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -64,18 +66,18 @@ std::unique_ptr<GrFragmentProcessor> GrYUVAImageTextureMaker::createFragmentProc
         GrSamplerState::WrapMode wrapX,
         GrSamplerState::WrapMode wrapY,
         const GrSamplerState::Filter* filterOrNullForBicubic) {
-    // Check simple cases to see if we need to fall back to flattening the image (or whether it's
-    // already been flattened.) GrYUVtoRGBEffect only supports kClamp (for now.)
-    if (!filterOrNullForBicubic || wrapX != GrSamplerState::WrapMode::kClamp ||
-        wrapY != GrSamplerState::WrapMode::kClamp || fImage->fRGBView.proxy()) {
+    // Check whether it's already been flattened.
+    if (fImage->fRGBView.proxy()) {
         return this->INHERITED::createFragmentProcessor(
                 textureMatrix, constraintRect, filterConstraint, coordsLimitedToConstraintRect,
                 wrapX, wrapY, filterOrNullForBicubic);
     }
 
+    GrSamplerState::Filter filter =
+            filterOrNullForBicubic ? *filterOrNullForBicubic : GrSamplerState::Filter::kNearest;
+
     // Check to see if the client has given us pre-mipped textures or we can generate them
     // If not, fall back to bilerp. Also fall back to bilerp when a domain is requested
-    GrSamplerState::Filter filter = *filterOrNullForBicubic;
     if (GrSamplerState::Filter::kMipMap == filter &&
         (filterConstraint == GrTextureProducer::kYes_FilterConstraint ||
          !fImage->setupMipmapsForPlanes(this->context()))) {
@@ -91,8 +93,13 @@ std::unique_ptr<GrFragmentProcessor> GrYUVAImageTextureMaker::createFragmentProc
     }
 
     const auto& caps = *fImage->context()->priv().caps();
+    const SkMatrix& m = filterOrNullForBicubic ? textureMatrix : SkMatrix::I();
     auto fp = GrYUVtoRGBEffect::Make(fImage->fViews, fImage->fYUVAIndices, fImage->fYUVColorSpace,
-                                     filter, caps, textureMatrix, domain);
+                                     filter, caps, m, domain);
+    if (!filterOrNullForBicubic) {
+        fp = GrBicubicEffect::Make(std::move(fp), fImage->alphaType(), textureMatrix,
+                                   GrBicubicEffect::Direction::kXY);
+    }
     if (fImage->fFromColorSpace) {
         fp = GrColorSpaceXformEffect::Make(std::move(fp), fImage->fFromColorSpace.get(),
                                            fImage->alphaType(), fImage->colorSpace());

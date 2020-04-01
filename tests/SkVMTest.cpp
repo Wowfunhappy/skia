@@ -7,6 +7,7 @@
 
 #include "include/core/SkColorPriv.h"
 #include "include/private/SkColorData.h"
+#include "src/core/SkCpu.h"
 #include "src/core/SkMSAN.h"
 #include "src/core/SkVM.h"
 #include "tests/Test.h"
@@ -161,23 +162,34 @@ DEF_TEST(SkVM, r) {
         dump(b, &buf);
     }
 
-    sk_sp<SkData> blob = buf.detachAsData();
-    {
+    // Our checked in dump expectations assume we have FMA support.
+    const bool fma_supported =
+    #if defined(SK_CPU_X86)
+        SkCpu::Supports(SkCpu::HSW);
+    #elif defined(SK_CPU_ARM64)
+        true;
+    #else
+        false;
+    #endif
+    if (fma_supported) {
+        sk_sp<SkData> blob = buf.detachAsData();
+        {
 
-        sk_sp<SkData> expected = GetResourceAsData("SkVMTest.expected");
-        REPORTER_ASSERT(r, expected, "Couldn't load SkVMTest.expected.");
-        if (expected) {
-            if (blob->size() != expected->size()
-                    || 0 != memcmp(blob->data(), expected->data(), blob->size())) {
+            sk_sp<SkData> expected = GetResourceAsData("SkVMTest.expected");
+            REPORTER_ASSERT(r, expected, "Couldn't load SkVMTest.expected.");
+            if (expected) {
+                if (blob->size() != expected->size()
+                        || 0 != memcmp(blob->data(), expected->data(), blob->size())) {
 
-                ERRORF(r, "SkVMTest expected\n%.*s\nbut got\n%.*s\n",
-                       expected->size(), expected->data(),
-                       blob->size(), blob->data());
-            }
+                    ERRORF(r, "SkVMTest expected\n%.*s\nbut got\n%.*s\n",
+                           expected->size(), expected->data(),
+                           blob->size(), blob->data());
+                }
 
-            SkFILEWStream out(GetResourcePath("SkVMTest.expected").c_str());
-            if (out.isValid()) {
-                out.write(blob->data(), blob->size());
+                SkFILEWStream out(GetResourcePath("SkVMTest.expected").c_str());
+                if (out.isValid()) {
+                    out.write(blob->data(), blob->size());
+                }
             }
         }
     }
@@ -258,6 +270,54 @@ DEF_TEST(SkVM, r) {
             REPORTER_ASSERT(r, abs(dst[i]-want) < 2);
         }
     });
+}
+
+DEF_TEST(SkVM_UsesAndLiveness, r) {
+    {
+        skvm::Builder b;
+        {
+            skvm::Arg arg = b.varying<int>(),
+                      buf = b.varying<int>();
+            skvm::I32 l = b.load32(arg);
+            skvm::I32 a = b.add(l, l);
+            skvm::I32 s = b.add(a, b.splat(7));
+            b.store32(buf, s);
+        }
+
+        std::vector<bool> live;
+        std::vector<skvm::Val> sinks;
+        skvm::liveness_analysis(b.program(), &live, &sinks);
+        skvm::Uses u{b.program(), live};
+        REPORTER_ASSERT(r, b.program()[0].op == skvm::Op::load32);
+        REPORTER_ASSERT(r, u.users(0).size() == 2);
+        REPORTER_ASSERT(r, b.program()[1].op == skvm::Op::add_i32);
+        REPORTER_ASSERT(r, u.users(1).size() == 1);
+        REPORTER_ASSERT(r, b.program()[2].op == skvm::Op::splat);
+        REPORTER_ASSERT(r, u.users(2).size() == 1);
+        REPORTER_ASSERT(r, b.program()[3].op == skvm::Op::add_i32);
+        REPORTER_ASSERT(r, u.users(3).size() == 1);
+    }
+    {
+        skvm::Builder b;
+        {
+            skvm::Arg arg = b.varying<int>();
+            skvm::I32 l = b.load32(arg);
+            skvm::I32 a = b.add(l, l);
+            b.add(a, b.splat(7));
+        }
+        std::vector<bool> live;
+        std::vector<skvm::Val> sinks;
+        skvm::liveness_analysis(b.program(), &live, &sinks);
+        skvm::Uses u{b.program(), live};
+        REPORTER_ASSERT(r, b.program()[0].op == skvm::Op::load32);
+        REPORTER_ASSERT(r, u.users(0).size() == 0);
+        REPORTER_ASSERT(r, b.program()[1].op == skvm::Op::add_i32);
+        REPORTER_ASSERT(r, u.users(1).size() == 0);
+        REPORTER_ASSERT(r, b.program()[2].op == skvm::Op::splat);
+        REPORTER_ASSERT(r, u.users(2).size() == 0);
+        REPORTER_ASSERT(r, b.program()[3].op == skvm::Op::add_i32);
+        REPORTER_ASSERT(r, u.users(3).size() == 0);
+    }
 }
 
 DEF_TEST(SkVM_Pointless, r) {
@@ -496,11 +556,11 @@ DEF_TEST(SkVM_f32, r) {
     {
         skvm::Arg arg = b.varying<float>();
 
-        skvm::F32 x = b.bit_cast(b.load32(arg)),
+        skvm::F32 x = b.loadF(arg),
                   y = b.add(x,x),   // y = 2x
                   z = b.sub(y,x),   // z = 2x-x = x
                   w = b.div(z,x);   // w = x/x = 1
-        b.store32(arg, b.bit_cast(w));
+        b.storeF(arg, w);
     }
 
     test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
@@ -556,7 +616,7 @@ DEF_TEST(SkVM_cmp_i32, r) {
 DEF_TEST(SkVM_cmp_f32, r) {
     skvm::Builder b;
     {
-        skvm::F32 x = b.bit_cast(b.load32(b.varying<float>()));
+        skvm::F32 x = b.loadF(b.varying<float>());
 
         auto to_bit = [&](int shift, skvm::I32 mask) {
             return b.shl(b.bit_and(mask, b.splat(0x1)), shift);
@@ -710,16 +770,60 @@ DEF_TEST(SkVM_mad, r) {
     });
 }
 
+DEF_TEST(SkVM_fms, r) {
+    // Create a pattern that can be peepholed into an Op::fms_f32.
+    skvm::Builder b;
+    {
+        skvm::Arg arg = b.varying<int>();
+
+        skvm::F32 x = b.to_f32(b.load32(arg)),
+                  v = b.sub(b.mul(x, b.splat(2.0f)),
+                            b.splat(1.0f));
+        b.store32(arg, b.trunc(v));
+    }
+
+    test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
+        int buf[] = {0,1,2,3,4,5,6,7,8,9,10};
+        program.eval((int)SK_ARRAY_COUNT(buf), &buf);
+
+        for (int i = 0; i < (int)SK_ARRAY_COUNT(buf); i++) {
+            REPORTER_ASSERT(r, buf[i] = 2*i-1);
+        }
+    });
+}
+
+DEF_TEST(SkVM_fnma, r) {
+    // Create a pattern that can be peepholed into an Op::fnma_f32.
+    skvm::Builder b;
+    {
+        skvm::Arg arg = b.varying<int>();
+
+        skvm::F32 x = b.to_f32(b.load32(arg)),
+                  v = b.sub(b.splat(1.0f),
+                            b.mul(x, b.splat(2.0f)));
+        b.store32(arg, b.trunc(v));
+    }
+
+    test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
+        int buf[] = {0,1,2,3,4,5,6,7,8,9,10};
+        program.eval((int)SK_ARRAY_COUNT(buf), &buf);
+
+        for (int i = 0; i < (int)SK_ARRAY_COUNT(buf); i++) {
+            REPORTER_ASSERT(r, buf[i] = 1-2*i);
+        }
+    });
+}
+
 DEF_TEST(SkVM_madder, r) {
     skvm::Builder b;
     {
         skvm::Arg arg = b.varying<float>();
 
-        skvm::F32 x = b.bit_cast(b.load32(arg)),
+        skvm::F32 x = b.loadF(arg),
                   y = b.mad(x,x,x),   // x is needed in the future, so r[x] != r[y].
                   z = b.mad(y,x,y),   // r[x] can be reused after this instruction, but not r[y].
                   w = b.mad(y,y,z);
-        b.store32(arg, b.bit_cast(w));
+        b.storeF(arg, w);
     }
 
     test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
@@ -736,7 +840,7 @@ DEF_TEST(SkVM_floor, r) {
     skvm::Builder b;
     {
         skvm::Arg arg = b.varying<float>();
-        b.store32(arg, b.bit_cast(b.floor(b.bit_cast(b.load32(arg)))));
+        b.storeF(arg, b.floor(b.loadF(arg)));
     }
 
 #if defined(SK_CPU_X86)
@@ -759,18 +863,20 @@ DEF_TEST(SkVM_round, r) {
     {
         skvm::Arg src = b.varying<float>();
         skvm::Arg dst = b.varying<int>();
-        b.store32(dst, b.round(b.bit_cast(b.load32(src))));
+        b.store32(dst, b.round(b.loadF(src)));
     }
 
+    // The test cases on exact 0.5f boundaries assume the current rounding mode is nearest even.
+    // We haven't explicitly guaranteed that here... it just probably is.
     test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
-          float buf[]  = { 0.0f, 0.2f, 0.6f, 1.0f, 1.4f, 2.0f };
-          int want[] =   { 0,    0,    1,    1,    1,    2    };
-          int dst[SK_ARRAY_COUNT(buf)];
+        float buf[]  = { -1.5f, -0.5f, 0.0f, 0.5f, 0.2f, 0.6f, 1.0f, 1.4f, 1.5f, 2.0f };
+        int want[] =   { -2   ,  0   , 0   , 0   , 0   , 1   , 1   , 1   , 2   , 2    };
+        int dst[SK_ARRAY_COUNT(buf)];
 
-          program.eval(SK_ARRAY_COUNT(buf), buf, dst);
-                  for (int i = 0; i < (int)SK_ARRAY_COUNT(dst); i++) {
-                      REPORTER_ASSERT(r, dst[i] == want[i]);
-                  }
+        program.eval(SK_ARRAY_COUNT(buf), buf, dst);
+        for (int i = 0; i < (int)SK_ARRAY_COUNT(dst); i++) {
+            REPORTER_ASSERT(r, dst[i] == want[i]);
+        }
     });
 }
 
@@ -781,7 +887,7 @@ DEF_TEST(SkVM_min, r) {
         skvm::Arg src2 = b.varying<float>();
         skvm::Arg dst = b.varying<float>();
 
-        b.store32(dst, b.bit_cast(b.min(b.bit_cast(b.load32(src1)), b.bit_cast(b.load32(src2)))));
+        b.storeF(dst, b.min(b.loadF(src1), b.loadF(src2)));
     }
 
     test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
@@ -803,7 +909,7 @@ DEF_TEST(SkVM_max, r) {
         skvm::Arg src2 = b.varying<float>();
         skvm::Arg dst = b.varying<float>();
 
-        b.store32(dst, b.bit_cast(b.max(b.bit_cast(b.load32(src1)), b.bit_cast(b.load32(src2)))));
+        b.storeF(dst, b.max(b.loadF(src1), b.loadF(src2)));
     }
 
     test_jit_and_interpreter(r, b.done(), [&](const skvm::Program& program) {
@@ -935,7 +1041,7 @@ DEF_TEST(SkVM_NewOps, r) {
 DEF_TEST(SkVM_sqrt, r) {
     skvm::Builder b;
     auto buf = b.varying<int>();
-    b.store32(buf, b.bit_cast(b.sqrt(b.bit_cast(b.load32(buf)))));
+    b.storeF(buf, b.sqrt(b.loadF(buf)));
 
 #if defined(SKVM_LLVM) || defined(SK_CPU_X86)
     test_jit_and_interpreter
@@ -994,13 +1100,13 @@ DEF_TEST(SkVM_premul, reporter) {
         auto rptr = p.varying<int>(),
              aptr = p.varying<int>();
 
-        skvm::F32 r = p.bit_cast(p.load32(rptr)),
+        skvm::F32 r = p.loadF(rptr),
                   g = p.splat(0.0f),
                   b = p.splat(0.0f),
-                  a = p.bit_cast(p.load32(aptr));
+                  a = p.loadF(aptr);
 
         p.premul(&r, &g, &b, a);
-        p.store32(rptr, p.bit_cast(r));
+        p.storeF(rptr, r);
 
         // load red, load alpha, red *= alpha, store red
         REPORTER_ASSERT(reporter, p.done().instructions().size() == 4);
@@ -1010,13 +1116,13 @@ DEF_TEST(SkVM_premul, reporter) {
         skvm::Builder p;
         auto rptr = p.varying<int>();
 
-        skvm::F32 r = p.bit_cast(p.load32(rptr)),
+        skvm::F32 r = p.loadF(rptr),
                   g = p.splat(0.0f),
                   b = p.splat(0.0f),
                   a = p.splat(1.0f);
 
         p.premul(&r, &g, &b, a);
-        p.store32(rptr, p.bit_cast(r));
+        p.storeF(rptr, r);
 
         // load red, store red
         REPORTER_ASSERT(reporter, p.done().instructions().size() == 2);
@@ -1028,13 +1134,13 @@ DEF_TEST(SkVM_premul, reporter) {
         auto rptr = p.varying<int>(),
              aptr = p.varying<int>();
 
-        skvm::F32 r = p.bit_cast(p.load32(rptr)),
+        skvm::F32 r = p.loadF(rptr),
                   g = p.splat(0.0f),
                   b = p.splat(0.0f),
-                  a = p.bit_cast(p.load32(aptr));
+                  a = p.loadF(aptr);
 
         p.unpremul(&r, &g, &b, a);
-        p.store32(rptr, p.bit_cast(r));
+        p.storeF(rptr, r);
 
         // load red, load alpha, a bunch of unpremul instructions, store red
         REPORTER_ASSERT(reporter, p.done().instructions().size() >= 4);
@@ -1044,13 +1150,13 @@ DEF_TEST(SkVM_premul, reporter) {
         skvm::Builder p;
         auto rptr = p.varying<int>();
 
-        skvm::F32 r = p.bit_cast(p.load32(rptr)),
+        skvm::F32 r = p.loadF(rptr),
                   g = p.splat(0.0f),
                   b = p.splat(0.0f),
                   a = p.splat(1.0f);
 
         p.unpremul(&r, &g, &b, a);
-        p.store32(rptr, p.bit_cast(r));
+        p.storeF(rptr, r);
 
         // load red, store red
         REPORTER_ASSERT(reporter, p.done().instructions().size() == 2);
@@ -1477,6 +1583,7 @@ DEF_TEST(SkVM_Assembler, r) {
         a.fdiv4s(A::v4, A::v3, A::v1);
         a.fmin4s(A::v4, A::v3, A::v1);
         a.fmax4s(A::v4, A::v3, A::v1);
+        a.fneg4s(A::v4, A::v3);
 
         a.fmla4s(A::v4, A::v3, A::v1);
         a.fmls4s(A::v4, A::v3, A::v1);
@@ -1508,6 +1615,7 @@ DEF_TEST(SkVM_Assembler, r) {
         0x64,0xfc,0x21,0x6e,
         0x64,0xf4,0xa1,0x4e,
         0x64,0xf4,0x21,0x4e,
+        0x64,0xf8,0xa0,0x6e,
 
         0x64,0xcc,0x21,0x4e,
         0x64,0xcc,0xa1,0x4e,
@@ -1730,4 +1838,64 @@ DEF_TEST(SkVM_Assembler, r) {
     },{
         0x20,0x00,0x02,0x4e,
     });
+}
+
+DEF_TEST(SkVM_approx_math, r) {
+    auto eval = [](int N, float values[], auto fn) {
+        skvm::Builder b;
+        skvm::Arg inout  = b.varying<float>();
+
+        b.storeF(inout, fn(&b, b.loadF(inout)));
+
+        b.done().eval(N, values);
+    };
+
+    auto compare = [r](int N, const float values[], const float expected[]) {
+        for (int i = 0; i < N; ++i) {
+            REPORTER_ASSERT(r, SkScalarNearlyEqual(values[i], expected[i], 0.001f));
+        }
+    };
+
+    // log2
+    {
+        float values[] = {0.25f, 0.5f, 1, 2, 4, 8};
+        constexpr int N = SK_ARRAY_COUNT(values);
+        eval(N, values, [](skvm::Builder* b, skvm::F32 v) {
+            return b->approx_log2(v);
+        });
+        const float expected[] = {-2, -1, 0, 1, 2, 3};
+        compare(N, values, expected);
+    }
+
+    // pow2
+    {
+        float values[] = {-2, -1, 0, 1, 2, 3};
+        constexpr int N = SK_ARRAY_COUNT(values);
+        eval(N, values, [](skvm::Builder* b, skvm::F32 v) {
+            return b->approx_pow2(v);
+        });
+        const float expected[] = {0.25f, 0.5f, 1, 2, 4, 8};
+        compare(N, values, expected);
+    }
+
+    // powf -- x^0.5
+    {
+        float bases[] = {0, 1, 4, 9, 16};
+        constexpr int N = SK_ARRAY_COUNT(bases);
+        eval(N, bases, [](skvm::Builder* b, skvm::F32 base) {
+            return b->approx_powf(base, b->splat(0.5f));
+        });
+        const float expected[] = {0, 1, 2, 3, 4};
+        compare(N, bases, expected);
+    }
+    // powf -- 3^x
+    {
+        float exps[] = {-2, -1, 0, 1, 2};
+        constexpr int N = SK_ARRAY_COUNT(exps);
+        eval(N, exps, [](skvm::Builder* b, skvm::F32 exp) {
+            return b->approx_powf(b->splat(3.0f), exp);
+        });
+        const float expected[] = {1/9.0f, 1/3.0f, 1, 3, 9};
+        compare(N, exps, expected);
+    }
 }

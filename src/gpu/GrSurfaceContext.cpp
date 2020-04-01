@@ -47,8 +47,8 @@ std::unique_ptr<GrSurfaceContext> GrSurfaceContext::Make(GrRecordingContext* con
         SkASSERT(kPremul_SkAlphaType == alphaType || kOpaque_SkAlphaType == alphaType);
         // Will we ever want a swizzle that is not the default output swizzle for the format and
         // colorType here? If so we will need to manually pass that in.
-        GrSwizzle outSwizzle = context->priv().caps()->getOutputSwizzle(proxy->backendFormat(),
-                                                                        colorType);
+        GrSwizzle outSwizzle =
+                context->priv().caps()->getWriteSwizzle(proxy->backendFormat(), colorType);
         GrSurfaceProxyView outputView(readView.refProxy(), readView.origin(), outSwizzle);
         surfaceContext.reset(new GrRenderTargetContext(context, std::move(readView),
                                                        std::move(outputView), colorType,
@@ -74,11 +74,14 @@ std::unique_ptr<GrSurfaceContext> GrSurfaceContext::Make(GrRecordingContext* con
                                                          sk_sp<SkColorSpace> colorSpace,
                                                          SkBackingFit fit,
                                                          SkBudgeted budgeted) {
-    GrSwizzle swizzle = context->priv().caps()->getReadSwizzle(format, colorType);
+    GrSwizzle swizzle("rgba");
+    if (!context->priv().caps()->isFormatCompressed(format)) {
+        swizzle = context->priv().caps()->getReadSwizzle(format, colorType);
+    }
 
     sk_sp<GrTextureProxy> proxy = context->priv().proxyProvider()->createProxy(
-            format, dimensions, swizzle, renderable, renderTargetSampleCnt, mipMapped, fit,
-            budgeted, isProtected);
+            format, dimensions, renderable, renderTargetSampleCnt, mipMapped, fit, budgeted,
+            isProtected);
     if (!proxy) {
         return nullptr;
     }
@@ -380,8 +383,8 @@ bool GrSurfaceContext::writePixels(const GrImageInfo& origSrcInfo, const void* s
         GrSurfaceOrigin tempOrigin =
                 this->asRenderTargetContext() ? kTopLeft_GrSurfaceOrigin : this->origin();
         auto tempProxy = direct->priv().proxyProvider()->createProxy(
-                format, srcInfo.dimensions(), tempReadSwizzle, GrRenderable::kNo, 1,
-                GrMipMapped::kNo, SkBackingFit::kApprox, SkBudgeted::kYes, GrProtected::kNo);
+                format, srcInfo.dimensions(), GrRenderable::kNo, 1, GrMipMapped::kNo,
+                SkBackingFit::kApprox, SkBudgeted::kYes, GrProtected::kNo);
         if (!tempProxy) {
             return false;
         }
@@ -686,10 +689,10 @@ GrSurfaceContext::PixelTransferResult GrSurfaceContext::transferPixels(GrColorTy
                                                                     proxy->backendFormat(), dstCT);
     // Fail if read color type does not have all of dstCT's color channels and those missing color
     // channels are in the src.
-    uint32_t dstComponents = GrColorTypeComponentFlags(dstCT);
-    uint32_t legalReadComponents = GrColorTypeComponentFlags(supportedRead.fColorType);
-    uint32_t srcComponents = GrColorTypeComponentFlags(this->colorInfo().colorType());
-    if ((~legalReadComponents & dstComponents) & srcComponents) {
+    uint32_t dstChannels = GrColorTypeChannelFlags(dstCT);
+    uint32_t legalReadChannels = GrColorTypeChannelFlags(supportedRead.fColorType);
+    uint32_t srcChannels = GrColorTypeChannelFlags(this->colorInfo().colorType());
+    if ((~legalReadChannels & dstChannels) & srcChannels) {
         return {};
     }
 

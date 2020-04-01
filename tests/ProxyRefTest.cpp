@@ -9,12 +9,12 @@
 
 #include "tests/Test.h"
 
-#include "include/gpu/GrTexture.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrSurfaceProxy.h"
+#include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTextureProxy.h"
 #include "tests/TestUtils.h"
 
@@ -26,10 +26,9 @@ static sk_sp<GrTextureProxy> make_deferred(GrContext* context) {
 
     const GrBackendFormat format = caps->getDefaultBackendFormat(GrColorType::kRGBA_8888,
                                                                  GrRenderable::kYes);
-    GrSwizzle swizzle = caps->getReadSwizzle(format, GrColorType::kRGBA_8888);
-    return proxyProvider->createProxy(format, {kWidthHeight, kWidthHeight}, swizzle,
-                                      GrRenderable::kYes, 1, GrMipMapped::kNo,
-                                      SkBackingFit::kApprox, SkBudgeted::kYes, GrProtected::kNo);
+    return proxyProvider->createProxy(format, {kWidthHeight, kWidthHeight}, GrRenderable::kYes, 1,
+                                      GrMipMapped::kNo, SkBackingFit::kApprox, SkBudgeted::kYes,
+                                      GrProtected::kNo);
 }
 
 static sk_sp<GrTextureProxy> make_wrapped(GrContext* context) {

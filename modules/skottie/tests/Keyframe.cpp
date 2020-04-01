@@ -5,9 +5,9 @@
  * found in the LICENSE file.
  */
 
-#include "modules/skottie/src/Animator.h"
 #include "modules/skottie/src/SkottiePriv.h"
 #include "modules/skottie/src/SkottieValue.h"
+#include "modules/skottie/src/animator/Animator.h"
 #include "src/utils/SkJSON.h"
 #include "tests/Test.h"
 
@@ -31,7 +31,7 @@ public:
 
     operator bool() const { return fDidBind; }
 
-    const T& operator()(float t) { this->tick(t); return fValue; }
+    const T& operator()(float t) { this->seek(t); return fValue; }
 
 private:
     void onSync() override {}

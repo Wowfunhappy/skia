@@ -397,6 +397,7 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
         shaderCaps->fShaderDerivativeSupport = version >= GR_GL_VER(2, 0) ||
                                                ctxInfo.hasExtension("GL_OES_standard_derivatives") ||
                                                ctxInfo.hasExtension("OES_standard_derivatives");
+        shaderCaps->fIntegerSupport = (version >= GR_GL_VER(2, 0));
     }
 
     if (ctxInfo.hasExtension("GL_NV_conservative_raster")) {
@@ -634,8 +635,8 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
         fDrawIndirectSupport = version >= GR_GL_VER(3,1);
         fMultiDrawIndirectSupport = fDrawIndirectSupport &&
                                     ctxInfo.hasExtension("GL_EXT_multi_draw_indirect");
-        fBaseInstanceSupport = fDrawIndirectSupport &&
-                               ctxInfo.hasExtension("GL_EXT_base_instance");
+        fBaseInstanceSupport = ctxInfo.hasExtension("GL_EXT_base_instance") ||
+                               ctxInfo.hasExtension("GL_ANGLE_base_vertex_base_instance");
         fDrawRangeElementsSupport = version >= GR_GL_VER(3,0);
     } else if (GR_IS_GR_WEBGL(standard)) {
         // WebGL lacks indirect support, but drawRange was added in WebGL 2.0
@@ -1525,7 +1526,7 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
                 ctInfo.fColorType = GrColorType::kAlpha_8;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
                 ctInfo.fReadSwizzle = GrSwizzle::RRRR();
-                ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
+                ctInfo.fWriteSwizzle = GrSwizzle::AAAA();
                 this->setColorTypeFormat(GrColorType::kAlpha_8, GrGLFormat::kR8);
 
                 // External IO ColorTypes:
@@ -2169,7 +2170,7 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
                 ctInfo.fColorType = GrColorType::kAlpha_F16;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
                 ctInfo.fReadSwizzle = GrSwizzle::RRRR();
-                ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
+                ctInfo.fWriteSwizzle = GrSwizzle::AAAA();
                 this->setColorTypeFormat(GrColorType::kAlpha_F16, GrGLFormat::kR16F);
 
                 // External IO ColorTypes:
@@ -2253,7 +2254,7 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
                 ctInfo.fColorType = GrColorType::kAlpha_F16;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag;
                 ctInfo.fReadSwizzle = GrSwizzle::RRRR();
-                ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
+                ctInfo.fWriteSwizzle = GrSwizzle::AAAA();
 
                 int idx = static_cast<int>(GrColorType::kAlpha_F16);
                 if (fColorTypeToFormatTable[idx] == GrGLFormat::kUnknown) {
@@ -2770,7 +2771,7 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
                 ctInfo.fColorType = GrColorType::kAlpha_16;
                 ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag | ColorTypeInfo::kRenderable_Flag;
                 ctInfo.fReadSwizzle = GrSwizzle::RRRR();
-                ctInfo.fOutputSwizzle = GrSwizzle::AAAA();
+                ctInfo.fWriteSwizzle = GrSwizzle::AAAA();
                 this->setColorTypeFormat(GrColorType::kAlpha_16, GrGLFormat::kR16);
 
                 // External IO ColorTypes:
@@ -3599,6 +3600,14 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     if (kMaliT_GrGLRenderer == ctxInfo.renderer()) {
         shaderCaps->fMustObfuscateUniformColor = true;
     }
+
+    // On Mali G series GPUs, applying transfer functions in the fragment shader with half-floats
+    // produces answers that are much less accurate than expected/required. This forces full floats
+    // for some intermediate values to get acceptable results.
+    if (kMaliG_GrGLRenderer == ctxInfo.renderer()) {
+        fShaderCaps->fColorSpaceMathNeedsFloat = true;
+    }
+
 #ifdef SK_BUILD_FOR_WIN
     // Check for ANGLE on Windows, so we can workaround a bug in D3D itself (anglebug.com/2098).
     //
@@ -4102,15 +4111,6 @@ SkImage::CompressionType GrGLCaps::compressionType(const GrBackendFormat& format
     SkUNREACHABLE;
 }
 
-bool GrGLCaps::isFormatTexturableAndUploadable(GrColorType ct,
-                                               const GrBackendFormat& format) const {
-    auto glFormat = format.asGLFormat();
-    const FormatInfo& info = this->getFormatInfo(glFormat);
-
-    return this->isFormatTexturable(glFormat) &&
-           SkToBool(info.colorTypeFlags(ct) & ColorTypeInfo::kUploadData_Flag);
-}
-
 bool GrGLCaps::isFormatTexturable(const GrBackendFormat& format) const {
     return this->isFormatTexturable(format.asGLFormat());
 }
@@ -4284,12 +4284,10 @@ GrColorType GrGLCaps::getYUVAColorTypeFromBackendFormat(const GrBackendFormat& f
     SkUNREACHABLE;
 }
 
-GrBackendFormat GrGLCaps::onGetDefaultBackendFormat(GrColorType ct,
-                                                    GrRenderable renderable) const {
-    // TODO: make use of renderable.
+GrBackendFormat GrGLCaps::onGetDefaultBackendFormat(GrColorType ct) const {
     auto format = this->getFormatFromColorType(ct);
     if (format == GrGLFormat::kUnknown) {
-        return GrBackendFormat();
+        return {};
     }
     return GrBackendFormat::MakeGL(GrGLFormatToEnum(format), GR_GL_TEXTURE_2D);
 }
@@ -4333,17 +4331,20 @@ GrSwizzle GrGLCaps::getReadSwizzle(const GrBackendFormat& format, GrColorType co
             return ctInfo.fReadSwizzle;
         }
     }
-    return GrSwizzle::RGBA();
+    SkDEBUGFAIL("Illegal color type/format combination.");
+    return {};
 }
-GrSwizzle GrGLCaps::getOutputSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
+
+GrSwizzle GrGLCaps::getWriteSwizzle(const GrBackendFormat& format, GrColorType colorType) const {
     const auto& info = this->getFormatInfo(format.asGLFormat());
     for (int i = 0; i < info.fColorTypeInfoCount; ++i) {
         const auto& ctInfo = info.fColorTypeInfos[i];
         if (ctInfo.fColorType == colorType) {
-            return ctInfo.fOutputSwizzle;
+            return ctInfo.fWriteSwizzle;
         }
     }
-    return GrSwizzle::RGBA();
+    SkDEBUGFAIL("Illegal color type/format combination.");
+    return {};
 }
 
 uint64_t GrGLCaps::computeFormatKey(const GrBackendFormat& format) const {

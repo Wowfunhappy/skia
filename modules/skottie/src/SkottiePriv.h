@@ -15,10 +15,12 @@
 #include "include/core/SkTypeface.h"
 #include "include/private/SkTHash.h"
 #include "modules/skottie/include/SkottieProperty.h"
+#include "modules/skottie/src/animator/Animator.h"
 #include "modules/sksg/include/SkSGScene.h"
 #include "src/utils/SkUTF.h"
 
 #include <functional>
+#include <vector>
 
 class SkFontMgr;
 
@@ -45,7 +47,7 @@ class TextAdapter;
 class TransformAdapter2D;
 class TransformAdapter3D;
 
-using AnimatorScope = sksg::AnimatorList;
+using AnimatorScope = std::vector<sk_sp<Animator>>;
 
 class AnimationBuilder final : public SkNoncopyable {
 public:
@@ -54,7 +56,12 @@ public:
                      Animation::Builder::Stats*, const SkSize& comp_size,
                      float duration, float framerate, uint32_t flags);
 
-    std::unique_ptr<sksg::Scene> parse(const skjson::ObjectValue&);
+    struct AnimationInfo {
+        std::unique_ptr<sksg::Scene> fScene;
+        AnimatorScope                fAnimators;
+    };
+
+    AnimationInfo parse(const skjson::ObjectValue&);
 
     struct FontInfo {
         SkString                  fFamily,
@@ -112,22 +119,25 @@ public:
     void attachDiscardableAdapter(sk_sp<T> adapter) const {
         if (adapter->isStatic()) {
             // Fire off a synthetic tick to force a single SG sync before discarding.
-            adapter->tick(0);
+            adapter->seek(0);
         } else {
             fCurrentAnimatorScope->push_back(std::move(adapter));
         }
     }
 
-    template <typename T,  typename NodeType = sk_sp<sksg::RenderNode>, typename... Args>
-    NodeType attachDiscardableAdapter(Args&&... args) const {
+    template <typename T, typename... Args>
+    auto attachDiscardableAdapter(Args&&... args) const ->
+        typename std::decay<decltype(T::Make(std::forward<Args>(args)...)->node())>::type
+    {
+        using NodeType =
+        typename std::decay<decltype(T::Make(std::forward<Args>(args)...)->node())>::type;
+
+        NodeType node;
         if (auto adapter = T::Make(std::forward<Args>(args)...)) {
-            auto node = adapter->node();
+            node = adapter->node();
             this->attachDiscardableAdapter(std::move(adapter));
-
-            return std::move(node);
         }
-
-        return nullptr;
+        return node;
     }
 
     class AutoPropertyTracker {

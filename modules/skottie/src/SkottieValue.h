@@ -9,10 +9,12 @@
 #define SkottieValue_DEFINED
 
 #include "include/core/SkColor.h"
+#include "include/core/SkM44.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkString.h"
+#include "include/private/SkNoncopyable.h"
 
 #include <vector>
 
@@ -31,11 +33,12 @@ struct ValueTraits {
     static U As(const T&);
 
     static bool CanLerp(const T&, const T&);
-    static void Lerp(const T&, const T&, float, T*);
+    static bool Lerp(const T&, const T&, float, T*);
 };
 
 using ScalarValue = SkScalar;
-using VectorValue = std::vector<ScalarValue>;
+using   Vec2Value = SkV2;
+using VectorValue = std::vector<float>;
 
 struct BezierVertex {
     SkPoint fInPoint,  // "in" control point, relative to the vertex

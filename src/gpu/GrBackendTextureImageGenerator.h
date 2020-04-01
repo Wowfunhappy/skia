@@ -11,6 +11,7 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/private/GrResourceKey.h"
 #include "include/private/SkMutex.h"
+#include "src/gpu/GrTexture.h"
 
 class GrSemaphore;
 
@@ -40,7 +41,7 @@ protected:
     bool onIsValid(GrContext*) const override { return true; }
 
     GrSurfaceProxyView onGenerateTexture(GrRecordingContext*, const SkImageInfo&, const SkIPoint&,
-                                         GrMipMapped mipMapped) override;
+                                         GrMipMapped mipMapped, GrImageTexGenPolicy) override;
 
 private:
     GrBackendTextureImageGenerator(const SkImageInfo& info, GrTexture*, GrSurfaceOrigin,

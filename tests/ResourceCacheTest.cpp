@@ -8,7 +8,6 @@
 #include "include/core/SkTypes.h"
 
 #include "include/gpu/GrContext.h"
-#include "include/gpu/GrTexture.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrGpuResourceCacheAccess.h"
@@ -17,6 +16,7 @@
 #include "src/gpu/GrRenderTargetPriv.h"
 #include "src/gpu/GrResourceCache.h"
 #include "src/gpu/GrResourceProvider.h"
+#include "src/gpu/GrTexture.h"
 #include "tools/gpu/GrContextFactory.h"
 
 #include "include/core/SkCanvas.h"
@@ -212,12 +212,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceCacheWrappedResources, reporter, ctxI
     context->resetContext();
 
     sk_sp<GrTexture> borrowed(resourceProvider->wrapBackendTexture(
-            backendTextures[0], GrColorType::kRGBA_8888,
-            kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, kRead_GrIOType));
+            backendTextures[0], kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, kRead_GrIOType));
 
     sk_sp<GrTexture> adopted(resourceProvider->wrapBackendTexture(
-            backendTextures[1], GrColorType::kRGBA_8888,
-            kAdopt_GrWrapOwnership, GrWrapCacheable::kNo, kRead_GrIOType));
+            backendTextures[1], kAdopt_GrWrapOwnership, GrWrapCacheable::kNo, kRead_GrIOType));
 
     REPORTER_ASSERT(reporter, borrowed != nullptr && adopted != nullptr);
     if (!borrowed || !adopted) {
@@ -1485,11 +1483,11 @@ static void test_free_texture_messages(skiatest::Reporter* reporter) {
     for (int i = 0; i < 3; ++i) {
         backends[i] = context->createBackendTexture(16, 16, SkColorType::kRGBA_8888_SkColorType,
                                                     GrMipMapped::kNo, GrRenderable::kNo);
-        wrapped[i] = gpu->wrapBackendTexture(backends[i], GrColorType::kRGBA_8888,
+        wrapped[i] = gpu->wrapBackendTexture(backends[i],
                                              GrWrapOwnership::kBorrow_GrWrapOwnership,
-                                             (i < 2) ? GrWrapCacheable::kYes
-                                                     : GrWrapCacheable::kNo,
-                                             GrIOType::kRead_GrIOType).release();
+                                             (i < 2) ? GrWrapCacheable::kYes : GrWrapCacheable::kNo,
+                                             GrIOType::kRead_GrIOType)
+                             .release();
         wrapped[i]->setRelease(releaseProc, &freed[i]);
     }
 
@@ -1567,10 +1565,11 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceMessagesAfterAbandon, reporter, ctxIn
     GrBackendTexture backend = context->createBackendTexture(16, 16,
                                                              SkColorType::kRGBA_8888_SkColorType,
                                                              GrMipMapped::kNo, GrRenderable::kNo);
-    GrTexture* tex = gpu->wrapBackendTexture(backend, GrColorType::kRGBA_8888,
+    GrTexture* tex = gpu->wrapBackendTexture(backend,
                                              GrWrapOwnership::kBorrow_GrWrapOwnership,
                                              GrWrapCacheable::kYes,
-                                             GrIOType::kRead_GrIOType).release();
+                                             GrIOType::kRead_GrIOType)
+                             .release();
 
     auto releaseProc = [](void* ctx) {
         int* index = (int*) ctx;
@@ -1624,11 +1623,9 @@ static sk_sp<GrTextureProxy> make_mipmap_proxy(GrContext* context,
 
     const GrBackendFormat format = caps->getDefaultBackendFormat(GrColorType::kRGBA_8888,
                                                                  GrRenderable::kNo);
-    GrSwizzle swizzle = caps->getReadSwizzle(format, GrColorType::kRGBA_8888);
 
-    return proxyProvider->createProxy(format, dims, swizzle, renderable, sampleCnt,
-                                      GrMipMapped::kYes, SkBackingFit::kExact, SkBudgeted::kYes,
-                                      GrProtected::kNo);
+    return proxyProvider->createProxy(format, dims, renderable, sampleCnt, GrMipMapped::kYes,
+                                      SkBackingFit::kExact, SkBudgeted::kYes, GrProtected::kNo);
 }
 
 // Exercise GrSurface::gpuMemorySize for different combos of MSAA, RT-only,

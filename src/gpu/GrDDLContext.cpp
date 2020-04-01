@@ -71,11 +71,16 @@ private:
 
     // Add to the set of unique program infos required by this DDL
     void recordProgramInfo(const GrProgramInfo* programInfo) final {
+        if (!programInfo) {
+            return;
+        }
+
         const GrCaps* caps = this->caps();
 
         if (this->backend() == GrBackendApi::kVulkan ||
-            this->backend() == GrBackendApi::kMetal) {
-            // Currently, both Vulkan and Metal require a live renderTarget to
+            this->backend() == GrBackendApi::kMetal ||
+            this->backend() == GrBackendApi::kDawn) {
+            // Currently, Vulkan, Metal and Dawn require a live renderTarget to
             // compute the key
             return;
         }
