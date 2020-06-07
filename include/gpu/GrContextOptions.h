@@ -243,6 +243,11 @@ struct SK_API GrContextOptions {
     bool fSuppressGeometryShaders = false;
 
     /**
+     * If true, the caps will never support tessellation shaders.
+     */
+    bool fSuppressTessellationShaders = false;
+
+    /**
      * Render everything in wireframe
      */
     bool fWireframeMode = false;
@@ -256,14 +261,6 @@ struct SK_API GrContextOptions {
      * Include or exclude specific GPU path renderers.
      */
     GpuPathRenderers fGpuPathRenderers = GpuPathRenderers::kDefault;
-#endif
-
-#if SK_SUPPORT_ATLAS_TEXT
-    /**
-     * Controls whether distance field glyph vertices always have 3 components even when the view
-     * matrix does not have perspective.
-     */
-    Enable fDistanceFieldGlyphVerticesAlwaysHaveW = Enable::kDefault;
 #endif
 
     GrDriverBugWorkarounds fDriverBugWorkarounds;

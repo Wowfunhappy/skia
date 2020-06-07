@@ -34,15 +34,26 @@ public:
         (void)clampRGBOutput;
         auto premulOutput = _outer.premulOutput;
         (void)premulOutput;
-        mVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf4x4_GrSLType, "m");
-        vVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf4_GrSLType, "v");
+        mVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, kHalf4x4_GrSLType,
+                                                "m");
+        vVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, kHalf4_GrSLType,
+                                                "v");
+        SkString _input605 = SkStringPrintf("%s", args.fInputColor);
+        SkString _sample605;
+        if (_outer.inputFP_index >= 0) {
+            _sample605 = this->invokeChild(_outer.inputFP_index, _input605.c_str(), args);
+        } else {
+            _sample605 = "half4(1)";
+        }
         fragBuilder->codeAppendf(
-                "half4 inputColor = %s;\n@if (%s) {\n    half nonZeroAlpha = max(inputColor.w, "
-                "9.9999997473787516e-05);\n    inputColor = half4(inputColor.xyz / nonZeroAlpha, "
-                "inputColor.w);\n}\n%s = %s * inputColor + %s;\n@if (%s) {\n    %s = clamp(%s, "
-                "0.0, 1.0);\n} else {\n    %s.w = clamp(%s.w, 0.0, 1.0);\n}\n@if (%s) {\n    "
-                "%s.xyz *= %s.w;\n}\n",
-                args.fInputColor, (_outer.unpremulInput ? "true" : "false"), args.fOutputColor,
+                "half4 inputColor = %s ? %s : %s;\n@if (%s) {\n    half4 inlineResult696;\n    "
+                "half4 inlineArg696_0 = inputColor;\n    {\n        inlineResult696 = "
+                "half4(inlineArg696_0.xyz / max(inlineArg696_0.w, 9.9999997473787516e-05), "
+                "inlineArg696_0.w);\n    }\n    inputColor = inlineResult696;\n\n}\n%s = %s * "
+                "inputColor + %s;\n@if (%s) {\n    %s = clamp(%s, 0.0, 1.0);\n} else {\n    %s.w = "
+                "clamp(%s.w, 0.0, 1.0);\n}\n@if (%s) {\n    %s.xyz *= %s.w;\n}\n",
+                _outer.inputFP_index >= 0 ? "true" : "false", _sample605.c_str(), args.fInputColor,
+                (_outer.unpremulInput ? "true" : "false"), args.fOutputColor,
                 args.fUniformHandler->getUniformCStr(mVar),
                 args.fUniformHandler->getUniformCStr(vVar),
                 (_outer.clampRGBOutput ? "true" : "false"), args.fOutputColor, args.fOutputColor,
@@ -94,11 +105,20 @@ bool GrColorMatrixFragmentProcessor::onIsEqual(const GrFragmentProcessor& other)
 GrColorMatrixFragmentProcessor::GrColorMatrixFragmentProcessor(
         const GrColorMatrixFragmentProcessor& src)
         : INHERITED(kGrColorMatrixFragmentProcessor_ClassID, src.optimizationFlags())
+        , inputFP_index(src.inputFP_index)
         , m(src.m)
         , v(src.v)
         , unpremulInput(src.unpremulInput)
         , clampRGBOutput(src.clampRGBOutput)
-        , premulOutput(src.premulOutput) {}
+        , premulOutput(src.premulOutput) {
+    if (inputFP_index >= 0) {
+        auto clone = src.childProcessor(inputFP_index).clone();
+        if (src.childProcessor(inputFP_index).isSampledWithExplicitCoords()) {
+            clone->setSampledWithExplicitCoords();
+        }
+        this->registerChildProcessor(std::move(clone));
+    }
+}
 std::unique_ptr<GrFragmentProcessor> GrColorMatrixFragmentProcessor::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrColorMatrixFragmentProcessor(*this));
 }
@@ -113,6 +133,6 @@ std::unique_ptr<GrFragmentProcessor> GrColorMatrixFragmentProcessor::TestCreate(
     bool unpremul = d->fRandom->nextBool();
     bool clampRGB = d->fRandom->nextBool();
     bool premul = d->fRandom->nextBool();
-    return Make(m, unpremul, clampRGB, premul);
+    return Make(/*inputFP=*/nullptr, m, unpremul, clampRGB, premul);
 }
 #endif

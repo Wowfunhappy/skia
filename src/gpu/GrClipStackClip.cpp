@@ -26,9 +26,8 @@
 #include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/effects/GrConvexPolyEffect.h"
 #include "src/gpu/effects/GrRRectEffect.h"
-#include "src/gpu/effects/GrTextureDomain.h"
 #include "src/gpu/effects/generated/GrDeviceSpaceEffect.h"
-#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/geometry/GrStyledShape.h"
 
 typedef SkClipStack::Element Element;
 typedef GrReducedClip::InitialState InitialState;
@@ -63,18 +62,14 @@ bool GrClipStackClip::isRRect(const SkRect& origRTBounds, SkRRect* rr, GrAA* aa)
     return false;
 }
 
-void GrClipStackClip::getConservativeBounds(int width, int height, SkIRect* devResult,
-                                            bool* isIntersectionOfRects) const {
-    if (!fStack) {
-        devResult->setXYWH(0, 0, width, height);
-        if (isIntersectionOfRects) {
-            *isIntersectionOfRects = true;
-        }
-        return;
+SkIRect GrClipStackClip::getConservativeBounds(int width, int height) const {
+    if (fStack) {
+        SkRect devBounds;
+        fStack->getConservativeBounds(0, 0, width, height, &devBounds);
+        return devBounds.roundOut();
+    } else {
+        return this->GrClip::getConservativeBounds(width, height);
     }
-    SkRect devBounds;
-    fStack->getConservativeBounds(0, 0, width, height, &devBounds, isIntersectionOfRects);
-    devBounds.roundOut(devResult);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -84,7 +79,7 @@ static std::unique_ptr<GrFragmentProcessor> create_fp_for_mask(GrSurfaceProxyVie
                                                                const GrCaps& caps) {
     GrSamplerState samplerState(GrSamplerState::WrapMode::kClampToBorder,
                                 GrSamplerState::Filter::kNearest);
-    auto m = SkMatrix::MakeTrans(-devBound.fLeft, -devBound.fTop);
+    auto m = SkMatrix::Translate(-devBound.fLeft, -devBound.fTop);
     auto subset = SkRect::Make(devBound.size());
     // We scissor to devBounds. The mask's texel centers are aligned to device space
     // pixel centers. Hence this domain of texture coordinates.
@@ -131,13 +126,14 @@ bool GrClipStackClip::PathNeedsSWRenderer(GrRecordingContext* context,
                 needsStencil ? GrPathRendererChain::DrawType::kStencilAndColor
                              : GrPathRendererChain::DrawType::kColor;
 
-        GrShape shape(path, GrStyle::SimpleFill());
+        GrStyledShape shape(path, GrStyle::SimpleFill());
         GrPathRenderer::CanDrawPathArgs canDrawArgs;
         canDrawArgs.fCaps = context->priv().caps();
         canDrawArgs.fProxy = renderTargetContext->asRenderTargetProxy();
         canDrawArgs.fClipConservativeBounds = &scissorRect;
         canDrawArgs.fViewMatrix = &viewMatrix;
         canDrawArgs.fShape = &shape;
+        canDrawArgs.fPaint = nullptr;
         canDrawArgs.fAAType = aaType;
         SkASSERT(!renderTargetContext->wrapsVkSecondaryCB());
         canDrawArgs.fTargetIsWrappedVkSecondaryCB = false;
@@ -257,7 +253,8 @@ bool GrClipStackClip::apply(GrRecordingContext* context, GrRenderTargetContext* 
     // The opsTask ID must not be looked up until AFTER producing the clip mask (if any). That step
     // can cause a flush or otherwise change which opstask our draw is going into.
     uint32_t opsTaskID = renderTargetContext->getOpsTask()->uniqueID();
-    if (auto clipFPs = reducedClip.finishAndDetachAnalyticFPs(ccpr, opsTaskID)) {
+    if (auto clipFPs = reducedClip.finishAndDetachAnalyticFPs(context, *fMatrixProvider, ccpr,
+                                                              opsTaskID)) {
         out->addCoverageFP(std::move(clipFPs));
     }
 
@@ -307,17 +304,7 @@ bool GrClipStackClip::applyClipMask(GrRecordingContext* context,
         }
     }
 
-    // This relies on the property that a reduced sub-rect of the last clip will contain all the
-    // relevant window rectangles that were in the last clip. This subtle requirement will go away
-    // after clipping is overhauled.
-    if (renderTargetContext->priv().mustRenderClip(reducedClip.maskGenID(), reducedClip.scissor(),
-                                                   reducedClip.numAnalyticFPs())) {
-        reducedClip.drawStencilClipMask(context, renderTargetContext);
-        renderTargetContext->priv().setLastClip(reducedClip.maskGenID(), reducedClip.scissor(),
-                                                reducedClip.numAnalyticFPs());
-    }
-    // GrAppliedClip doesn't need to figure numAnalyticFPs into its key (used by operator==) because
-    // it verifies the FPs are also equal.
+    reducedClip.drawStencilClipMask(context, renderTargetContext);
     out->hardClip().addStencilClip(reducedClip.maskGenID());
     return true;
 }
@@ -355,7 +342,8 @@ static void add_invalidate_on_pop_message(GrRecordingContext* context,
 static constexpr auto kMaskOrigin = kTopLeft_GrSurfaceOrigin;
 
 static GrSurfaceProxyView find_mask(GrProxyProvider* provider, const GrUniqueKey& key) {
-    return provider->findCachedProxyWithColorTypeFallback(key, kMaskOrigin, GrColorType::kAlpha_8);
+    return provider->findCachedProxyWithColorTypeFallback(key, kMaskOrigin, GrColorType::kAlpha_8,
+                                                          1);
 }
 
 GrSurfaceProxyView GrClipStackClip::createAlphaClipMask(GrRecordingContext* context,
@@ -449,8 +437,7 @@ static void draw_clip_elements_to_mask_helper(GrSWMaskHelper& helper, const Elem
             SkPath clipPath;
             element->asDeviceSpacePath(&clipPath);
             clipPath.toggleInverseFillType();
-            GrShape shape(clipPath, GrStyle::SimpleFill());
-            helper.drawShape(shape, translate, SkRegion::kReplace_Op, aa, 0x00);
+            helper.drawShape(GrShape(clipPath), translate, SkRegion::kReplace_Op, aa, 0x00);
             continue;
         }
 
@@ -458,11 +445,12 @@ static void draw_clip_elements_to_mask_helper(GrSWMaskHelper& helper, const Elem
         // the geometry so they can just be drawn normally
         if (Element::DeviceSpaceType::kRect == element->getDeviceSpaceType()) {
             helper.drawRect(element->getDeviceSpaceRect(), translate, (SkRegion::Op)op, aa, 0xFF);
+        } else if (Element::DeviceSpaceType::kRRect == element->getDeviceSpaceType()) {
+            helper.drawRRect(element->getDeviceSpaceRRect(), translate, (SkRegion::Op)op, aa, 0xFF);
         } else {
             SkPath path;
             element->asDeviceSpacePath(&path);
-            GrShape shape(path, GrStyle::SimpleFill());
-            helper.drawShape(shape, translate, (SkRegion::Op)op, aa, 0xFF);
+            helper.drawShape(GrShape(path), translate, (SkRegion::Op)op, aa, 0xFF);
         }
     }
 }

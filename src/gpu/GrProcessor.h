@@ -117,6 +117,7 @@ public:
         kGrLumaColorFilterEffect_ClassID,
         kGrMagnifierEffect_ClassID,
         kGrMatrixConvolutionEffect_ClassID,
+        kGrMatrixEffect_ClassID,
         kGrMeshTestProcessor_ClassID,
         kGrMorphologyEffect_ClassID,
         kGrMixerEffect_ClassID,
@@ -161,9 +162,10 @@ public:
         kTessellate_GrFillBoundingBoxShader_ClassID,
         kTessellate_GrFillCubicHullShader_ClassID,
         kTessellate_GrFillTriangleShader_ClassID,
-        kTessellate_GrStencilCubicShader_ClassID,
+        kTessellate_GrMiddleOutCubicShader_ClassID,
         kTessellate_GrStencilTriangleShader_ClassID,
-        kTessellate_GrStencilWedgeShader_ClassID,
+        kTessellate_GrTessellateCubicShader_ClassID,
+        kTessellate_GrTessellateWedgeShader_ClassID,
         kTestFP_ClassID,
         kTestRectOp_ClassID,
         kFlatNormalsFP_ClassID,
@@ -175,8 +177,8 @@ public:
 
     virtual ~GrProcessor() = default;
 
-    /** Human-meaningful string to identify this prcoessor; may be embedded in generated shader
-        code. */
+    /** Human-meaningful string to identify this processor; may be embedded in generated shader
+        code and must be a legal SkSL identifier prefix. */
     virtual const char* name() const = 0;
 
     /** Human-readable dump of all information */

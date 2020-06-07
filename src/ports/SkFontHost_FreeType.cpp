@@ -933,7 +933,7 @@ SkScalerContext_FreeType::SkScalerContext_FreeType(sk_sp<SkTypeface> typeface,
     }
 
     using DoneFTSize = SkFunctionWrapper<decltype(FT_Done_Size), FT_Done_Size>;
-    std::unique_ptr<skstd::remove_pointer_t<FT_Size>, DoneFTSize> ftSize([this]() -> FT_Size {
+    std::unique_ptr<std::remove_pointer_t<FT_Size>, DoneFTSize> ftSize([this]() -> FT_Size {
         FT_Size size;
         FT_Error err = FT_New_Size(fFaceRec->fFace.get(), &size);
         if (err != 0) {
@@ -1817,7 +1817,7 @@ SkTypeface_FreeType::Scanner::~Scanner() {
 FT_Face SkTypeface_FreeType::Scanner::openFace(SkStreamAsset* stream, int ttcIndex,
                                                FT_Stream ftStream) const
 {
-    if (fLibrary == nullptr) {
+    if (fLibrary == nullptr || stream == nullptr) {
         return nullptr;
     }
 

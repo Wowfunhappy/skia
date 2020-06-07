@@ -322,17 +322,17 @@ void DebugCanvas::onClipShader(sk_sp<SkShader> cs, SkClipOp op) {
     this->addDrawCommand(new ClipShaderCommand(std::move(cs), op));
 }
 
-void DebugCanvas::didConcat44(const SkScalar m[16]) {
+void DebugCanvas::didConcat44(const SkM44& m) {
     // TODO
     this->INHERITED::didConcat44(m);
 }
 
 void DebugCanvas::didScale(SkScalar x, SkScalar y) {
-    this->didConcat(SkMatrix::MakeScale(x, y));
+    this->didConcat(SkMatrix::Scale(x, y));
 }
 
 void DebugCanvas::didTranslate(SkScalar x, SkScalar y) {
-    this->didConcat(SkMatrix::MakeTrans(x, y));
+    this->didConcat(SkMatrix::Translate(x, y));
 }
 
 void DebugCanvas::didConcat(const SkMatrix& matrix) {
@@ -490,24 +490,12 @@ void DebugCanvas::onDrawPatch(const SkPoint  cubics[12],
     this->addDrawCommand(new DrawPatchCommand(cubics, colors, texCoords, bmode, paint));
 }
 
-#ifdef SK_SUPPORT_LEGACY_DRAWVERTS_VIRTUAL
-void DebugCanvas::onDrawVerticesObject(const SkVertices*      vertices,
-                                       const SkVertices::Bone bones[],
-                                       int                    boneCount,
-                                       SkBlendMode            bmode,
-                                       const SkPaint&         paint) {
-    // TODO: ANIMATION NOT LOGGED
-    this->addDrawCommand(
-            new DrawVerticesCommand(sk_ref_sp(const_cast<SkVertices*>(vertices)), bmode, paint));
-}
-#else
 void DebugCanvas::onDrawVerticesObject(const SkVertices*      vertices,
                                        SkBlendMode            bmode,
                                        const SkPaint&         paint) {
     this->addDrawCommand(
             new DrawVerticesCommand(sk_ref_sp(const_cast<SkVertices*>(vertices)), bmode, paint));
 }
-#endif
 
 void DebugCanvas::onDrawAtlas(const SkImage*  image,
                               const SkRSXform xform[],

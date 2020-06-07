@@ -2,22 +2,32 @@
 #ifndef Run_DEFINED
 #define Run_DEFINED
 
+#include "include/core/SkFont.h"
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkPoint.h"
-#include "include/core/SkTextBlob.h"
+#include "include/core/SkRect.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkTArray.h"
 #include "modules/skparagraph/include/DartTypes.h"
 #include "modules/skparagraph/include/TextStyle.h"
 #include "modules/skshaper/include/SkShaper.h"
 #include "src/core/SkSpan.h"
-#include "src/core/SkTraceEvent.h"
-#include <functional>  // std::function
+
+#include <math.h>
+#include <algorithm>
+#include <functional>
+#include <limits>
+#include <tuple>
+
+class SkTextBlobBuilder;
 
 namespace skia {
 namespace textlayout {
 
-class ParagraphImpl;
 class Cluster;
-class Run;
+class InternalLineMetrics;
+class ParagraphImpl;
 
 typedef size_t RunIndex;
 const size_t EMPTY_RUN = EMPTY_INDEX;
@@ -33,13 +43,18 @@ typedef SkRange<GraphemeIndex> GraphemeRange;
 typedef size_t CodepointIndex;
 typedef SkRange<CodepointIndex> CodepointRange;
 
-struct RunShifts {
-    RunShifts() { }
-    RunShifts(size_t count) { fShifts.push_back_n(count, 0.0); }
-    SkSTArray<128, SkScalar, true> fShifts;
+typedef size_t GlyphIndex;
+typedef SkRange<GlyphIndex> GlyphRange;
+
+// LTR: [start: end) where start <= end
+// RTL: [end: start) where start >= end
+class DirText {
+    DirText(bool dir, size_t s, size_t e) : start(s), end(e) { }
+    bool isLeftToRight() const { return start <= end; }
+    size_t start;
+    size_t end;
 };
 
-class InternalLineMetrics;
 class Run {
 public:
     Run() = default;
@@ -49,7 +64,11 @@ public:
         SkScalar lineHeight,
         size_t index,
         SkScalar shiftX);
-    ~Run() {}
+    Run(const Run&) = default;
+    Run& operator=(const Run&) = default;
+    Run(Run&&) = default;
+    Run& operator=(Run&&) = default;
+    ~Run() = default;
 
     void setMaster(ParagraphImpl* master) { fMaster = master; }
 
@@ -76,6 +95,8 @@ public:
     }
     SkVector offset() const { return fOffset; }
     SkScalar ascent() const { return fFontMetrics.fAscent; }
+    SkScalar descent() const { return fFontMetrics.fDescent; }
+    SkScalar leading() const { return fFontMetrics.fLeading; }
     SkScalar correctAscent() const {
 
         if (fHeightMultiplier == 0) {
@@ -102,8 +123,9 @@ public:
     }
     const SkFont& font() const { return fFont; }
     bool leftToRight() const { return fBidiLevel % 2 == 0; }
+    TextDirection getTextDirection() const { return leftToRight() ? TextDirection::kLtr : TextDirection::kRtl; }
     size_t index() const { return fIndex; }
-    SkScalar lineHeight() const { return fHeightMultiplier; }
+    SkScalar heightMultiplier() const { return fHeightMultiplier; }
     PlaceholderStyle* placeholderStyle() const;
     bool isPlaceholder() const { return fPlaceholderIndex != std::numeric_limits<size_t>::max(); }
     size_t clusterIndex(size_t pos) const { return fClusterIndexes[pos]; }
@@ -128,23 +150,27 @@ public:
     SkScalar addSpacesEvenly(SkScalar space, Cluster* cluster);
     void shift(const Cluster* cluster, SkScalar offset);
 
-    SkScalar calculateHeight() const {
-        if (fHeightMultiplier == 0) {
-            return fFontMetrics.fDescent - fFontMetrics.fAscent;
-        }
-        return fHeightMultiplier * fFont.getSize();
+    SkScalar calculateHeight(LineMetricStyle ascentStyle, LineMetricStyle descentStyle) const {
+        auto ascent = ascentStyle == LineMetricStyle::Typographic ? this->ascent()
+                                    : this->correctAscent();
+        auto descent = descentStyle == LineMetricStyle::Typographic ? this->descent()
+                                      : this->correctDescent();
+        return descent - ascent;
     }
     SkScalar calculateWidth(size_t start, size_t end, bool clip) const;
 
     void copyTo(SkTextBlobBuilder& builder, size_t pos, size_t size, SkVector offset) const;
 
-    using ClusterVisitor = std::function<void(size_t glyphStart,
-                                              size_t glyphEnd,
-                                              size_t charStart,
-                                              size_t charEnd,
-                                              SkScalar width,
-                                              SkScalar height)>;
-    void iterateThroughClustersInTextOrder(const ClusterVisitor& visitor);
+    using ClusterTextVisitor = std::function<void(size_t glyphStart,
+                                                  size_t glyphEnd,
+                                                  size_t charStart,
+                                                  size_t charEnd,
+                                                  SkScalar width,
+                                                  SkScalar height)>;
+    void iterateThroughClustersInTextOrder(const ClusterTextVisitor& visitor);
+
+    using ClusterVisitor = std::function<void(Cluster* cluster)>;
+    void iterateThroughClusters(const ClusterVisitor& visitor);
 
     std::tuple<bool, ClusterIndex, ClusterIndex> findLimitingClusters(TextRange text, bool onlyInnerClusters) const;
     SkSpan<const SkGlyphID> glyphs() const {
@@ -206,9 +232,9 @@ private:
     bool fSpaced;
 };
 
-struct Codepoint {
+struct CodepointRepresentation {
 
-  Codepoint(GraphemeIndex graphemeIndex, TextIndex textIndex, size_t index)
+  CodepointRepresentation(GraphemeIndex graphemeIndex, TextIndex textIndex, size_t index)
     : fGrapheme(graphemeIndex), fTextIndex(textIndex), fIndex(index) { }
 
   GraphemeIndex fGrapheme;
@@ -227,13 +253,9 @@ class Cluster {
 public:
     enum BreakType {
         None,
-        CharacterBoundary,       // not yet in use (UBRK_CHARACTER)
-        WordBoundary,            // calculated for all clusters (UBRK_WORD)
-        WordBreakWithoutHyphen,  // calculated only for hyphenated words
-        WordBreakWithHyphen,
-        SoftLineBreak,  // calculated for all clusters (UBRK_LINE)
+        GraphemeBreak,  // calculated for all clusters (UBRK_CHARACTER)
+        SoftLineBreak,  // calculated for all clusters (UBRK_LINE & UBRK_CHARACTER)
         HardLineBreak,  // calculated for all clusters (UBRK_LINE)
-        GraphemeBreak,
     };
 
     Cluster()
@@ -246,9 +268,7 @@ public:
             , fWidth()
             , fSpacing(0)
             , fHeight()
-            , fHalfLetterSpacing(0.0)
-            , fWhiteSpaces(false)
-            , fBreakType(None) {}
+            , fHalfLetterSpacing(0.0) {}
 
     Cluster(ParagraphImpl* master,
             RunIndex runIndex,
@@ -273,14 +293,11 @@ public:
         fWidth += shift;
     }
 
-    void setBreakType(BreakType type) { fBreakType = type; }
-    bool isWhitespaces() const { return fWhiteSpaces; }
-    bool canBreakLineAfter() const {
-        return fBreakType == SoftLineBreak || fBreakType == HardLineBreak;
-    }
-    bool isHardBreak() const { return fBreakType == HardLineBreak; }
-    bool isSoftBreak() const { return fBreakType == SoftLineBreak; }
-    bool isGraphemeBreak() const { return fBreakType == GraphemeBreak; }
+    bool isWhitespaces() const { return fIsWhiteSpaces; }
+    bool isHardBreak() const;
+    bool isSoftBreak() const;
+    bool isGraphemeBreak() const;
+    bool canBreakLineAfter() const { return isHardBreak() || isSoftBreak(); }
     size_t startPos() const { return fStart; }
     size_t endPos() const { return fEnd; }
     SkScalar width() const { return fWidth; }
@@ -299,8 +316,6 @@ public:
     SkFont font() const;
 
     SkScalar trimmedWidth(size_t pos) const;
-
-    void setIsWhiteSpaces();
 
     bool contains(TextIndex ch) const { return ch >= fTextRange.start && ch < fTextRange.end; }
 
@@ -327,8 +342,7 @@ private:
     SkScalar fSpacing;
     SkScalar fHeight;
     SkScalar fHalfLetterSpacing;
-    bool fWhiteSpaces;
-    BreakType fBreakType;
+    bool fIsWhiteSpaces;
 };
 
 class InternalLineMetrics {
@@ -396,8 +410,9 @@ public:
         }
     }
 
-    SkScalar runTop(const Run* run) const {
-        return fLeading / 2 - fAscent + run->ascent() + delta();
+    SkScalar runTop(const Run* run, LineMetricStyle ascentStyle) const {
+        return fLeading / 2 - fAscent +
+          (ascentStyle == LineMetricStyle::Typographic ? run->ascent() : run->correctAscent()) + delta();
     }
 
     SkScalar height() const {
@@ -412,10 +427,12 @@ public:
     SkScalar descent() const { return fDescent; }
     SkScalar leading() const { return fLeading; }
     void setForceStrut(bool value) { fForceStrut = value; }
+    bool getForceStrut() const { return fForceStrut; }
 
 private:
 
     friend class TextWrapper;
+    friend class TextLine;
 
     SkScalar fAscent;
     SkScalar fDescent;

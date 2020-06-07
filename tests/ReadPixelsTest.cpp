@@ -19,6 +19,7 @@
 #include "src/core/SkMathPriv.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrImageInfo.h"
+#include "src/gpu/GrSurfaceContext.h"
 #include "tests/Test.h"
 #include "tests/TestUtils.h"
 #include "tools/ToolUtils.h"
@@ -947,6 +948,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(AsyncReadPixels, reporter, ctxInfo) {
         // Rescale quality and linearity don't matter since we're doing a non-scaling readback.
         surface->asyncRescaleAndReadPixels(pixels.info(), rect, SkSurface::RescaleGamma::kSrc,
                                            kNone_SkFilterQuality, async_callback, &context);
+        surface->getContext()->submit();
         while (!context.fCalled) {
             surface->getCanvas()->getGrContext()->checkAsyncWorkCompletion();
         }
@@ -1064,6 +1066,7 @@ DEF_GPUTEST(AsyncReadPixelsContextShutdown, reporter, options) {
                                                     kNone_SkFilterQuality, &async_callback,
                                                     &cbContext);
                 }
+                surf->getContext()->submit();
                 while (!cbContext.fCalled) {
                     context->checkAsyncWorkCompletion();
                 }

@@ -53,7 +53,7 @@ struct Program {
 
             Value(float f)
             : fKind(kFloat_Kind)
-            , fValue(f) {}
+            , fValueF(f) {}
 
             std::unique_ptr<Expression> literal(const Context& context, int offset) const {
                 switch (fKind) {
@@ -67,8 +67,8 @@ struct Program {
                                                                           fValue));
                     case Program::Settings::Value::kFloat_Kind:
                         return std::unique_ptr<Expression>(new FloatLiteral(context,
-                                                                          offset,
-                                                                          fValue));
+                                                                            offset,
+                                                                            fValueF));
                     default:
                         SkASSERT(false);
                         return nullptr;
@@ -81,16 +81,16 @@ struct Program {
                 kFloat_Kind,
             } fKind;
 
-            int fValue;
+            union {
+                int   fValue;  // for kBool_Kind and kInt_Kind
+                float fValueF; // for kFloat_Kind
+            };
         };
 
 #if defined(SKSL_STANDALONE) || !SK_SUPPORT_GPU
         const StandaloneShaderCaps* fCaps = &standaloneCaps;
 #else
         const GrShaderCaps* fCaps = nullptr;
-#ifdef SK_VULKAN
-        const GrVkCaps* fVkCaps = nullptr;
-#endif
 #endif
         // if false, sk_FragCoord is exactly the same as gl_FragCoord. If true, the y coordinate
         // must be flipped.
@@ -107,6 +107,14 @@ struct Program {
         // if the program needs to create an RTHeight uniform, this is its offset in the uniform
         // buffer
         int fRTHeightOffset = -1;
+        // if the program needs to create an RTHeight uniform and is creating spriv, this is the
+        // binding and set number of the uniform buffer.
+        int fRTHeightBinding = -1;
+        int fRTHeightSet = -1;
+        // If true, remove any uncalled functions other than main(). Note that a function which
+        // starts out being used may end up being uncalled after optimization.
+        bool fRemoveDeadFunctions = true;
+
         std::unordered_map<String, Value> fArgs;
     };
 

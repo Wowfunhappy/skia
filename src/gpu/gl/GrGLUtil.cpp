@@ -480,33 +480,38 @@ GrGLRenderer GrGLGetRendererFromStrings(const char* rendererString,
         static constexpr char kRadeonStr[] = "Radeon ";
         if (const char* amdString = strstr(rendererString, kRadeonStr)) {
             amdString += strlen(kRadeonStr);
-            char amdGeneration, amdTier, amdRevision;
             // Sometimes there is a (TM) and sometimes not.
             static constexpr char kTMStr[] = "(TM) ";
             if (!strncmp(amdString, kTMStr, strlen(kTMStr))) {
                 amdString += strlen(kTMStr);
             }
-            n = sscanf(amdString, "R9 M%c%c%c", &amdGeneration, &amdTier, &amdRevision);
-            if (3 == n) {
-                if ('3' == amdGeneration) {
-                    return kAMDRadeonR9M3xx_GrGLRenderer;
-                } else if ('4' == amdGeneration) {
-                    return kAMDRadeonR9M4xx_GrGLRenderer;
-                }
-            }
 
             char amd0, amd1, amd2;
+            int amdModel;
+            n = sscanf(amdString, "R9 M3%c%c", &amd0, &amd1);
+            if (2 == n && isdigit(amd0) && isdigit(amd1)) {
+                return kAMDRadeonR9M3xx_GrGLRenderer;
+            }
+
+            n = sscanf(amdString, "R9 M4%c%c", &amd0, &amd1);
+            if (2 == n && isdigit(amd0) && isdigit(amd1)) {
+                return kAMDRadeonR9M4xx_GrGLRenderer;
+            }
+
             n = sscanf(amdString, "HD 7%c%c%c Series", &amd0, &amd1, &amd2);
-            if (3 == n) {
+            if (3 == n && isdigit(amd0) && isdigit(amd1) && isdigit(amd2)) {
                 return kAMDRadeonHD7xxx_GrGLRenderer;
             }
 
-            int amdVegaModel=0;
-            n = sscanf(amdString, "Pro Vega %i", &amdVegaModel);
+            n = sscanf(amdString, "Pro 5%c%c%c", &amd0, &amd1, &amd2);
+            if (3 == n && isdigit(amd0) && isdigit(amd1) && isdigit(amd2)) {
+                return kAMDRadeonPro5xxx_GrGLRenderer;
+            }
+
+            n = sscanf(amdString, "Pro Vega %i", &amdModel);
             if (1 == n) {
                 return kAMDRadeonProVegaxx_GrGLRenderer;
             }
-
         }
 
         if (strstr(rendererString, "llvmpipe")) {
@@ -532,16 +537,16 @@ GrGLRenderer GrGLGetRendererFromStrings(const char* rendererString,
     return kOther_GrGLRenderer;
 }
 
-void GrGLGetANGLEInfoFromString(const char* rendererString, GrGLANGLEBackend* backend,
-                                GrGLANGLEVendor* vendor, GrGLANGLERenderer* renderer) {
-    *backend = GrGLANGLEBackend::kUnknown;
-    *vendor = GrGLANGLEVendor::kUnknown;
-    *renderer = GrGLANGLERenderer::kUnknown;
+std::tuple<GrGLANGLEBackend, GrGLANGLEVendor, GrGLANGLERenderer> GrGLGetANGLEInfoFromString(
+        const char* rendererString) {
+    auto backend = GrGLANGLEBackend::kUnknown;
+    auto vendor = GrGLANGLEVendor::kUnknown;
+    auto renderer = GrGLANGLERenderer::kUnknown;
     if (!is_renderer_angle(rendererString)) {
-        return;
+        return {backend, vendor, renderer};
     }
     if (strstr(rendererString, "Intel")) {
-        *vendor = GrGLANGLEVendor::kIntel;
+        vendor = GrGLANGLEVendor::kIntel;
 
         const char* modelStr;
         int modelNumber;
@@ -551,17 +556,17 @@ void GrGLGetANGLEInfoFromString(const char* rendererString, GrGLANGLEBackend* ba
             switch (modelNumber) {
                 case 2000:
                 case 3000:
-                    *renderer = GrGLANGLERenderer::kSandyBridge;
+                    renderer = GrGLANGLERenderer::kSandyBridge;
                     break;
                 case 4000:
                 case 2500:
-                    *renderer = GrGLANGLERenderer::kIvyBridge;
+                    renderer = GrGLANGLERenderer::kIvyBridge;
                     break;
                 case 510:
                 case 515:
                 case 520:
                 case 530:
-                    *renderer = GrGLANGLERenderer::kSkylake;
+                    renderer = GrGLANGLERenderer::kSkylake;
                     break;
             }
         } else if ((modelStr = strstr(rendererString, "Iris")) &&
@@ -573,18 +578,21 @@ void GrGLGetANGLEInfoFromString(const char* rendererString, GrGLANGLEBackend* ba
                 case 550:
                 case 555:
                 case 580:
-                    *renderer = GrGLANGLERenderer::kSkylake;
+                    renderer = GrGLANGLERenderer::kSkylake;
                     break;
             }
         }
+    } else if (strstr(rendererString, "NVIDIA")) {
+        vendor = GrGLANGLEVendor::kNVIDIA;
     }
     if (strstr(rendererString, "Direct3D11")) {
-        *backend = GrGLANGLEBackend::kD3D11;
+        backend = GrGLANGLEBackend::kD3D11;
     } else if (strstr(rendererString, "Direct3D9")) {
-        *backend = GrGLANGLEBackend::kD3D9;
+        backend = GrGLANGLEBackend::kD3D9;
     } else if (strstr(rendererString, "OpenGL")) {
-        *backend = GrGLANGLEBackend::kOpenGL;
+        backend = GrGLANGLEBackend::kOpenGL;
     }
+    return {backend, vendor, renderer};
 }
 
 GrGLVersion GrGLGetVersion(const GrGLInterface* gl) {
@@ -610,6 +618,13 @@ GrGLRenderer GrGLGetRenderer(const GrGLInterface* gl) {
     GR_GL_CALL_RET(gl, rendererString, GetString(GR_GL_RENDERER));
 
     return GrGLGetRendererFromStrings((const char*)rendererString, gl->fExtensions);
+}
+
+std::tuple<GrGLANGLEBackend, GrGLANGLEVendor, GrGLANGLERenderer> GrGLGetANGLEInfo(
+        const GrGLInterface* gl) {
+    const GrGLubyte* rendererString;
+    GR_GL_CALL_RET(gl, rendererString, GetString(GR_GL_RENDERER));
+    return GrGLGetANGLEInfoFromString((const char*)rendererString);
 }
 
 GrGLenum GrToGLStencilFunc(GrStencilTest test) {

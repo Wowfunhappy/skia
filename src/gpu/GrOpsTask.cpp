@@ -8,8 +8,8 @@
 #include "src/gpu/GrOpsTask.h"
 
 #include "include/private/GrRecordingContext.h"
-#include "src/core/SkExchange.h"
 #include "src/core/SkRectPriv.h"
+#include "src/core/SkScopeExit.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrCaps.h"
@@ -36,6 +36,10 @@ static const int kMaxOpChainDistance = 10;
 ////////////////////////////////////////////////////////////////////////////////
 
 using DstProxyView = GrXferProcessor::DstProxyView;
+
+////////////////////////////////////////////////////////////////////////////////
+
+GrOpsTaskClosedObserver::~GrOpsTaskClosedObserver() = default;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -268,7 +272,7 @@ bool GrOpsTask::OpChain::tryConcat(
                 SkASSERT(first);
                 return false;
             case GrOp::CombineResult::kMayChain:
-                fList = DoConcat(std::move(fList), skstd::exchange(*list, List()), caps, arenas,
+                fList = DoConcat(std::move(fList), std::exchange(*list, List()), caps, arenas,
                                  auditTrail);
                 // The above exchange cleared out 'list'. The list needs to be empty now for the
                 // loop to terminate.
@@ -359,7 +363,6 @@ GrOpsTask::GrOpsTask(GrRecordingContext::Arenas arenas,
         : GrRenderTask(std::move(view))
         , fArenas(arenas)
         , fAuditTrail(auditTrail)
-        , fLastClipStackGenID(SK_InvalidUniqueID)
         SkDEBUGCODE(, fNumClips(0)) {
     fTargetView.proxy()->setLastRenderTask(this);
 }
@@ -375,7 +378,15 @@ GrOpsTask::~GrOpsTask() {
     this->deleteOps();
 }
 
-////////////////////////////////////////////////////////////////////////////////
+void GrOpsTask::removeClosedObserver(GrOpsTaskClosedObserver* observer) {
+    SkASSERT(observer);
+    for (int i = 0; i < fClosedObservers.count(); ++i) {
+        if (fClosedObservers[i] == observer) {
+            fClosedObservers.removeShuffle(i);
+            --i;
+        }
+    }
+}
 
 void GrOpsTask::endFlush() {
     fLastClipStackGenID = SK_InvalidUniqueID;
@@ -458,9 +469,10 @@ void GrOpsTask::onPrepare(GrOpFlushState* flushState) {
 }
 
 static GrOpsRenderPass* create_render_pass(
-        GrGpu* gpu, GrRenderTarget* rt, GrSurfaceOrigin origin, const SkIRect& bounds,
-        GrLoadOp colorLoadOp, const SkPMColor4f& loadClearColor, GrLoadOp stencilLoadOp,
-        GrStoreOp stencilStoreOp, const SkTArray<GrSurfaceProxy*, true>& sampledProxies) {
+        GrGpu* gpu, GrRenderTarget* rt, GrStencilAttachment* stencil, GrSurfaceOrigin origin,
+        const SkIRect& bounds, GrLoadOp colorLoadOp, const SkPMColor4f& loadClearColor,
+        GrLoadOp stencilLoadOp, GrStoreOp stencilStoreOp,
+        const SkTArray<GrSurfaceProxy*, true>& sampledProxies) {
     const GrOpsRenderPass::LoadAndStoreInfo kColorLoadStoreInfo {
         colorLoadOp,
         GrStoreOp::kStore,
@@ -477,8 +489,8 @@ static GrOpsRenderPass* create_render_pass(
         stencilStoreOp,
     };
 
-    return gpu->getOpsRenderPass(rt, origin, bounds, kColorLoadStoreInfo, stencilLoadAndStoreInfo,
-                                 sampledProxies);
+    return gpu->getOpsRenderPass(rt, stencil, origin, bounds,
+                                 kColorLoadStoreInfo, stencilLoadAndStoreInfo, sampledProxies);
 }
 
 // TODO: this is where GrOp::renderTarget is used (which is fine since it
@@ -560,7 +572,7 @@ bool GrOpsTask::onExecute(GrOpFlushState* flushState) {
             : GrStoreOp::kStore;
 
     GrOpsRenderPass* renderPass = create_render_pass(
-            flushState->gpu(), proxy->peekRenderTarget(), fTargetView.origin(),
+            flushState->gpu(), proxy->peekRenderTarget(), stencil, fTargetView.origin(),
             fClippedContentBounds, fColorLoadOp, fLoadClearColor, stencilLoadOp, stencilStoreOp,
             fSampledProxies);
     if (!renderPass) {
@@ -601,7 +613,7 @@ void GrOpsTask::setColorLoadOp(GrLoadOp op, const SkPMColor4f& color) {
     if (GrLoadOp::kClear == fColorLoadOp) {
         GrSurfaceProxy* proxy = fTargetView.proxy();
         SkASSERT(proxy);
-        fTotalBounds = proxy->getBoundsRect();
+        fTotalBounds = proxy->backingStoreBoundsRect();
     }
 }
 
@@ -874,9 +886,17 @@ void GrOpsTask::forwardCombine(const GrCaps& caps) {
 GrRenderTask::ExpectedOutcome GrOpsTask::onMakeClosed(
         const GrCaps& caps, SkIRect* targetUpdateBounds) {
     this->forwardCombine(caps);
+    SkScopeExit triggerObservers([&] {
+        for (const auto& o : fClosedObservers) {
+            o->wasClosed(*this);
+        }
+        fClosedObservers.reset();
+    });
     if (!this->isNoOp()) {
         GrSurfaceProxy* proxy = fTargetView.proxy();
-        SkRect clippedContentBounds = proxy->getBoundsRect();
+        // Use the entire backing store bounds since the GPU doesn't clip automatically to the
+        // logical dimensions.
+        SkRect clippedContentBounds = proxy->backingStoreBoundsRect();
         // TODO: If we can fix up GLPrograms test to always intersect the fTargetView proxy bounds
         // then we can simply assert here that the bounds intersect.
         if (clippedContentBounds.intersect(fTotalBounds)) {

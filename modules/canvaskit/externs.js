@@ -26,6 +26,7 @@ var CanvasKit = {
   // public API (i.e. things we declare in the pre-js file or in the cpp bindings)
   Color: function() {},
   Color4f: function() {},
+  ColorAsInt: function() {},
   /** @return {CanvasKit.SkRect} */
   LTRBRect: function() {},
   /** @return {CanvasKit.SkRect} */
@@ -60,7 +61,7 @@ var CanvasKit = {
   MakeWebGLCanvasSurface: function() {},
   /** @return {TypedArray} */
   Malloc: function() {},
-  /** @return {TonalColors} */
+  Free: function() {},
   computeTonalColors: function() {},
   currentContext: function() {},
   getColorComponents: function() {},
@@ -72,8 +73,12 @@ var CanvasKit = {
   setCurrentContext: function() {},
   setDecodeCacheLimitBytes: function() {},
 
+  // Defined by emscripten.
+  createContext:function() {},
+
   // private API (i.e. things declared in the bindings that we use
   // in the pre-js file)
+  _computeTonalColors: function() {},
   _MakeImage: function() {},
   _MakeLinearGradientShader: function() {},
   _MakePathFromCmds: function() {},
@@ -104,6 +109,12 @@ var CanvasKit = {
     setResourceCacheLimitBytes: function() {},
   },
 
+  ManagedAnimation: {
+    prototype: {
+      setColor: function() {},
+    },
+  },
+
   Paragraph: {
     // public API (from C++ bindings)
     didExceedMaxLines: function() {},
@@ -121,6 +132,21 @@ var CanvasKit = {
     // private API
     /** @return {Float32Array} */
     _getRectsForRange: function() {},
+  },
+
+  ParagraphBuilder: {
+    Make: function() {},
+    addText: function() {},
+    build: function() {},
+    pop: function() {},
+
+    prototype: {
+      pushStyle: function() {},
+    },
+
+    // private API
+    _Make: function() {},
+    _pushStyle: function() {},
   },
 
   SkRuntimeEffect: {
@@ -154,15 +180,13 @@ var CanvasKit = {
 
   SkCanvas: {
     // public API (from C++ bindings)
-    clear: function() {},
     clipPath: function() {},
     clipRRect: function() {},
     clipRect: function() {},
-    concat: function() {},
     drawAnimatedImage: function() {},
     drawArc: function() {},
     drawCircle: function() {},
-    drawColor: function() {},
+    drawColorInt: function() {},
     drawDRRect:  function() {},
     drawImage: function() {},
     drawImageNine: function() {},
@@ -176,14 +200,14 @@ var CanvasKit = {
     drawRRect:  function() {},
     drawRect: function() {},
     drawRoundRect: function() {},
-    drawShadow: function() {},
     drawText: function() {},
     drawTextBlob: function() {},
     drawVertices: function() {},
     flush: function() {},
     getSaveCount: function() {},
-    getTotalMatrix: function() {},
     makeSurface: function() {},
+    markCTM: function() {},
+    findMarkedCTM: function() {},
     restore: function() {},
     restoreToCount: function() {},
     rotate: function() {},
@@ -193,10 +217,26 @@ var CanvasKit = {
     skew: function() {},
     translate: function() {},
 
+    prototype: {
+      clear: function() {},
+      drawColor: function() {},
+      drawColorComponents: function() {},
+      drawShadow: function() {},
+    },
+
     // private API
+    _clear: function() {},
+    _concat: function() {},
     _drawAtlas: function() {},
+    _drawColor: function() {},
     _drawPoints: function() {},
+    _drawShadow: function() {},
     _drawSimpleText: function() {},
+    _getLocalToCamera: function() {},
+    _getLocalToDevice: function() {},
+    _getLocalToWorld: function() {},
+    _getTotalMatrix: function() {},
+    _findMarkedCTM: function() {},
     _readPixels: function() {},
     _writePixels: function() {},
     delete: function() {},
@@ -211,6 +251,7 @@ var CanvasKit = {
     MakeMatrix: function() {},
     MakeSRGBToLinearGamma: function() {},
     // private API (from C++ bindings)
+    _MakeBlend: function() {},
     _makeMatrix: function() {},
   },
 
@@ -220,6 +261,17 @@ var CanvasKit = {
     postTranslate: function() {},
     rotated: function() {},
     scaled: function() {},
+  },
+
+  SkColorSpace: {
+    Equals: function() {},
+    SRGB: {},
+    DISPLAY_P3: {},
+    ADOBE_RGB: {},
+    // private API (from C++ bindings)
+    _MakeSRGB: function() {},
+    _MakeDisplayP3: function() {},
+    _MakeAdobeRGB: function() {},
   },
 
   SkContourMeasureIter: {
@@ -278,6 +330,9 @@ var CanvasKit = {
     MakeColorFilter: function() {},
     MakeCompose: function() {},
     MakeMatrixTransform: function() {},
+
+    // private API
+    _MakeMatrixTransform: function() {},
   },
 
   // These are defined in interface.js
@@ -323,7 +378,7 @@ var CanvasKit = {
     getStrokeWidth: function() {},
     setAntiAlias: function() {},
     setBlendMode: function() {},
-    setColor: function() {},
+    setColorInt: function() {},
     setFilterQuality: function() {},
     setImageFilter: function() {},
     setMaskFilter: function() {},
@@ -335,8 +390,16 @@ var CanvasKit = {
     setStrokeWidth: function() {},
     setStyle: function() {},
 
+    prototype: {
+      setColor: function() {},
+      setColorComponents: function() {},
+      setColorInt: function() {},
+    },
+
     // Private API
     delete: function() {},
+    _getColor: function() {},
+    _setColor: function() {},
   },
 
   SkPathEffect: {
@@ -466,15 +529,20 @@ var CanvasKit = {
     MakeRadialGradient: function() {},
     MakeTwoPointConicalGradient: function() {},
     MakeSweepGradient: function() {},
+
+    // private API (from C++ bindings)
+    _Color: function() {},
   },
 
   SkSurface: {
     // public API (from C++ bindings)
     /** @return {CanvasKit.SkCanvas} */
     getCanvas: function() {},
+    imageInfo: function() {},
     /** @return {CanvasKit.SkImage} */
     makeImageSnapshot: function() {},
     makeSurface: function() {},
+    reportBackendType: function() {},
     grContext: {},
 
     // private API
@@ -834,9 +902,15 @@ CanvasKit.SkSurface.prototype.captureFrameAsSkPicture = function() {};
 CanvasKit.SkImage.prototype.encodeToData = function() {};
 CanvasKit.SkImage.prototype.makeShader = function() {};
 
+CanvasKit.SkCanvas.prototype.concat = function() {};
+CanvasKit.SkCanvas.prototype.concat44 = function() {}; // deprecated
 CanvasKit.SkCanvas.prototype.drawAtlas = function() {};
 CanvasKit.SkCanvas.prototype.drawPoints = function() {};
 CanvasKit.SkCanvas.prototype.drawText = function() {};
+CanvasKit.SkCanvas.prototype.getLocalToCamera = function() {};
+CanvasKit.SkCanvas.prototype.getLocalToDevice = function() {};
+CanvasKit.SkCanvas.prototype.getLocalToWorld = function() {};
+CanvasKit.SkCanvas.prototype.getTotalMatrix = function() {};
 /** @return {Uint8Array} */
 CanvasKit.SkCanvas.prototype.readPixels = function() {};
 CanvasKit.SkCanvas.prototype.writePixels = function() {};

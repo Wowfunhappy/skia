@@ -126,10 +126,6 @@ Compiler::Compiler(Flags flags)
     ADD_TYPE(Half2);
     ADD_TYPE(Half3);
     ADD_TYPE(Half4);
-    ADD_TYPE(Double);
-    ADD_TYPE(Double2);
-    ADD_TYPE(Double3);
-    ADD_TYPE(Double4);
     ADD_TYPE(Int);
     ADD_TYPE(Int2);
     ADD_TYPE(Int3);
@@ -176,18 +172,8 @@ Compiler::Compiler(Flags flags)
     ADD_TYPE(Half4x2);
     ADD_TYPE(Half4x3);
     ADD_TYPE(Half4x4);
-    ADD_TYPE(Double2x2);
-    ADD_TYPE(Double2x3);
-    ADD_TYPE(Double2x4);
-    ADD_TYPE(Double3x2);
-    ADD_TYPE(Double3x3);
-    ADD_TYPE(Double3x4);
-    ADD_TYPE(Double4x2);
-    ADD_TYPE(Double4x3);
-    ADD_TYPE(Double4x4);
     ADD_TYPE(GenType);
     ADD_TYPE(GenHType);
-    ADD_TYPE(GenDType);
     ADD_TYPE(GenIType);
     ADD_TYPE(GenUType);
     ADD_TYPE(GenBType);
@@ -198,7 +184,6 @@ Compiler::Compiler(Flags flags)
     ADD_TYPE(GVec3);
     ADD_TYPE(GVec4);
     ADD_TYPE(HVec);
-    ADD_TYPE(DVec);
     ADD_TYPE(IVec);
     ADD_TYPE(UVec);
     ADD_TYPE(SVec);
@@ -253,6 +238,9 @@ Compiler::Compiler(Flags flags)
     ADD_TYPE(Sampler);
     ADD_TYPE(Texture2D);
 
+    StringFragment fpAliasName("shader");
+    fTypes->addWithoutOwnership(fpAliasName, fContext->fFragmentProcessor_Type.get());
+
     StringFragment skCapsName("sk_Caps");
     Variable* skCaps = new Variable(-1, Modifiers(), skCapsName,
                                     *fContext->fSkCaps_Type, Variable::kGlobal_Storage);
@@ -283,13 +271,11 @@ Compiler::Compiler(Flags flags)
     this->processIncludeFile(Program::kPipelineStage_Kind, SKSL_PIPELINE_INCLUDE,
                              strlen(SKSL_PIPELINE_INCLUDE), fGpuSymbolTable, &fPipelineInclude,
                              &fPipelineSymbolTable);
+    std::vector<std::unique_ptr<ProgramElement>> interpIntrinsics;
     this->processIncludeFile(Program::kGeneric_Kind, SKSL_INTERP_INCLUDE,
                              strlen(SKSL_INTERP_INCLUDE), symbols, &fInterpreterInclude,
                              &fInterpreterSymbolTable);
-    grab_intrinsics(&fInterpreterInclude, &fInterpreterIntrinsics);
-    // need to hang on to the source so that FunctionDefinition.fSource pointers in this file
-    // remain valid
-    fInterpreterIncludeSource = std::move(fIRGenerator->fFile);
+    grab_intrinsics(&interpIntrinsics, &fInterpreterIntrinsics);
 }
 
 Compiler::~Compiler() {
@@ -387,7 +373,7 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
             switch (expr->fKind) {
                 case Expression::kBinary_Kind: {
                     BinaryExpression* b = (BinaryExpression*) expr;
-                    if (b->fOperator == Token::EQ) {
+                    if (b->fOperator == Token::Kind::TK_EQ) {
                         this->addDefinition(b->fLeft.get(), &b->fRight, definitions);
                     } else if (Compiler::IsAssignment(b->fOperator)) {
                         this->addDefinition(
@@ -412,7 +398,8 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
                 }
                 case Expression::kPrefix_Kind: {
                     const PrefixExpression* p = (PrefixExpression*) expr;
-                    if (p->fOperator == Token::MINUSMINUS || p->fOperator == Token::PLUSPLUS) {
+                    if (p->fOperator == Token::Kind::TK_MINUSMINUS ||
+                        p->fOperator == Token::Kind::TK_PLUSPLUS) {
                         this->addDefinition(
                                       p->fOperand.get(),
                                       (std::unique_ptr<Expression>*) &fContext->fDefined_Expression,
@@ -422,7 +409,8 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
                 }
                 case Expression::kPostfix_Kind: {
                     const PostfixExpression* p = (PostfixExpression*) expr;
-                    if (p->fOperator == Token::MINUSMINUS || p->fOperator == Token::PLUSPLUS) {
+                    if (p->fOperator == Token::Kind::TK_MINUSMINUS ||
+                        p->fOperator == Token::Kind::TK_PLUSPLUS) {
                         this->addDefinition(
                                       p->fOperand.get(),
                                       (std::unique_ptr<Expression>*) &fContext->fDefined_Expression,
@@ -639,7 +627,7 @@ void delete_left(BasicBlock* b,
     BinaryExpression& bin = (BinaryExpression&) **target;
     SkASSERT(!bin.fLeft->hasSideEffects());
     bool result;
-    if (bin.fOperator == Token::EQ) {
+    if (bin.fOperator == Token::Kind::TK_EQ) {
         result = b->tryRemoveLValueBefore(iter, bin.fLeft.get());
     } else {
         result = b->tryRemoveExpressionBefore(iter, bin.fLeft.get());
@@ -841,7 +829,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                 break;
             }
             switch (bin->fOperator) {
-                case Token::STAR:
+                case Token::Kind::TK_STAR:
                     if (is_constant(*bin->fLeft, 1)) {
                         if (bin->fLeft->fType.kind() == Type::kVector_Kind &&
                             bin->fRight->fType.kind() == Type::kScalar_Kind) {
@@ -897,7 +885,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                         }
                     }
                     break;
-                case Token::PLUS:
+                case Token::Kind::TK_PLUS:
                     if (is_constant(*bin->fLeft, 0)) {
                         if (bin->fLeft->fType.kind() == Type::kVector_Kind &&
                             bin->fRight->fType.kind() == Type::kScalar_Kind) {
@@ -922,7 +910,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                         }
                     }
                     break;
-                case Token::MINUS:
+                case Token::Kind::TK_MINUS:
                     if (is_constant(*bin->fRight, 0)) {
                         if (bin->fLeft->fType.kind() == Type::kScalar_Kind &&
                             bin->fRight->fType.kind() == Type::kVector_Kind) {
@@ -936,7 +924,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                         }
                     }
                     break;
-                case Token::SLASH:
+                case Token::Kind::TK_SLASH:
                     if (is_constant(*bin->fRight, 1)) {
                         if (bin->fLeft->fType.kind() == Type::kScalar_Kind &&
                             bin->fRight->fType.kind() == Type::kVector_Kind) {
@@ -964,25 +952,25 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                         }
                     }
                     break;
-                case Token::PLUSEQ:
+                case Token::Kind::TK_PLUSEQ:
                     if (is_constant(*bin->fRight, 0)) {
                         clear_write(*bin->fLeft);
                         delete_right(&b, iter, outUpdated, outNeedsRescan);
                     }
                     break;
-                case Token::MINUSEQ:
+                case Token::Kind::TK_MINUSEQ:
                     if (is_constant(*bin->fRight, 0)) {
                         clear_write(*bin->fLeft);
                         delete_right(&b, iter, outUpdated, outNeedsRescan);
                     }
                     break;
-                case Token::STAREQ:
+                case Token::Kind::TK_STAREQ:
                     if (is_constant(*bin->fRight, 1)) {
                         clear_write(*bin->fLeft);
                         delete_right(&b, iter, outUpdated, outNeedsRescan);
                     }
                     break;
-                case Token::SLASHEQ:
+                case Token::Kind::TK_SLASHEQ:
                     if (is_constant(*bin->fRight, 1)) {
                         clear_write(*bin->fLeft);
                         delete_right(&b, iter, outUpdated, outNeedsRescan);
@@ -1266,6 +1254,14 @@ void Compiler::scanCFG(FunctionDefinition& f) {
                     break;
                 case BasicBlock::Node::kExpression_Kind:
                     offset = (*cfg.fBlocks[i].fNodes[0].expression())->fOffset;
+                    if ((*cfg.fBlocks[i].fNodes[0].expression())->fKind ==
+                        Expression::kBoolLiteral_Kind) {
+                        // Function inlining can generate do { ... } while(false) loops which always
+                        // break, so the boolean condition is considered unreachable. Since not
+                        // being able to reach a literal is a non-issue in the first place, we
+                        // don't report an error in this case.
+                        continue;
+                    }
                     break;
             }
             this->error(offset, String("unreachable"));
@@ -1450,6 +1446,20 @@ bool Compiler::optimize(Program& program) {
         for (auto& element : program) {
             if (element.fKind == ProgramElement::kFunction_Kind) {
                 this->scanCFG((FunctionDefinition&) element);
+            }
+        }
+        // we wait until after analysis to remove dead functions so that we still report errors
+        // even in unused code
+        if (program.fSettings.fRemoveDeadFunctions) {
+            for (auto iter = program.fElements.begin(); iter != program.fElements.end(); ) {
+                if ((*iter)->fKind == ProgramElement::kFunction_Kind) {
+                    const FunctionDefinition& f = (const FunctionDefinition&) **iter;
+                    if (!f.fDeclaration.fCallCount && f.fDeclaration.fName != "main") {
+                        iter = program.fElements.erase(iter);
+                        continue;
+                    }
+                }
+                ++iter;
             }
         }
         if (program.fKind != Program::kFragmentProcessor_Kind) {
@@ -1639,8 +1649,10 @@ std::unique_ptr<ByteCode> Compiler::toByteCode(Program& program) {
     }
     fSource = program.fSource.get();
     std::unique_ptr<ByteCode> result(new ByteCode());
-    ByteCodeGenerator cg(&program, this, result.get());
-    if (cg.generateCode()) {
+    ByteCodeGenerator cg(fContext.get(), &program, this, result.get());
+    bool success = cg.generateCode();
+    fSource = nullptr;
+    if (success) {
         return result;
     }
 #else
@@ -1651,66 +1663,66 @@ std::unique_ptr<ByteCode> Compiler::toByteCode(Program& program) {
 
 const char* Compiler::OperatorName(Token::Kind kind) {
     switch (kind) {
-        case Token::PLUS:         return "+";
-        case Token::MINUS:        return "-";
-        case Token::STAR:         return "*";
-        case Token::SLASH:        return "/";
-        case Token::PERCENT:      return "%";
-        case Token::SHL:          return "<<";
-        case Token::SHR:          return ">>";
-        case Token::LOGICALNOT:   return "!";
-        case Token::LOGICALAND:   return "&&";
-        case Token::LOGICALOR:    return "||";
-        case Token::LOGICALXOR:   return "^^";
-        case Token::BITWISENOT:   return "~";
-        case Token::BITWISEAND:   return "&";
-        case Token::BITWISEOR:    return "|";
-        case Token::BITWISEXOR:   return "^";
-        case Token::EQ:           return "=";
-        case Token::EQEQ:         return "==";
-        case Token::NEQ:          return "!=";
-        case Token::LT:           return "<";
-        case Token::GT:           return ">";
-        case Token::LTEQ:         return "<=";
-        case Token::GTEQ:         return ">=";
-        case Token::PLUSEQ:       return "+=";
-        case Token::MINUSEQ:      return "-=";
-        case Token::STAREQ:       return "*=";
-        case Token::SLASHEQ:      return "/=";
-        case Token::PERCENTEQ:    return "%=";
-        case Token::SHLEQ:        return "<<=";
-        case Token::SHREQ:        return ">>=";
-        case Token::LOGICALANDEQ: return "&&=";
-        case Token::LOGICALOREQ:  return "||=";
-        case Token::LOGICALXOREQ: return "^^=";
-        case Token::BITWISEANDEQ: return "&=";
-        case Token::BITWISEOREQ:  return "|=";
-        case Token::BITWISEXOREQ: return "^=";
-        case Token::PLUSPLUS:     return "++";
-        case Token::MINUSMINUS:   return "--";
-        case Token::COMMA:        return ",";
+        case Token::Kind::TK_PLUS:         return "+";
+        case Token::Kind::TK_MINUS:        return "-";
+        case Token::Kind::TK_STAR:         return "*";
+        case Token::Kind::TK_SLASH:        return "/";
+        case Token::Kind::TK_PERCENT:      return "%";
+        case Token::Kind::TK_SHL:          return "<<";
+        case Token::Kind::TK_SHR:          return ">>";
+        case Token::Kind::TK_LOGICALNOT:   return "!";
+        case Token::Kind::TK_LOGICALAND:   return "&&";
+        case Token::Kind::TK_LOGICALOR:    return "||";
+        case Token::Kind::TK_LOGICALXOR:   return "^^";
+        case Token::Kind::TK_BITWISENOT:   return "~";
+        case Token::Kind::TK_BITWISEAND:   return "&";
+        case Token::Kind::TK_BITWISEOR:    return "|";
+        case Token::Kind::TK_BITWISEXOR:   return "^";
+        case Token::Kind::TK_EQ:           return "=";
+        case Token::Kind::TK_EQEQ:         return "==";
+        case Token::Kind::TK_NEQ:          return "!=";
+        case Token::Kind::TK_LT:           return "<";
+        case Token::Kind::TK_GT:           return ">";
+        case Token::Kind::TK_LTEQ:         return "<=";
+        case Token::Kind::TK_GTEQ:         return ">=";
+        case Token::Kind::TK_PLUSEQ:       return "+=";
+        case Token::Kind::TK_MINUSEQ:      return "-=";
+        case Token::Kind::TK_STAREQ:       return "*=";
+        case Token::Kind::TK_SLASHEQ:      return "/=";
+        case Token::Kind::TK_PERCENTEQ:    return "%=";
+        case Token::Kind::TK_SHLEQ:        return "<<=";
+        case Token::Kind::TK_SHREQ:        return ">>=";
+        case Token::Kind::TK_LOGICALANDEQ: return "&&=";
+        case Token::Kind::TK_LOGICALOREQ:  return "||=";
+        case Token::Kind::TK_LOGICALXOREQ: return "^^=";
+        case Token::Kind::TK_BITWISEANDEQ: return "&=";
+        case Token::Kind::TK_BITWISEOREQ:  return "|=";
+        case Token::Kind::TK_BITWISEXOREQ: return "^=";
+        case Token::Kind::TK_PLUSPLUS:     return "++";
+        case Token::Kind::TK_MINUSMINUS:   return "--";
+        case Token::Kind::TK_COMMA:        return ",";
         default:
-            ABORT("unsupported operator: %d\n", kind);
+            ABORT("unsupported operator: %d\n", (int) kind);
     }
 }
 
 
 bool Compiler::IsAssignment(Token::Kind op) {
     switch (op) {
-        case Token::EQ:           // fall through
-        case Token::PLUSEQ:       // fall through
-        case Token::MINUSEQ:      // fall through
-        case Token::STAREQ:       // fall through
-        case Token::SLASHEQ:      // fall through
-        case Token::PERCENTEQ:    // fall through
-        case Token::SHLEQ:        // fall through
-        case Token::SHREQ:        // fall through
-        case Token::BITWISEOREQ:  // fall through
-        case Token::BITWISEXOREQ: // fall through
-        case Token::BITWISEANDEQ: // fall through
-        case Token::LOGICALOREQ:  // fall through
-        case Token::LOGICALXOREQ: // fall through
-        case Token::LOGICALANDEQ:
+        case Token::Kind::TK_EQ:           // fall through
+        case Token::Kind::TK_PLUSEQ:       // fall through
+        case Token::Kind::TK_MINUSEQ:      // fall through
+        case Token::Kind::TK_STAREQ:       // fall through
+        case Token::Kind::TK_SLASHEQ:      // fall through
+        case Token::Kind::TK_PERCENTEQ:    // fall through
+        case Token::Kind::TK_SHLEQ:        // fall through
+        case Token::Kind::TK_SHREQ:        // fall through
+        case Token::Kind::TK_BITWISEOREQ:  // fall through
+        case Token::Kind::TK_BITWISEXOREQ: // fall through
+        case Token::Kind::TK_BITWISEANDEQ: // fall through
+        case Token::Kind::TK_LOGICALOREQ:  // fall through
+        case Token::Kind::TK_LOGICALXOREQ: // fall through
+        case Token::Kind::TK_LOGICALANDEQ:
             return true;
         default:
             return false;

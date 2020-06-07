@@ -13,12 +13,12 @@
 #include "src/gpu/ops/GrDrawOp.h"
 
 class GrOpFlushState;
-class GrFixedClip;
 class GrGpu;
 class GrPipeline;
 class GrPrimitiveProcessor;
 class GrProgramInfo;
 class GrRenderTarget;
+class GrScissorState;
 class GrSemaphore;
 struct SkIRect;
 struct SkRect;
@@ -74,8 +74,8 @@ public:
     void bindBuffers(const GrBuffer* indexBuffer, const GrBuffer* instanceBuffer,
                      const GrBuffer* vertexBuffer, GrPrimitiveRestart = GrPrimitiveRestart::kNo);
 
-    // These methods issue draws using the current pipeline state. Before drawing, the caller must
-    // configure the pipeline and dynamic state:
+    // The next several draw*() methods issue draws using the current pipeline state. Before
+    // drawing, the caller must configure the pipeline and dynamic state:
     //
     //   - Call bindPipeline()
     //   - If the scissor test is enabled, call setScissorRect()
@@ -84,9 +84,30 @@ public:
     void draw(int vertexCount, int baseVertex);
     void drawIndexed(int indexCount, int baseIndex, uint16_t minIndexValue, uint16_t maxIndexValue,
                      int baseVertex);
+
+    // Requires caps.drawInstancedSupport().
     void drawInstanced(int instanceCount, int baseInstance, int vertexCount, int baseVertex);
+
+    // Requires caps.drawInstancedSupport().
     void drawIndexedInstanced(int indexCount, int baseIndex, int instanceCount, int baseInstance,
                               int baseVertex);
+
+    // Executes multiple draws from an array of GrDrawIndirectCommand in the provided buffer.
+    //
+    // Requires caps.drawInstancedSupport().
+    //
+    // If caps.nativeDrawIndirectSupport() is unavailable, then 'drawIndirectBuffer' must be a
+    // GrCpuBuffer in order to polyfill. Performance may suffer in this scenario.
+    void drawIndirect(const GrBuffer* drawIndirectBuffer, size_t bufferOffset, int drawCount);
+
+    // Executes multiple draws from an array of GrDrawIndexedIndirectCommand in the provided buffer.
+    //
+    // Requires caps.drawInstancedSupport().
+    //
+    // If caps.nativeDrawIndirectSupport() is unavailable, then 'drawIndirectBuffer' must be a
+    // GrCpuBuffer in order to polyfill. Performance may suffer in this scenario.
+    void drawIndexedIndirect(const GrBuffer* drawIndirectBuffer, size_t bufferOffset,
+                             int drawCount);
 
     // This is a helper method for drawing a repeating pattern of vertices. The bound index buffer
     // is understood to contain 'maxPatternRepetitionsInIndexBuffer' repetitions of the pattern.
@@ -99,11 +120,17 @@ public:
     virtual void inlineUpload(GrOpFlushState*, GrDeferredTextureUploadFn&) = 0;
 
     /**
-     * Clear the owned render target. Ignores the draw state and clip.
+     * Clear the owned render target. Clears the full target if 'scissor' is disabled, otherwise it
+     * is restricted to 'scissor'. Must check caps.performPartialClearsAsDraws() before using an
+     * enabled scissor test; must check caps.performColorClearsAsDraws() before using this at all.
      */
-    void clear(const GrFixedClip&, const SkPMColor4f&);
+    void clear(const GrScissorState& scissor, const SkPMColor4f&);
 
-    void clearStencilClip(const GrFixedClip&, bool insideStencilMask);
+    /**
+     * Same as clear() but modifies the stencil; check caps.performStencilClearsAsDraws() and
+     * caps.performPartialClearsAsDraws().
+     */
+    void clearStencilClip(const GrScissorState& scissor, bool insideStencilMask);
 
     /**
      * Executes the SkDrawable object for the underlying backend.
@@ -137,6 +164,12 @@ protected:
 private:
     virtual GrGpu* gpu() = 0;
 
+    void resetActiveBuffers() {
+        fActiveIndexBuffer.reset();
+        fActiveInstanceBuffer.reset();
+        fActiveVertexBuffer.reset();
+    }
+
     bool prepareToDraw();
 
     // overridden by backend-specific derived class to perform the rendering command.
@@ -156,8 +189,14 @@ private:
                                  int baseVertex) = 0;
     virtual void onDrawIndexedInstanced(int indexCount, int baseIndex, int instanceCount,
                                         int baseInstance, int baseVertex) = 0;
-    virtual void onClear(const GrFixedClip&, const SkPMColor4f&) = 0;
-    virtual void onClearStencilClip(const GrFixedClip&, bool insideStencilMask) = 0;
+    virtual void onDrawIndirect(const GrBuffer*, size_t offset, int drawCount) {
+        SK_ABORT("Not implemented.");  // Only called if caps.nativeDrawIndirectSupport().
+    }
+    virtual void onDrawIndexedIndirect(const GrBuffer*, size_t offset, int drawCount) {
+        SK_ABORT("Not implemented.");  // Only called if caps.nativeDrawIndirectSupport().
+    }
+    virtual void onClear(const GrScissorState&, const SkPMColor4f&) = 0;
+    virtual void onClearStencilClip(const GrScissorState&, bool insideStencilMask) = 0;
     virtual void onExecuteDrawable(std::unique_ptr<SkDrawable::GpuDrawHandler>) {}
 
     enum class DrawPipelineStatus {

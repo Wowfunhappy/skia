@@ -123,15 +123,24 @@ bool GrMtlOpsRenderPass::onBindTextures(const GrPrimitiveProcessor& primProc,
     return true;
 }
 
-void GrMtlOpsRenderPass::onClear(const GrFixedClip& clip, const SkPMColor4f& color) {
-    // We should never end up here since all clears should either be done as draws or load ops in
-    // metal. If we hit this assert then we missed a chance to set a load op on the
-    // GrRenderTargetContext level.
-    SkASSERT(false);
+void GrMtlOpsRenderPass::onClear(const GrScissorState& scissor, const SkPMColor4f& color) {
+    // Partial clears are not supported
+    SkASSERT(!scissor.enabled());
+
+    // Ideally we should never end up here since all clears should either be done as draws or
+    // load ops in metal. However, if a client inserts a wait op we need to handle it.
+    fRenderPassDesc.colorAttachments[0].clearColor =
+            MTLClearColorMake(color[0], color[1], color[2], color[3]);
+    fRenderPassDesc.colorAttachments[0].loadAction = MTLLoadActionClear;
+    this->precreateCmdEncoder();
+    fRenderPassDesc.colorAttachments[0].loadAction = MTLLoadActionLoad;
+    fActiveRenderCmdEncoder =
+            fGpu->commandBuffer()->getRenderCommandEncoder(fRenderPassDesc, nullptr, this);
 }
 
-void GrMtlOpsRenderPass::onClearStencilClip(const GrFixedClip& clip, bool insideStencilMask) {
-    SkASSERT(!clip.hasWindowRectangles());
+void GrMtlOpsRenderPass::onClearStencilClip(const GrScissorState& scissor, bool insideStencilMask) {
+    // Partial clears are not supported
+    SkASSERT(!scissor.enabled());
 
     GrStencilAttachment* sb = fRenderTarget->renderTargetPriv().getStencilAttachment();
     // this should only be called internally when we know we have a

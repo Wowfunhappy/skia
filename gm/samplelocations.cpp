@@ -22,7 +22,6 @@
 #include "include/private/SkColorData.h"
 #include "src/gpu/GrBuffer.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrClip.h"
 #include "src/gpu/GrColorSpaceXform.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGeometryProcessor.h"
@@ -244,14 +243,14 @@ private:
 
     GrProgramInfo* createProgramInfo(const GrCaps* caps,
                                      SkArenaAlloc* arena,
-                                     const GrSurfaceProxyView* outputView,
+                                     const GrSurfaceProxyView* writeView,
                                      GrAppliedClip&& appliedClip,
                                      const GrXferProcessor::DstProxyView& dstProxyView) const {
         GrGeometryProcessor* geomProc = SampleLocationsTestProcessor::Make(arena, fGradType);
 
         GrPipeline::InputFlags flags = GrPipeline::InputFlags::kHWAntialias;
 
-        return sk_gpu_test::CreateProgramInfo(caps, arena, outputView,
+        return sk_gpu_test::CreateProgramInfo(caps, arena, writeView,
                                               std::move(appliedClip), dstProxyView,
                                               geomProc, SkBlendMode::kSrcOver,
                                               GrPrimitiveType::kTriangleStrip,
@@ -261,13 +260,13 @@ private:
     GrProgramInfo* createProgramInfo(GrOpFlushState* flushState) const {
         return this->createProgramInfo(&flushState->caps(),
                                        flushState->allocator(),
-                                       flushState->outputView(),
+                                       flushState->writeView(),
                                        flushState->detachAppliedClip(),
                                        flushState->dstProxyView());
     }
 
     void onPrePrepare(GrRecordingContext* context,
-                      const GrSurfaceProxyView* outputView,
+                      const GrSurfaceProxyView* writeView,
                       GrAppliedClip* clip,
                       const GrXferProcessor::DstProxyView& dstProxyView) final {
         // We're going to create the GrProgramInfo (and the GrPipeline and geometry processor
@@ -275,9 +274,9 @@ private:
         SkArenaAlloc* arena = context->priv().recordTimeAllocator();
 
         // This is equivalent to a GrOpFlushState::detachAppliedClip
-        GrAppliedClip appliedClip = clip ? std::move(*clip) : GrAppliedClip();
+        GrAppliedClip appliedClip = clip ? std::move(*clip) : GrAppliedClip::Disabled();
 
-        fProgramInfo = this->createProgramInfo(context->priv().caps(), arena, outputView,
+        fProgramInfo = this->createProgramInfo(context->priv().caps(), arena, writeView,
                                                std::move(appliedClip), dstProxyView);
 
         context->priv().recordProgramInfo(fProgramInfo);
@@ -322,6 +321,10 @@ DrawResult SampleLocationsGM::onDraw(
         *errorMsg = "Requires support for sample mask.";
         return DrawResult::kSkip;
     }
+    if (!ctx->priv().caps()->drawInstancedSupport()) {
+        *errorMsg = "Requires support for instanced rendering.";
+        return DrawResult::kSkip;
+    }
     if (rtc->numSamples() <= 1 && !ctx->priv().caps()->mixedSamplesSupport()) {
         *errorMsg = "MSAA and mixed samples only.";
         return DrawResult::kSkip;
@@ -350,7 +353,7 @@ DrawResult SampleLocationsGM::onDraw(
             0xffff>()
     );
 
-    offscreenRTC->clear(nullptr, {0,1,0,1}, GrRenderTargetContext::CanClearFullscreen::kYes);
+    offscreenRTC->clear({0,1,0,1});
 
     // Stencil.
     offscreenRTC->priv().testingOnly_addDrawOp(
@@ -360,11 +363,11 @@ DrawResult SampleLocationsGM::onDraw(
     GrPaint coverPaint;
     coverPaint.setColor4f({1,0,0,1});
     coverPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrcOver));
-    rtc->priv().stencilRect(GrNoClip(), &kStencilCover, std::move(coverPaint), GrAA::kNo,
+    rtc->priv().stencilRect(nullptr, &kStencilCover, std::move(coverPaint), GrAA::kNo,
                             SkMatrix::I(), SkRect::MakeWH(200, 200));
 
     // Copy offscreen texture to canvas.
-    rtc->drawTexture(GrNoClip(), offscreenRTC->readSurfaceView(),
+    rtc->drawTexture(nullptr, offscreenRTC->readSurfaceView(),
                      offscreenRTC->colorInfo().alphaType(),
                      GrSamplerState::Filter::kNearest, SkBlendMode::kSrc, SK_PMColor4fWHITE,
                      {0,0,200,200}, {0,0,200,200}, GrAA::kNo, GrQuadAAFlags::kNone,

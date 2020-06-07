@@ -195,15 +195,24 @@ static void gpu_tests(GrContext* context, skiatest::Reporter* reporter, const Te
     for (bool fullInit : { false, true }) {
         GrBackendTexture backendTex;
 
+        bool finishedBECreate = false;
+        auto markFinished = [](void* context) {
+            *(bool*)context = true;
+        };
         if (fullInit) {
             backendTex = context->createBackendTexture(&nativeExpected, 1,
-                                                       GrRenderable::kNo, GrProtected::kNo);
+                                                       GrRenderable::kNo, GrProtected::kNo,
+                                                       markFinished, &finishedBECreate);
         } else {
             backendTex = context->createBackendTexture(kSize, kSize, test.fColorType,
                                                        SkColors::kWhite, GrMipMapped::kNo,
-                                                       GrRenderable::kNo, GrProtected::kNo);
+                                                       GrRenderable::kNo, GrProtected::kNo,
+                                                       markFinished, &finishedBECreate);
         }
         REPORTER_ASSERT(reporter, backendTex.isValid());
+        while (backendTex.isValid() && !finishedBECreate) {
+            context->checkAsyncWorkCompletion();
+        }
 
         auto img = SkImage::MakeFromTexture(context, backendTex, kTopLeft_GrSurfaceOrigin,
                                             test.fColorType, test.fAlphaType, nullptr);
@@ -280,7 +289,7 @@ static void gpu_tests(GrContext* context, skiatest::Reporter* reporter, const Te
         }
 
         img.reset();
-        context->flush();
+        context->flushAndSubmit();
         context->deleteBackendTexture(backendTex);
     }
 }

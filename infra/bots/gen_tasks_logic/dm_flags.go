@@ -108,6 +108,13 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		}
 		return rv
 	}
+	suffix := func(slice []string, sfx string) []string {
+		rv := make([]string, 0, len(slice))
+		for _, e := range slice {
+			rv = append(rv, e+sfx)
+		}
+		return rv
+	}
 
 	blacklist := func(quad ...string) {
 		if len(quad) == 1 {
@@ -189,6 +196,10 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 		configs = append(configs, "8888")
 
+		if b.extraConfig("SkVM") {
+			args = append(args, "--skvm")
+		}
+
 		if b.extraConfig("BonusConfigs") {
 			configs = []string{
 				"g8", "565",
@@ -258,14 +269,14 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			blacklist("gltestthreading gm _ lcdoverlap")
 			blacklist("gltestthreading gm _ textbloblooper")
 			// All of these GMs are flaky, too:
-			blacklist("gltestthreading gm _ bleed_alpha_bmp")
-			blacklist("gltestthreading gm _ bleed_alpha_bmp_shader")
-			blacklist("gltestthreading gm _ bleed_alpha_image")
-			blacklist("gltestthreading gm _ bleed_alpha_image_shader")
 			blacklist("gltestthreading gm _ savelayer_with_backdrop")
 			blacklist("gltestthreading gm _ persp_shaders_bw")
 			blacklist("gltestthreading gm _ dftext_blob_persp")
 			blacklist("gltestthreading gm _ dftext")
+			blacklist("gltestthreading gm _ gpu_blur_utils")
+			blacklist("gltestthreading gm _ gpu_blur_utils_ref")
+			blacklist("gltestthreading gm _ gpu_blur_utils_subset_rect")
+			blacklist("gltestthreading gm _ gpu_blur_utils_subset_rect_ref")
 			// skbug.com/7523 - Flaky on various GPUs
 			blacklist("gltestthreading gm _ orientation")
 			// These GMs only differ in the low bits
@@ -278,10 +289,14 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			configs = []string{"commandbuffer"}
 		}
 
+		// Dawn bot *only* runs the dawn config
+		if b.extraConfig("Dawn") {
+			configs = []string{"dawn"}
+		}
+
 		// ANGLE bot *only* runs the angle configs
 		if b.extraConfig("ANGLE") {
 			configs = []string{"angle_d3d11_es2",
-				"angle_d3d9_es2",
 				"angle_gl_es2",
 				"angle_d3d11_es3"}
 			if sampleCount > 0 {
@@ -303,10 +318,20 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 					configs = append(configs, fmt.Sprintf("angle_gl_es3_msaa%d", sampleCount))
 				}
 			}
+			if !b.matchGpu("GTX", "Quadro", "GT610") {
+				// See skia:10149
+				configs = append(configs, "angle_d3d9_es2")
+			}
 			if b.model("NUC5i7RYH") {
 				// skbug.com/7376
 				blacklist("_ test _ ProcessorCloneTest")
 			}
+		}
+
+		if b.model("Pixelbook") {
+			// skbug.com/10232
+			blacklist("_ test _ ProcessorCloneTest")
+
 		}
 
 		if b.model("AndroidOne", "GalaxyS6") || (b.model("Nexus5", "Nexus7")) {
@@ -376,12 +401,18 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 				blacklist("gltestpersistentcache gm _ atlastext")
 				blacklist("gltestpersistentcache gm _ dftext")
 				blacklist("gltestpersistentcache gm _ glyph_pos_h_b")
+				blacklist("gltestpersistentcache gm _ glyph_pos_h_f")
+				blacklist("gltestpersistentcache gm _ glyph_pos_n_f")
 				blacklist("gltestglslcache gm _ atlastext")
 				blacklist("gltestglslcache gm _ dftext")
 				blacklist("gltestglslcache gm _ glyph_pos_h_b")
+				blacklist("gltestglslcache gm _ glyph_pos_h_f")
+				blacklist("gltestglslcache gm _ glyph_pos_n_f")
 				blacklist("gltestprecompile gm _ atlastext")
 				blacklist("gltestprecompile gm _ dftext")
 				blacklist("gltestprecompile gm _ glyph_pos_h_b")
+				blacklist("gltestprecompile gm _ glyph_pos_h_f")
+				blacklist("gltestprecompile gm _ glyph_pos_n_f")
 				// Tessellation shaders do not yet participate in the persistent cache.
 				blacklist("gltestpersistentcache gm _ tessellation")
 				blacklist("gltestglslcache gm _ tessellation")
@@ -426,15 +457,14 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 		// DDL is a GPU-only feature
 		if b.extraConfig("DDL1") {
-			// This bot generates gl and vk comparison images for the large skps
+			// This bot generates comparison images for the large skps and the gms
 			configs = filter(configs, "gl", "vk", "mtl")
 			args = append(args, "--skpViewportSize", "2048")
 			args = append(args, "--pr", "~small")
 		}
 		if b.extraConfig("DDL3") {
-			// This bot generates the ddl-gl and ddl-vk images for the
-			// large skps and the gms
-			ddlConfigs := prefix(filter(configs, "gl", "vk", "mtl"), "ddl-")
+			// This bot generates the real ddl images for the large skps and the gms
+			ddlConfigs := suffix(filter(configs, "gl", "vk", "mtl"), "ddl")
 			ddl2Configs := prefix(filter(configs, "gl", "vk", "mtl"), "ddl2-")
 			configs = append(ddlConfigs, ddl2Configs...)
 			args = append(args, "--skpViewportSize", "2048")
@@ -467,7 +497,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	if b.gpu() {
 		// Don't run the "svgparse_*" svgs on GPU.
 		blacklist("_ svg _ svgparse_")
-	} else if b.Name == "Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Debug-All-ASAN" {
+	} else if b.Name == "Test-Debian10-Clang-GCE-CPU-AVX2-x86_64-Debug-All-ASAN" {
 		// Only run the CPU SVGs on 8888.
 		blacklist("~8888 svg _ _")
 	} else {
@@ -612,7 +642,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		// This test crashes the N9 (perhaps because of large malloc/frees). It also
 		// is fairly slow and not platform-specific. So we just disable it on all of
 		// Android and iOS. skia:5438
-		blacklist("_ test _ GrShape")
+		blacklist("_ test _ GrStyledShape")
 	}
 
 	if internalHardwareLabel == "5" {
@@ -622,7 +652,9 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 	// skia:4095
 	badSerializeGMs := []string{
-		"bleed_image",
+		"strict_constraint_batch_no_red_allowed",  // https://crbug.com/skia/10278
+		"strict_constraint_no_red_allowed",        // https://crbug.com/skia/10278
+		"fast_constraint_red_is_allowed",          // https://crbug.com/skia/10278
 		"c_gms",
 		"colortype",
 		"colortype_xfermodes",
@@ -644,9 +676,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	badSerializeGMs = append(badSerializeGMs,
 		"bitmapfilters",
 		"bitmapshaders",
-		"bleed",
-		"bleed_alpha_bmp",
-		"bleed_alpha_bmp_shader",
 		"convex_poly_clip",
 		"extractalpha",
 		"filterbitmap_checkerboard_32_32_g8",
@@ -693,11 +722,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		blacklist("serialize-8888", "gm", "_", test)
 	}
 
-	if !b.matchOs("Mac") {
-		for _, test := range []string{"bleed_alpha_image", "bleed_alpha_image_shader"} {
-			blacklist("serialize-8888", "gm", "_", test)
-		}
-	}
 	// It looks like we skip these only for out-of-memory concerns.
 	if b.matchOs("Win", "Android") {
 		for _, test := range []string{"verylargebitmap", "verylarge_picture_image"} {
@@ -777,12 +801,8 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 	if b.model("AndroidOne") && b.gpu() { // skia:4697, skia:4704, skia:4694, skia:4705
 		blacklist("_", "gm", "_", "bigblurs")
-		blacklist("_", "gm", "_", "bleed")
-		blacklist("_", "gm", "_", "bleed_alpha_bmp")
-		blacklist("_", "gm", "_", "bleed_alpha_bmp_shader")
-		blacklist("_", "gm", "_", "bleed_alpha_image")
-		blacklist("_", "gm", "_", "bleed_alpha_image_shader")
-		blacklist("_", "gm", "_", "bleed_image")
+		blacklist("_", "gm", "_", "strict_constraint_no_red_allowed")
+		blacklist("_", "gm", "_", "fast_constraint_red_is_allowed")
 		blacklist("_", "gm", "_", "dropshadowimagefilter")
 		blacklist("_", "gm", "_", "filterfastbounds")
 		blacklist(glPrefix, "gm", "_", "imageblurtiled")
@@ -927,6 +947,11 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	if b.matchOs("Mac") && b.gpu("IntelHD615") {
 		// skia:7603
 		match = append(match, "~^GrMeshTest$")
+	}
+
+	if b.extraConfig("Vulkan") && b.model("GalaxyS20") {
+		// skia:10247
+		match = append(match, "~VkPrepareForExternalIOQueueTransitionTest")
 	}
 
 	if b.model("LenovoYogaC630") && b.extraConfig("ANGLE") {

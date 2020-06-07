@@ -110,14 +110,14 @@ void SkLuaCanvas::willRestore() {
     this->INHERITED::willRestore();
 }
 
-void SkLuaCanvas::didConcat44(const SkScalar m[16]) {
+void SkLuaCanvas::didConcat44(const SkM44&) {
     // TODO
 }
 void SkLuaCanvas::didScale(SkScalar x, SkScalar y) {
-    this->didConcat(SkMatrix::MakeScale(x, y));
+    this->didConcat(SkMatrix::Scale(x, y));
 }
 void SkLuaCanvas::didTranslate(SkScalar x, SkScalar y) {
-    this->didConcat(SkMatrix::MakeTrans(x, y));
+    this->didConcat(SkMatrix::Translate(x, y));
 }
 void SkLuaCanvas::didConcat(const SkMatrix& matrix) {
     switch (matrix.getType()) {
@@ -271,15 +271,7 @@ void SkLuaCanvas::onDrawDrawable(SkDrawable* drawable, const SkMatrix* matrix) {
     this->INHERITED::onDrawDrawable(drawable, matrix);
 }
 
-#ifdef SK_SUPPORT_LEGACY_DRAWVERTS_VIRTUAL
-void SkLuaCanvas::onDrawVerticesObject(const SkVertices*, const SkVertices::Bone[], int,
-                                       SkBlendMode, const SkPaint& paint) {
-    AUTO_LUA("drawVertices");
-    lua.pushPaint(paint, "paint");
-}
-#else
 void SkLuaCanvas::onDrawVerticesObject(const SkVertices*, SkBlendMode, const SkPaint& paint) {
     AUTO_LUA("drawVertices");
     lua.pushPaint(paint, "paint");
 }
-#endif

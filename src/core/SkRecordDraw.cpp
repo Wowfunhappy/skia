@@ -78,12 +78,19 @@ template <> void Draw::draw(const NoOp&) {}
 DRAW(Flush, flush());
 DRAW(Restore, restore());
 DRAW(Save, save());
+#ifdef SK_SUPPORT_LEGACY_LAYERCLIPMASK
 DRAW(SaveLayer, saveLayer(SkCanvas::SaveLayerRec(r.bounds,
                                                  r.paint,
                                                  r.backdrop.get(),
                                                  r.clipMask.get(),
                                                  r.clipMatrix,
                                                  r.saveLayerFlags)));
+#else
+DRAW(SaveLayer, saveLayer(SkCanvas::SaveLayerRec(r.bounds,
+                                                 r.paint,
+                                                 r.backdrop.get(),
+                                                 r.saveLayerFlags)));
+#endif
 
 template <> void Draw::draw(const SaveBehind& r) {
     SkCanvasPriv::SaveBehind(fCanvas, r.subset);
@@ -93,8 +100,9 @@ template <> void Draw::draw(const DrawBehind& r) {
     SkCanvasPriv::DrawBehind(fCanvas, r.paint);
 }
 
+DRAW(MarkCTM, markCTM(r.name.c_str()));
 DRAW(SetMatrix, setMatrix(SkMatrix::Concat(fInitialCTM, r.matrix)));
-DRAW(Concat44, concat44(r.matrix));
+DRAW(Concat44, concat(r.matrix));
 DRAW(Concat, concat(r.matrix));
 DRAW(Translate, translate(r.dx, r.dy));
 DRAW(Scale, scale(r.sx, r.sy));
@@ -268,6 +276,7 @@ private:
         fMeta  [fCurrentOp].isDraw = isSaveLayer;
     }
 
+    void trackBounds(const MarkCTM&)           { this->pushControl(); }
     void trackBounds(const SetMatrix&)         { this->pushControl(); }
     void trackBounds(const Concat&)            { this->pushControl(); }
     void trackBounds(const Concat44&)          { this->pushControl(); }

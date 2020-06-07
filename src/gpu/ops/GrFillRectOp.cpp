@@ -212,7 +212,7 @@ private:
                                                                         fQuads.count());
 
         return VertexSpec(fQuads.deviceQuadType(), fColorType, fQuads.localQuadType(),
-                          fHelper.usesLocalCoords(), GrQuadPerEdgeAA::Domain::kNo,
+                          fHelper.usesLocalCoords(), GrQuadPerEdgeAA::Subset::kNo,
                           fHelper.aaType(),
                           fHelper.compatibleWithCoverageAsAlpha(), indexBufferOption);
     }
@@ -225,7 +225,7 @@ private:
 
     void onCreateProgramInfo(const GrCaps* caps,
                              SkArenaAlloc* arena,
-                             const GrSurfaceProxyView* outputView,
+                             const GrSurfaceProxyView* writeView,
                              GrAppliedClip&& appliedClip,
                              const GrXferProcessor::DstProxyView& dstProxyView) override {
         const VertexSpec vertexSpec = this->vertexSpec();
@@ -233,14 +233,14 @@ private:
         GrGeometryProcessor* gp = GrQuadPerEdgeAA::MakeProcessor(arena, vertexSpec);
         SkASSERT(gp->vertexStride() == vertexSpec.vertexSize());
 
-        fProgramInfo = fHelper.createProgramInfoWithStencil(caps, arena, outputView,
+        fProgramInfo = fHelper.createProgramInfoWithStencil(caps, arena, writeView,
                                                             std::move(appliedClip),
                                                             dstProxyView, gp,
                                                             vertexSpec.primitiveType());
     }
 
     void onPrePrepareDraws(GrRecordingContext* context,
-                           const GrSurfaceProxyView* outputView,
+                           const GrSurfaceProxyView* writeView,
                            GrAppliedClip* clip,
                            const GrXferProcessor::DstProxyView& dstProxyView) override {
         TRACE_EVENT0("skia.gpu", TRACE_FUNC);
@@ -250,9 +250,9 @@ private:
         SkArenaAlloc* arena = context->priv().recordTimeAllocator();
 
         // This is equivalent to a GrOpFlushState::detachAppliedClip
-        GrAppliedClip appliedClip = clip ? std::move(*clip) : GrAppliedClip();
+        GrAppliedClip appliedClip = clip ? std::move(*clip) : GrAppliedClip::Disabled();
 
-        this->createProgramInfo(context->priv().caps(), arena, outputView,
+        this->createProgramInfo(context->priv().caps(), arena, writeView,
                                 std::move(appliedClip), dstProxyView);
 
         context->priv().recordProgramInfo(fProgramInfo);
@@ -524,7 +524,7 @@ std::unique_ptr<GrDrawOp> GrFillRectOp::MakeOp(GrRecordingContext* context,
 }
 
 void GrFillRectOp::AddFillRectOps(GrRenderTargetContext* rtc,
-                                  const GrClip& clip,
+                                  const GrClip* clip,
                                   GrRecordingContext* context,
                                   GrPaint&& paint,
                                   GrAAType aaType,

@@ -15,6 +15,7 @@
 #include "src/core/SkMathPriv.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDataUtils.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrGpuBuffer.h"
 #include "src/gpu/GrImageInfo.h"
@@ -30,8 +31,7 @@
 
 const int GrResourceProvider::kMinScratchTextureSize = 16;
 
-#define ASSERT_SINGLE_OWNER \
-    SkDEBUGCODE(GrSingleOwner::AutoEnforce debug_SingleOwner(fSingleOwner);)
+#define ASSERT_SINGLE_OWNER GR_ASSERT_SINGLE_OWNER(fSingleOwner)
 
 GrResourceProvider::GrResourceProvider(GrGpu* gpu, GrResourceCache* cache, GrSingleOwner* owner)
         : fCache(cache)

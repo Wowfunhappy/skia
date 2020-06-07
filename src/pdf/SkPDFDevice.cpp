@@ -154,12 +154,11 @@ static void draw_points(SkCanvas::PointMode mode,
                         const SkPoint* points,
                         const SkPaint& paint,
                         const SkIRect& bounds,
-                        const SkMatrix& ctm,
                         SkBaseDevice* device) {
     SkRasterClip rc(bounds);
     SkDraw draw;
     draw.fDst = SkPixmap(SkImageInfo::MakeUnknown(bounds.right(), bounds.bottom()), nullptr, 0);
-    draw.fMatrix = &ctm;
+    draw.fMatrixProvider = device;
     draw.fRC = &rc;
     draw.drawPoints(mode, count, points, paint, device);
 }
@@ -420,8 +419,7 @@ void SkPDFDevice::drawPoints(SkCanvas::PointMode mode,
     // We only use this when there's a path effect because of the overhead
     // of multiple calls to setUpContentEntry it causes.
     if (paint->getPathEffect()) {
-        draw_points(mode, count, points, *paint,
-                    this->devClipBounds(), this->localToDevice(), this);
+        draw_points(mode, count, points, *paint, this->devClipBounds(), this);
         return;
     }
 
@@ -742,7 +740,7 @@ struct PositionedGlyph {
 static SkRect get_glyph_bounds_device_space(const SkGlyph* glyph,
                                             SkScalar xScale, SkScalar yScale,
                                             SkPoint xy, const SkMatrix& ctm) {
-    SkRect glyphBounds = SkMatrix::MakeScale(xScale, yScale).mapRect(glyph->rect());
+    SkRect glyphBounds = SkMatrix::Scale(xScale, yScale).mapRect(glyph->rect());
     glyphBounds.offset(xy);
     ctm.mapRect(&glyphBounds); // now in dev space.
     return glyphBounds;
@@ -868,7 +866,7 @@ void SkPDFDevice::internalDrawGlyphRun(
 
     ScopedOutputMarkedContentTags mark(fNodeId, fDocument, out);
 
-    const SkGlyphID maxGlyphID = SkToU16(typeface->countGlyphs() - 1);
+    const int numGlyphs = typeface->countGlyphs();
 
     if (clusterator.reversedChars()) {
         out->writeText("/ReversedChars BMC\n");
@@ -920,7 +918,7 @@ void SkPDFDevice::internalDrawGlyphRun(
         }
         for (; index < glyphLimit; ++index) {
             SkGlyphID gid = glyphIDs[index];
-            if (gid > maxGlyphID) {
+            if (numGlyphs <= gid) {
                 continue;
             }
             SkPoint xy = glyphRun.positions()[index];
@@ -1002,7 +1000,7 @@ void SkPDFDevice::drawDevice(SkBaseDevice* device, int x, int y, const SkPaint& 
         return;
     }
 
-    SkMatrix matrix = SkMatrix::MakeTrans(SkIntToScalar(x), SkIntToScalar(y));
+    SkMatrix matrix = SkMatrix::Translate(SkIntToScalar(x), SkIntToScalar(y));
     ScopedContentEntry content(this, &this->cs(), matrix, paint);
     if (!content) {
         return;
@@ -1660,7 +1658,7 @@ void SkPDFDevice::internalDrawImageRect(SkKeyedImage imageSubset,
         canvas->setMatrix(offsetMatrix);
         canvas->drawImage(imageSubset.image(), 0, 0);
         // Make sure the final bits are in the bitmap.
-        surface->flush();
+        surface->flushAndSubmit();
 
         // In the new space, we use the identity matrix translated
         // and scaled to reflect DPI.

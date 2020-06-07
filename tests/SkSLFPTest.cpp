@@ -14,6 +14,7 @@ static void test(skiatest::Reporter* r, const char* src, const GrShaderCaps& cap
                  std::vector<const char*> expectedH, std::vector<const char*> expectedCPP) {
     SkSL::Program::Settings settings;
     settings.fCaps = &caps;
+    settings.fRemoveDeadFunctions = false;
     SkSL::Compiler compiler;
     SkSL::StringStream output;
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
@@ -195,8 +196,8 @@ DEF_TEST(SkSLFPUniform, r) {
              "static std::unique_ptr<GrFragmentProcessor> Make()"
          },
          {
-            "colorVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf4_GrSLType, "
-                                                        "\"color\");",
+            "colorVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, "
+                                                        "kHalf4_GrSLType, \"color\");",
          });
 }
 
@@ -214,8 +215,8 @@ DEF_TEST(SkSLFPInUniform, r) {
              "static std::unique_ptr<GrFragmentProcessor> Make(SkRect color) {",
          },
          {
-            "colorVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf4_GrSLType, "
-                                                        "\"color\");",
+            "colorVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, "
+                                                        "kHalf4_GrSLType, \"color\");",
             "pdman.set4fv(colorVar, 1, reinterpret_cast<const float*>(&(_outer.color)));"
          });
 }
@@ -232,8 +233,8 @@ DEF_TEST(SkSLFPInUniformCType, r) {
              "static std::unique_ptr<GrFragmentProcessor> Make(SkPMColor4f color) {",
          },
          {
-            "colorVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf4_GrSLType, "
-                                                        "\"color\");",
+            "colorVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, "
+                                                        "kHalf4_GrSLType, \"color\");",
             "pdman.set4fv(colorVar, 1, (_outer.color).vec());"
          });
 }
@@ -253,8 +254,8 @@ DEF_TEST(SkSLFPTrackedInUniform, r) {
          },
          {
             "SkRect colorPrev = SkRect::MakeEmpty();",
-            "colorVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf4_GrSLType, "
-                                                        "\"color\");",
+            "colorVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, "
+                                                        "kHalf4_GrSLType, \"color\");",
             "const SkRect& colorValue = _outer.color;",
             "if (colorPrev.isEmpty() || colorPrev != colorValue) {",
             "colorPrev = colorValue;",
@@ -275,8 +276,8 @@ DEF_TEST(SkSLFPNonInlinedInUniform, r) {
              "static std::unique_ptr<GrFragmentProcessor> Make(SkPoint point) {",
          },
          {
-            "pointVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf2_GrSLType, "
-                                                        "\"point\");",
+            "pointVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, "
+                                                        "kHalf2_GrSLType, \"point\");",
             "const SkPoint& pointValue = _outer.point;",
             "pdman.set2f(pointVar, pointValue.fX, pointValue.fY);"
          });
@@ -303,8 +304,8 @@ DEF_TEST(SkSLFPConditionalInUniform, r) {
             "SkPMColor4f colorPrev = {SK_FloatNaN, SK_FloatNaN, SK_FloatNaN, SK_FloatNaN}",
             "auto test = _outer.test;",
             "if (test) {",
-            "colorVar = args.fUniformHandler->addUniform(kFragment_GrShaderFlag, kHalf4_GrSLType, "
-                                                        "\"color\");",
+            "colorVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag, "
+                                                        "kHalf4_GrSLType, \"color\");",
             "if (colorVar.isValid()) {",
             "const SkPMColor4f& colorValue = _outer.color;",
             "if (colorPrev != colorValue) {",
@@ -453,11 +454,11 @@ DEF_TEST(SkSLFPTransformedCoords, r) {
          {},
          {
             "SkString sk_TransformedCoords2D_0 = "
-                           "fragBuilder->ensureCoords2D(args.fTransformedCoords[0].fVaryingPoint);",
+                           "fragBuilder->ensureCoords2D(args.fTransformedCoords[0].fVaryingPoint, "
+                                                       "_outer.sampleMatrix());",
             "fragBuilder->codeAppendf(\"%s = half4(%s, %s);\\n\", args.fOutputColor, "
                     "sk_TransformedCoords2D_0.c_str(), sk_TransformedCoords2D_0.c_str());"
          });
-
 }
 
 DEF_TEST(SkSLFPLayoutWhen, r) {
@@ -495,14 +496,16 @@ DEF_TEST(SkSLFPChildProcessors, r) {
                                      "_sample110.c_str());\n",
             "{",
             "    auto clone = src.childProcessor(child1_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child1_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child1_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
             "{",
             "    auto clone = src.childProcessor(child2_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child2_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child2_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
          });
@@ -533,14 +536,16 @@ DEF_TEST(SkSLFPChildProcessorsWithInput, r) {
             "_sample174 = this->invokeChild(_outer.child2_index, _input174.c_str(), args);",
             "{",
             "    auto clone = src.childProcessor(child1_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child1_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child1_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
             "{",
             "    auto clone = src.childProcessor(child2_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child2_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child2_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}"
          });
@@ -563,8 +568,9 @@ DEF_TEST(SkSLFPChildProcessorWithInputExpression, r) {
             "fragBuilder->codeAppendf(\"%s = %s;\\n\", args.fOutputColor, _sample64.c_str());",
             "{",
             "    auto clone = src.childProcessor(child_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
          });
@@ -592,14 +598,16 @@ DEF_TEST(SkSLFPNestedChildProcessors, r) {
             "fragBuilder->codeAppendf(\"%s = %s;\\n\", args.fOutputColor, _sample93.c_str());",
             "{",
             "    auto clone = src.childProcessor(child1_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child1_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child1_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
             "{",
             "    auto clone = src.childProcessor(child2_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child2_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child2_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
             });
@@ -631,8 +639,9 @@ DEF_TEST(SkSLFPChildFPAndGlobal, r) {
                                      " args.fOutputColor, _sample130.c_str(), args.fOutputColor);",
             "{",
             "    auto clone = src.childProcessor(child_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
             });
@@ -662,8 +671,9 @@ DEF_TEST(SkSLFPChildProcessorInlineFieldAccess, r) {
                                      " args.fOutputColor, _sample105.c_str(), args.fOutputColor);",
             "{",
             "    auto clone = src.childProcessor(child_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
          });
@@ -694,8 +704,9 @@ DEF_TEST(SkSLFPChildProcessorFieldAccess, r) {
                                      " args.fOutputColor, _sample126.c_str(), args.fOutputColor);",
             "{",
             "    auto clone = src.childProcessor(child_index).clone();",
-            "    clone->setSampledWithExplicitCoords(",
-            "            src.childProcessor(child_index).isSampledWithExplicitCoords());",
+            "    if (src.childProcessor(child_index).isSampledWithExplicitCoords()) {",
+            "        clone->setSampledWithExplicitCoords();",
+            "    }",
             "    this->registerChildProcessor(std::move(clone));",
             "}",
          });
@@ -750,7 +761,8 @@ DEF_TEST(SkSLFPSampleCoords, r) {
             "_sample94 = this->invokeChild(_outer.child_index, args);\n",
             "SkString _sample110;\n",
             "SkString sk_TransformedCoords2D_0 = fragBuilder->ensureCoords2D("
-                                                     "args.fTransformedCoords[0].fVaryingPoint);\n",
+                                                     "args.fTransformedCoords[0].fVaryingPoint, "
+                                                     "_outer.sampleMatrix());\n",
             "SkString _coords110 = SkStringPrintf(\"%s / 2.0\", "
                 "sk_TransformedCoords2D_0.c_str());\n",
             "_sample110 = this->invokeChild(_outer.child_index, args, _coords110.c_str());\n",
@@ -773,7 +785,19 @@ DEF_TEST(SkSLFPFunction, r) {
             "const GrShaderVar flip_args[] = { GrShaderVar(\"c\", kHalf4_GrSLType)};",
             "fragBuilder->emitFunction(kHalf4_GrSLType, \"flip\", 1, flip_args, "
                                       "\"return c.wzyx;\\n\", &flip_name);",
-            "fragBuilder->codeAppendf(\"%s = %s(%s);\\n\", args.fOutputColor, flip_name.c_str(), "
-                                      "args.fInputColor);"
+            "fragBuilder->codeAppendf(\"half4 inlineResult101;\\nhalf4 inlineArg101_0 = %s;\\n{\\n    inlineResult101 = inlineArg101_0.wzyx;\\n}\\n%s = inlineResult101;\\n\\n\", args.fInputColor, "
+                                       "args.fOutputColor);"
+         });
+}
+
+DEF_TEST(SkSLFPMatrixSample, r) {
+    test(r,
+         "in fragmentProcessor? child;"
+         "void main() {"
+         "    sk_OutColor = sample(child, float3x3(2));"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         {},
+         {
          });
 }

@@ -59,7 +59,7 @@ npm:
 	mkdir -p ./canvaskit/bin
 	# These features are turned off to keep code size smaller for the
 	# general use case.
-	./compile.sh release no_skottie no_particles no_pathops no_rt_shader no_skp
+	./compile.sh release no_skottie no_particles no_pathops no_rt_shader no_skp no_alias_font
 	cp ../../out/canvaskit_wasm/canvaskit.js       ./canvaskit/bin
 	cp ../../out/canvaskit_wasm/canvaskit.wasm     ./canvaskit/bin
 
@@ -80,6 +80,13 @@ test-continuous:
 	echo "Also assuming make debug or release has also been run by a user (if needed)"
 	npx karma start ./karma.conf.js --no-single-run --watch-poll
 
+test-continuous-headless:
+	npx karma start ./karma.conf.js --no-single-run --watch-poll --headless
+
+.PHONY: perf
+perf:
+	npx karma start ./karma.bench.conf.js --single-run
+
 node-example:
 	node ./canvaskit/node.example.js --expose-wasm
 
@@ -87,5 +94,5 @@ docker-compile:
 	mkdir -p ${SKIA_ROOT}/out/canvaskit_wasm_docker
 	docker run --rm --volume ${SKIA_ROOT}:/SRC \
                --volume ${SKIA_ROOT}/out/canvaskit_wasm_docker:/OUT \
-               gcr.io/skia-public/canvaskit-emsdk:1.39.6_v1 \
+               gcr.io/skia-public/canvaskit-emsdk:1.39.16_v1 \
                /SRC/infra/canvaskit/build_canvaskit.sh

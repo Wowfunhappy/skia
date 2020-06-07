@@ -9,13 +9,13 @@
 
 #include "include/core/SkPath.h"
 #include "include/gpu/GrContext.h"
-#include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrResourceCache.h"
 #include "src/gpu/GrSoftwarePathRenderer.h"
 #include "src/gpu/GrStyle.h"
 #include "src/gpu/effects/GrPorterDuffXferProcessor.h"
-#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/geometry/GrStyledShape.h"
 #include "src/gpu/ops/GrTriangulatingPathRenderer.h"
 
 static SkPath create_concave_path() {
@@ -38,10 +38,9 @@ static void draw_path(GrContext* ctx,
     GrPaint paint;
     paint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrc));
 
-    GrNoClip noClip;
     SkIRect clipConservativeBounds = SkIRect::MakeWH(renderTargetContext->width(),
                                                      renderTargetContext->height());
-    GrShape shape(path, style);
+    GrStyledShape shape(path, style);
     if (shape.style().applies()) {
         shape = shape.applyStyle(GrStyle::Apply::kPathEffectAndStrokeRec, 1.0f);
     }
@@ -51,7 +50,7 @@ static void draw_path(GrContext* ctx,
                                       std::move(paint),
                                       &GrUserStencilSettings::kUnused,
                                       renderTargetContext,
-                                      &noClip,
+                                      nullptr,
                                       &clipConservativeBounds,
                                       &matrix,
                                       &shape,
@@ -97,7 +96,7 @@ static void test_path(skiatest::Reporter* reporter,
 
     // Draw the path, check that new resource count matches expectations
     draw_path(ctx.get(), rtc.get(), path, pathRenderer.get(), aaType, style);
-    ctx->flush();
+    ctx->flushAndSubmit();
     REPORTER_ASSERT(reporter, cache_non_scratch_resources_equals(cache, expected));
 
     // Nothing should be purgeable yet
@@ -121,7 +120,7 @@ static void test_path(skiatest::Reporter* reporter,
         float scaleX = 1 + ((float)i + 1)/20.f;
         draw_path(ctx.get(), rtc.get(), path, pathRenderer.get(), aaType, style, scaleX);
     }
-    ctx->flush();
+    ctx->flushAndSubmit();
     REPORTER_ASSERT(reporter, SkPathPriv::GenIDChangeListenersCount(path) == 20);
     cache->purgeAllUnlocked();
     // The listeners don't actually purge until we try to add another one.

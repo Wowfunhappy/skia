@@ -50,7 +50,7 @@ public:
               fOverdrawCanvas{overdrawCanvas},
               fPainter{props, kN32_SkColorType, nullptr, SkStrikeCache::GlobalStrikeCache()} {}
 
-    void paintPaths(SkDrawableGlyphBuffer*, SkScalar scale, const SkPaint& paint) const override {}
+    void paintPaths(SkDrawableGlyphBuffer*, SkScalar, SkPoint, const SkPaint&) const override {}
 
     void paintMasks(SkDrawableGlyphBuffer* drawables, const SkPaint& paint) const override {
         for (auto t : drawables->drawable()) {
@@ -131,24 +131,10 @@ void SkOverdrawCanvas::onDrawPoints(PointMode mode, size_t count, const SkPoint 
     fList[0]->onDrawPoints(mode, count, points, this->overdrawPaint(paint));
 }
 
-#ifdef SK_SUPPORT_LEGACY_DRAWVERTS_VIRTUAL
-void SkOverdrawCanvas::onDrawVerticesObject(const SkVertices* vertices,
-                                            const SkVertices::Bone bones[], int boneCount,
-                                            SkBlendMode blendMode, const SkPaint& paint) {
-    fList[0]->onDrawVerticesObject(vertices,
-                                   bones,
-                                   boneCount,
-                                   blendMode,
-                                   this->overdrawPaint(paint));
-}
-#else
 void SkOverdrawCanvas::onDrawVerticesObject(const SkVertices* vertices,
                                             SkBlendMode blendMode, const SkPaint& paint) {
-    fList[0]->onDrawVerticesObject(vertices,
-                                   blendMode,
-                                   this->overdrawPaint(paint));
+    fList[0]->onDrawVerticesObject(vertices, blendMode, this->overdrawPaint(paint));
 }
-#endif
 
 void SkOverdrawCanvas::onDrawAtlas(const SkImage* image, const SkRSXform xform[],
                                    const SkRect texs[], const SkColor colors[], int count,

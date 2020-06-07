@@ -100,10 +100,12 @@ private:
     SkRect fSubset;
     SkRect fClamp;
     ShaderMode fShaderModes[2];
+    // true if we are dealing with a fully lazy proxy which can't be normalized until runtime
+    bool fLazyProxyNormalization;
 
-    inline GrTextureEffect(GrSurfaceProxyView, SkAlphaType, const SkMatrix&, const Sampling&);
+    inline GrTextureEffect(GrSurfaceProxyView, SkAlphaType, const Sampling&, bool);
 
-    GrTextureEffect(const GrTextureEffect& src);
+    explicit GrTextureEffect(const GrTextureEffect& src);
 
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
 

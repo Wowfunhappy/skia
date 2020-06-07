@@ -36,9 +36,7 @@ public:
         return {surfaceColorType, GrColorTypeBytesPerPixel(surfaceColorType)};
     }
 
-    SurfaceReadPixelsSupport surfaceSupportsReadPixels(const GrSurface*) const override {
-        return SurfaceReadPixelsSupport::kSupported;
-    }
+    SurfaceReadPixelsSupport surfaceSupportsReadPixels(const GrSurface*) const override;
 
     size_t bytesPerPixel(const GrBackendFormat&) const override;
 
@@ -55,9 +53,6 @@ public:
 
     uint64_t computeFormatKey(const GrBackendFormat&) const override;
 
-    GrColorType getYUVAColorTypeFromBackendFormat(const GrBackendFormat&,
-                                                  bool isAlphaChannel) const override;
-
     GrProgramDesc makeDesc(const GrRenderTarget*, const GrProgramInfo&) const override;
 
 #if GR_TEST_UTILS
@@ -65,9 +60,7 @@ public:
 #endif
 
 private:
-    bool onSurfaceSupportsWritePixels(const GrSurface* surface) const override {
-        return true;
-    }
+    bool onSurfaceSupportsWritePixels(const GrSurface* surface) const override;
     bool onCanCopySurface(const GrSurfaceProxy* dst, const GrSurfaceProxy* src,
         const SkIRect& srcRect, const SkIPoint& dstPoint) const override {
         return true;

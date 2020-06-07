@@ -10,7 +10,6 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkString.h"
-#include "include/core/SkVertices.h"
 
 struct lua_State;
 
@@ -27,7 +26,7 @@ protected:
     bool onDoSaveBehind(const SkRect*) override;
     void willRestore() override;
 
-    void didConcat44(const SkScalar[16]) override;
+    void didConcat44(const SkM44&) override;
     void didConcat(const SkMatrix&) override;
     void didSetMatrix(const SkMatrix&) override;
     void didScale(SkScalar, SkScalar) override;
@@ -48,12 +47,7 @@ protected:
     void onDrawImage(const SkImage*, SkScalar left, SkScalar top, const SkPaint*) override;
     void onDrawImageRect(const SkImage*, const SkRect* src, const SkRect& dst,
                          const SkPaint*, SrcRectConstraint) override;
-#ifdef SK_SUPPORT_LEGACY_DRAWVERTS_VIRTUAL
-    void onDrawVerticesObject(const SkVertices*, const SkVertices::Bone bones[], int boneCount,
-                              SkBlendMode, const SkPaint&) override;
-#else
     void onDrawVerticesObject(const SkVertices*, SkBlendMode, const SkPaint&) override;
-#endif
     void onClipRect(const SkRect&, SkClipOp, ClipEdgeStyle) override;
     void onClipRRect(const SkRRect&, SkClipOp, ClipEdgeStyle) override;
     void onClipPath(const SkPath&, SkClipOp, ClipEdgeStyle) override;

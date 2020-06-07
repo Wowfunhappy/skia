@@ -28,15 +28,17 @@ struct Setting : public Expression {
     std::unique_ptr<Expression> constantPropagate(const IRGenerator& irGenerator,
                                                   const DefinitionMap& definitions) override;
 
+    int nodeCount() const override {
+        return 1;
+    }
+
     std::unique_ptr<Expression> clone() const override {
         return std::unique_ptr<Expression>(new Setting(fOffset, fName, fValue->clone()));
     }
 
-#ifdef SK_DEBUG
     String description() const override {
         return fName;
     }
-#endif
 
     bool hasProperty(Property property) const override {
         return false;

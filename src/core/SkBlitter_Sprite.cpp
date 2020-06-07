@@ -14,6 +14,8 @@
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkSpriteBlitter.h"
 
+extern bool gUseSkVMBlitter;
+
 SkSpriteBlitter::SkSpriteBlitter(const SkPixmap& source)
     : fSource(source) {}
 
@@ -132,7 +134,7 @@ public:
                                             : kPremul_SkAlphaType;
             fAlloc->make<SkColorSpaceXformSteps>(srcCS, srcAT,
                                                  dstCS, kPremul_SkAlphaType)
-                ->apply(&p, fSource.colorType());
+                ->apply(&p);
         }
         if (fPaintColor.fA != 1.0f) {
             p.append(SkRasterPipeline::scale_1_float, &fPaintColor.fA);
@@ -181,6 +183,12 @@ SkBlitter* SkBlitter::ChooseSprite(const SkPixmap& dst, const SkPaint& paint,
         (which does respect soft edges).
     */
     SkASSERT(alloc != nullptr);
+
+    if (gUseSkVMBlitter) {
+        // TODO: one day, focused SkVMBlitters with the sprite as a varying?
+        // For now, returning nullptr here will make it fall back to normal non-sprite blitting.
+        return nullptr;
+    }
 
     // TODO: in principle SkRasterPipelineSpriteBlitter could be made to handle this.
     if (source.alphaType() == kUnpremul_SkAlphaType) {

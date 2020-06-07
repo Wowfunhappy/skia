@@ -40,8 +40,8 @@ public:
 private:
     GrGpu* gpu() override { return fGpu; }
 
-    void setupGeometry(const GrBuffer* vertexBuffer, int baseVertex, const GrBuffer* instanceBuffer,
-                       int baseInstance);
+    void bindInstanceBuffer(const GrBuffer*, int baseInstance);
+    void bindVertexBuffer(const GrBuffer*, int baseVertex);
 
     const void* offsetForBaseIndex(int baseIndex) const {
         if (!fIndexPointer) {
@@ -66,8 +66,11 @@ private:
                          int baseVertex) override;
     void onDrawIndexedInstanced(int indexCount, int baseIndex, int instanceCount, int baseInstance,
                                 int baseVertex) override;
-    void onClear(const GrFixedClip& clip, const SkPMColor4f& color) override;
-    void onClearStencilClip(const GrFixedClip& clip, bool insideStencilMask) override;
+    void onDrawIndirect(const GrBuffer* drawIndirectBuffer, size_t offset, int drawCount) override;
+    void onDrawIndexedIndirect(const GrBuffer* drawIndirectBuffer, size_t offset,
+                               int drawCount) override;
+    void onClear(const GrScissorState& scissor, const SkPMColor4f& color) override;
+    void onClearStencilClip(const GrScissorState& scissor, bool insideStencilMask) override;
 
     GrGLGpu* fGpu;
     SkIRect fContentBounds;
@@ -86,4 +89,3 @@ private:
 };
 
 #endif
-

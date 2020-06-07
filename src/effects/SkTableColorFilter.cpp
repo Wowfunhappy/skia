@@ -128,15 +128,12 @@ public:
                           skvm::Uniforms* uniforms, SkArenaAlloc*) const override {
 
         auto apply_table_to_component = [&](skvm::F32 c, const uint8_t* bytePtr) -> skvm::F32 {
-            c = p->clamp(c, p->splat(0.f), p->splat(1.0f));
-            skvm::I32 index = p->to_unorm(8, c);
-
+            skvm::I32     index = to_unorm(8, clamp01(c));
             skvm::Uniform table = uniforms->pushPtr(bytePtr);
-            skvm::I32 byte = p->gather8(table, index);
-            return p->from_unorm(8, byte);
+            return from_unorm(8, gather8(table, index));
         };
 
-        c = p->unpremul(c);
+        c = unpremul(c);
 
         const uint8_t* ptr = fStorage;
         if (fFlags & kA_Flag) {
@@ -154,7 +151,7 @@ public:
         if (fFlags & kB_Flag) {
             c.b = apply_table_to_component(c.b, ptr);
         }
-        return p->premul(c);
+        return premul(c);
     }
 
 protected:
@@ -332,17 +329,11 @@ void GLColorTableEffect::emitCode(EmitArgs& args) {
     if (nullptr == args.fInputColor) {
         // the input color is solid white (all ones).
         static const float kMaxValue = kColorScaleFactor + kColorOffsetFactor;
-        fragBuilder->codeAppendf("\t\thalf4 coord = half4(%f, %f, %f, %f);\n",
-                                 kMaxValue, kMaxValue, kMaxValue, kMaxValue);
-
+        fragBuilder->codeAppendf("\t\thalf4 coord = half4(%f);\n", kMaxValue);
     } else {
-        fragBuilder->codeAppendf("\t\thalf nonZeroAlpha = max(%s.a, .0001);\n", args.fInputColor);
-        fragBuilder->codeAppendf("\t\thalf4 coord = half4(%s.rgb / nonZeroAlpha, nonZeroAlpha);\n",
-                                 args.fInputColor);
-        fragBuilder->codeAppendf("\t\tcoord = coord * %f + half4(%f, %f, %f, %f);\n",
-                                 kColorScaleFactor,
-                                 kColorOffsetFactor, kColorOffsetFactor,
-                                 kColorOffsetFactor, kColorOffsetFactor);
+        fragBuilder->codeAppendf("\t\thalf4 coord = unpremul(%s);\n", args.fInputColor);
+        fragBuilder->codeAppendf("\t\tcoord = coord * %f + %f;\n",
+                                 kColorScaleFactor, kColorOffsetFactor);
     }
 
     SkString coord;

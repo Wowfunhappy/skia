@@ -8,8 +8,8 @@
 #ifndef GrClearStencilClipOp_DEFINED
 #define GrClearStencilClipOp_DEFINED
 
-#include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrRenderTargetProxy.h"
+#include "src/gpu/GrScissorState.h"
 #include "src/gpu/ops/GrOp.h"
 
 class GrOpFlushState;
@@ -20,17 +20,16 @@ public:
     DEFINE_OP_CLASS_ID
 
     static std::unique_ptr<GrOp> Make(GrRecordingContext* context,
-                                      const GrFixedClip& clip,
-                                      bool insideStencilMask,
-                                      GrRenderTargetProxy* proxy);
+                                      const GrScissorState& scissor,
+                                      bool insideStencilMask);
 
     const char* name() const override { return "ClearStencilClip"; }
 
 #ifdef SK_DEBUG
     SkString dumpInfo() const override {
         SkString string("Scissor [");
-        if (fClip.scissorEnabled()) {
-            const SkIRect& r = fClip.scissorRect();
+        if (fScissor.enabled()) {
+            const SkIRect& r = fScissor.rect();
             string.appendf("L: %d, T: %d, R: %d, B: %d", r.fLeft, r.fTop, r.fRight, r.fBottom);
         } else {
             string.append("disabled");
@@ -44,18 +43,15 @@ public:
 private:
     friend class GrOpMemoryPool; // for ctor
 
-    GrClearStencilClipOp(const GrFixedClip& clip, bool insideStencilMask,
-                         GrRenderTargetProxy* proxy)
+    GrClearStencilClipOp(const GrScissorState& scissor, bool insideStencilMask)
             : INHERITED(ClassID())
-            , fClip(clip)
+            , fScissor(scissor)
             , fInsideStencilMask(insideStencilMask) {
-        const SkRect& bounds =
-                fClip.scissorEnabled() ? SkRect::Make(fClip.scissorRect()) : proxy->getBoundsRect();
-        this->setBounds(bounds, HasAABloat::kNo, IsHairline::kNo);
+        this->setBounds(SkRect::Make(scissor.rect()), HasAABloat::kNo, IsHairline::kNo);
     }
 
     void onPrePrepare(GrRecordingContext*,
-                      const GrSurfaceProxyView* outputView,
+                      const GrSurfaceProxyView* writeView,
                       GrAppliedClip*,
                       const GrXferProcessor::DstProxyView&) override {}
 
@@ -63,8 +59,8 @@ private:
 
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) override;
 
-    const GrFixedClip fClip;
-    const bool        fInsideStencilMask;
+    const GrScissorState fScissor;
+    const bool           fInsideStencilMask;
 
     typedef GrOp INHERITED;
 };

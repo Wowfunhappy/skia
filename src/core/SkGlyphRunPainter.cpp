@@ -15,6 +15,7 @@
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/SkGr.h"
+#include "src/gpu/ops/GrAtlasTextOp.h"
 #include "src/gpu/text/GrTextBlobCache.h"
 #include "src/gpu/text/GrTextContext.h"
 #endif
@@ -106,7 +107,7 @@ void SkGlyphRunListPainter::drawForBitmapDevice(
 
             auto strike = strikeSpec.findOrCreateStrike();
 
-            fDrawable.startSource(fRejects.source(), drawOrigin);
+            fDrawable.startSource(fRejects.source());
             strike->prepareForPathDrawing(&fDrawable, &fRejects);
             fRejects.flipRejectsToSource();
 
@@ -115,7 +116,8 @@ void SkGlyphRunListPainter::drawForBitmapDevice(
             SkPaint pathPaint = runPaint;
             pathPaint.setAntiAlias(runFont.hasSomeAntiAliasing());
 
-            bitmapDevice->paintPaths(&fDrawable, strikeSpec.strikeToSourceRatio(), pathPaint);
+            bitmapDevice->paintPaths(
+                    &fDrawable, strikeSpec.strikeToSourceRatio(), drawOrigin, pathPaint);
         }
         if (!fRejects.source().empty()) {
             SkStrikeSpec strikeSpec = SkStrikeSpec::MakeMask(
@@ -123,7 +125,7 @@ void SkGlyphRunListPainter::drawForBitmapDevice(
 
             auto strike = strikeSpec.findOrCreateStrike();
 
-            fDrawable.startDevice(
+            fDrawable.startBitmapDevice(
                     fRejects.source(), drawOrigin, deviceMatrix, strike->roundingSpec());
             strike->prepareForDrawingMasksCPU(&fDrawable);
             bitmapDevice->paintMasks(&fDrawable, runPaint);
@@ -167,7 +169,7 @@ void SkGlyphRunListPainter::processGlyphRunList(const SkGlyphRunList& glyphRunLi
             if (!strikeSpec.isEmpty()) {
                 SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(fStrikeCache);
 
-                fDrawable.startSource(fRejects.source(), origin);
+                fDrawable.startSource(fRejects.source());
                 strike->prepareForSDFTDrawing(&fDrawable, &fRejects);
                 fRejects.flipRejectsToSource();
 
@@ -188,7 +190,7 @@ void SkGlyphRunListPainter::processGlyphRunList(const SkGlyphRunList& glyphRunLi
 
             SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(fStrikeCache);
 
-            fDrawable.startDevice(fRejects.source(), origin, drawMatrix, strike->roundingSpec());
+            fDrawable.startGPUDevice(fRejects.source(), origin, drawMatrix, strike->roundingSpec());
             strike->prepareForMaskDrawing(&fDrawable, &fRejects);
             fRejects.flipRejectsToSource();
 
@@ -212,7 +214,7 @@ void SkGlyphRunListPainter::processGlyphRunList(const SkGlyphRunList& glyphRunLi
             if (!strikeSpec.isEmpty()) {
                 SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(fStrikeCache);
 
-                fDrawable.startPaths(fRejects.source());
+                fDrawable.startSource(fRejects.source());
                 strike->prepareForPathDrawing(&fDrawable, &fRejects);
                 fRejects.flipRejectsToSource();
                 maxDimensionInSourceSpace =
@@ -235,7 +237,7 @@ void SkGlyphRunListPainter::processGlyphRunList(const SkGlyphRunList& glyphRunLi
             if (!strikeSpec.isEmpty()) {
                 SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(fStrikeCache);
 
-                fDrawable.startSource(fRejects.source(), origin);
+                fDrawable.startSource(fRejects.source());
                 strike->prepareForMaskDrawing(&fDrawable, &fRejects);
                 fRejects.flipRejectsToSource();
                 SkASSERT(fRejects.source().empty());
@@ -271,16 +273,17 @@ SkPMColor4f generate_filtered_color(const SkPaint& paint, const GrColorInfo& col
     return filteredColor.premul();
 }
 
-void GrTextContext::drawGlyphRunList(
-        GrRecordingContext* context, GrTextTarget* target, const GrClip& clip,
-        const SkMatrix& drawMatrix, const SkSurfaceProps& props,
-        const SkGlyphRunList& glyphRunList) {
+void GrTextContext::drawGlyphRunList(GrRecordingContext* context,
+                                     GrTextTarget* target,
+                                     const GrClip* clip,
+                                     const SkMatrixProvider& matrixProvider,
+                                     const SkSurfaceProps& props,
+                                     const SkGlyphRunList& glyphRunList) const {
     auto contextPriv = context->priv();
     // If we have been abandoned, then don't draw
     if (contextPriv.abandoned()) {
         return;
     }
-    auto grStrikeCache = contextPriv.getGrStrikeCache();
     GrTextBlobCache* textBlobCache = contextPriv.getTextBlobCache();
 
     // Get the first paint to use as the key paint.
@@ -308,8 +311,7 @@ void GrTextContext::drawGlyphRunList(
         bool hasLCD = glyphRunList.anyRunsLCD();
 
         // We canonicalize all non-lcd draws to use kUnknown_SkPixelGeometry
-        SkPixelGeometry pixelGeometry = hasLCD ? props.pixelGeometry() :
-                                        kUnknown_SkPixelGeometry;
+        SkPixelGeometry pixelGeometry = hasLCD ? props.pixelGeometry() : kUnknown_SkPixelGeometry;
 
         // TODO we want to figure out a way to be able to use the canonical color on LCD text,
         // see the note on ComputeCanonicalColor above.  We pick a dummy value for LCD text to
@@ -326,9 +328,9 @@ void GrTextContext::drawGlyphRunList(
         cachedBlob = textBlobCache->find(key);
     }
 
-    bool forceW = fOptions.fDistanceFieldVerticesAlwaysHaveW;
     bool supportsSDFT = context->priv().caps()->shaderCaps()->supportsDistanceFieldText();
     SkGlyphRunListPainter* painter = target->glyphPainter();
+    const SkMatrix& drawMatrix(matrixProvider.localToDevice());
     if (cachedBlob) {
         if (cachedBlob->mustRegenerate(blobPaint, glyphRunList.anyRunsSubpixelPositioned(),
                                        blurRec, drawMatrix, drawOrigin)) {
@@ -336,9 +338,8 @@ void GrTextContext::drawGlyphRunList(
             // TODO we could probably get away reuse most of the time if the pointer is unique,
             // but we'd have to clear the subrun information
             textBlobCache->remove(cachedBlob.get());
-            cachedBlob = textBlobCache->makeCachedBlob(
-                    glyphRunList, grStrikeCache, key, blurRec, drawMatrix,
-                    initialVertexColor, forceW);
+            cachedBlob = textBlobCache->makeCachedBlob(glyphRunList, key, blurRec, drawMatrix,
+                                                       initialVertexColor);
 
             painter->processGlyphRunList(
                     glyphRunList, drawMatrix, props, supportsSDFT, fOptions, cachedBlob.get());
@@ -347,18 +348,17 @@ void GrTextContext::drawGlyphRunList(
         }
     } else {
         if (canCache) {
-            cachedBlob = textBlobCache->makeCachedBlob(
-                    glyphRunList, grStrikeCache, key, blurRec, drawMatrix,
-                    initialVertexColor, forceW);
+            cachedBlob = textBlobCache->makeCachedBlob(glyphRunList, key, blurRec, drawMatrix,
+                                                       initialVertexColor);
         } else {
-            cachedBlob = textBlobCache->makeBlob(
-                    glyphRunList, grStrikeCache, drawMatrix, initialVertexColor, forceW);
+            cachedBlob = GrTextBlob::Make(glyphRunList, drawMatrix, initialVertexColor);
         }
         painter->processGlyphRunList(
                 glyphRunList, drawMatrix, props, supportsSDFT, fOptions, cachedBlob.get());
     }
 
-    cachedBlob->flush(target, props, blobPaint, drawingColor, clip, drawMatrix, drawOrigin);
+    cachedBlob->insertOpsIntoTarget(target, props, blobPaint, drawingColor, clip, matrixProvider,
+                                    drawOrigin);
 }
 
 #if GR_TEST_UTILS
@@ -371,7 +371,7 @@ std::unique_ptr<GrDrawOp> GrTextContext::createOp_TestingOnly(GrRecordingContext
                                                               GrRenderTargetContext* rtc,
                                                               const SkPaint& skPaint,
                                                               const SkFont& font,
-                                                              const SkMatrix& drawMatrix,
+                                                              const SkMatrixProvider& mtxProvider,
                                                               const char* text,
                                                               int x,
                                                               int y) {
@@ -380,14 +380,13 @@ std::unique_ptr<GrDrawOp> GrTextContext::createOp_TestingOnly(GrRecordingContext
         return nullptr;
     }
 
-    auto strikeCache = direct->priv().getGrStrikeCache();
-
     static SkSurfaceProps surfaceProps(SkSurfaceProps::kLegacyFontHost_InitType);
 
     size_t textLen = (int)strlen(text);
 
     SkPMColor4f filteredColor = generate_filtered_color(skPaint, rtc->colorInfo());
     GrColor color = filteredColor.toBytes_RGBA();
+    const SkMatrix& drawMatrix(mtxProvider.localToDevice());
 
     auto drawOrigin = SkPoint::Make(x, y);
     SkGlyphRunBuilder builder;
@@ -396,8 +395,7 @@ std::unique_ptr<GrDrawOp> GrTextContext::createOp_TestingOnly(GrRecordingContext
     auto glyphRunList = builder.useGlyphRunList();
     sk_sp<GrTextBlob> blob;
     if (!glyphRunList.empty()) {
-        blob = direct->priv().getTextBlobCache()->makeBlob(
-                glyphRunList, strikeCache, drawMatrix, color, false);
+        blob = GrTextBlob::Make(glyphRunList, drawMatrix, color);
         SkGlyphRunListPainter* painter = rtc->textTarget()->glyphPainter();
         painter->processGlyphRunList(
                 glyphRunList, drawMatrix, surfaceProps,
@@ -405,8 +403,13 @@ std::unique_ptr<GrDrawOp> GrTextContext::createOp_TestingOnly(GrRecordingContext
                 textContext->fOptions, blob.get());
     }
 
-    return blob->test_makeOp(textLen, drawMatrix, drawOrigin, skPaint, filteredColor, surfaceProps,
-                             rtc->textTarget());
+    return blob->firstSubRun()->makeOp(mtxProvider,
+                                       drawOrigin,
+                                       SkIRect::MakeEmpty(),
+                                       skPaint,
+                                       filteredColor,
+                                       surfaceProps,
+                                       rtc->textTarget());
 }
 
 #endif  // GR_TEST_UTILS

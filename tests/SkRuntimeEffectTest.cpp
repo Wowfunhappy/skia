@@ -10,6 +10,7 @@
 #include "include/core/SkSurface.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/GrContext.h"
+#include "src/core/SkTLazy.h"
 #include "tests/Test.h"
 
 #include <algorithm>
@@ -67,33 +68,16 @@ public:
             return;
         }
 
-        fEffect = std::move(effect);
-        fInputs = SkData::MakeUninitialized(fEffect->inputSize());
+        fBuilder.init(std::move(effect));
     }
 
-    struct InputVar {
-        template <typename T> InputVar& operator=(const T& val) {
-            SkASSERT(sizeof(T) == fVar.sizeInBytes());
-            memcpy(SkTAddOffset<void>(fOwner->fInputs->writable_data(), fVar.fOffset), &val,
-                   sizeof(T));
-            return *this;
-        }
-        TestEffect* fOwner;
-        const SkRuntimeEffect::Variable& fVar;
-    };
-
-    InputVar operator[](const char* name) {
-        auto input = std::find_if(fEffect->inputs().begin(), fEffect->inputs().end(),
-                                  [name](const auto& v) { return v.fName.equals(name); });
-        SkASSERT(input != fEffect->inputs().end());
-        return {this, *input};
+    SkRuntimeShaderBuilder::BuilderInput operator[](const char* name) {
+        return fBuilder->input(name);
     }
 
     void test(skiatest::Reporter* r, sk_sp<SkSurface> surface,
               uint32_t TL, uint32_t TR, uint32_t BL, uint32_t BR) {
-        if (!fEffect) { return; }
-
-        auto shader = fEffect->makeShader(fInputs, nullptr, 0, nullptr, false);
+        auto shader = fBuilder->makeShader(nullptr, false);
         if (!shader) {
             REPORT_FAILURE(r, "shader", SkString("Effect didn't produce a shader"));
             return;
@@ -119,7 +103,7 @@ public:
                                           "Got     : [ %08x %08x %08x %08x ]\n"
                                           "SkSL:\n%s\n",
                                           TL, TR, BL, BR, actual[0], actual[1], actual[2],
-                                          actual[3], fEffect->source().c_str()));
+                                          actual[3], fBuilder->fEffect->source().c_str()));
         }
     }
 
@@ -128,8 +112,7 @@ public:
     }
 
 private:
-    sk_sp<SkRuntimeEffect> fEffect;
-    sk_sp<SkData> fInputs;
+    SkTLazy<SkRuntimeShaderBuilder> fBuilder;
 };
 
 static void test_RuntimeEffect_Shaders(skiatest::Reporter* r, GrContext* context) {
@@ -163,6 +146,18 @@ static void test_RuntimeEffect_Shaders(skiatest::Reporter* r, GrContext* context
     pickColor.test(r, surface, 0x7F00007F);  // Tests that we clamp to valid premul
     pickColor["flag"] = 1;
     pickColor.test(r, surface, 0xFF00FF00);
+
+    TestEffect inlineColor(r, "in half c;", "color = half4(c, c, c, 1);");
+    inlineColor["c"] = 0.498f;
+    inlineColor.test(r, surface, 0xFF7F7F7F);
+
+    // Test sk_FragCoord, which we output to color. Since the surface is 2x2, we should see
+    // (0,0), (1,0), (0,1), (1,1), multiply by 0.498 to make sure we're not saturating unexpectedly.
+    // TODO: Remove this when sk_FragCoord is supported by interpreter.
+    if (context) {
+        TestEffect fragCoord(r, "", "color = half4(0.498 * (half2(sk_FragCoord.xy) - 0.5), 0, 1);");
+        fragCoord.test(r, surface, 0xFF000000, 0xFF00007F, 0xFF007F00, 0xFF007F7F);
+    }
 }
 
 DEF_TEST(SkRuntimeEffectSimple, r) {

@@ -14,6 +14,7 @@
 #include "include/gpu/vk/GrVkVulkan.h"
 
 #include "tests/Test.h"
+#include "tests/TestUtils.h"
 
 #include "include/core/SkImage.h"
 #include "include/gpu/GrBackendSurface.h"
@@ -33,12 +34,9 @@
 DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkImageLayoutTest, reporter, ctxInfo) {
     GrContext* context = ctxInfo.grContext();
 
-    GrBackendTexture backendTex = context->createBackendTexture(1, 1,
-                                                                kRGBA_8888_SkColorType,
-                                                                SkColors::kTransparent,
-                                                                GrMipMapped::kNo,
-                                                                GrRenderable::kNo,
-                                                                GrProtected::kNo);
+    GrBackendTexture backendTex;
+    CreateBackendTexture(context, &backendTex, 1, 1, kRGBA_8888_SkColorType, SkColors::kTransparent,
+                         GrMipMapped::kNo, GrRenderable::kNo, GrProtected::kNo);
     REPORTER_ASSERT(reporter, backendTex.isValid());
 
     GrVkImageInfo info;
@@ -312,6 +310,7 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkPrepareForExternalIOQueueTransitionTest, report
 
             }
             context->flush(GrFlushInfo(), externalRequests);
+            context->submit();
 
             if (useSurface) {
                 newBackendTexture = surface->getBackendTexture(
@@ -332,6 +331,7 @@ DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkPrepareForExternalIOQueueTransitionTest, report
             GrFlushInfo flushInfo;
             flushInfo.fFlags = kSyncCpu_GrFlushFlag;
             context->flush(flushInfo);
+            context->submit(true);
             context->deleteBackendTexture(backendTex);
         }
     }

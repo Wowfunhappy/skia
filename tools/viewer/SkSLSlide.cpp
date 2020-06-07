@@ -7,6 +7,7 @@
 
 #include "tools/viewer/SkSLSlide.h"
 
+#include "include/core/SkCanvas.h"
 #include "include/effects/SkGradientShader.h"
 #include "include/effects/SkPerlinNoiseShader.h"
 #include "include/gpu/GrContext.h"
@@ -40,10 +41,10 @@ SkSLSlide::SkSLSlide() {
 
     fSkSL =
 
-        "in fragmentProcessor fp;\n"
+        "in shader child;\n"
         "\n"
         "void main(float2 p, inout half4 color) {\n"
-        "    color = sample(fp, p);\n"
+        "    color = sample(child, p);\n"
         "}\n";
 
     fCodeIsDirty = true;

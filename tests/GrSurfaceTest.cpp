@@ -11,12 +11,12 @@
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkCompressedDataUtils.h"
 #include "src/gpu/GrBitmapTextureMaker.h"
-#include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRenderTarget.h"
+#include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTexturePriv.h"
@@ -386,7 +386,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadOnlyTexture, reporter, context_info) {
         auto writeResult = surfContext->writePixels(srcPixmap.info(), write.addr(), 0, {0, 0});
         REPORTER_ASSERT(reporter, writeResult == (ioType == kRW_GrIOType));
         // Try the low level write.
-        context->flush();
+        context->flushAndSubmit();
         auto gpuWriteResult = context->priv().getGpu()->writePixels(
                 proxy->peekTexture(), 0, 0, kSize, kSize, GrColorType::kRGBA_8888,
                 GrColorType::kRGBA_8888, write.addr32(),
@@ -402,10 +402,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadOnlyTexture, reporter, context_info) {
         auto copySrc = maker.view(GrMipMapped::kNo);
 
         REPORTER_ASSERT(reporter, copySrc.proxy());
-        auto copyResult = surfContext->testCopy(copySrc.proxy(), copySrc.origin());
+        auto copyResult = surfContext->testCopy(copySrc.proxy());
         REPORTER_ASSERT(reporter, copyResult == (ioType == kRW_GrIOType));
         // Try the low level copy.
-        context->flush();
+        context->flushAndSubmit();
         auto gpuCopyResult = context->priv().getGpu()->copySurface(
                 proxy->peekSurface(), copySrc.proxy()->peekSurface(), SkIRect::MakeWH(kSize, kSize),
                 {0, 0});
@@ -420,7 +420,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadOnlyTexture, reporter, context_info) {
                     GrProtected::kNo);
             proxy = proxyProvider->wrapBackendTexture(backendTex, kBorrow_GrWrapOwnership,
                                                       GrWrapCacheable::kNo, ioType);
-            context->flush();
+            context->flushAndSubmit();
             proxy->peekTexture()->texturePriv().markMipMapsDirty();  // avoids assert in GrGpu.
             auto regenResult =
                     context->priv().getGpu()->regenerateMipMapLevels(proxy->peekTexture());
@@ -433,9 +433,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReadOnlyTexture, reporter, context_info) {
 static const int kSurfSize = 10;
 
 static sk_sp<GrTexture> make_wrapped_texture(GrContext* context, GrRenderable renderable) {
-    auto backendTexture = context->createBackendTexture(
-            kSurfSize, kSurfSize, kRGBA_8888_SkColorType, SkColors::kTransparent, GrMipMapped::kNo,
-            renderable, GrProtected::kNo);
+    GrBackendTexture backendTexture;
+    CreateBackendTexture(context, &backendTexture, kSurfSize, kSurfSize, kRGBA_8888_SkColorType,
+                         SkColors::kTransparent, GrMipMapped::kNo, renderable, GrProtected::kNo);
+    SkASSERT(backendTexture.isValid());
     sk_sp<GrTexture> texture;
     if (GrRenderable::kYes == renderable) {
         texture = context->priv().resourceProvider()->wrapRenderableBackendTexture(
@@ -544,7 +545,8 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                         SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
                 auto rt = SkSurface::MakeRenderTarget(context, SkBudgeted::kNo, info, 0, nullptr);
                 auto rtc = rt->getCanvas()->internal_private_accessTopLayerRenderTargetContext();
-                auto singleUseLazyCB = [&texture](GrResourceProvider* rp) {
+                auto singleUseLazyCB = [&texture](GrResourceProvider*,
+                                                  const GrSurfaceProxy::LazySurfaceDesc&) {
                     auto mode = GrSurfaceProxy::LazyInstantiationKeyMode::kSynced;
                     if (texture->getUniqueKey().isValid()) {
                         mode = GrSurfaceProxy::LazyInstantiationKeyMode::kUnsynced;
@@ -568,7 +570,7 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                 GrSwizzle readSwizzle = context->priv().caps()->getReadSwizzle(
                         backendFormat, GrColorType::kRGBA_8888);
                 GrSurfaceProxyView view(std::move(proxy), kTopLeft_GrSurfaceOrigin, readSwizzle);
-                rtc->drawTexture(GrNoClip(), view, kPremul_SkAlphaType,
+                rtc->drawTexture(nullptr, view, kPremul_SkAlphaType,
                                  GrSamplerState::Filter::kNearest, SkBlendMode::kSrcOver,
                                  SkPMColor4f(), SkRect::MakeWH(w, h), SkRect::MakeWH(w, h),
                                  GrAA::kNo, GrQuadAAFlags::kNone, SkCanvas::kFast_SrcRectConstraint,
@@ -576,19 +578,19 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                 // We still have the proxy, which should remain instantiated, thereby keeping the
                 // texture not purgeable.
                 REPORTER_ASSERT(reporter, idleIDs.find(2) == idleIDs.end());
-                context->flush();
+                context->flushAndSubmit();
                 REPORTER_ASSERT(reporter, idleIDs.find(2) == idleIDs.end());
                 context->priv().getGpu()->testingOnly_flushGpuAndSync();
                 REPORTER_ASSERT(reporter, idleIDs.find(2) == idleIDs.end());
 
                 // This time we move the proxy into the draw.
-                rtc->drawTexture(GrNoClip(), std::move(view), kPremul_SkAlphaType,
+                rtc->drawTexture(nullptr, std::move(view), kPremul_SkAlphaType,
                                  GrSamplerState::Filter::kNearest, SkBlendMode::kSrcOver,
                                  SkPMColor4f(), SkRect::MakeWH(w, h), SkRect::MakeWH(w, h),
                                  GrAA::kNo, GrQuadAAFlags::kNone,
                                  SkCanvas::kFast_SrcRectConstraint, SkMatrix::I(), nullptr);
                 REPORTER_ASSERT(reporter, idleIDs.find(2) == idleIDs.end());
-                context->flush();
+                context->flushAndSubmit();
                 context->priv().getGpu()->testingOnly_flushGpuAndSync();
                 // Now that the draw is fully consumed by the GPU, the texture should be idle.
                 REPORTER_ASSERT(reporter, idleIDs.find(2) != idleIDs.end());
@@ -600,10 +602,11 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                 // one where the the texture was drawn but the context is not flushed.
                 // In each scenario we test holding a ref beyond the context shutdown and not.
 
-                // These tests are difficult to get working with Vulkan. See http://skbug.com/8705
-                // and http://skbug.com/8275
+                // These tests are difficult to get working with Vulkan, Direct3D, and Dawn.
+                // See http://skbug.com/8705, http://skbug.com/8277, and http://skbug.com/10326
                 GrBackendApi api = sk_gpu_test::GrContextFactory::ContextTypeBackend(contextType);
-                if (api == GrBackendApi::kVulkan) {
+                if (api == GrBackendApi::kVulkan || api == GrBackendApi::kDirect3D ||
+                    api == GrBackendApi::kDawn) {
                     continue;
                 }
                 int id = 3;
@@ -633,13 +636,13 @@ DEF_GPUTEST(TextureIdleProcTest, reporter, options) {
                             GrSurfaceProxyView view(std::move(proxy), kTopLeft_GrSurfaceOrigin,
                                                     swizzle);
                             rtc->drawTexture(
-                                    GrNoClip(), std::move(view), kPremul_SkAlphaType,
+                                    nullptr, std::move(view), kPremul_SkAlphaType,
                                     GrSamplerState::Filter::kNearest, SkBlendMode::kSrcOver,
                                     SkPMColor4f(), SkRect::MakeWH(w, h), SkRect::MakeWH(w, h),
                                     GrAA::kNo, GrQuadAAFlags::kNone,
                                     SkCanvas::kFast_SrcRectConstraint, SkMatrix::I(), nullptr);
                             if (drawType == DrawType::kDrawAndFlush) {
-                                context->flush();
+                                context->flushAndSubmit();
                             }
                             if (unrefFirst) {
                                 texture.reset();
@@ -715,7 +718,7 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(TextureIdleProcFlushTest, reporter, contextInfo) {
     GrContext* context = contextInfo.grContext();
 
     // idle proc that flushes the context.
-    auto idleProc = [](void* context) { reinterpret_cast<GrContext*>(context)->flush(); };
+    auto idleProc = [](void* context) { reinterpret_cast<GrContext*>(context)->flushAndSubmit(); };
 
     for (const auto& idleMaker : {make_wrapped_texture, make_normal_texture}) {
         for (auto idleState : {GrTexture::IdleState::kFlushed, GrTexture::IdleState::kFinished}) {
@@ -759,7 +762,7 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(TextureIdleProcRerefTest, reporter, contextInfo) {
         // This test assumes the texture won't be cached (or else the release proc doesn't get
         // called).
         idleTexture->resourcePriv().removeScratchKey();
-        context->flush();
+        context->flushAndSubmit();
         idleTexture->addIdleProc(idleProc, idleTexture.get(), idleState);
         idleTexture->setRelease(releaseProc, &isReleased);
         auto* raw = idleTexture.get();
@@ -791,15 +794,15 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(TextureIdleStateTest, reporter, contextInfo) {
         auto rtc = rt->getCanvas()->internal_private_accessTopLayerRenderTargetContext();
         auto proxy =
                 context->priv().proxyProvider()->testingOnly_createWrapped(std::move(idleTexture));
-        context->flush();
-        SkAssertResult(rtc->testCopy(proxy.get(), rtc->origin()));
+        context->flushAndSubmit();
+        SkAssertResult(rtc->testCopy(proxy.get()));
         proxy.reset();
         REPORTER_ASSERT(reporter, flags == 0);
 
         // After a flush we expect idleTexture to have reached the kFlushed state on all backends.
         // On "managed" backends we expect it to reach kFinished as well. On Vulkan, the only
         // current "unmanaged" backend, we *may* need a sync to reach kFinished.
-        context->flush();
+        context->flushAndSubmit();
         if (contextInfo.backend() == kVulkan_GrBackend) {
             REPORTER_ASSERT(reporter, flags & kFlushFlag);
         } else {

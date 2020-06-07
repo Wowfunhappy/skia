@@ -20,8 +20,6 @@ public:
     struct Format {
         VkFormat  fInternalFormat;
         int  fStencilBits;
-        int  fTotalBits;
-        bool fPacked;
     };
 
     static GrVkStencilAttachment* Create(GrVkGpu* gpu, int width, int height,
@@ -31,8 +29,6 @@ public:
 
     const GrManagedResource* imageResource() const { return this->resource(); }
     const GrVkImageView* stencilView() const { return fStencilView; }
-
-    VkFormat vkFormat() const { return fFormat.fInternalFormat; }
 
 protected:
     void onRelease() override;
@@ -45,12 +41,10 @@ private:
                           const Format& format,
                           const GrVkImage::ImageDesc&,
                           const GrVkImageInfo&,
-                          sk_sp<GrVkImageLayout> layout,
+                          sk_sp<GrBackendSurfaceMutableStateImpl> mutableState,
                           const GrVkImageView* stencilView);
 
     GrVkGpu* getVkGpu() const;
-
-    Format fFormat;
 
     const GrVkImageView*       fStencilView;
 };

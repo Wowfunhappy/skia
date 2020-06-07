@@ -53,7 +53,8 @@ sk_sp<GrGpu> GrMockGpu::Make(const GrMockOptions* mockOptions,
 }
 
 GrOpsRenderPass* GrMockGpu::getOpsRenderPass(
-                                GrRenderTarget* rt, GrSurfaceOrigin origin, const SkIRect& bounds,
+                                GrRenderTarget* rt, GrStencilAttachment*,
+                                GrSurfaceOrigin origin, const SkIRect& bounds,
                                 const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
                                 const GrOpsRenderPass::StencilLoadAndStoreInfo&,
                                 const SkTArray<GrSurfaceProxy*, true>& sampledProxies) {
@@ -276,8 +277,7 @@ GrBackendTexture GrMockGpu::onCreateBackendTexture(SkISize dimensions,
                                                    const GrBackendFormat& format,
                                                    GrRenderable,
                                                    GrMipMapped mipMapped,
-                                                   GrProtected,
-                                                   const BackendTextureData*) {
+                                                   GrProtected) {
     SkImage::CompressionType compression = format.asMockCompressionType();
     if (compression != SkImage::CompressionType::kNone) {
         return {}; // should go through onCreateCompressedBackendTexture
@@ -294,11 +294,9 @@ GrBackendTexture GrMockGpu::onCreateBackendTexture(SkISize dimensions,
     return GrBackendTexture(dimensions.width(), dimensions.height(), mipMapped, info);
 }
 
-GrBackendTexture GrMockGpu::onCreateCompressedBackendTexture(SkISize dimensions,
-                                                             const GrBackendFormat& format,
-                                                             GrMipMapped mipMapped,
-                                                             GrProtected,
-                                                             const BackendTextureData*) {
+GrBackendTexture GrMockGpu::onCreateCompressedBackendTexture(
+        SkISize dimensions, const GrBackendFormat& format, GrMipMapped mipMapped,
+         GrProtected, sk_sp<GrRefCntedCallback> finishedCallback, const BackendTextureData*) {
     SkImage::CompressionType compression = format.asMockCompressionType();
     if (compression == SkImage::CompressionType::kNone) {
         return {}; // should go through onCreateBackendTexture

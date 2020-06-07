@@ -24,7 +24,7 @@
 #include "src/gpu/GrStyle.h"
 #include "src/gpu/GrSurfaceContextPriv.h"
 #include "src/gpu/geometry/GrPathUtils.h"
-#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/geometry/GrStyledShape.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
 #include "src/gpu/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
 
@@ -36,7 +36,7 @@ GrDefaultPathRenderer::GrDefaultPathRenderer() {
 
 #define STENCIL_OFF     0   // Always disable stencil (even when needed)
 
-static inline bool single_pass_shape(const GrShape& shape) {
+static inline bool single_pass_shape(const GrStyledShape& shape) {
 #if STENCIL_OFF
     return true;
 #else
@@ -55,7 +55,7 @@ static inline bool single_pass_shape(const GrShape& shape) {
 }
 
 GrPathRenderer::StencilSupport
-GrDefaultPathRenderer::onGetStencilSupport(const GrShape& shape) const {
+GrDefaultPathRenderer::onGetStencilSupport(const GrStyledShape& shape) const {
     if (single_pass_shape(shape)) {
         return GrPathRenderer::kNoRestriction_StencilSupport;
     } else {
@@ -430,7 +430,7 @@ private:
 
     void onCreateProgramInfo(const GrCaps* caps,
                              SkArenaAlloc* arena,
-                             const GrSurfaceProxyView* outputView,
+                             const GrSurfaceProxyView* writeView,
                              GrAppliedClip&& appliedClip,
                              const GrXferProcessor::DstProxyView& dstProxyView) override {
         GrGeometryProcessor* gp;
@@ -449,7 +449,7 @@ private:
 
         SkASSERT(gp->vertexStride() == sizeof(SkPoint));
 
-        fProgramInfo =  fHelper.createProgramInfoWithStencil(caps, arena, outputView,
+        fProgramInfo =  fHelper.createProgramInfoWithStencil(caps, arena, writeView,
                                                              std::move(appliedClip),
                                                              dstProxyView, gp, this->primType());
 
@@ -537,9 +537,9 @@ bool GrDefaultPathRenderer::internalDrawPath(GrRenderTargetContext* renderTarget
                                              GrPaint&& paint,
                                              GrAAType aaType,
                                              const GrUserStencilSettings& userStencilSettings,
-                                             const GrClip& clip,
+                                             const GrClip* clip,
                                              const SkMatrix& viewMatrix,
-                                             const GrShape& shape,
+                                             const GrStyledShape& shape,
                                              bool stencilOnly) {
     auto context = renderTargetContext->surfPriv().getContext();
 
@@ -705,7 +705,7 @@ bool GrDefaultPathRenderer::onDrawPath(const DrawPathArgs& args) {
 
     return this->internalDrawPath(
             args.fRenderTargetContext, std::move(args.fPaint), aaType, *args.fUserStencilSettings,
-            *args.fClip, *args.fViewMatrix, *args.fShape, false);
+            args.fClip, *args.fViewMatrix, *args.fShape, false);
 }
 
 void GrDefaultPathRenderer::onStencilPath(const StencilPathArgs& args) {
@@ -720,7 +720,7 @@ void GrDefaultPathRenderer::onStencilPath(const StencilPathArgs& args) {
 
     this->internalDrawPath(
             args.fRenderTargetContext, std::move(paint), aaType, GrUserStencilSettings::kUnused,
-            *args.fClip, *args.fViewMatrix, *args.fShape, true);
+            args.fClip, *args.fViewMatrix, *args.fShape, true);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

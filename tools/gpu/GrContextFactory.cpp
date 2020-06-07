@@ -90,7 +90,8 @@ void GrContextFactory::abandonContexts() {
                 auto restore = context.fTestContext->makeCurrentAndAutoRestore();
                 context.fTestContext->testAbandon();
             }
-            bool requiresEarlyAbandon = (context.fGrContext->backend() == GrBackendApi::kVulkan);
+            GrBackendApi api = context.fGrContext->backend();
+            bool requiresEarlyAbandon = api == GrBackendApi::kVulkan || api == GrBackendApi::kDawn;
             if (requiresEarlyAbandon) {
                 context.fGrContext->abandonContext();
             }
@@ -181,6 +182,16 @@ ContextInfo GrContextFactory::getContextInfoInternal(ContextType type, ContextOv
                 case kANGLE_D3D9_ES2_ContextType:
                     glCtx = MakeANGLETestContext(ANGLEBackend::kD3D9, ANGLEContextVersion::kES2,
                                                  glShareContext).release();
+                    // Chrome will only run on D3D9 with NVIDIA for 2012 and earlier drivers.
+                    // (<= 269.73). We get shader link failures when testing on recent drivers
+                    // using this backend.
+                    if (glCtx) {
+                        auto [backend, vendor, renderer] = GrGLGetANGLEInfo(glCtx->gl());
+                        if (vendor == GrGLANGLEVendor::kNVIDIA) {
+                            delete glCtx;
+                            return ContextInfo();
+                        }
+                    }
                     break;
                 case kANGLE_D3D11_ES2_ContextType:
                     glCtx = MakeANGLETestContext(ANGLEBackend::kD3D11, ANGLEContextVersion::kES2,

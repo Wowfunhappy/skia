@@ -10,11 +10,11 @@
 #include "include/core/SkPath.h"
 #include "include/effects/SkGradientShader.h"
 #include "include/gpu/GrContext.h"
-#include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrStyle.h"
 #include "src/gpu/effects/GrPorterDuffXferProcessor.h"
-#include "src/gpu/geometry/GrShape.h"
+#include "src/gpu/geometry/GrStyledShape.h"
 #include "src/gpu/ops/GrTriangulatingPathRenderer.h"
 #include "src/shaders/SkShaderBase.h"
 
@@ -694,7 +694,8 @@ static std::unique_ptr<GrFragmentProcessor> create_linear_gradient_processor(GrC
     sk_sp<SkShader> shader = SkGradientShader::MakeLinear(
         pts, colors, nullptr, SK_ARRAY_COUNT(colors), SkTileMode::kClamp);
     GrColorInfo colorInfo(GrColorType::kRGBA_8888, kPremul_SkAlphaType, nullptr);
-    GrFPArgs args(ctx, &SkMatrix::I(), SkFilterQuality::kLow_SkFilterQuality, &colorInfo);
+    SkSimpleMatrixProvider matrixProvider(SkMatrix::I());
+    GrFPArgs args(ctx, matrixProvider, SkFilterQuality::kLow_SkFilterQuality, &colorInfo);
     return as_SB(shader)->asFragmentProcessor(args);
 }
 
@@ -713,16 +714,15 @@ static void test_path(GrContext* ctx,
         paint.addColorFragmentProcessor(std::move(fp));
     }
 
-    GrNoClip noClip;
     SkIRect clipConservativeBounds = SkIRect::MakeWH(renderTargetContext->width(),
                                                      renderTargetContext->height());
     GrStyle style(SkStrokeRec::kFill_InitStyle);
-    GrShape shape(path, style);
+    GrStyledShape shape(path, style);
     GrPathRenderer::DrawPathArgs args{ctx,
                                       std::move(paint),
                                       &GrUserStencilSettings::kUnused,
                                       renderTargetContext,
-                                      &noClip,
+                                      nullptr,
                                       &clipConservativeBounds,
                                       &matrix,
                                       &shape,
@@ -740,7 +740,7 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(TriangulatingPathRendererTests, reporter, ctxInfo) 
         return;
     }
 
-    ctx->flush();
+    ctx->flushAndSubmit();
     // Adding discard to appease vulkan validation warning about loading uninitialized data on draw
     rtc->discard();
 
@@ -761,7 +761,7 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(TriangulatingPathRendererTests, reporter, ctxInfo) 
     test_path(ctx, rtc.get(), create_path_14());
     test_path(ctx, rtc.get(), create_path_15());
     test_path(ctx, rtc.get(), create_path_16());
-    SkMatrix nonInvertibleMatrix = SkMatrix::MakeScale(0, 0);
+    SkMatrix nonInvertibleMatrix = SkMatrix::Scale(0, 0);
     std::unique_ptr<GrFragmentProcessor> fp(create_linear_gradient_processor(ctx));
     test_path(ctx, rtc.get(), create_path_17(), nonInvertibleMatrix, GrAAType::kCoverage,
               std::move(fp));

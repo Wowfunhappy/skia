@@ -10,7 +10,6 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkCanvasVirtualEnforcer.h"
-#include "include/core/SkVertices.h"
 
 struct SkIRect;
 
@@ -60,12 +59,7 @@ protected:
     void onDrawImageNine(const SkImage*, const SkIRect&, const SkRect&, const SkPaint*) override {}
     void onDrawImageLattice(const SkImage*, const Lattice&, const SkRect&,
                             const SkPaint*) override {}
-#ifdef SK_SUPPORT_LEGACY_DRAWVERTS_VIRTUAL
-    void onDrawVerticesObject(const SkVertices*, const SkVertices::Bone bones[], int boneCount,
-                              SkBlendMode, const SkPaint&) override {}
-#else
     void onDrawVerticesObject(const SkVertices*, SkBlendMode, const SkPaint&) override {}
-#endif
     void onDrawAtlas(const SkImage*, const SkRSXform[], const SkRect[], const SkColor[],
                      int, SkBlendMode, const SkRect*, const SkPaint*) override {}
     void onDrawShadowRec(const SkPath&, const SkDrawShadowRec&) override {}

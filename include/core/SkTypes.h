@@ -97,7 +97,7 @@
 #define SK_CPU_SSE_LEVEL_SSE42    42
 #define SK_CPU_SSE_LEVEL_AVX      51
 #define SK_CPU_SSE_LEVEL_AVX2     52
-#define SK_CPU_SSE_LEVEL_AVX512   60
+#define SK_CPU_SSE_LEVEL_SKX      60
 
 // When targetting iOS and using gyp to generate the build files, it is not
 // possible to select files to build depending on the architecture (i.e. it
@@ -111,8 +111,9 @@
 #ifndef SK_CPU_SSE_LEVEL
     // These checks must be done in descending order to ensure we set the highest
     // available SSE level.
-    #if defined(__AVX512F__)
-        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_AVX512
+    #if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512CD__) && \
+        defined(__AVX512BW__) && defined(__AVX512VL__)
+        #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_SKX
     #elif defined(__AVX2__)
         #define SK_CPU_SSE_LEVEL    SK_CPU_SSE_LEVEL_AVX2
     #elif defined(__AVX__)
@@ -134,7 +135,10 @@
 #ifndef SK_CPU_SSE_LEVEL
     // These checks must be done in descending order to ensure we set the highest
     // available SSE level. 64-bit intel guarantees at least SSE2 support.
-    #if defined(__AVX2__)
+    #if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512CD__) && \
+        defined(__AVX512BW__) && defined(__AVX512VL__)
+        #define SK_CPU_SSE_LEVEL        SK_CPU_SSE_LEVEL_SKX
+    #elif defined(__AVX2__)
         #define SK_CPU_SSE_LEVEL        SK_CPU_SSE_LEVEL_AVX2
     #elif defined(__AVX__)
         #define SK_CPU_SSE_LEVEL        SK_CPU_SSE_LEVEL_AVX
@@ -259,12 +263,6 @@
 #  undef SK_DIRECT3D
 #endif
 
-#if !defined(SK_SUPPORT_ATLAS_TEXT)
-#  define SK_SUPPORT_ATLAS_TEXT 0
-#elif SK_SUPPORT_ATLAS_TEXT && !SK_SUPPORT_GPU
-#  error "SK_SUPPORT_ATLAS_TEXT requires SK_SUPPORT_GPU"
-#endif
-
 #if !defined(SkUNREACHABLE)
 #  if defined(_MSC_VER) && !defined(__clang__)
 #    define SkUNREACHABLE __assume(false)
@@ -321,12 +319,7 @@
 
 
 /**
- * SK_PMCOLOR_BYTE_ORDER can be used to query the byte order of SkPMColor at compile time. The
- * relationship between the byte order and shift values depends on machine endianness. If the shift
- * order is R=0, G=8, B=16, A=24 then ((char*)&pmcolor)[0] will produce the R channel on a little
- * endian machine and the A channel on a big endian machine. Thus, given those shifts values,
- * SK_PMCOLOR_BYTE_ORDER(R,G,B,A) will be true on a little endian machine and
- * SK_PMCOLOR_BYTE_ORDER(A,B,G,R) will be true on a big endian machine.
+ * SK_PMCOLOR_BYTE_ORDER can be used to query the byte order of SkPMColor at compile time.
  */
 #ifdef SK_CPU_BENDIAN
 #  define SK_PMCOLOR_BYTE_ORDER(C0, C1, C2, C3)     \
@@ -397,14 +390,6 @@
 #    define SK_PRINTF_LIKE(A, B) __attribute__((format(printf, (A), (B))))
 #  else
 #    define SK_PRINTF_LIKE(A, B)
-#  endif
-#endif
-
-#ifndef SK_SIZE_T_SPECIFIER
-#  if defined(_MSC_VER) && !defined(__clang__)
-#    define SK_SIZE_T_SPECIFIER "%Iu"
-#  else
-#    define SK_SIZE_T_SPECIFIER "%zu"
 #  endif
 #endif
 
@@ -551,7 +536,7 @@ template <typename T> static constexpr bool SkIsAlignPtr(T x) {
 
 typedef uint32_t SkFourByteTag;
 static inline constexpr SkFourByteTag SkSetFourByteTag(char a, char b, char c, char d) {
-    return (((uint8_t)a << 24) | ((uint8_t)b << 16) | ((uint8_t)c << 8) | (uint8_t)d);
+    return (((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | (uint32_t)d);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -169,7 +169,6 @@ cc_defaults {
 cc_defaults {
     name: "skia_deps",
     shared_libs: [
-        "libandroidicu",
         "libdng_sdk",
         "libexpat",
         "libft2",
@@ -230,10 +229,15 @@ cc_defaults {
         "skia_deps",
         "skia_pgo_no_profile_use"
     ],
+    shared_libs: [
+        "libandroidicu",
+        "libharfbuzz_ng",
+    ],
     static_libs: [
         "libskia",
     ],
     cflags: [
+        "-DSK_SHAPER_HARFBUZZ_AVAILABLE",
         "-Wno-implicit-fallthrough",
         "-Wno-unused-parameter",
         "-Wno-unused-variable",
@@ -290,6 +294,7 @@ def generate_args(target_os, enable_gpu):
     # files.
     'target_cpu':                         '"none"',
 
+    'skia_enable_android_utils':          'true',
     # Use the custom FontMgr, as the framework will handle fonts.
     'skia_enable_fontmgr_custom':         'false',
     'skia_enable_fontmgr_custom_empty':   'true',
@@ -489,7 +494,8 @@ with open('Android.bp', 'w') as Android_bp:
                                              defs['sse41'] +
                                              defs['sse42'] +
                                              defs['avx'  ] +
-                                             defs['hsw'  ])),
+                                             defs['hsw'  ] +
+                                             defs['skx'  ])),
 
     'dm_includes'       : bpfmt(8, dm_includes),
     'dm_srcs'           : bpfmt(8, dm_srcs),

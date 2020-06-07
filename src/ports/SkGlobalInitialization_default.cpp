@@ -76,7 +76,6 @@
         SK_REGISTER_FLATTENABLE(SkLumaColorFilter);
         SkColorFilter::RegisterFlattenables();
         SkHighContrastFilter::RegisterFlattenables();
-        SkOverdrawColorFilter::RegisterFlattenables();
         SkTableColorFilter::RegisterFlattenables();
 
         // Shader & color filter.
@@ -97,6 +96,7 @@
         SK_REGISTER_FLATTENABLE(SkPath1DPathEffect);
         SK_REGISTER_FLATTENABLE(SkPath2DPathEffect);
         SK_REGISTER_FLATTENABLE(SkStrokePE);
+        SK_REGISTER_FLATTENABLE(SkStrokeAndFillPE);
         SK_REGISTER_FLATTENABLE(SkTrimPE);
         SkPathEffect::RegisterFlattenables();
 

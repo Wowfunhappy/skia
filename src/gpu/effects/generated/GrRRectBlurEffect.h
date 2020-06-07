@@ -19,7 +19,6 @@
 #include "src/core/SkGpuBlurUtils.h"
 #include "src/core/SkRRectPriv.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrClip.h"
 #include "src/gpu/GrPaint.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
@@ -53,7 +52,7 @@ public:
         GrProxyProvider* proxyProvider = context->priv().proxyProvider();
 
         if (auto view = proxyProvider->findCachedProxyWithColorTypeFallback(
-                    key, kMaskOrigin, GrColorType::kAlpha_8)) {
+                    key, kMaskOrigin, GrColorType::kAlpha_8, 1)) {
             return view;
         }
 
@@ -66,9 +65,8 @@ public:
 
         GrPaint paint;
 
-        rtc->clear(nullptr, SK_PMColor4fTRANSPARENT,
-                   GrRenderTargetContext::CanClearFullscreen::kYes);
-        rtc->drawRRect(GrNoClip(), std::move(paint), GrAA::kYes, SkMatrix::I(), rrectToDraw,
+        rtc->clear(SK_PMColor4fTRANSPARENT);
+        rtc->drawRRect(nullptr, std::move(paint), GrAA::kYes, SkMatrix::I(), rrectToDraw,
                        GrStyle::SimpleFill());
 
         GrSurfaceProxyView srcView = rtc->readSurfaceView();
@@ -96,7 +94,7 @@ public:
             return {};
         }
         SkASSERT(mask.asTextureProxy());
-        SkASSERT(mask.origin() == kBottomLeft_GrSurfaceOrigin);
+        SkASSERT(mask.origin() == kMaskOrigin);
         proxyProvider->assignUniqueKeyToProxy(key, mask.asTextureProxy());
 
         return mask;

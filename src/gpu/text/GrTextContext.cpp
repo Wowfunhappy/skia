@@ -110,9 +110,8 @@ bool GrTextContext::CanDrawAsDistanceFields(const SkPaint& paint, const SkFont& 
     }
 
     if (viewMatrix.hasPerspective()) {
-        if (!options.fDistanceFieldVerticesAlwaysHaveW) {
-            return false;
-        }
+        // Don't use SDF for perspective. Paths look better.
+        return false;
     } else {
         SkScalar maxScale = viewMatrix.getMaxScale();
         SkScalar scaledTextSize = maxScale * font.getSize();
@@ -255,7 +254,7 @@ GR_DRAW_OP_TEST_DEFINE(GrAtlasTextOp) {
     auto rtc = GrRenderTargetContext::Make(
             context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox, {1024, 1024});
 
-    SkMatrix viewMatrix = GrTest::TestMatrixInvertible(random);
+    SkSimpleMatrixProvider matrixProvider(GrTest::TestMatrixInvertible(random));
 
     SkPaint skPaint;
     skPaint.setColor(random->nextU());
@@ -277,8 +276,8 @@ GR_DRAW_OP_TEST_DEFINE(GrAtlasTextOp) {
     int xInt = (random->nextU() % kMaxTrans) * xPos;
     int yInt = (random->nextU() % kMaxTrans) * yPos;
 
-    return gTextContext->createOp_TestingOnly(context, gTextContext.get(), rtc.get(),
-                                              skPaint, font, viewMatrix, text, xInt, yInt);
+    return gTextContext->createOp_TestingOnly(context, gTextContext.get(), rtc.get(), skPaint, font,
+                                              matrixProvider, text, xInt, yInt);
 }
 
 #endif

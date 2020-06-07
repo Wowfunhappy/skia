@@ -11,6 +11,7 @@
 #include "include/private/SkImageInfoPriv.h"
 #include "src/core/SkMathPriv.h"
 #include "tests/Test.h"
+#include "tests/TestUtils.h"
 #include "tools/ToolUtils.h"
 
 #include "include/gpu/GrBackendSurface.h"
@@ -453,10 +454,14 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(WritePixelsMSAA_Gpu, reporter, ctxInfo) {
 static void test_write_pixels_non_texture(skiatest::Reporter* reporter,
                                           GrContext* context,
                                           int sampleCnt) {
-
+    // Dawn currently doesn't support writePixels to a texture-as-render-target.
+    // See http://skbug.com/10336.
+    if (GrBackendApi::kDawn == context->backend()) {
+        return;
+    }
     for (auto& origin : { kTopLeft_GrSurfaceOrigin, kBottomLeft_GrSurfaceOrigin }) {
-        GrBackendTexture backendTex = context->createBackendTexture(
-                DEV_W, DEV_H, kRGBA_8888_SkColorType,
+        GrBackendTexture backendTex;
+        CreateBackendTexture(context, &backendTex, DEV_W, DEV_H, kRGBA_8888_SkColorType,
                 SkColors::kTransparent, GrMipMapped::kNo, GrRenderable::kYes, GrProtected::kNo);
         if (!backendTex.isValid()) {
             continue;
@@ -485,7 +490,7 @@ static sk_sp<SkSurface> create_surf(GrContext* context, int width, int height) {
                                              kRGBA_8888_SkColorType, kPremul_SkAlphaType);
 
     sk_sp<SkSurface> surf = SkSurface::MakeRenderTarget(context, SkBudgeted::kYes, ii);
-    surf->flush();
+    surf->flushAndSubmit();
     return surf;
 }
 

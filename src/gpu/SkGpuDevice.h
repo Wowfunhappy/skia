@@ -27,6 +27,7 @@ struct GrCachedLayer;
 
 class SkSpecialImage;
 class SkSurface;
+class SkVertices;
 
 /**
  *  Subclass of SkBaseDevice, which directs all drawing to the GrGpu owned by the
@@ -128,6 +129,7 @@ private:
     // We want these unreffed in RenderTargetContext, GrContext order.
     sk_sp<GrContext> fContext;
     std::unique_ptr<GrRenderTargetContext> fRenderTargetContext;
+    GrClipStackClip  fClip;
 
     enum Flags {
         kNeedClear_Flag = 1 << 0,  //!< Surface requires an initial clear
@@ -147,7 +149,7 @@ private:
 
     bool forceConservativeRasterClip() const override { return true; }
 
-    GrClipStackClip clip() const { return GrClipStackClip(&this->cs()); }
+    const GrClip* clip() const { return &fClip; }
 
     sk_sp<SkSpecialImage> filterTexture(SkSpecialImage*,
                                         int left, int top,
@@ -166,9 +168,6 @@ private:
                              const SkPaint&);
 
     void drawStrokedLine(const SkPoint pts[2], const SkPaint&);
-
-    void wireframeVertices(SkVertices::VertexMode, int vertexCount, const SkPoint verts[],
-                           SkBlendMode, const uint16_t indices[], int indexCount, const SkPaint&);
 
     static std::unique_ptr<GrRenderTargetContext> MakeRenderTargetContext(GrContext*,
                                                                           SkBudgeted,

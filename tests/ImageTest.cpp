@@ -388,7 +388,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkImage_makeTextureImage, reporter, contextIn
             [otherContextInfo] {
                 auto restore = otherContextInfo.testContext()->makeCurrentAndAutoRestore();
                 sk_sp<SkImage> otherContextImage = create_gpu_image(otherContextInfo.grContext());
-                otherContextInfo.grContext()->flush();
+                otherContextInfo.grContext()->flushAndSubmit();
                 return otherContextImage;
             }};
     for (auto mipMapped : {GrMipMapped::kNo, GrMipMapped::kYes}) {
@@ -444,7 +444,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkImage_makeTextureImage, reporter, contextIn
             }
         }
     }
-    context->flush();
+    context->flushAndSubmit();
 }
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkImage_makeNonTextureImage, reporter, contextInfo) {
@@ -483,9 +483,9 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrContext_colorTypeSupportedAsImage, reporter
         SkColorType colorType = static_cast<SkColorType>(ct);
         bool can = context->colorTypeSupportedAsImage(colorType);
 
-        GrBackendTexture backendTex = context->createBackendTexture(
-                kSize, kSize, colorType, SkColors::kTransparent,
-                GrMipMapped::kNo, GrRenderable::kNo, GrProtected::kNo);
+        GrBackendTexture backendTex;
+        CreateBackendTexture(context, &backendTex, kSize, kSize, colorType, SkColors::kTransparent,
+                             GrMipMapped::kNo, GrRenderable::kNo, GrProtected::kNo);
 
         auto img = SkImage::MakeFromTexture(context, backendTex, kTopLeft_GrSurfaceOrigin,
                                             colorType, kOpaque_SkAlphaType, nullptr);
@@ -494,7 +494,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrContext_colorTypeSupportedAsImage, reporter
                         colorType);
 
         img.reset();
-        context->flush();
+        context->flushAndSubmit();
         context->deleteBackendTexture(backendTex);
     }
 }
@@ -822,7 +822,6 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(SkImage_NewFromTextureRelease, reporter, c
     SkImageInfo ii = SkImageInfo::Make(kWidth, kHeight, SkColorType::kRGBA_8888_SkColorType,
                                        kPremul_SkAlphaType);
     GrBackendTexture backendTex;
-
     if (!CreateBackendTexture(ctx, &backendTex, ii, SkColors::kRed, GrMipMapped::kNo,
                               GrRenderable::kNo)) {
         ERRORF(reporter, "couldn't create backend texture\n");
@@ -901,7 +900,7 @@ static void test_cross_context_image(skiatest::Reporter* reporter, const GrConte
             sk_sp<SkImage> refImg(imageMaker(ctx));
 
             canvas->drawImage(refImg, 0, 0);
-            surface->flush();
+            surface->flushAndSubmit();
 
             refImg.reset(nullptr); // force a release of the image
         }
@@ -913,7 +912,7 @@ static void test_cross_context_image(skiatest::Reporter* reporter, const GrConte
             canvas->drawImage(refImg, 0, 0);
             refImg.reset(nullptr); // force a release of the image
 
-            surface->flush();
+            surface->flushAndSubmit();
         }
 
         // Configure second context
@@ -938,7 +937,7 @@ static void test_cross_context_image(skiatest::Reporter* reporter, const GrConte
 
             otherTestContext->makeCurrent();
             canvas->drawImage(refImg, 0, 0);
-            surface->flush();
+            surface->flushAndSubmit();
 
             testContext->makeCurrent();
             refImg.reset(nullptr); // force a release of the image
@@ -956,7 +955,7 @@ static void test_cross_context_image(skiatest::Reporter* reporter, const GrConte
             refImg.reset(nullptr); // force a release of the image
 
             otherTestContext->makeCurrent();
-            surface->flush();
+            surface->flushAndSubmit();
 
             // This is specifically here for vulkan to guarantee the command buffer will finish
             // which is when we call the ReleaseProc.
@@ -1078,7 +1077,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(makeBackendTexture, reporter, ctxInfo) {
         { [otherContextInfo] {
             auto restore = otherContextInfo.testContext()->makeCurrentAndAutoRestore();
             sk_sp<SkImage> otherContextImage = create_gpu_image(otherContextInfo.grContext());
-            otherContextInfo.grContext()->flush();
+            otherContextInfo.grContext()->flushAndSubmit();
             return otherContextImage;
           }, false, false },
         // Create an image that is too large to be texture backed.
@@ -1118,7 +1117,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(makeBackendTexture, reporter, ctxInfo) {
             kExpectedState[testCase.fCanTakeDirectly]);
         }
 
-        context->flush();
+        context->flushAndSubmit();
     }
 }
 
@@ -1379,53 +1378,56 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ImageFlush, reporter, ctxInfo) {
 
     // Flush all the setup work we did above and then make little lambda that reports the flush
     // count delta since the last time it was called.
-    c->flush();
-    auto numFlushes = [c, flushCnt = c->priv().getGpu()->stats()->numFinishFlushes()]() mutable {
-        int curr = c->priv().getGpu()->stats()->numFinishFlushes();
-        int n = curr - flushCnt;
-        flushCnt = curr;
+    c->flushAndSubmit();
+    auto numSubmits = [c, submitCnt = c->priv().getGpu()->stats()->numSubmitToGpus()]() mutable {
+        int curr = c->priv().getGpu()->stats()->numSubmitToGpus();
+        int n = curr - submitCnt;
+        submitCnt = curr;
         return n;
     };
 
-    // Images aren't used therefore flush is ignored.
-    i0->flush(c);
-    i1->flush(c);
-    i2->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
+    // Images aren't used therefore flush is ignored, but submit is still called.
+    i0->flushAndSubmit(c);
+    i1->flushAndSubmit(c);
+    i2->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 3);
 
     // Syncing forces the flush to happen even if the images aren't used.
     GrFlushInfo syncInfo;
     syncInfo.fFlags = kSyncCpu_GrFlushFlag;
     i0->flush(c, syncInfo);
-    REPORTER_ASSERT(reporter, numFlushes() == 1);
+    c->submit(true);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
     i1->flush(c, syncInfo);
-    REPORTER_ASSERT(reporter, numFlushes() == 1);
+    c->submit(true);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
     i2->flush(c, syncInfo);
-    REPORTER_ASSERT(reporter, numFlushes() == 1);
+    c->submit(true);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
 
     // Use image 1
     s->getCanvas()->drawImage(i1, 0, 0);
-    // Flushing image 0 should do nothing.
-    i0->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
+    // Flushing image 0 should do nothing, but submit is still called.
+    i0->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
     // Flushing image 1 should flush.
-    i1->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 1);
-    // Flushing image 2 should do nothing.
-    i2->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
+    i1->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
+    // Flushing image 2 should do nothing, but submit is still called.
+    i2->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
 
     // Use image 2
     s->getCanvas()->drawImage(i2, 0, 0);
-    // Flushing image 0 should do nothing.
-    i0->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
-    // Flushing image 1 do nothing.
-    i1->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
+    // Flushing image 0 should do nothing, but submit is still called.
+    i0->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
+    // Flushing image 1 do nothing, but submit is still called.
+    i1->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
     // Flushing image 2 should flush.
-    i2->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 1);
+    i2->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
     // Since we just did a simple image draw it should not have been flattened.
     REPORTER_ASSERT(reporter,
                     !static_cast<SkImage_GpuYUVA*>(as_IB(i2.get()))->testingOnly_IsFlattened());
@@ -1437,35 +1439,35 @@ DEF_GPUTEST_FOR_ALL_CONTEXTS(ImageFlush, reporter, ctxInfo) {
                     static_cast<SkImage_GpuYUVA*>(as_IB(i2.get()))->testingOnly_IsFlattened());
     REPORTER_ASSERT(reporter, static_cast<SkImage_GpuYUVA*>(as_IB(i2.get()))->isTextureBacked());
     s->getCanvas()->drawImage(i2, 0, 0);
-    // Flushing image 0 should do nothing.
-    i0->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
-    // Flushing image 1 do nothing.
-    i1->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
+    // Flushing image 0 should do nothing, but submit is still called.
+    i0->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
+    // Flushing image 1 do nothing, but submit is still called.
+    i1->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
     // Flushing image 2 should flush.
-    i2->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 1);
+    i2->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
 
     // Test case where flatten happens before the first flush.
     i2 = make_yuva_image(c);
     // On some systems where preferVRAMUseOverFlushes is false (ANGLE on Windows) the above may
     // actually flush in order to make textures for the YUV planes. TODO: Remove this when we
     // make the YUVA planes from backend textures rather than pixmaps that GrContext must upload.
-    // Calling numFlushes rebases the flush count from here.
-    numFlushes();
+    // Calling numSubmits rebases the flush count from here.
+    numSubmits();
     as_IB(i2.get())->view(c);
     REPORTER_ASSERT(reporter,
                     static_cast<SkImage_GpuYUVA*>(as_IB(i2.get()))->testingOnly_IsFlattened());
     REPORTER_ASSERT(reporter, static_cast<SkImage_GpuYUVA*>(as_IB(i2.get()))->isTextureBacked());
     s->getCanvas()->drawImage(i2, 0, 0);
-    // Flushing image 0 should do nothing.
-    i0->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
-    // Flushing image 1 do nothing.
-    i1->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 0);
-    // Flushing image 2 should flush.
-    i2->flush(c);
-    REPORTER_ASSERT(reporter, numFlushes() == 1);
+    // Flushing image 0 should do nothing, but submit is still called.
+    i0->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
+    // Flushing image 1 do nothing, but submit is still called.
+    i1->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
+    // Flushing image 2 should flush, but submit is still called.
+    i2->flushAndSubmit(c);
+    REPORTER_ASSERT(reporter, numSubmits() == 1);
 }

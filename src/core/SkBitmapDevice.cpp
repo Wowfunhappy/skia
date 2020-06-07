@@ -54,9 +54,9 @@ class SkDrawTiler {
     SkDraw          fDraw;
 
     // fCurr... are only used if fNeedTiling
-    SkMatrix        fTileMatrix;
-    SkRasterClip    fTileRC;
-    SkIPoint        fOrigin;
+    SkTLazy<SkPostTranslateMatrixProvider> fTileMatrixProvider;
+    SkRasterClip                           fTileRC;
+    SkIPoint                               fOrigin;
 
     bool            fDone, fNeedsTiling;
 
@@ -105,15 +105,14 @@ public:
         }
 
         if (fNeedsTiling) {
-            // fDraw.fDst is reset each time in setupTileDraw()
-            fDraw.fMatrix = &fTileMatrix;
+            // fDraw.fDst and fMatrixProvider are reset each time in setupTileDraw()
             fDraw.fRC = &fTileRC;
             // we'll step/increase it before using it
             fOrigin.set(fSrcBounds.fLeft - kMaxDim, fSrcBounds.fTop);
         } else {
             // don't reference fSrcBounds, as it may not have been set
             fDraw.fDst = fRootPixmap;
-            fDraw.fMatrix = &dev->localToDevice();
+            fDraw.fMatrixProvider = dev;
             fDraw.fRC = &dev->fRCStack.rc();
             fOrigin.set(0, 0);
 
@@ -165,8 +164,9 @@ private:
         SkASSERT_RELEASE(success);
         // now don't use bounds, since fDst has the clipped dimensions.
 
-        fTileMatrix = fDevice->localToDevice();
-        fTileMatrix.postTranslate(SkIntToScalar(-fOrigin.x()), SkIntToScalar(-fOrigin.y()));
+        fDraw.fMatrixProvider = fTileMatrixProvider.init(fDevice->asMatrixProvider(),
+                                                         SkIntToScalar(-fOrigin.x()),
+                                                         SkIntToScalar(-fOrigin.y()));
         fDevice->fRCStack.rc().translate(-fOrigin.x(), -fOrigin.y(), &fTileRC);
         fTileRC.op(SkIRect::MakeWH(fDraw.fDst.width(), fDraw.fDst.height()),
                    SkRegion::kIntersect_Op);
@@ -192,7 +192,7 @@ public:
             // NoDrawDevice uses us (why?) so we have to catch this case w/ no pixels
             fDst.reset(dev->imageInfo(), nullptr, 0);
         }
-        fMatrix = &dev->localToDevice();
+        fMatrixProvider = dev;
         fRC = &dev->fRCStack.rc();
         fCoverage = dev->accessCoverage();
     }
@@ -568,12 +568,13 @@ void SkBitmapDevice::drawDevice(SkBaseDevice* device, int x, int y, const SkPain
     SkBitmapDevice* src = static_cast<SkBitmapDevice*>(device);
     if (src->fCoverage) {
         SkDraw draw;
+        SkSimpleMatrixProvider matrixProvider(SkMatrix::I());
         draw.fDst = fBitmap.pixmap();
-        draw.fMatrix = &SkMatrix::I();
+        draw.fMatrixProvider = &matrixProvider;
         draw.fRC = &fRCStack.rc();
         paint.writable()->setShader(src->fBitmap.makeShader());
         draw.drawBitmap(*src->fCoverage.get(),
-                        SkMatrix::MakeTrans(SkIntToScalar(x),SkIntToScalar(y)), nullptr, *paint);
+                        SkMatrix::Translate(SkIntToScalar(x),SkIntToScalar(y)), nullptr, *paint);
     } else {
         BDDraw(this).drawSprite(src->fBitmap, x, y, *paint);
     }
@@ -598,9 +599,9 @@ class SkAutoDeviceClipRestore {
 public:
     SkAutoDeviceClipRestore(SkBaseDevice* device, const SkIRect& clip)
         : fDevice(device)
-        , fPrevLocalToDevice(device->localToDevice()) {
+        , fPrevLocalToDevice(device->localToDevice44()) {
         fDevice->save();
-        fDevice->setLocalToDevice(SkMatrix::I());
+        fDevice->setLocalToDevice(SkM44());
         fDevice->clipRect(SkRect::Make(clip), SkClipOp::kIntersect, false);
         fDevice->setLocalToDevice(fPrevLocalToDevice);
     }
@@ -610,8 +611,8 @@ public:
     }
 
 private:
-    SkBaseDevice*  fDevice;
-    const SkMatrix fPrevLocalToDevice;
+    SkBaseDevice* fDevice;
+    const SkM44   fPrevLocalToDevice;
 };
 
 }  // anonymous ns
@@ -627,7 +628,7 @@ void SkBitmapDevice::drawSpecial(SkSpecialImage* src, int x, int y, const SkPain
     if (SkImageFilter* filter = paint->getImageFilter()) {
         SkIPoint offset = SkIPoint::Make(0, 0);
         const SkMatrix matrix = SkMatrix::Concat(
-            SkMatrix::MakeTrans(SkIntToScalar(-x), SkIntToScalar(-y)), this->localToDevice());
+            SkMatrix::Translate(SkIntToScalar(-x), SkIntToScalar(-y)), this->localToDevice());
         const SkIRect clipBounds = fRCStack.rc().getBounds().makeOffset(-x, -y);
         sk_sp<SkImageFilterCache> cache(this->getImageFilterCache());
         SkImageFilter_Base::Context ctx(matrix, clipBounds, cache.get(), fBitmap.colorType(),
@@ -678,7 +679,7 @@ void SkBitmapDevice::drawSpecial(SkSpecialImage* src, int x, int y, const SkPain
         // (while compensating in the shader matrix).
         mask = sk_ref_sp(clipImage);
         maskMatrix = totalMatrix;
-        shaderMatrix = SkMatrix::Concat(totalInverse, SkMatrix::MakeTrans(x, y));
+        shaderMatrix = totalInverse * SkMatrix::Translate(x, y);
 
         // If the mask is not fully contained within the src layer, we must clip.
         if (!srcBounds.contains(clipBounds)) {
@@ -697,7 +698,7 @@ void SkBitmapDevice::drawSpecial(SkSpecialImage* src, int x, int y, const SkPain
 
         mask = surf->makeImageSnapshot();
         maskMatrix = SkMatrix::I();
-        shaderMatrix = SkMatrix::MakeTrans(x - maskBounds.x(), y - maskBounds.y());
+        shaderMatrix = SkMatrix::Translate(x - maskBounds.x(), y - maskBounds.y());
     }
 
     SkAutoDeviceTransformRestore adr(this, maskMatrix);

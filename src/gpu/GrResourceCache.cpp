@@ -11,7 +11,6 @@
 #include "include/private/GrSingleOwner.h"
 #include "include/private/SkTo.h"
 #include "include/utils/SkRandom.h"
-#include "src/core/SkExchange.h"
 #include "src/core/SkMessageBus.h"
 #include "src/core/SkOpts.h"
 #include "src/core/SkScopeExit.h"
@@ -29,8 +28,7 @@ DECLARE_SKMESSAGEBUS_MESSAGE(GrUniqueKeyInvalidatedMessage);
 
 DECLARE_SKMESSAGEBUS_MESSAGE(GrTextureFreedMessage);
 
-#define ASSERT_SINGLE_OWNER \
-    SkDEBUGCODE(GrSingleOwner::AutoEnforce debug_SingleOwner(fSingleOwner);)
+#define ASSERT_SINGLE_OWNER GR_ASSERT_SINGLE_OWNER(fSingleOwner)
 
 //////////////////////////////////////////////////////////////////////////////
 
@@ -78,14 +76,14 @@ inline GrResourceCache::TextureAwaitingUnref::TextureAwaitingUnref(GrTexture* te
         : fTexture(texture), fNumUnrefs(1) {}
 
 inline GrResourceCache::TextureAwaitingUnref::TextureAwaitingUnref(TextureAwaitingUnref&& that) {
-    fTexture = skstd::exchange(that.fTexture, nullptr);
-    fNumUnrefs = skstd::exchange(that.fNumUnrefs, 0);
+    fTexture = std::exchange(that.fTexture, nullptr);
+    fNumUnrefs = std::exchange(that.fNumUnrefs, 0);
 }
 
 inline GrResourceCache::TextureAwaitingUnref& GrResourceCache::TextureAwaitingUnref::operator=(
         TextureAwaitingUnref&& that) {
-    fTexture = skstd::exchange(that.fTexture, nullptr);
-    fNumUnrefs = skstd::exchange(that.fNumUnrefs, 0);
+    fTexture = std::exchange(that.fTexture, nullptr);
+    fNumUnrefs = std::exchange(that.fNumUnrefs, 0);
     return *this;
 }
 
