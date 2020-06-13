@@ -25,19 +25,19 @@ public:
         (void)_outer;
         auto clampToPremul = _outer.clampToPremul;
         (void)clampToPremul;
-        SkString _input484 = SkStringPrintf("%s", args.fInputColor);
-        SkString _sample484;
+        SkString _input464 = SkStringPrintf("%s", args.fInputColor);
+        SkString _sample464;
         if (_outer.inputFP_index >= 0) {
-            _sample484 = this->invokeChild(_outer.inputFP_index, _input484.c_str(), args);
+            _sample464 = this->invokeChild(_outer.inputFP_index, _input464.c_str(), args);
         } else {
-            _sample484 = "half4(1)";
+            _sample464 = _input464;
         }
         fragBuilder->codeAppendf(
-                "half4 inputColor = %s ? %s : %s;\n@if (%s) {\n    half alpha = "
-                "clamp(inputColor.w, 0.0, 1.0);\n    %s = half4(clamp(inputColor.xyz, 0.0, alpha), "
-                "alpha);\n} else {\n    %s = clamp(inputColor, 0.0, 1.0);\n}\n",
-                _outer.inputFP_index >= 0 ? "true" : "false", _sample484.c_str(), args.fInputColor,
-                (_outer.clampToPremul ? "true" : "false"), args.fOutputColor, args.fOutputColor);
+                "half4 inputColor = %s;\n@if (%s) {\n    half alpha = clamp(inputColor.w, 0.0, "
+                "1.0);\n    %s = half4(clamp(inputColor.xyz, 0.0, alpha), alpha);\n} else {\n    "
+                "%s = clamp(inputColor, 0.0, 1.0);\n}\n",
+                _sample464.c_str(), (_outer.clampToPremul ? "true" : "false"), args.fOutputColor,
+                args.fOutputColor);
     }
 
 private:
@@ -59,14 +59,13 @@ bool GrClampFragmentProcessor::onIsEqual(const GrFragmentProcessor& other) const
 }
 GrClampFragmentProcessor::GrClampFragmentProcessor(const GrClampFragmentProcessor& src)
         : INHERITED(kGrClampFragmentProcessor_ClassID, src.optimizationFlags())
-        , inputFP_index(src.inputFP_index)
         , clampToPremul(src.clampToPremul) {
-    if (inputFP_index >= 0) {
-        auto clone = src.childProcessor(inputFP_index).clone();
-        if (src.childProcessor(inputFP_index).isSampledWithExplicitCoords()) {
-            clone->setSampledWithExplicitCoords();
+    if (src.inputFP_index >= 0) {
+        auto inputFP_clone = src.childProcessor(src.inputFP_index).clone();
+        if (src.childProcessor(src.inputFP_index).isSampledWithExplicitCoords()) {
+            inputFP_clone->setSampledWithExplicitCoords();
         }
-        this->registerChildProcessor(std::move(clone));
+        inputFP_index = this->registerChildProcessor(std::move(inputFP_clone));
     }
 }
 std::unique_ptr<GrFragmentProcessor> GrClampFragmentProcessor::clone() const {

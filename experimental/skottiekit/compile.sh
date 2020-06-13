@@ -62,10 +62,6 @@ if [[ $@ == *cpu* ]]; then
   WASM_GPU="-DSK_SUPPORT_GPU=0 --pre-js $BASE_DIR/cpu.js -s USE_WEBGL2=0"
 fi
 
-# Trim some skp-related code
-EXTRA_CFLAGS+=",\"-DSK_DISABLE_READBUFFER\""
-RELEASE_CONF+=" -DSK_DISABLE_READBUFFER"
-
 SKOTTIE_LIB="$BUILD_DIR/libskottie.a \
              $BUILD_DIR/libsksg.a"
 
@@ -134,6 +130,8 @@ echo "Compiling bitcode"
   skia_use_wuffs=false \
   skia_use_zlib=false \
   skia_enable_fontmgr_empty=true \
+  skia_enable_fontmgr_custom_directory=false \
+  skia_enable_fontmgr_custom_embedded=false \
   skia_enable_fontmgr_custom_empty=false \
   skia_enable_sksl_interpreter=false \
   \

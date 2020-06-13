@@ -431,14 +431,15 @@ void CPPCodeGenerator::writeFunctionCall(const FunctionCall& c) {
         // must be properly formatted with a prefixed comma when the parameter should be inserted
         // into the invokeChild() parameter list.
         String inputArg;
+        String inputColorName = "\"half4(1)\"";
         if (c.fArguments.size() > 1 && c.fArguments[1]->fType.name() == "half4") {
             // Use the invokeChild() variant that accepts an input color, so convert the 2nd
             // argument's expression into C++ code that produces sksl stored in an SkString.
-            String inputName = "_input" + to_string(c.fOffset);
-            addExtraEmitCodeLine(convertSKSLExpressionToCPP(*c.fArguments[1], inputName));
+            inputColorName = "_input" + to_string(c.fOffset);
+            addExtraEmitCodeLine(convertSKSLExpressionToCPP(*c.fArguments[1], inputColorName));
 
             // invokeChild() needs a char*
-            inputArg = ", " + inputName + ".c_str()";
+            inputArg = ", " + inputColorName + ".c_str()";
         }
 
         bool hasCoords = c.fArguments.back()->fType.name() == "float2";
@@ -481,12 +482,11 @@ void CPPCodeGenerator::writeFunctionCall(const FunctionCall& c) {
         if (c.fArguments[0]->fType.kind() == Type::kNullable_Kind) {
             // Null FPs are not emitted, but their output can still be referenced in dependent
             // expressions - thus we always fill the variable with something.
-            // Note: this is essentially dead code required to satisfy the compiler, because
-            // 'process' function calls should always be guarded at a higher level, in the .fp
-            // source.
+            // Sampling from a null fragment processor will provide in the input color as-is. This
+            // defaults to half4(1) if no color is specified.
             addExtraEmitCodeLine(
                 "} else {"
-                "    " + childName + " = \"half4(1)\";"
+                "    " + childName + " = " + inputColorName + ";"
                 "}");
         }
         this->write("%s");
@@ -1125,11 +1125,7 @@ void CPPCodeGenerator::writeClone() {
         }
         for (const Variable* param : fSectionAndParameterHelper.getParameters()) {
             String fieldName = HCodeGenerator::FieldName(String(param->fName).c_str());
-            if (param->fType.nonnullable() == *fContext.fFragmentProcessor_Type) {
-                this->writef("\n, %s_index(src.%s_index)",
-                             fieldName.c_str(),
-                             fieldName.c_str());
-            } else {
+            if (param->fType.nonnullable() != *fContext.fFragmentProcessor_Type) {
                 this->writef("\n, %s(src.%s)",
                              fieldName.c_str(),
                              fieldName.c_str());
@@ -1143,18 +1139,19 @@ void CPPCodeGenerator::writeClone() {
             } else if (param->fType.nonnullable() == *fContext.fFragmentProcessor_Type) {
                 String fieldName = HCodeGenerator::FieldName(String(param->fName).c_str());
                 if (param->fType.kind() == Type::kNullable_Kind) {
-                    this->writef("    if (%s_index >= 0) {\n", fieldName.c_str());
+                    this->writef("    if (src.%s_index >= 0) {\n", fieldName.c_str());
                 } else {
                     this->write("    {\n");
                 }
                 this->writef(
-                       "        auto clone = src.childProcessor(%s_index).clone();\n"
-                       "        if (src.childProcessor(%s_index).isSampledWithExplicitCoords()) {\n"
-                       "            clone->setSampledWithExplicitCoords();\n"
-                       "        }"
-                       "        this->registerChildProcessor(std::move(clone));\n"
+                       "        auto %s_clone = src.childProcessor(src.%s_index).clone();\n"
+                       "        if (src.childProcessor(src.%s_index).isSampledWithExplicitCoords()) {\n"
+                       "            %s_clone->setSampledWithExplicitCoords();\n"
+                       "        }\n"
+                       "        %s_index = this->registerChildProcessor(std::move(%s_clone));\n"
                        "    }\n",
-                       fieldName.c_str(), fieldName.c_str());
+                       fieldName.c_str(), fieldName.c_str(), fieldName.c_str(),
+                       fieldName.c_str(), fieldName.c_str(), fieldName.c_str());
             }
         }
         if (samplerCount) {

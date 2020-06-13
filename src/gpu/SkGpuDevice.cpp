@@ -125,7 +125,7 @@ SkGpuDevice::SkGpuDevice(GrContext* context,
                     renderTargetContext->surfaceProps())
         , fContext(SkRef(context))
         , fRenderTargetContext(std::move(renderTargetContext))
-        , fClip(&this->cs(), &this->asMatrixProvider()) {
+        , fClip(fRenderTargetContext->dimensions(), &this->cs(), &this->asMatrixProvider()) {
     if (flags & kNeedClear_Flag) {
         this->clearAll();
     }
@@ -725,7 +725,8 @@ void SkGpuDevice::drawSpecial(SkSpecialImage* special, int left, int top, const 
                 dstRectClip.clipDevRect(
                         SkIRect::MakeXYWH(left, top, subset.width(), subset.height()),
                         SkClipOp::kIntersect);
-                GrClipStackClip clip(&dstRectClip);
+                GrClipStackClip clip(fRenderTargetContext->dimensions(), &dstRectClip,
+                                     &this->asMatrixProvider());
                 SkMatrix local = SkMatrix::Concat(SkMatrix::MakeRectToRect(
                         dstRect, srcRect, SkMatrix::kFill_ScaleToFit), ctm);
                 fRenderTargetContext->fillRectWithLocalMatrix(&clip, std::move(grPaint),
@@ -1062,15 +1063,16 @@ void SkGpuDevice::drawDrawable(SkDrawable* drawable, const SkMatrix* matrix, SkC
 ///////////////////////////////////////////////////////////////////////////////
 
 void SkGpuDevice::flush() {
-    this->flush(SkSurface::BackendSurfaceAccess::kNoAccess, GrFlushInfo());
+    this->flush(SkSurface::BackendSurfaceAccess::kNoAccess, GrFlushInfo(), nullptr);
     this->context()->submit();
 }
 
 GrSemaphoresSubmitted SkGpuDevice::flush(SkSurface::BackendSurfaceAccess access,
-                                         const GrFlushInfo& info) {
+                                         const GrFlushInfo& info,
+                                         const GrBackendSurfaceMutableState* newState) {
     ASSERT_SINGLE_OWNER
 
-    return fRenderTargetContext->flush(access, info);
+    return fRenderTargetContext->flush(access, info, newState);
 }
 
 bool SkGpuDevice::wait(int numSemaphores, const GrBackendSemaphore* waitSemaphores) {

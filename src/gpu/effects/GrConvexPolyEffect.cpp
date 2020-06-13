@@ -130,6 +130,7 @@ std::unique_ptr<GrFragmentProcessor> GrConvexPolyEffect::Make(GrClipEdgeType typ
         switch (verb) {
             case SkPath::kMove_Verb:
                 SkASSERT(n == 0);
+                break;
             case SkPath::kClose_Verb:
                 break;
             case SkPath::kLine_Verb: {
@@ -167,7 +168,7 @@ std::unique_ptr<GrFragmentProcessor> GrConvexPolyEffect::Make(GrClipEdgeType edg
     if (GrClipEdgeType::kHairlineAA == edgeType){
         return nullptr;
     }
-    return GrAARectEffect::Make(edgeType, rect);
+    return GrAARectEffect::Make(/*inputFP=*/nullptr, edgeType, rect);
 }
 
 GrConvexPolyEffect::~GrConvexPolyEffect() {}

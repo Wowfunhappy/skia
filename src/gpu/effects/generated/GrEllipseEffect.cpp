@@ -56,8 +56,17 @@ public:
                 "       break;\n    case 1:\n        alpha = clamp(0.5 - half(approx_dist), 0.0, "
                 "1.0);\n        break;\n    case 2:\n        alpha = approx_dist > 0.0 ? 1.0 : "
                 "0.0;\n        break;\n    case 3:\n        alpha = clamp(0.5 + half(approx_dist), "
-                "0.0, 1.0);\n        break;\n    default:\n        discard;\n}\n%s = %s * alpha;\n",
-                (int)_outer.edgeType, args.fOutputColor, args.fInputColor);
+                "0.0, 1.0);\n        break;\n    default:\n        discard;\n}",
+                (int)_outer.edgeType);
+        SkString _input4497 = SkStringPrintf("%s", args.fInputColor);
+        SkString _sample4497;
+        if (_outer.inputFP_index >= 0) {
+            _sample4497 = this->invokeChild(_outer.inputFP_index, _input4497.c_str(), args);
+        } else {
+            _sample4497 = _input4497;
+        }
+        fragBuilder->codeAppendf("\nhalf4 inputColor = %s;\n%s = inputColor * alpha;\n",
+                                 _sample4497.c_str(), args.fOutputColor);
     }
 
 private:
@@ -125,7 +134,15 @@ GrEllipseEffect::GrEllipseEffect(const GrEllipseEffect& src)
         : INHERITED(kGrEllipseEffect_ClassID, src.optimizationFlags())
         , edgeType(src.edgeType)
         , center(src.center)
-        , radii(src.radii) {}
+        , radii(src.radii) {
+    if (src.inputFP_index >= 0) {
+        auto inputFP_clone = src.childProcessor(src.inputFP_index).clone();
+        if (src.childProcessor(src.inputFP_index).isSampledWithExplicitCoords()) {
+            inputFP_clone->setSampledWithExplicitCoords();
+        }
+        inputFP_index = this->registerChildProcessor(std::move(inputFP_clone));
+    }
+}
 std::unique_ptr<GrFragmentProcessor> GrEllipseEffect::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrEllipseEffect(*this));
 }
@@ -141,7 +158,7 @@ std::unique_ptr<GrFragmentProcessor> GrEllipseEffect::TestCreate(GrProcessorTest
     do {
         et = (GrClipEdgeType)testData->fRandom->nextULessThan(kGrClipEdgeTypeCnt);
     } while (GrClipEdgeType::kHairlineAA == et);
-    return GrEllipseEffect::Make(et, center, SkPoint::Make(rx, ry),
+    return GrEllipseEffect::Make(/*inputFP=*/nullptr, et, center, SkPoint::Make(rx, ry),
                                  *testData->caps()->shaderCaps());
 }
 #endif

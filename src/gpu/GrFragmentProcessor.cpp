@@ -13,7 +13,6 @@
 #include "src/gpu/effects/generated/GrClampFragmentProcessor.h"
 #include "src/gpu/effects/generated/GrConstColorProcessor.h"
 #include "src/gpu/effects/generated/GrOverrideInputFragmentProcessor.h"
-#include "src/gpu/effects/generated/GrPremulInputFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
@@ -91,7 +90,12 @@ void GrFragmentProcessor::setSampleMatrix(SkSL::SampleMatrix newMatrix) {
     if (fMatrix.fKind == SkSL::SampleMatrix::Kind::kConstantOrUniform) {
         if (newMatrix.fKind == SkSL::SampleMatrix::Kind::kConstantOrUniform) {
             // need to base this transform on the one that happened in our parent
-            fMatrix.fBase = newMatrix.fOwner;
+            // If we're already based on something, then we have to assume that parent is now
+            // based on yet another transform, so don't update our base pointer (or we'll skip
+            // the intermediate transform).
+            if (!fMatrix.fBase) {
+                fMatrix.fBase = newMatrix.fOwner;
+            }
         } else {
             SkASSERT(newMatrix.fKind == SkSL::SampleMatrix::Kind::kVariable);
             fMatrix = SkSL::SampleMatrix(SkSL::SampleMatrix::Kind::kMixed, fMatrix.fOwner,
@@ -164,16 +168,6 @@ std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::MulInputByChildAlpha(
         return nullptr;
     }
     return GrXfermodeFragmentProcessor::MakeFromDstProcessor(std::move(fp), SkBlendMode::kSrcIn);
-}
-
-std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::PremulInput(
-        std::unique_ptr<GrFragmentProcessor> fp) {
-    if (!fp) {
-        return nullptr;
-    }
-    std::unique_ptr<GrFragmentProcessor> fpPipeline[] = { GrPremulInputFragmentProcessor::Make(),
-                                                          std::move(fp) };
-    return GrFragmentProcessor::RunInSeries(fpPipeline, 2);
 }
 
 std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::ClampPremulOutput(

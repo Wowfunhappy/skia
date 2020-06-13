@@ -23,21 +23,20 @@ public:
         GrGLSLFPFragmentBuilder* fragBuilder = args.fFragBuilder;
         const GrHSLToRGBFilterEffect& _outer = args.fFp.cast<GrHSLToRGBFilterEffect>();
         (void)_outer;
-        SkString _input543 = SkStringPrintf("%s", args.fInputColor);
-        SkString _sample543;
+        SkString _input523 = SkStringPrintf("%s", args.fInputColor);
+        SkString _sample523;
         if (_outer.inputFP_index >= 0) {
-            _sample543 = this->invokeChild(_outer.inputFP_index, _input543.c_str(), args);
+            _sample523 = this->invokeChild(_outer.inputFP_index, _input523.c_str(), args);
         } else {
-            _sample543 = "half4(1)";
+            _sample523 = _input523;
         }
         fragBuilder->codeAppendf(
-                "half4 inputColor = %s ? %s : %s;\nhalf3 hsl = inputColor.xyz;\nhalf C = (1.0 - "
-                "abs(2.0 * hsl.z - 1.0)) * hsl.y;\nhalf3 p = hsl.xxx + half3(0.0, "
-                "0.66666666666666663, 0.33333333333333331);\nhalf3 q = clamp(abs(fract(p) * 6.0 - "
-                "3.0) - 1.0, 0.0, 1.0);\nhalf3 rgb = (q - 0.5) * C + hsl.z;\n%s = clamp(half4(rgb, "
-                "inputColor.w), 0.0, 1.0);\n%s.xyz *= %s.w;\n",
-                _outer.inputFP_index >= 0 ? "true" : "false", _sample543.c_str(), args.fInputColor,
-                args.fOutputColor, args.fOutputColor, args.fOutputColor);
+                "half4 inputColor = %s;\nhalf3 hsl = inputColor.xyz;\nhalf C = (1.0 - abs(2.0 * "
+                "hsl.z - 1.0)) * hsl.y;\nhalf3 p = hsl.xxx + half3(0.0, 0.66666666666666663, "
+                "0.33333333333333331);\nhalf3 q = clamp(abs(fract(p) * 6.0 - 3.0) - 1.0, 0.0, "
+                "1.0);\nhalf3 rgb = (q - 0.5) * C + hsl.z;\n%s = clamp(half4(rgb, inputColor.w), "
+                "0.0, 1.0);\n%s.xyz *= %s.w;\n",
+                _sample523.c_str(), args.fOutputColor, args.fOutputColor, args.fOutputColor);
     }
 
 private:
@@ -55,14 +54,13 @@ bool GrHSLToRGBFilterEffect::onIsEqual(const GrFragmentProcessor& other) const {
     return true;
 }
 GrHSLToRGBFilterEffect::GrHSLToRGBFilterEffect(const GrHSLToRGBFilterEffect& src)
-        : INHERITED(kGrHSLToRGBFilterEffect_ClassID, src.optimizationFlags())
-        , inputFP_index(src.inputFP_index) {
-    if (inputFP_index >= 0) {
-        auto clone = src.childProcessor(inputFP_index).clone();
-        if (src.childProcessor(inputFP_index).isSampledWithExplicitCoords()) {
-            clone->setSampledWithExplicitCoords();
+        : INHERITED(kGrHSLToRGBFilterEffect_ClassID, src.optimizationFlags()) {
+    if (src.inputFP_index >= 0) {
+        auto inputFP_clone = src.childProcessor(src.inputFP_index).clone();
+        if (src.childProcessor(src.inputFP_index).isSampledWithExplicitCoords()) {
+            inputFP_clone->setSampledWithExplicitCoords();
         }
-        this->registerChildProcessor(std::move(clone));
+        inputFP_index = this->registerChildProcessor(std::move(inputFP_clone));
     }
 }
 std::unique_ptr<GrFragmentProcessor> GrHSLToRGBFilterEffect::clone() const {

@@ -36,69 +36,16 @@ static const int kLargeDFFontLimit = 162;
 static const int kExtraLargeDFFontSize = 256;
 #endif
 
-static const int kDefaultMinDistanceFieldFontSize = 18;
-#if defined(SK_BUILD_FOR_ANDROID)
-static const int kDefaultMaxDistanceFieldFontSize = 384;
-#elif defined(SK_BUILD_FOR_MAC)
-static const int kDefaultMaxDistanceFieldFontSize = kExtraLargeDFFontSize;
-#else
-static const int kDefaultMaxDistanceFieldFontSize = 2 * kLargeDFFontSize;
-#endif
-
-GrTextContext::GrTextContext(const Options& options) : fOptions(options) {
-    SanitizeOptions(&fOptions);
-}
+GrTextContext::GrTextContext(const Options& options) : fOptions(options) { }
 
 std::unique_ptr<GrTextContext> GrTextContext::Make(const Options& options) {
     return std::unique_ptr<GrTextContext>(new GrTextContext(options));
 }
 
-SkColor GrTextContext::ComputeCanonicalColor(const SkPaint& paint, bool lcd) {
-    SkColor canonicalColor = SkPaintPriv::ComputeLuminanceColor(paint);
-    if (lcd) {
-        // This is the correct computation, but there are tons of cases where LCD can be overridden.
-        // For now we just regenerate if any run in a textblob has LCD.
-        // TODO figure out where all of these overrides are and see if we can incorporate that logic
-        // at a higher level *OR* use sRGB
-        SkASSERT(false);
-        //canonicalColor = SkMaskGamma::CanonicalColor(canonicalColor);
-    } else {
-        // A8, though can have mixed BMP text but it shouldn't matter because BMP text won't have
-        // gamma corrected masks anyways, nor color
-        U8CPU lum = SkComputeLuminance(SkColorGetR(canonicalColor),
-                                       SkColorGetG(canonicalColor),
-                                       SkColorGetB(canonicalColor));
-        // reduce to our finite number of bits
-        canonicalColor = SkMaskGamma::CanonicalColor(SkColorSetRGB(lum, lum, lum));
-    }
-    return canonicalColor;
-}
-
-SkScalerContextFlags GrTextContext::ComputeScalerContextFlags(const GrColorInfo& colorInfo) {
-    // If we're doing linear blending, then we can disable the gamma hacks.
-    // Otherwise, leave them on. In either case, we still want the contrast boost:
-    // TODO: Can we be even smarter about mask gamma based on the dest transfer function?
-    if (colorInfo.isLinearlyBlended()) {
-        return SkScalerContextFlags::kBoostContrast;
-    } else {
-        return SkScalerContextFlags::kFakeGammaAndBoostContrast;
-    }
-}
-
-void GrTextContext::SanitizeOptions(Options* options) {
-    if (options->fMaxDistanceFieldFontSize < 0.f) {
-        options->fMaxDistanceFieldFontSize = kDefaultMaxDistanceFieldFontSize;
-    }
-    if (options->fMinDistanceFieldFontSize < 0.f) {
-        options->fMinDistanceFieldFontSize = kDefaultMinDistanceFieldFontSize;
-    }
-}
-
-bool GrTextContext::CanDrawAsDistanceFields(const SkPaint& paint, const SkFont& font,
-                                            const SkMatrix& viewMatrix,
-                                            const SkSurfaceProps& props,
-                                            bool contextSupportsDistanceFieldText,
-                                            const Options& options) {
+bool GrTextContext::Options::canDrawAsDistanceFields(const SkPaint& paint, const SkFont& font,
+                                                     const SkMatrix& viewMatrix,
+                                                     const SkSurfaceProps& props,
+                                                     bool contextSupportsDistanceFieldText) const {
     // mask filters modify alpha, which doesn't translate well to distance
     if (paint.getMaskFilter() || !contextSupportsDistanceFieldText) {
         return false;
@@ -116,9 +63,9 @@ bool GrTextContext::CanDrawAsDistanceFields(const SkPaint& paint, const SkFont& 
         SkScalar maxScale = viewMatrix.getMaxScale();
         SkScalar scaledTextSize = maxScale * font.getSize();
         // Hinted text looks far better at small resolutions
-        // Scaling up beyond 2x yields undesireable artifacts
-        if (scaledTextSize < options.fMinDistanceFieldFontSize ||
-            scaledTextSize > options.fMaxDistanceFieldFontSize) {
+        // Scaling up beyond 2x yields undesirable artifacts
+        if (scaledTextSize < fMinDistanceFieldFontSize ||
+            scaledTextSize > fMaxDistanceFieldFontSize) {
             return false;
         }
 
@@ -155,10 +102,9 @@ SkScalar scaled_text_size(const SkScalar textSize, const SkMatrix& viewMatrix) {
     return scaledTextSize;
 }
 
-SkFont GrTextContext::InitDistanceFieldFont(const SkFont& font,
-                                            const SkMatrix& viewMatrix,
-                                            const Options& options,
-                                            SkScalar* textRatio) {
+SkFont GrTextContext::Options::getSDFFont(const SkFont& font,
+                                          const SkMatrix& viewMatrix,
+                                          SkScalar* textRatio) const {
     SkScalar textSize = font.getSize();
     SkScalar scaledTextSize = scaled_text_size(textSize, viewMatrix);
 
@@ -194,10 +140,8 @@ SkFont GrTextContext::InitDistanceFieldFont(const SkFont& font,
     return dfFont;
 }
 
-std::pair<SkScalar, SkScalar> GrTextContext::InitDistanceFieldMinMaxScale(
-        SkScalar textSize,
-        const SkMatrix& viewMatrix,
-        const GrTextContext::Options& options) {
+std::pair<SkScalar, SkScalar> GrTextContext::Options::computeSDFMinMaxScale(
+        SkScalar textSize, const SkMatrix& viewMatrix) const {
 
     SkScalar scaledTextSize = scaled_text_size(textSize, viewMatrix);
 
@@ -206,14 +150,14 @@ std::pair<SkScalar, SkScalar> GrTextContext::InitDistanceFieldMinMaxScale(
     SkScalar dfMaskScaleFloor;
     SkScalar dfMaskScaleCeil;
     if (scaledTextSize <= kSmallDFFontLimit) {
-        dfMaskScaleFloor = options.fMinDistanceFieldFontSize;
+        dfMaskScaleFloor = fMinDistanceFieldFontSize;
         dfMaskScaleCeil = kSmallDFFontLimit;
     } else if (scaledTextSize <= kMediumDFFontLimit) {
         dfMaskScaleFloor = kSmallDFFontLimit;
         dfMaskScaleCeil = kMediumDFFontLimit;
     } else {
         dfMaskScaleFloor = kMediumDFFontLimit;
-        dfMaskScaleCeil = options.fMaxDistanceFieldFontSize;
+        dfMaskScaleCeil = fMaxDistanceFieldFontSize;
     }
 
     // Because there can be multiple runs in the blob, we want the overall maxMinScale, and
@@ -233,51 +177,3 @@ SkPaint GrTextContext::InitDistanceFieldPaint(const SkPaint& paint) {
     dfPaint.setMaskFilter(GrSDFMaskFilter::Make());
     return dfPaint;
 }
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#if GR_TEST_UTILS
-
-#include "src/gpu/GrRenderTargetContext.h"
-
-GR_DRAW_OP_TEST_DEFINE(GrAtlasTextOp) {
-    static uint32_t gContextID = SK_InvalidGenID;
-    static std::unique_ptr<GrTextContext> gTextContext;
-    static SkSurfaceProps gSurfaceProps(SkSurfaceProps::kLegacyFontHost_InitType);
-
-    if (context->priv().contextID() != gContextID) {
-        gContextID = context->priv().contextID();
-        gTextContext = GrTextContext::Make(GrTextContext::Options());
-    }
-
-    // Setup dummy SkPaint / GrPaint / GrRenderTargetContext
-    auto rtc = GrRenderTargetContext::Make(
-            context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox, {1024, 1024});
-
-    SkSimpleMatrixProvider matrixProvider(GrTest::TestMatrixInvertible(random));
-
-    SkPaint skPaint;
-    skPaint.setColor(random->nextU());
-
-    SkFont font;
-    if (random->nextBool()) {
-        font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
-    } else {
-        font.setEdging(random->nextBool() ? SkFont::Edging::kAntiAlias : SkFont::Edging::kAlias);
-    }
-    font.setSubpixel(random->nextBool());
-
-    const char* text = "The quick brown fox jumps over the lazy dog.";
-
-    // create some random x/y offsets, including negative offsets
-    static const int kMaxTrans = 1024;
-    int xPos = (random->nextU() % 2) * 2 - 1;
-    int yPos = (random->nextU() % 2) * 2 - 1;
-    int xInt = (random->nextU() % kMaxTrans) * xPos;
-    int yInt = (random->nextU() % kMaxTrans) * yPos;
-
-    return gTextContext->createOp_TestingOnly(context, gTextContext.get(), rtc.get(), skPaint, font,
-                                              matrixProvider, text, xInt, yInt);
-}
-
-#endif

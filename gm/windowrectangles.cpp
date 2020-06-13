@@ -30,7 +30,6 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrContextPriv.h"
-#include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrFragmentProcessor.h"
 #include "src/gpu/GrPaint.h"
 #include "src/gpu/GrRecordingContextPriv.h"
@@ -164,7 +163,7 @@ private:
 class MaskOnlyClipBase : public GrClip {
 private:
     bool quickContains(const SkRect&) const final { return false; }
-    bool isRRect(const SkRect& rtBounds, SkRRect* rr, GrAA*) const final { return false; }
+    bool isRRect(SkRRect* rr, GrAA*) const final { return false; }
 };
 
 /**
@@ -175,6 +174,10 @@ public:
     AlphaOnlyClip(GrSurfaceProxyView mask, int x, int y) : fMask(std::move(mask)), fX(x), fY(y) {}
 
 private:
+    SkIRect getConservativeBounds() const final {
+        return SkIRect::MakeXYWH(fX, fY, fMask.width(), fMask.height());
+    }
+
     bool apply(GrRecordingContext* ctx, GrRenderTargetContext*, bool, bool, GrAppliedClip* out,
                SkRect* bounds) const override {
         GrSamplerState samplerState(GrSamplerState::WrapMode::kClampToBorder,

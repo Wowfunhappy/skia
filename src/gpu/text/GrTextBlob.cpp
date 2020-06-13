@@ -384,7 +384,6 @@ auto GrTextBlob::SubRun::MakeTransformedMask(
 void GrTextBlob::SubRun::insertSubRunOpsIntoTarget(GrTextTarget* target,
                                                    const SkSurfaceProps& props,
                                                    const SkPaint& paint,
-                                                   const SkPMColor4f& filteredColor,
                                                    const GrClip* clip,
                                                    const SkMatrixProvider& deviceMatrix,
                                                    SkPoint drawOrigin) {
@@ -448,7 +447,7 @@ void GrTextBlob::SubRun::insertSubRunOpsIntoTarget(GrTextTarget* target,
         // and we have an axis-aligned rectangular non-AA clip
         if (!this->drawAsDistanceFields() &&
             !this->needsTransform() &&
-            (!clip || (clip->isRRect(rtBounds, &clipRRect, &aa) &&
+            (!clip || (clip->isRRect(&clipRRect, &aa) &&
                        clipRRect.isRect() && GrAA::kNo == aa))) {
             // We only need to do clipping work if the subrun isn't contained by the clip
             SkRect subRunBounds = this->deviceRect(deviceMatrix.localToDevice(), drawOrigin);
@@ -463,24 +462,36 @@ void GrTextBlob::SubRun::insertSubRunOpsIntoTarget(GrTextTarget* target,
             skipClip = true;
         }
 
-        auto op = this->makeOp(deviceMatrix, drawOrigin, clipRect,
-                                 paint, filteredColor, props, target);
+        auto op = this->makeOp(deviceMatrix, drawOrigin, clipRect, paint, props, target);
         if (op != nullptr) {
             target->addDrawOp(skipClip ? nullptr : clip, std::move(op));
         }
     }
 }
 
+SkPMColor4f generate_filtered_color(const SkPaint& paint, const GrColorInfo& colorInfo) {
+    SkColor4f c = paint.getColor4f();
+    if (auto* xform = colorInfo.colorSpaceXformFromSRGB()) {
+        c = xform->apply(c);
+    }
+    if (auto* cf = paint.getColorFilter()) {
+        c = cf->filterColor4f(c, colorInfo.colorSpace(), colorInfo.colorSpace());
+    }
+    return c.premul();
+}
 
 std::unique_ptr<GrAtlasTextOp> GrTextBlob::SubRun::makeOp(const SkMatrixProvider& matrixProvider,
                                                   SkPoint drawOrigin,
                                                   const SkIRect& clipRect,
                                                   const SkPaint& paint,
-                                                  const SkPMColor4f& filteredColor,
                                                   const SkSurfaceProps& props,
                                                   GrTextTarget* target) {
     GrPaint grPaint;
     target->makeGrPaint(this->maskFormat(), paint, matrixProvider, &grPaint);
+    const GrColorInfo& colorInfo = target->colorInfo();
+    // This is the color the op will use to draw.
+    SkPMColor4f drawingColor = generate_filtered_color(paint, colorInfo);
+
     if (this->drawAsDistanceFields()) {
         // TODO: Can we be even smarter based on the dest transfer function?
         return GrAtlasTextOp::MakeDistanceField(target->getContext(),
@@ -489,7 +500,7 @@ std::unique_ptr<GrAtlasTextOp> GrTextBlob::SubRun::makeOp(const SkMatrixProvider
                                                 matrixProvider.localToDevice(),
                                                 drawOrigin,
                                                 clipRect,
-                                                filteredColor,
+                                                drawingColor,
                                                 target->colorInfo().isLinearlyBlended(),
                                                 SkPaintPriv::ComputeLuminanceColor(paint),
                                                 props);
@@ -500,7 +511,7 @@ std::unique_ptr<GrAtlasTextOp> GrTextBlob::SubRun::makeOp(const SkMatrixProvider
                                          matrixProvider.localToDevice(),
                                          drawOrigin,
                                          clipRect,
-                                         filteredColor);
+                                         drawingColor);
     }
 }
 
@@ -542,9 +553,7 @@ void* GrTextBlob::operator new(size_t, void* p) { return p; }
 
 GrTextBlob::~GrTextBlob() = default;
 
-sk_sp<GrTextBlob> GrTextBlob::Make(const SkGlyphRunList& glyphRunList,
-                                   const SkMatrix& drawMatrix,
-                                   GrColor color) {
+sk_sp<GrTextBlob> GrTextBlob::Make(const SkGlyphRunList& glyphRunList, const SkMatrix& drawMatrix) {
     // The difference in alignment from the storage of VertexData to SubRun;
     constexpr size_t alignDiff = alignof(SubRun) - alignof(SubRun::VertexData);
     constexpr size_t vertexDataToSubRunPadding = alignDiff > 0 ? alignDiff : 0;
@@ -557,7 +566,7 @@ sk_sp<GrTextBlob> GrTextBlob::Make(const SkGlyphRunList& glyphRunList,
 
     SkColor initialLuminance = SkPaintPriv::ComputeLuminanceColor(glyphRunList.paint());
     sk_sp<GrTextBlob> blob{new (allocation) GrTextBlob{
-            arenaSize, drawMatrix, glyphRunList.origin(), color, initialLuminance}};
+            arenaSize, drawMatrix, glyphRunList.origin(), initialLuminance}};
 
     return blob;
 }
@@ -591,30 +600,31 @@ void GrTextBlob::setMinAndMaxScale(SkScalar scaledMin, SkScalar scaledMax) {
     fMinMaxScale = std::min(scaledMax, fMinMaxScale);
 }
 
-bool GrTextBlob::mustRegenerate(const SkPaint& paint, bool anyRunHasSubpixelPosition,
-                                const SkMaskFilterBase::BlurRec& blurRec,
-                                const SkMatrix& drawMatrix, SkPoint drawOrigin) {
+bool GrTextBlob::canReuse(const SkPaint& paint,
+                          const SkMaskFilterBase::BlurRec& blurRec,
+                          const SkMatrix& drawMatrix,
+                          SkPoint drawOrigin) {
     // If we have LCD text then our canonical color will be set to transparent, in this case we have
     // to regenerate the blob on any color change
     // We use the grPaint to get any color filter effects
     if (fKey.fCanonicalColor == SK_ColorTRANSPARENT &&
         fInitialLuminance != SkPaintPriv::ComputeLuminanceColor(paint)) {
-        return true;
+        return false;
     }
 
     if (fInitialMatrix.hasPerspective() != drawMatrix.hasPerspective()) {
-        return true;
+        return false;
     }
 
     /** This could be relaxed for blobs with only distance field glyphs. */
     if (fInitialMatrix.hasPerspective() && !SkMatrixPriv::CheapEqual(fInitialMatrix, drawMatrix)) {
-        return true;
+        return false;
     }
 
     // We only cache one masked version
     if (fKey.fHasBlur &&
         (fBlurRec.fSigma != blurRec.fSigma || fBlurRec.fStyle != blurRec.fStyle)) {
-        return true;
+        return false;
     }
 
     // Similarly, we only cache one version for each style
@@ -622,15 +632,14 @@ bool GrTextBlob::mustRegenerate(const SkPaint& paint, bool anyRunHasSubpixelPosi
         (fStrokeInfo.fFrameWidth != paint.getStrokeWidth() ||
          fStrokeInfo.fMiterLimit != paint.getStrokeMiter() ||
          fStrokeInfo.fJoin != paint.getStrokeJoin())) {
-        return true;
+        return false;
     }
 
     // Mixed blobs must be regenerated.  We could probably figure out a way to do integer scrolls
     // for mixed blobs if this becomes an issue.
     if (this->hasBitmap() && this->hasDistanceField()) {
         // Identical view matrices and we can reuse in all cases
-        return !(SkMatrixPriv::CheapEqual(fInitialMatrix, drawMatrix) &&
-                 drawOrigin == fInitialOrigin);
+        return SkMatrixPriv::CheapEqual(fInitialMatrix, drawMatrix) && drawOrigin == fInitialOrigin;
     }
 
     if (this->hasBitmap()) {
@@ -638,7 +647,7 @@ bool GrTextBlob::mustRegenerate(const SkPaint& paint, bool anyRunHasSubpixelPosi
             fInitialMatrix.getScaleY() != drawMatrix.getScaleY() ||
             fInitialMatrix.getSkewX() != drawMatrix.getSkewX() ||
             fInitialMatrix.getSkewY() != drawMatrix.getSkewY()) {
-            return true;
+            return false;
         }
 
         // TODO(herb): this is not needed for full pixel glyph choice, but is needed to adjust
@@ -660,7 +669,7 @@ bool GrTextBlob::mustRegenerate(const SkPaint& paint, bool anyRunHasSubpixelPosi
         SkPoint translation = drawDeviceOrigin - initialDeviceOrigin;
 
         if (!SkScalarIsInt(translation.x()) || !SkScalarIsInt(translation.y())) {
-            return true;
+            return false;
         }
     } else if (this->hasDistanceField()) {
         // A scale outside of [blob.fMaxMinScale, blob.fMinMaxScale] would result in a different
@@ -669,26 +678,22 @@ bool GrTextBlob::mustRegenerate(const SkPaint& paint, bool anyRunHasSubpixelPosi
         SkScalar oldMaxScale = fInitialMatrix.getMaxScale();
         SkScalar scaleAdjust = newMaxScale / oldMaxScale;
         if (scaleAdjust < fMaxMinScale || scaleAdjust > fMinMaxScale) {
-            return true;
+            return false;
         }
     }
 
-    // It is possible that a blob has neither distanceField nor bitmaptext.  This is in the case
-    // when all of the runs inside the blob are drawn as paths.  In this case, we always regenerate
-    // the blob anyways at flush time, so no need to regenerate explicitly
-    return false;
+    // If the blob is all paths, there is no reason to regenerate.
+    return true;
 }
 
 void GrTextBlob::insertOpsIntoTarget(GrTextTarget* target,
                                      const SkSurfaceProps& props,
                                      const SkPaint& paint,
-                                     const SkPMColor4f& filteredColor,
                                      const GrClip* clip,
                                      const SkMatrixProvider& deviceMatrix,
                                      SkPoint drawOrigin) {
     for (SubRun* subRun = fFirstSubRun; subRun != nullptr; subRun = subRun->fNextSubRun) {
-        subRun->insertSubRunOpsIntoTarget(target, props, paint, filteredColor, clip, deviceMatrix,
-                                          drawOrigin);
+        subRun->insertSubRunOpsIntoTarget(target, props, paint, clip, deviceMatrix, drawOrigin);
     }
 }
 
@@ -726,12 +731,10 @@ void GrTextBlob::addMultiMaskFormat(
 GrTextBlob::GrTextBlob(size_t allocSize,
                        const SkMatrix& drawMatrix,
                        SkPoint origin,
-                       GrColor color,
                        SkColor initialLuminance)
         : fSize{allocSize}
         , fInitialMatrix{drawMatrix}
         , fInitialOrigin{origin}
-        , fColor{color}
         , fInitialLuminance{initialLuminance}
         , fAlloc{SkTAddOffset<char>(this, sizeof(GrTextBlob)), allocSize, allocSize/2} { }
 

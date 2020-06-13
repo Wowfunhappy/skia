@@ -28,72 +28,39 @@ class GrTextBlob;
  */
 class GrTextContext {
 public:
-    struct Options {
-        /**
-         * Below this size (in device space) distance field text will not be used. Negative means
-         * use a default value.
-         */
-        SkScalar fMinDistanceFieldFontSize = -1.f;
-        /**
-         * Above this size (in device space) distance field text will not be used and glyphs will
-         * be rendered from outline as individual paths. Negative means use a default value.
-         */
-        SkScalar fMaxDistanceFieldFontSize = -1.f;
+    class Options {
+    public:
+        Options(SkScalar min, SkScalar max)
+                : fMinDistanceFieldFontSize{min}
+                , fMaxDistanceFieldFontSize{max} {
+            SkASSERT_RELEASE(min > 0 && max >= min);
+        }
+
+        bool canDrawAsDistanceFields(const SkPaint&, const SkFont&, const SkMatrix& viewMatrix,
+                                     const SkSurfaceProps& props,
+                                     bool contextSupportsDistanceFieldText) const;
+        SkFont getSDFFont(const SkFont& font,
+                          const SkMatrix& viewMatrix,
+                          SkScalar* textRatio) const;
+        std::pair<SkScalar, SkScalar> computeSDFMinMaxScale(
+                SkScalar textSize, const SkMatrix& viewMatrix) const;
+    private:
+        // Below this size (in device space) distance field text will not be used.
+        const SkScalar fMinDistanceFieldFontSize;
+
+        // Above this size (in device space) distance field text will not be used and glyphs will
+        // be rendered from outline as individual paths.
+        const SkScalar fMaxDistanceFieldFontSize;
     };
 
     static std::unique_ptr<GrTextContext> Make(const Options& options);
 
-    void drawGlyphRunList(GrRecordingContext*,
-                          GrTextTarget*,
-                          const GrClip*,
-                          const SkMatrixProvider&,
-                          const SkSurfaceProps&,
-                          const SkGlyphRunList&) const;
-
-#if GR_TEST_UTILS
-    std::unique_ptr<GrDrawOp> createOp_TestingOnly(GrRecordingContext*,
-                                                   GrTextContext*,
-                                                   GrRenderTargetContext*,
-                                                   const SkPaint&,
-                                                   const SkFont&,
-                                                   const SkMatrixProvider&,
-                                                   const char* text,
-                                                   int x,
-                                                   int y);
-#endif
-
-    static void SanitizeOptions(Options* options);
-    static bool CanDrawAsDistanceFields(const SkPaint&, const SkFont&, const SkMatrix& viewMatrix,
-                                        const SkSurfaceProps& props,
-                                        bool contextSupportsDistanceFieldText,
-                                        const Options& options);
-
-    static SkFont InitDistanceFieldFont(const SkFont& font,
-                                        const SkMatrix& viewMatrix,
-                                        const Options& options,
-                                        SkScalar* textRatio);
-
     static SkPaint InitDistanceFieldPaint(const SkPaint& paint);
-
-    static std::pair<SkScalar, SkScalar> InitDistanceFieldMinMaxScale(SkScalar textSize,
-                                                                      const SkMatrix& viewMatrix,
-                                                                      const Options& options);
 
 private:
     GrTextContext(const Options& options);
 
-    // sets up the descriptor on the blob and returns a detached cache.  Client must attach
-    static SkColor ComputeCanonicalColor(const SkPaint&, bool lcd);
-    // Determines if we need to use fake gamma (and contrast boost):
-    static SkScalerContextFlags ComputeScalerContextFlags(const GrColorInfo&);
-
     Options fOptions;
-
-#if GR_TEST_UTILS
-    static const SkScalerContextFlags kTextBlobOpScalerContextFlags =
-            SkScalerContextFlags::kFakeGammaAndBoostContrast;
-    GR_DRAW_OP_TEST_FRIEND(GrAtlasTextOp);
-#endif
 };
 
 #endif  // GrTextContext_DEFINED

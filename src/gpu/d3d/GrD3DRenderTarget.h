@@ -36,7 +36,7 @@ public:
 
     GrBackendFormat backendFormat() const override { return this->getBackendFormat(); }
 
-    GrD3DTextureResource* msaaTextureResource() { return fMSAATextureResource.get(); }
+    GrD3DTextureResource* msaaTextureResource() const { return fMSAATextureResource.get(); }
 
     bool canAttemptStencilAttachment() const override {
         return true;
@@ -44,7 +44,7 @@ public:
 
     GrBackendRenderTarget getBackendRenderTarget() const override;
 
-    D3D12_CPU_DESCRIPTOR_HANDLE colorRenderTargetView() {
+    D3D12_CPU_DESCRIPTOR_HANDLE colorRenderTargetView() const {
         return fColorRenderTargetView;
     }
 
