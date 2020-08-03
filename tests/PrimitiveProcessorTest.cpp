@@ -11,7 +11,7 @@
 #include "tests/Test.h"
 
 #include "include/core/SkString.h"
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "src/core/SkPointPriv.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGeometryProcessor.h"
@@ -34,8 +34,8 @@ public:
 
     const char* name() const override { return "Dummy Op"; }
 
-    static std::unique_ptr<GrDrawOp> Make(GrContext* context, int numAttribs) {
-        GrOpMemoryPool* pool = context->priv().opMemoryPool();
+    static std::unique_ptr<GrDrawOp> Make(GrRecordingContext* rContext, int numAttribs) {
+        GrOpMemoryPool* pool = rContext->priv().opMemoryPool();
 
         return pool->allocate<Op>(numAttribs);
     }
@@ -84,8 +84,7 @@ private:
                         fragBuilder->codeAppendf("%s = half4(1);", args.fOutputCoverage);
                     }
                     void setData(const GrGLSLProgramDataManager& pdman,
-                                 const GrPrimitiveProcessor& primProc,
-                                 const CoordTransformRange&) override {}
+                                 const GrPrimitiveProcessor& primProc) override {}
                 };
                 return new GLSLGP();
             }
@@ -167,7 +166,7 @@ private:
 }
 
 DEF_GPUTEST_FOR_ALL_CONTEXTS(VertexAttributeCount, reporter, ctxInfo) {
-    GrContext* context = ctxInfo.grContext();
+    auto context = ctxInfo.directContext();
 #if GR_GPU_STATS
     GrGpu* gpu = context->priv().getGpu();
 #endif

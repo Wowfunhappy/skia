@@ -7,10 +7,7 @@
 
 #include "src/gpu/GrDrawOpAtlas.h"
 
-#include "include/gpu/GrContext.h"
 #include "src/core/SkOpts.h"
-#include "src/gpu/GrContextPriv.h"
-#include "src/gpu/GrGpu.h"
 #include "src/gpu/GrOnFlushResourceProvider.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrProxyProvider.h"
@@ -265,7 +262,7 @@ GrDrawOpAtlas::GrDrawOpAtlas(
 }
 
 inline void GrDrawOpAtlas::processEviction(PlotLocator plotLocator) {
-    for (auto evictor : fEvictionCallbacks) {
+    for (EvictionCallback* evictor : fEvictionCallbacks) {
         evictor->evict(plotLocator);
     }
 
@@ -602,7 +599,7 @@ bool GrDrawOpAtlas::createPages(
     for (uint32_t i = 0; i < this->maxPages(); ++i) {
         GrSwizzle swizzle = proxyProvider->caps()->getReadSwizzle(fFormat, fColorType);
         sk_sp<GrSurfaceProxy> proxy = proxyProvider->createProxy(
-                fFormat, dims, GrRenderable::kNo, 1, GrMipMapped::kNo, SkBackingFit::kExact,
+                fFormat, dims, GrRenderable::kNo, 1, GrMipmapped::kNo, SkBackingFit::kExact,
                 SkBudgeted::kYes, GrProtected::kNo, GrInternalSurfaceFlags::kNone,
                 GrSurfaceProxy::UseAllocator::kNo);
         if (!proxy) {

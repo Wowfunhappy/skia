@@ -27,8 +27,6 @@ private:
                      const SkIPoint& dstPoint);
 
     bool onIsUsed(GrSurfaceProxy* proxy) const override {
-        // This case should be handled by GrRenderTask.
-        SkASSERT(proxy != fTargetView.proxy());
         return proxy == fSrcView.proxy();
     }
     // If instantiation failed, at flush time we simply will skip doing the copy.
@@ -44,7 +42,7 @@ private:
 #ifdef SK_DEBUG
     const char* name() const final { return "Copy"; }
     void visitProxies_debugOnly(const GrOp::VisitProxyFunc& fn) const override {
-        fn(fSrcView.proxy(), GrMipMapped::kNo);
+        fn(fSrcView.proxy(), GrMipmapped::kNo);
     }
 #endif
 

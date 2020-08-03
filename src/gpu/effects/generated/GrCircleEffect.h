@@ -14,27 +14,25 @@
 #include "include/core/SkM44.h"
 #include "include/core/SkTypes.h"
 
-#include "src/gpu/GrCoordTransform.h"
 #include "src/gpu/GrFragmentProcessor.h"
 
 class GrCircleEffect : public GrFragmentProcessor {
 public:
-    static std::unique_ptr<GrFragmentProcessor> Make(std::unique_ptr<GrFragmentProcessor> inputFP,
-                                                     GrClipEdgeType edgeType,
-                                                     SkPoint center,
-                                                     float radius) {
+    static GrFPResult Make(std::unique_ptr<GrFragmentProcessor> inputFP,
+                           GrClipEdgeType edgeType,
+                           SkPoint center,
+                           float radius) {
         // A radius below half causes the implicit insetting done by this processor to become
         // inverted. We could handle this case by making the processor code more complicated.
         if (radius < .5f && GrProcessorEdgeTypeIsInverseFill(edgeType)) {
-            return nullptr;
+            return GrFPFailure(std::move(inputFP));
         }
-        return std::unique_ptr<GrFragmentProcessor>(
-                new GrCircleEffect(std::move(inputFP), edgeType, center, radius));
+        return GrFPSuccess(std::unique_ptr<GrFragmentProcessor>(
+                new GrCircleEffect(std::move(inputFP), edgeType, center, radius)));
     }
     GrCircleEffect(const GrCircleEffect& src);
     std::unique_ptr<GrFragmentProcessor> clone() const override;
     const char* name() const override { return "CircleEffect"; }
-    int inputFP_index = -1;
     GrClipEdgeType edgeType;
     SkPoint center;
     float radius;
@@ -51,9 +49,7 @@ private:
             , edgeType(edgeType)
             , center(center)
             , radius(radius) {
-        if (inputFP) {
-            inputFP_index = this->registerChildProcessor(std::move(inputFP));
-        }
+        this->registerChild(std::move(inputFP), SkSL::SampleUsage::PassThrough());
     }
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
     void onGetGLSLProcessorKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override;

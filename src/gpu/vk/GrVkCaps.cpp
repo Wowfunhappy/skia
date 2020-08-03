@@ -37,7 +37,7 @@ GrVkCaps::GrVkCaps(const GrContextOptions& contextOptions, const GrVkInterface* 
     /**************************************************************************
      * GrCaps fields
      **************************************************************************/
-    fMipMapSupport = true;   // always available in Vulkan
+    fMipmapSupport = true;   // always available in Vulkan
     fNPOTTextureTileSupport = true;  // always available in Vulkan
     fReuseScratchTextures = true; //TODO: figure this out
     fGpuTracingSupport = false; //TODO: figure this out
@@ -401,6 +401,11 @@ void GrVkCaps::init(const GrContextOptions& contextOptions, const GrVkInterface*
     this->initFormatTable(vkInterface, physDev, properties);
     this->initStencilFormat(vkInterface, physDev);
 
+    if (contextOptions.fMaxCachedVulkanSecondaryCommandBuffers >= 0) {
+        fMaxPerPoolCachedSecondaryCommandBuffers =
+                contextOptions.fMaxCachedVulkanSecondaryCommandBuffers;
+    }
+
     if (!contextOptions.fDisableDriverCorrectnessWorkarounds) {
         this->applyDriverCorrectnessWorkarounds(properties);
     }
@@ -471,12 +476,12 @@ void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDevicePropertie
     // blending, but that shouldn't be an issue because MSAA CCPR seems to work fine (even without
     // mixed samples) on later NVIDIA hardware where mixed samples would be supported.
     if ((kNvidia_VkVendor == properties.vendorID) && !fMixedSamplesSupport) {
-        fDriverBlacklistMSAACCPR = true;
+        fDriverDisableMSAACCPR = true;
     }
 
 #ifdef SK_BUILD_FOR_ANDROID
     // MSAA CCPR is slow on Android. http://skbug.com/9676
-    fDriverBlacklistMSAACCPR = true;
+    fDriverDisableMSAACCPR = true;
 #endif
 
     if (kARM_VkVendor == properties.vendorID) {
@@ -998,6 +1003,7 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
             }
         }
     }
+
     // Format: VK_FORMAT_R4G4B4A4_UNORM_PACK16
     {
         constexpr VkFormat format = VK_FORMAT_R4G4B4A4_UNORM_PACK16;
@@ -1167,7 +1173,8 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
-        info.fBytesPerPixel = 0;
+        // Setting this to texel block size
+        info.fBytesPerPixel = 8;
         // No supported GrColorTypes.
     }
 
@@ -1176,7 +1183,8 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_BC1_RGB_UNORM_BLOCK;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
-        info.fBytesPerPixel = 0;
+        // Setting this to texel block size
+        info.fBytesPerPixel = 8;
         // No supported GrColorTypes.
     }
 
@@ -1185,7 +1193,8 @@ void GrVkCaps::initFormatTable(const GrVkInterface* interface, VkPhysicalDevice 
         constexpr VkFormat format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
         auto& info = this->getFormatInfo(format);
         info.init(interface, physDev, properties, format);
-        info.fBytesPerPixel = 0;
+        // Setting this to texel block size
+        info.fBytesPerPixel = 8;
         // No supported GrColorTypes.
     }
 
@@ -1685,7 +1694,7 @@ void GrVkCaps::addExtraSamplerKey(GrProcessorKeyBuilder* b,
  * each draw  and thus is not included in this descriptor. This includes the viewport, scissor,
  * and blend constant.
  */
-GrProgramDesc GrVkCaps::makeDesc(const GrRenderTarget* rt, const GrProgramInfo& programInfo) const {
+GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& programInfo) const {
     GrProgramDesc desc;
     if (!GrProgramDesc::Build(&desc, rt, programInfo, *this)) {
         SkASSERT(!desc.isValid());
@@ -1701,13 +1710,39 @@ GrProgramDesc GrVkCaps::makeDesc(const GrRenderTarget* rt, const GrProgramInfo& 
     // GrVkPipelineStateBuilder.cpp).
     b.add32(GrVkGpu::kShader_PersistentCacheKeyType);
 
-    GrVkRenderTarget* vkRT = (GrVkRenderTarget*) rt;
+    if (rt) {
+        GrVkRenderTarget* vkRT = (GrVkRenderTarget*) rt;
 
-    bool needsStencil = programInfo.numStencilSamples() || programInfo.isStencilEnabled();
-    // TODO: support failure in getSimpleRenderPass
-    const GrVkRenderPass* rp = vkRT->getSimpleRenderPass(needsStencil);
-    SkASSERT(rp);
-    rp->genKey(&b);
+        bool needsStencil = programInfo.numStencilSamples() || programInfo.isStencilEnabled();
+        // TODO: support failure in getSimpleRenderPass
+        const GrVkRenderPass* rp = vkRT->getSimpleRenderPass(needsStencil);
+        SkASSERT(rp);
+        rp->genKey(&b);
+
+#ifdef SK_DEBUG
+        if (!rp->isExternal()) {
+            // This is to ensure ReconstructAttachmentsDescriptor keeps matching
+            // getSimpleRenderPass' result
+            GrVkRenderPass::AttachmentsDescriptor attachmentsDescriptor;
+            GrVkRenderPass::AttachmentFlags attachmentFlags;
+            GrVkRenderTarget::ReconstructAttachmentsDescriptor(*this, programInfo,
+                                                               &attachmentsDescriptor,
+                                                               &attachmentFlags);
+            SkASSERT(rp->isCompatible(attachmentsDescriptor, attachmentFlags));
+        }
+#endif
+    } else {
+        GrVkRenderPass::AttachmentsDescriptor attachmentsDescriptor;
+        GrVkRenderPass::AttachmentFlags attachmentFlags;
+        GrVkRenderTarget::ReconstructAttachmentsDescriptor(*this, programInfo,
+                                                           &attachmentsDescriptor,
+                                                           &attachmentFlags);
+
+        // kExternal_AttachmentFlag is only set for wrapped secondary command buffers - which
+        // will always go through the above 'rt' path (i.e., we can always pass 0 as the final
+        // parameter to GenKey).
+        GrVkRenderPass::GenKey(&b, attachmentFlags, attachmentsDescriptor, 0);
+    }
 
     GrStencilSettings stencil = programInfo.nonGLStencilSettings();
     stencil.genKey(&b, true);

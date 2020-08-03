@@ -9,6 +9,7 @@
 #define SKSL_VARIABLEREFERENCE
 
 #include "src/sksl/ir/SkSLExpression.h"
+#include "src/sksl/ir/SkSLVariable.h"
 
 namespace SkSL {
 
@@ -52,10 +53,6 @@ struct VariableReference : public Expression {
                 SkASSERT(false);
                 return false;
         }
-    }
-
-    bool isConstant() const override {
-        return 0 != (fVariable.fModifiers.fFlags & Modifiers::kConst_Flag);
     }
 
     bool isConstantOrUniform() const override {

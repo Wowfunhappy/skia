@@ -21,7 +21,7 @@ bool GrCoverageCountingPathRenderer::IsSupported(const GrCaps& caps, CoverageTyp
     const GrShaderCaps& shaderCaps = *caps.shaderCaps();
     GrBackendFormat defaultA8Format = caps.getDefaultBackendFormat(GrColorType::kAlpha_8,
                                                                    GrRenderable::kYes);
-    if (caps.driverBlacklistCCPR() || !shaderCaps.integerSupport() ||
+    if (caps.driverDisableCCPR() || !shaderCaps.integerSupport() ||
         !caps.drawInstancedSupport() || !shaderCaps.floatIs32Bits() ||
         !defaultA8Format.isValid() || // This checks both texturable and renderable
         !caps.halfFloatVertexAttributeSupport()) {
@@ -38,7 +38,7 @@ bool GrCoverageCountingPathRenderer::IsSupported(const GrCaps& caps, CoverageTyp
         return true;
     }
 
-    if (!caps.driverBlacklistMSAACCPR() &&
+    if (!caps.driverDisableMSAACCPR() &&
         caps.internalMultisampleCount(defaultA8Format) > 1 &&
         caps.sampleLocationsSupport() &&
         shaderCaps.sampleMaskSupport()) {
@@ -186,8 +186,8 @@ void GrCoverageCountingPathRenderer::recordOp(std::unique_ptr<GrCCDrawPathsOp> o
 }
 
 std::unique_ptr<GrFragmentProcessor> GrCoverageCountingPathRenderer::makeClipProcessor(
-        uint32_t opsTaskID, const SkPath& deviceSpacePath, const SkIRect& accessRect,
-        const GrCaps& caps) {
+        std::unique_ptr<GrFragmentProcessor> inputFP, uint32_t opsTaskID,
+        const SkPath& deviceSpacePath, const SkIRect& accessRect, const GrCaps& caps) {
     SkASSERT(!fFlushing);
 
     uint32_t key = deviceSpacePath.getGenerationID();
@@ -218,7 +218,8 @@ std::unique_ptr<GrFragmentProcessor> GrCoverageCountingPathRenderer::makeClipPro
             CoverageType::kFP16_CoverageCount == fCoverageType);
     auto mustCheckBounds = GrCCClipProcessor::MustCheckBounds(
             !clipPath.pathDevIBounds().contains(accessRect));
-    return std::make_unique<GrCCClipProcessor>(caps, &clipPath, isCoverageCount, mustCheckBounds);
+    return std::make_unique<GrCCClipProcessor>(
+                std::move(inputFP), caps, &clipPath, isCoverageCount, mustCheckBounds);
 }
 
 void GrCoverageCountingPathRenderer::preFlush(

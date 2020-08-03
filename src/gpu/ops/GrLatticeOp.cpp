@@ -46,10 +46,9 @@ public:
     GrGLSLPrimitiveProcessor* createGLSLInstance(const GrShaderCaps& caps) const override {
         class GLSLProcessor : public GrGLSLGeometryProcessor {
         public:
-            void setData(const GrGLSLProgramDataManager& pdman, const GrPrimitiveProcessor& proc,
-                         const CoordTransformRange& transformRange) override {
+            void setData(const GrGLSLProgramDataManager& pdman,
+                         const GrPrimitiveProcessor& proc) override {
                 const auto& latticeGP = proc.cast<LatticeGP>();
-                this->setTransformDataHelper(SkMatrix::I(), pdman, transformRange);
                 fColorSpaceXformHelper.setData(pdman, latticeGP.fColorSpaceXform.get());
             }
 
@@ -62,11 +61,8 @@ public:
 
                 args.fVaryingHandler->emitAttributes(latticeGP);
                 this->writeOutputPosition(args.fVertBuilder, gpArgs, latticeGP.fInPosition.name());
-                this->emitTransforms(args.fVertBuilder,
-                                     args.fVaryingHandler,
-                                     args.fUniformHandler,
-                                     latticeGP.fInTextureCoords.asShaderVar(),
-                                     args.fFPCoordTransformHandler);
+                gpArgs->fLocalCoordVar = latticeGP.fInTextureCoords.asShaderVar();
+
                 args.fFragBuilder->codeAppend("float2 textureCoords;");
                 args.fVaryingHandler->addPassThroughAttribute(latticeGP.fInTextureCoords,
                                                               "textureCoords");
@@ -169,8 +165,7 @@ public:
     const char* name() const override { return "NonAALatticeOp"; }
 
     void visitProxies(const VisitProxyFunc& func) const override {
-        bool mipped = (GrSamplerState::Filter::kMipMap == fFilter);
-        func(fView.proxy(), GrMipMapped(mipped));
+        func(fView.proxy(), GrMipmapped::kNo);
         if (fProgramInfo) {
             fProgramInfo->visitFPProxies(func);
         } else {
@@ -446,7 +441,7 @@ GR_DRAW_OP_TEST_DEFINE(NonAALatticeOp) {
                                                               dims,
                                                               GrRenderable::kNo,
                                                               1,
-                                                              GrMipMapped::kNo,
+                                                              GrMipmapped::kNo,
                                                               SkBackingFit::kExact,
                                                               SkBudgeted::kYes,
                                                               GrProtected::kNo);
@@ -496,7 +491,7 @@ GR_DRAW_OP_TEST_DEFINE(NonAALatticeOp) {
     SkMatrix viewMatrix = GrTest::TestMatrixPreservesRightAngles(random);
     auto csxf = GrTest::TestColorXform(random);
     GrSamplerState::Filter filter =
-            random->nextBool() ? GrSamplerState::Filter::kNearest : GrSamplerState::Filter::kBilerp;
+            random->nextBool() ? GrSamplerState::Filter::kNearest : GrSamplerState::Filter::kLinear;
 
     GrSurfaceProxyView view(
             std::move(proxy), origin,

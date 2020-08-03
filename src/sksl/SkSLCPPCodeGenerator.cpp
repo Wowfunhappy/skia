@@ -7,10 +7,11 @@
 
 #include "src/sksl/SkSLCPPCodeGenerator.h"
 
+#include "include/private/SkSLSampleUsage.h"
+#include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLCPPUniformCTypes.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLHCodeGenerator.h"
-#include "src/sksl/SkSLSampleMatrix.h"
 
 #include <algorithm>
 
@@ -23,11 +24,11 @@ static bool needs_uniform_var(const Variable& var) {
 
 CPPCodeGenerator::CPPCodeGenerator(const Context* context, const Program* program,
                                    ErrorReporter* errors, String name, OutputStream* out)
-: INHERITED(context, program, errors, out)
-, fName(std::move(name))
-, fFullName(String::printf("Gr%s", fName.c_str()))
-, fSectionAndParameterHelper(program, *errors) {
-    fLineEnding = "\\n";
+    : INHERITED(context, program, errors, out)
+    , fName(std::move(name))
+    , fFullName(String::printf("Gr%s", fName.c_str()))
+    , fSectionAndParameterHelper(program, *errors) {
+    fLineEnding = "\n";
     fTextureFunctionOverride = "sample";
 }
 
@@ -36,7 +37,7 @@ void CPPCodeGenerator::writef(const char* s, va_list va) {
     va_list copy;
     va_copy(copy, va);
     char buffer[BUFFER_SIZE];
-    int length = vsnprintf(buffer, BUFFER_SIZE, s, va);
+    int length = std::vsnprintf(buffer, BUFFER_SIZE, s, va);
     if (length < BUFFER_SIZE) {
         fOut->write(buffer, length);
     } else {
@@ -92,19 +93,20 @@ void CPPCodeGenerator::writeBinaryExpression(const BinaryExpression& b,
         SkASSERT(var->fType.kind() == Type::kNullable_Kind &&
                  var->fType.componentType() == *fContext.fFragmentProcessor_Type);
         this->write("%s");
-        const char* op;
+        const char* op = "";
         switch (b.fOperator) {
             case Token::Kind::TK_EQEQ:
-                op = "<";
+                op = "!";
                 break;
             case Token::Kind::TK_NEQ:
-                op = ">=";
+                op = "";
                 break;
             default:
                 SkASSERT(false);
         }
-        fFormatArgs.push_back("_outer." + String(var->fName) + "_index " + op + " 0 ? \"true\" "
-                              ": \"false\"");
+        int childIndex = this->getChildFPIndex(*var);
+        fFormatArgs.push_back(String(op) + "_outer.childProcessor(" + to_string(childIndex) +
+                              ") ? \"true\" : \"false\"");
     } else {
         INHERITED::writeBinaryExpression(b, parentPrecedence);
     }
@@ -114,24 +116,7 @@ void CPPCodeGenerator::writeIndexExpression(const IndexExpression& i) {
     const Expression& base = *i.fBase;
     if (base.fKind == Expression::kVariableReference_Kind) {
         int builtin = ((VariableReference&) base).fVariable.fModifiers.fLayout.fBuiltin;
-        if (SK_TRANSFORMEDCOORDS2D_BUILTIN == builtin) {
-            this->write("%s");
-            if (i.fIndex->fKind != Expression::kIntLiteral_Kind) {
-                fErrors.error(i.fIndex->fOffset,
-                              "index into sk_TransformedCoords2D must be an integer literal");
-                return;
-            }
-            int64_t index = ((IntLiteral&) *i.fIndex).fValue;
-            String name = "sk_TransformedCoords2D_" + to_string(index);
-            fFormatArgs.push_back(name + ".c_str()");
-            if (fWrittenTransformedCoords.find(index) == fWrittenTransformedCoords.end()) {
-                addExtraEmitCodeLine("SkString " + name +
-                                     " = fragBuilder->ensureCoords2D(args.fTransformedCoords[" +
-                                     to_string(index) + "].fVaryingPoint, _outer.sampleMatrix());");
-                fWrittenTransformedCoords.insert(index);
-            }
-            return;
-        } else if (SK_TEXTURESAMPLERS_BUILTIN == builtin) {
+        if (SK_TEXTURESAMPLERS_BUILTIN == builtin) {
             this->write("%s");
             if (i.fIndex->fKind != Expression::kIntLiteral_Kind) {
                 fErrors.error(i.fIndex->fOffset,
@@ -298,6 +283,11 @@ void CPPCodeGenerator::writeVariableReference(const VariableReference& ref) {
             this->write("%s");
             fFormatArgs.push_back(String("args.fOutputColor"));
             break;
+        case SK_MAIN_COORDS_BUILTIN:
+            this->write("%s");
+            fFormatArgs.push_back(String("args.fSampleCoord"));
+            fAccessSampleCoordsDirectly = true;
+            break;
         case SK_WIDTH_BUILTIN:
             this->write("sk_Width");
             break;
@@ -368,8 +358,8 @@ void CPPCodeGenerator::writeFieldAccess(const FieldAccess& access) {
 
         const Type::Field& field = fContext.fFragmentProcessor_Type->fields()[access.fFieldIndex];
         const Variable& var = ((const VariableReference&) *access.fBase).fVariable;
-        String cppAccess = String::printf("_outer.childProcessor(_outer.%s_index).%s()",
-                                          String(var.fName).c_str(),
+        String cppAccess = String::printf("_outer.childProcessor(%d)->%s()",
+                                          this->getChildFPIndex(var),
                                           String(field.fName).c_str());
 
         if (fCPPMode) {
@@ -408,7 +398,7 @@ int CPPCodeGenerator::getChildFPIndex(const Variable& var) const {
 void CPPCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     if (c.fFunction.fBuiltin && c.fFunction.fName == "sample" &&
         c.fArguments[0]->fType.kind() != Type::Kind::kSampler_Kind) {
-        // Sanity checks that are detected by function definition in sksl_fp.inc
+        // Validity checks that are detected by function definition in sksl_fp.inc
         SkASSERT(c.fArguments.size() >= 1 && c.fArguments.size() <= 3);
         SkASSERT("fragmentProcessor"  == c.fArguments[0]->fType.name() ||
                  "fragmentProcessor?" == c.fArguments[0]->fType.name());
@@ -427,68 +417,47 @@ void CPPCodeGenerator::writeFunctionCall(const FunctionCall& c) {
         // sksl variables defined in earlier sksl code.
         this->newExtraEmitCodeBlock();
 
-        // Set to the empty string when no input color parameter should be emitted, which means this
-        // must be properly formatted with a prefixed comma when the parameter should be inserted
-        // into the invokeChild() parameter list.
-        String inputArg;
-        String inputColorName = "\"half4(1)\"";
+        String inputColor;
         if (c.fArguments.size() > 1 && c.fArguments[1]->fType.name() == "half4") {
             // Use the invokeChild() variant that accepts an input color, so convert the 2nd
             // argument's expression into C++ code that produces sksl stored in an SkString.
-            inputColorName = "_input" + to_string(c.fOffset);
+            String inputColorName = "_input" + to_string(c.fOffset);
             addExtraEmitCodeLine(convertSKSLExpressionToCPP(*c.fArguments[1], inputColorName));
 
-            // invokeChild() needs a char*
-            inputArg = ", " + inputColorName + ".c_str()";
+            // invokeChild() needs a char* and a pre-pended comma
+            inputColor = ", " + inputColorName + ".c_str()";
         }
 
-        bool hasCoords = c.fArguments.back()->fType.name() == "float2";
-        SampleMatrix matrix = fSectionAndParameterHelper.getMatrix(child);
+        String inputCoord;
+        String invokeFunction = "invokeChild";
+        if (c.fArguments.back()->fType.name() == "float2") {
+            // Invoking child with explicit coordinates at this call site
+            inputCoord = "_coords" + to_string(c.fOffset);
+            addExtraEmitCodeLine(convertSKSLExpressionToCPP(*c.fArguments.back(), inputCoord));
+            inputCoord.append(".c_str()");
+        } else if (c.fArguments.back()->fType.name() == "float3x3") {
+            // Invoking child with a matrix, sampling relative to the input coords.
+            invokeFunction = "invokeChildWithMatrix";
+            SampleUsage usage = Analysis::GetSampleUsage(fProgram, child);
+
+            if (!usage.hasUniformMatrix()) {
+                inputCoord = "_matrix" + to_string(c.fOffset);
+                addExtraEmitCodeLine(convertSKSLExpressionToCPP(*c.fArguments.back(), inputCoord));
+                inputCoord.append(".c_str()");
+            }
+            // else pass in the empty string to rely on invokeChildWithMatrix's automatic uniform
+            // resolution
+        }
+        if (!inputCoord.empty()) {
+            inputCoord = ", " + inputCoord;
+        }
+
         // Write the output handling after the possible input handling
         String childName = "_sample" + to_string(c.fOffset);
-        addExtraEmitCodeLine("SkString " + childName + ";");
-        String coordsName;
-        String matrixName;
-        if (hasCoords) {
-            coordsName = "_coords" + to_string(c.fOffset);
-            addExtraEmitCodeLine(convertSKSLExpressionToCPP(*c.fArguments.back(), coordsName));
-        }
-        if (matrix.fKind == SampleMatrix::Kind::kVariable) {
-            matrixName = "_matrix" + to_string(c.fOffset);
-            addExtraEmitCodeLine(convertSKSLExpressionToCPP(*c.fArguments.back(), matrixName));
-        }
-        if (c.fArguments[0]->fType.kind() == Type::kNullable_Kind) {
-            addExtraEmitCodeLine("if (_outer." + String(child.fName) + "_index >= 0) {\n    ");
-        }
-        if (hasCoords) {
-            addExtraEmitCodeLine(childName + " = this->invokeChild(_outer." + String(child.fName) +
-                                 "_index" + inputArg + ", args, " + coordsName + ".c_str());");
-        } else {
-            switch (matrix.fKind) {
-                case SampleMatrix::Kind::kMixed:
-                case SampleMatrix::Kind::kVariable:
-                    addExtraEmitCodeLine(childName + " = this->invokeChildWithMatrix(_outer." +
-                                         String(child.fName) + "_index" + inputArg + ", args, " +
-                                         matrixName + ".c_str());");
-                    break;
-                case SampleMatrix::Kind::kConstantOrUniform:
-                case SampleMatrix::Kind::kNone:
-                    addExtraEmitCodeLine(childName + " = this->invokeChild(_outer." +
-                                         String(child.fName) + "_index" + inputArg + ", args);");
-                    break;
-            }
-        }
+        String childIndexStr = to_string(this->getChildFPIndex(child));
+        addExtraEmitCodeLine("SkString " + childName + " = this->" + invokeFunction + "(" +
+                             childIndexStr + inputColor + ", args" + inputCoord + ");");
 
-        if (c.fArguments[0]->fType.kind() == Type::kNullable_Kind) {
-            // Null FPs are not emitted, but their output can still be referenced in dependent
-            // expressions - thus we always fill the variable with something.
-            // Sampling from a null fragment processor will provide in the input color as-is. This
-            // defaults to half4(1) if no color is specified.
-            addExtraEmitCodeLine(
-                "} else {"
-                "    " + childName + " = " + inputColorName + ";"
-                "}");
-        }
         this->write("%s");
         fFormatArgs.push_back(childName + ".c_str()");
         return;
@@ -597,7 +566,7 @@ void CPPCodeGenerator::writeFunction(const FunctionDefinition& f) {
         emit += ", \"" + decl.fName + "\"";
         emit += ", " + to_string((int64_t) decl.fParameters.size());
         emit += ", " + decl.fName + "_args";
-        emit += ", \"" + buffer.str() + "\"";
+        emit += ",\nR\"SkSL(" + buffer.str() + ")SkSL\"";
         emit += ", &" + decl.fName + "_name);";
         this->addExtraEmitCodeLine(emit.c_str());
     }
@@ -818,46 +787,33 @@ void CPPCodeGenerator::flushEmittedCode() {
 }
 
 void CPPCodeGenerator::writeCodeAppend(const String& code) {
-    // codeAppendf can only handle appending 1024 bytes at a time, so we need to break the string
-    // into chunks. Unfortunately we can't tell exactly how long the string is going to end up,
-    // because printf escape sequences get replaced by strings of unknown length, but keeping the
-    // format string below 512 bytes is probably safe.
-    static constexpr size_t maxChunkSize = 512;
-    size_t start = 0;
-    size_t index = 0;
-    size_t argStart = 0;
-    size_t argCount;
-    while (index < code.size()) {
-        argCount = 0;
-        this->write("        fragBuilder->codeAppendf(\"");
-        while (index < code.size() && index < start + maxChunkSize) {
+    if (!code.empty()) {
+        // Count % format specifiers.
+        size_t argCount = 0;
+        for (size_t index = 0; index < code.size(); ++index) {
             if ('%' == code[index]) {
-                if (index == start + maxChunkSize - 1 || index == code.size() - 1) {
+                if (index == code.size() - 1) {
                     break;
                 }
                 if (code[index + 1] != '%') {
                     ++argCount;
                 }
-            } else if ('\\' == code[index] && index == start + maxChunkSize - 1) {
-                // avoid splitting an escape sequence that happens to fall across a chunk boundary
-                break;
             }
-            ++index;
         }
-        fOut->write(code.c_str() + start, index - start);
-        this->write("\"");
-        for (size_t i = argStart; i < argStart + argCount; ++i) {
+
+        // Emit the code string.
+        this->writef("        fragBuilder->codeAppendf(\n"
+                     "R\"SkSL(%s)SkSL\"\n", code.c_str());
+        for (size_t i = 0; i < argCount; ++i) {
             this->writef(", %s", fFormatArgs[i].c_str());
         }
         this->write(");\n");
-        argStart += argCount;
-        start = index;
-    }
 
-    // argStart is equal to the number of fFormatArgs that were consumed
-    // so they should be removed from the list
-    if (argStart > 0) {
-        fFormatArgs.erase(fFormatArgs.begin(), fFormatArgs.begin() + argStart);
+        // argCount is equal to the number of fFormatArgs that were consumed, so they should be
+        // removed from the list.
+        if (argCount > 0) {
+            fFormatArgs.erase(fFormatArgs.begin(), fFormatArgs.begin() + argCount);
+        }
     }
 }
 
@@ -904,10 +860,14 @@ String CPPCodeGenerator::convertSKSLExpressionToCPP(const Expression& e,
 
     // Now build the final C++ code snippet from the format string and args
     String cppExpr;
-    if (newArgs.size() == 0) {
+    if (newArgs.empty()) {
         // This was a static expression, so we can simplify the input
         // color declaration in the emitted code to just a static string
         cppExpr = "SkString " + cppVar + "(\"" + exprFormat + "\");";
+    } else if (newArgs.size() == 1 && exprFormat == "%s") {
+        // If the format expression is simply "%s", we can avoid an expensive call to printf.
+        // This happens fairly often in codegen so it is worth simplifying.
+        cppExpr = "SkString " + cppVar + "(" + newArgs[0] + ");";
     } else {
         // String formatting must occur dynamically, so have the C++ declaration
         // use SkStringPrintf with the format args that were accumulated
@@ -1117,12 +1077,6 @@ void CPPCodeGenerator::writeClone() {
         this->writef("%s::%s(const %s& src)\n"
                      ": INHERITED(k%s_ClassID, src.optimizationFlags())", fFullName.c_str(),
                      fFullName.c_str(), fFullName.c_str(), fFullName.c_str());
-        const auto transforms = fSectionAndParameterHelper.getSections(COORD_TRANSFORM_SECTION);
-        for (size_t i = 0; i < transforms.size(); ++i) {
-            const Section& s = *transforms[i];
-            String fieldName = HCodeGenerator::CoordTransformName(s.fArgument, i);
-            this->writef("\n, %s(src.%s)", fieldName.c_str(), fieldName.c_str());
-        }
         for (const Variable* param : fSectionAndParameterHelper.getParameters()) {
             String fieldName = HCodeGenerator::FieldName(String(param->fName).c_str());
             if (param->fType.nonnullable() != *fContext.fFragmentProcessor_Type) {
@@ -1132,35 +1086,18 @@ void CPPCodeGenerator::writeClone() {
             }
         }
         this->writef(" {\n");
+        this->writef("        this->cloneAndRegisterAllChildProcessors(src);\n");
         int samplerCount = 0;
         for (const auto& param : fSectionAndParameterHelper.getParameters()) {
             if (param->fType.kind() == Type::kSampler_Kind) {
                 ++samplerCount;
-            } else if (param->fType.nonnullable() == *fContext.fFragmentProcessor_Type) {
-                String fieldName = HCodeGenerator::FieldName(String(param->fName).c_str());
-                if (param->fType.kind() == Type::kNullable_Kind) {
-                    this->writef("    if (src.%s_index >= 0) {\n", fieldName.c_str());
-                } else {
-                    this->write("    {\n");
-                }
-                this->writef(
-                       "        auto %s_clone = src.childProcessor(src.%s_index).clone();\n"
-                       "        if (src.childProcessor(src.%s_index).isSampledWithExplicitCoords()) {\n"
-                       "            %s_clone->setSampledWithExplicitCoords();\n"
-                       "        }\n"
-                       "        %s_index = this->registerChildProcessor(std::move(%s_clone));\n"
-                       "    }\n",
-                       fieldName.c_str(), fieldName.c_str(), fieldName.c_str(),
-                       fieldName.c_str(), fieldName.c_str(), fieldName.c_str());
             }
         }
         if (samplerCount) {
             this->writef("     this->setTextureSamplerCnt(%d);", samplerCount);
         }
-        for (size_t i = 0; i < transforms.size(); ++i) {
-            const Section& s = *transforms[i];
-            String fieldName = HCodeGenerator::CoordTransformName(s.fArgument, i);
-            this->writef("    this->addCoordTransform(&%s);\n", fieldName.c_str());
+        if (fAccessSampleCoordsDirectly) {
+            this->writef("    this->setUsesSampleCoordsDirectly();\n");
         }
         this->write("}\n");
         this->writef("std::unique_ptr<GrFragmentProcessor> %s::clone() const {\n",
@@ -1223,23 +1160,7 @@ void CPPCodeGenerator::writeGetKey() {
                         if (var.fModifiers.fLayout.fWhen.fLength) {
                             this->writef("if (%s) {", String(var.fModifiers.fLayout.fWhen).c_str());
                         }
-                        if (var.fType == *fContext.fFloat4x4_Type) {
-                            ABORT("no automatic key handling for float4x4\n");
-                        } else if (var.fType == *fContext.fFloat2_Type) {
-                            this->writef("    b->add32(%s.fX);\n",
-                                         HCodeGenerator::FieldName(name).c_str());
-                            this->writef("    b->add32(%s.fY);\n",
-                                         HCodeGenerator::FieldName(name).c_str());
-                        } else if (var.fType == *fContext.fFloat4_Type) {
-                            this->writef("    b->add32(%s.x());\n",
-                                         HCodeGenerator::FieldName(name).c_str());
-                            this->writef("    b->add32(%s.y());\n",
-                                         HCodeGenerator::FieldName(name).c_str());
-                            this->writef("    b->add32(%s.width());\n",
-                                         HCodeGenerator::FieldName(name).c_str());
-                            this->writef("    b->add32(%s.height());\n",
-                                         HCodeGenerator::FieldName(name).c_str());
-                        } else if (var.fType == *fContext.fHalf4_Type) {
+                        if (var.fType == *fContext.fHalf4_Type) {
                             this->writef("    uint16_t red = SkFloatToHalf(%s.fR);\n",
                                          HCodeGenerator::FieldName(name).c_str());
                             this->writef("    uint16_t green = SkFloatToHalf(%s.fG);\n",
@@ -1250,9 +1171,17 @@ void CPPCodeGenerator::writeGetKey() {
                                          HCodeGenerator::FieldName(name).c_str());
                             this->write("    b->add32(((uint32_t)red << 16) | green);\n");
                             this->write("    b->add32(((uint32_t)blue << 16) | alpha);\n");
-                        } else {
-                            this->writef("    b->add32((int32_t) %s);\n",
+                        } else if (var.fType == *fContext.fHalf_Type ||
+                                   var.fType == *fContext.fFloat_Type) {
+                            this->writef("    b->add32(sk_bit_cast<uint32_t>(%s));\n",
                                          HCodeGenerator::FieldName(name).c_str());
+                        } else if (var.fType.isInteger() || var.fType == *fContext.fBool_Type ||
+                                   var.fType.kind() == Type::kEnum_Kind) {
+                            this->writef("    b->add32((uint32_t) %s);\n",
+                                         HCodeGenerator::FieldName(name).c_str());
+                        } else {
+                            ABORT("NOT YET IMPLEMENTED: automatic key handling for %s\n",
+                                  var.fType.displayName().c_str());
                         }
                         if (var.fModifiers.fLayout.fWhen.fLength) {
                             this->write("}");
@@ -1321,7 +1250,8 @@ bool CPPCodeGenerator::generateCode() {
     this->writef(kFragmentProcessorHeader, fullName);
     this->writef("#include \"%s.h\"\n\n", fullName);
     this->writeSection(CPP_SECTION);
-    this->writef("#include \"src/gpu/GrTexture.h\"\n"
+    this->writef("#include \"src/core/SkUtils.h\"\n"
+                 "#include \"src/gpu/GrTexture.h\"\n"
                  "#include \"src/gpu/glsl/GrGLSLFragmentProcessor.h\"\n"
                  "#include \"src/gpu/glsl/GrGLSLFragmentShaderBuilder.h\"\n"
                  "#include \"src/gpu/glsl/GrGLSLProgramBuilder.h\"\n"

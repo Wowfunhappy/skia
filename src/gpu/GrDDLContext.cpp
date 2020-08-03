@@ -8,10 +8,10 @@
 #include "include/gpu/GrContext.h"
 #include "src/core/SkLRUCache.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrContextThreadSafeProxyPriv.h"
 #include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrProgramInfo.h"
+#include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/effects/GrSkSLFP.h"
 
 /**
@@ -37,14 +37,14 @@ public:
     }
 
     void freeGpuResources() override {
-        SkASSERT(0); // freeing resources in a DDL Recorder doesn't make a whole lot of sense
-        INHERITED::freeGpuResources();
+        // freeing resources in a DDL Recorder doesn't make a whole lot of sense but some of
+        // our tests do it anyways
     }
 
 private:
     // TODO: Here we're pretending this isn't derived from GrContext. Switch this to be derived from
     // GrRecordingContext!
-    GrContext* asDirectContext() override { return nullptr; }
+    GrDirectContext* asDirectContext() override { return nullptr; }
 
     bool init() override {
         if (!INHERITED::init()) {
@@ -71,11 +71,10 @@ private:
 
         const GrCaps* caps = this->caps();
 
-        if (this->backend() == GrBackendApi::kVulkan ||
-            this->backend() == GrBackendApi::kMetal ||
+        if (this->backend() == GrBackendApi::kMetal ||
             this->backend() == GrBackendApi::kDirect3D ||
             this->backend() == GrBackendApi::kDawn) {
-            // Currently Vulkan, Metal, Direct3D, and Dawn require a live renderTarget to
+            // Currently Metal, Direct3D, and Dawn require a live renderTarget to
             // compute the key
             return;
         }
@@ -148,8 +147,8 @@ private:
     typedef GrContext INHERITED;
 };
 
-sk_sp<GrContext> GrContextPriv::MakeDDL(sk_sp<GrContextThreadSafeProxy> proxy) {
-    sk_sp<GrContext> context(new GrDDLContext(std::move(proxy)));
+sk_sp<GrRecordingContext> GrRecordingContextPriv::MakeDDL(sk_sp<GrContextThreadSafeProxy> proxy) {
+    sk_sp<GrRecordingContext> context(new GrDDLContext(std::move(proxy)));
 
     if (!context->init()) {
         return nullptr;

@@ -8,7 +8,6 @@
 #include "src/gpu/vk/GrVkRenderTarget.h"
 
 #include "include/gpu/GrBackendSurface.h"
-#include "src/gpu/GrRenderTargetPriv.h"
 #include "src/gpu/vk/GrVkCommandBuffer.h"
 #include "src/gpu/vk/GrVkFramebuffer.h"
 #include "src/gpu/vk/GrVkGpu.h"
@@ -325,7 +324,7 @@ void GrVkRenderTarget::getAttachmentsDescriptor(GrVkRenderPass::AttachmentsDescr
     uint32_t attachmentCount = 1;
 
     if (withStencil) {
-        const GrStencilAttachment* stencil = this->renderTargetPriv().getStencilAttachment();
+        const GrStencilAttachment* stencil = this->getStencilAttachment();
         SkASSERT(stencil);
         const GrVkStencilAttachment* vkStencil = static_cast<const GrVkStencilAttachment*>(stencil);
         desc->fStencil.fFormat = vkStencil->imageFormat();
@@ -338,6 +337,36 @@ void GrVkRenderTarget::getAttachmentsDescriptor(GrVkRenderPass::AttachmentsDescr
         }
 #endif
         *attachmentFlags |= GrVkRenderPass::kStencil_AttachmentFlag;
+        ++attachmentCount;
+    }
+    desc->fAttachmentCount = attachmentCount;
+}
+
+void GrVkRenderTarget::ReconstructAttachmentsDescriptor(const GrVkCaps& vkCaps,
+                                                        const GrProgramInfo& programInfo,
+                                                        GrVkRenderPass::AttachmentsDescriptor* desc,
+                                                        GrVkRenderPass::AttachmentFlags* flags) {
+    VkFormat format;
+    SkAssertResult(programInfo.backendFormat().asVkFormat(&format));
+
+    desc->fColor.fFormat = format;
+    desc->fColor.fSamples = programInfo.numSamples();
+    *flags = GrVkRenderPass::kColor_AttachmentFlag;
+    uint32_t attachmentCount = 1;
+
+    SkASSERT(!programInfo.isStencilEnabled() || programInfo.numStencilSamples());
+    if (programInfo.numStencilSamples()) {
+        const GrVkCaps::StencilFormat& stencilFormat = vkCaps.preferredStencilFormat();
+        desc->fStencil.fFormat = stencilFormat.fInternalFormat;
+        desc->fStencil.fSamples = programInfo.numStencilSamples();
+#ifdef SK_DEBUG
+        if (vkCaps.mixedSamplesSupport()) {
+            SkASSERT(desc->fStencil.fSamples >= desc->fColor.fSamples);
+        } else {
+            SkASSERT(desc->fStencil.fSamples == desc->fColor.fSamples);
+        }
+#endif
+        *flags |= GrVkRenderPass::kStencil_AttachmentFlag;
         ++attachmentCount;
     }
     desc->fAttachmentCount = attachmentCount;
@@ -422,7 +451,7 @@ GrBackendRenderTarget GrVkRenderTarget::getBackendRenderTarget() const {
 
 const GrManagedResource* GrVkRenderTarget::stencilImageResource() const {
     SkASSERT(!this->wrapsSecondaryCommandBuffer());
-    const GrStencilAttachment* stencil = this->renderTargetPriv().getStencilAttachment();
+    const GrStencilAttachment* stencil = this->getStencilAttachment();
     if (stencil) {
         const GrVkStencilAttachment* vkStencil = static_cast<const GrVkStencilAttachment*>(stencil);
         return vkStencil->imageResource();
@@ -433,7 +462,7 @@ const GrManagedResource* GrVkRenderTarget::stencilImageResource() const {
 
 const GrVkImageView* GrVkRenderTarget::stencilAttachmentView() const {
     SkASSERT(!this->wrapsSecondaryCommandBuffer());
-    const GrStencilAttachment* stencil = this->renderTargetPriv().getStencilAttachment();
+    const GrStencilAttachment* stencil = this->getStencilAttachment();
     if (stencil) {
         const GrVkStencilAttachment* vkStencil = static_cast<const GrVkStencilAttachment*>(stencil);
         return vkStencil->stencilView();

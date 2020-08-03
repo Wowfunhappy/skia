@@ -7,29 +7,29 @@
 
 #include "include/core/SkCanvas.h"
 #include "include/core/SkSurface.h"
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "src/gpu/GrContextPriv.h"
-#include "src/gpu/GrTexturePriv.h"
+#include "src/gpu/GrTexture.h"
 #include "src/image/SkImage_Base.h"
 #include "src/image/SkImage_GpuBase.h"
 #include "tests/Test.h"
 
 // Tests that MIP maps are created and invalidated as expected when drawing to and from GrTextures.
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrTextureMipMapInvalidationTest, reporter, ctxInfo) {
-    GrContext* context = ctxInfo.grContext();
-    if (!context->priv().caps()->mipMapSupport()) {
+    auto context = ctxInfo.directContext();
+    if (!context->priv().caps()->mipmapSupport()) {
         return;
     }
 
     auto isMipped = [] (SkSurface* surf) {
         SkImage_GpuBase* image = static_cast<SkImage_GpuBase*>(as_IB(surf->makeImageSnapshot()));
         const GrTexture* texture = image->getTexture();
-        return GrMipMapped::kYes == texture->texturePriv().mipMapped();
+        return GrMipmapped::kYes == texture->mipmapped();
     };
 
     auto mipsAreDirty = [] (SkSurface* surf) {
         SkImage_GpuBase* image = static_cast<SkImage_GpuBase*>(as_IB(surf->makeImageSnapshot()));
-        return image->getTexture()->texturePriv().mipMapsAreDirty();
+        return image->getTexture()->mipmapsAreDirty();
     };
 
     auto info = SkImageInfo::MakeN32Premul(256, 256);
@@ -65,8 +65,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrTextureMipMapInvalidationTest, reporter, ct
 }
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReimportImageTextureWithMipLevels, reporter, ctxInfo) {
-    auto* ctx = ctxInfo.grContext();
-    if (!ctx->priv().caps()->mipMapSupport()) {
+    auto ctx = ctxInfo.directContext();
+    if (!ctx->priv().caps()->mipmapSupport()) {
         return;
     }
     static constexpr auto kCreateWithMipMaps = true;
@@ -90,7 +90,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ReimportImageTextureWithMipLevels, reporter, 
         // ERRORF(reporter, "Could not turn image into texture");
         return;
     }
-    REPORTER_ASSERT(reporter, btex.hasMipMaps());
+    REPORTER_ASSERT(reporter, btex.hasMipmaps());
     // Reimport the texture as an image and perform a downsampling draw with medium quality which
     // should use the upper MIP levels.
     img = SkImage::MakeFromTexture(ctx, btex, kTopLeft_GrSurfaceOrigin, kRGBA_8888_SkColorType,

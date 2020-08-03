@@ -434,6 +434,40 @@ CanvasKit.onRuntimeInitialized = function() {
     ];
   }
 
+  // Return the inverse of an SkM44. throw an error if it's not invertible
+  CanvasKit.SkM44.mustInvert = function(m) {
+    var m2 = CanvasKit.SkM44.invert(m);
+    if (m2 === null) {
+      throw "Matrix not invertible";
+    }
+    return m2;
+  }
+
+  // returns a matrix that sets up a 3D perspective view from a given camera.
+  //
+  // area - a rect describing the viewport. (0, 0, canvas_width, canvas_height) suggested
+  // zscale - a scalar describing the scale of the z axis. min(width, height)/2 suggested
+  // cam - an object with the following attributes
+  // const cam = {
+  //   'eye'  : [0, 0, 1 / Math.tan(Math.PI / 24) - 1], // a 3D point locating the camera
+  //   'coa'  : [0, 0, 0], // center of attention - the 3D point the camera is looking at.
+  //   'up'   : [0, 1, 0], // a unit vector pointing in the camera's up direction, because eye and coa alone leave roll unspecified.
+  //   'near' : 0.02,      // near clipping plane
+  //   'far'  : 4,         // far clipping plane
+  //   'angle': Math.PI / 12, // field of view in radians
+  // };
+  CanvasKit.SkM44.setupCamera = function(area, zscale, cam) {
+    var camera = CanvasKit.SkM44.lookat(cam['eye'], cam['coa'], cam['up']);
+    var perspective = CanvasKit.SkM44.perspective(cam['near'], cam['far'], cam['angle']);
+    var center = [(area.fLeft + area.fRight)/2, (area.fTop + area.fBottom)/2, 0];
+    var viewScale = [(area.fRight - area.fLeft)/2, (area.fBottom - area.fTop)/2, zscale];
+    var viewport = CanvasKit.SkM44.multiply(
+      CanvasKit.SkM44.translated(center),
+      CanvasKit.SkM44.scaled(viewScale));
+    return CanvasKit.SkM44.multiply(
+      viewport, perspective, camera, CanvasKit.SkM44.mustInvert(viewport));
+  }
+
   // An SkColorMatrix is a 4x4 color matrix that transforms the 4 color channels
   //  with a 1x4 matrix that post-translates those 4 channels.
   // For example, the following is the layout with the scale (S) and post-transform
@@ -520,7 +554,31 @@ CanvasKit.onRuntimeInitialized = function() {
     }
 
     return m;
-  }
+  };
+
+  CanvasKit.SkPath.MakeFromCmds = function(cmds) {
+    var ptrLen = loadCmdsTypedArray(cmds);
+    var path = CanvasKit.SkPath._MakeFromCmds(ptrLen[0], ptrLen[1]);
+    CanvasKit._free(ptrLen[0]);
+    return path;
+  };
+
+  // Deprecated
+  CanvasKit.MakePathFromCmds = CanvasKit.SkPath.MakeFromCmds;
+
+  // The weights array is optional (only used for conics).
+  CanvasKit.SkPath.MakeFromVerbsPointsWeights = function(verbs, pts, weights) {
+    var verbsPtr = copy1dArray(verbs, "HEAPU8");
+    var pointsPtr = copy1dArray(pts, "HEAPF32");
+    var weightsPtr = copy1dArray(weights, "HEAPF32");
+    var numWeights = (weights && weights.length) || 0;
+    var path = CanvasKit.SkPath._MakeFromVerbsPointsWeights(
+        verbsPtr, verbs.length, pointsPtr, pts.length, weightsPtr, numWeights);
+    freeArraysThatAreNotMallocedByUsers(verbsPtr, verbs);
+    freeArraysThatAreNotMallocedByUsers(pointsPtr, pts);
+    freeArraysThatAreNotMallocedByUsers(weightsPtr, weights);
+    return path;
+  };
 
   CanvasKit.SkPath.prototype.addArc = function(oval, startAngle, sweepAngle) {
     // see arc() for the HTMLCanvas version
@@ -654,6 +712,19 @@ CanvasKit.onRuntimeInitialized = function() {
     return this;
   };
 
+  // The weights array is optional (only used for conics).
+  CanvasKit.SkPath.prototype.addVerbsPointsWeights = function(verbs, points, weights) {
+    var verbsPtr = copy1dArray(verbs, "HEAPU8");
+    var pointsPtr = copy1dArray(points, "HEAPF32");
+    var weightsPtr = copy1dArray(weights, "HEAPF32");
+    var numWeights = (weights && weights.length) || 0;
+    this._addVerbsPointsWeights(verbsPtr, verbs.length, pointsPtr, points.length,
+                                weightsPtr, numWeights);
+    freeArraysThatAreNotMallocedByUsers(verbsPtr, verbs);
+    freeArraysThatAreNotMallocedByUsers(pointsPtr, points);
+    freeArraysThatAreNotMallocedByUsers(weightsPtr, weights);
+  };
+
   CanvasKit.SkPath.prototype.arc = function(x, y, radius, startAngle, endAngle, ccw) {
     // emulates the HTMLCanvas behavior.  See addArc() for the SkPath version.
     // Note input angles are radians.
@@ -666,6 +737,7 @@ CanvasKit.onRuntimeInitialized = function() {
     return this;
   };
 
+  // Deprecated, use one of the three variants below depending on how many args you were calling it with.
   CanvasKit.SkPath.prototype.arcTo = function() {
     // takes 4, 5 or 7 args
     // - 5 x1, y1, x2, y2, radius
@@ -673,15 +745,61 @@ CanvasKit.onRuntimeInitialized = function() {
     // - 7 rx, ry, xAxisRotate, useSmallArc, isCCW, x, y
     var args = arguments;
     if (args.length === 5) {
-      this._arcTo(args[0], args[1], args[2], args[3], args[4]);
+      this._arcToTangent(args[0], args[1], args[2], args[3], args[4]);
     } else if (args.length === 4) {
-      this._arcTo(args[0], args[1], args[2], args[3]);
+      this._arcToOval(args[0], args[1], args[2], args[3]);
     } else if (args.length === 7) {
-      this._arcTo(args[0], args[1], args[2], !!args[3], !!args[4], args[5], args[6]);
+      this._arcToRotated(args[0], args[1], args[2], !!args[3], !!args[4], args[5], args[6]);
     } else {
       throw 'Invalid args for arcTo. Expected 4, 5, or 7, got '+ args.length;
     }
 
+    return this;
+  };
+
+  // Appends arc to SkPath. Arc added is part of ellipse
+  // bounded by oval, from startAngle through sweepAngle. Both startAngle and
+  // sweepAngle are measured in degrees, where zero degrees is aligned with the
+  // positive x-axis, and positive sweeps extends arc clockwise.
+  CanvasKit.SkPath.prototype.arcToOval = function(oval, startAngle, sweepAngle, forceMoveTo) {
+    this._arcToOval(oval, startAngle, sweepAngle, forceMoveTo);
+    return this;
+  };
+
+  // Appends arc to SkPath. Arc is implemented by one or more conics weighted to
+  // describe part of oval with radii (rx, ry) rotated by xAxisRotate degrees. Arc
+  // curves from last SkPath SkPoint to (x, y), choosing one of four possible routes:
+  // clockwise or counterclockwise, and smaller or larger.
+
+  // Arc sweep is always less than 360 degrees. arcTo() appends line to (x, y) if
+  // either radii are zero, or if last SkPath SkPoint equals (x, y). arcTo() scales radii
+  // (rx, ry) to fit last SkPath SkPoint and (x, y) if both are greater than zero but
+  // too small.
+
+  // arcToRotated() appends up to four conic curves.
+  // arcToRotated() implements the functionality of SVG arc, although SVG sweep-flag value
+  // is opposite the integer value of sweep; SVG sweep-flag uses 1 for clockwise,
+  // while kCW_Direction cast to int is zero.
+  CanvasKit.SkPath.prototype.arcToRotated = function(rx, ry, xAxisRotate, useSmallArc, isCCW, x, y) {
+    this._arcToRotated(rx, ry, xAxisRotate, !!useSmallArc, !!isCCW, x, y);
+    return this;
+  };
+
+  // Appends arc to SkPath, after appending line if needed. Arc is implemented by conic
+  // weighted to describe part of circle. Arc is contained by tangent from
+  // last SkPath point to (x1, y1), and tangent from (x1, y1) to (x2, y2). Arc
+  // is part of circle sized to radius, positioned so it touches both tangent lines.
+
+  // If last Path Point does not start Arc, arcTo appends connecting Line to Path.
+  // The length of Vector from (x1, y1) to (x2, y2) does not affect Arc.
+
+  // Arc sweep is always less than 180 degrees. If radius is zero, or if
+  // tangents are nearly parallel, arcTo appends Line from last Path Point to (x1, y1).
+
+  // arcToTangent appends at most one Line and one conic.
+  // arcToTangent implements the functionality of PostScript arct and HTML Canvas arcTo.
+  CanvasKit.SkPath.prototype.arcToTangent = function(x1, y1, x2, y2, radius) {
+    this._arcToTangent(x1, y1, x2, y2, radius);
     return this;
   };
 
@@ -1139,7 +1257,7 @@ CanvasKit.onRuntimeInitialized = function() {
     if (!this._cached_canvas) {
       this._cached_canvas = this.getCanvas();
     }
-    window.requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
       if (this._context !== undefined) {
         CanvasKit.setCurrentContext(this._context);
       }
@@ -1159,7 +1277,7 @@ CanvasKit.onRuntimeInitialized = function() {
     if (!this._cached_canvas) {
       this._cached_canvas = this.getCanvas();
     }
-    window.requestAnimationFrame(function() {
+    requestAnimationFrame(function() {
       if (this._context !== undefined) {
         CanvasKit.setCurrentContext(this._context);
       }
@@ -1288,12 +1406,12 @@ CanvasKit.computeTonalColors = function(tonalColors) {
     var result =  {
       'ambient': copyColorFromWasm(cPtrAmbi),
       'spot': copyColorFromWasm(cPtrSpot),
-    }
+    };
     // If the user passed us malloced colors in here, we don't want to clean them up.
     freeArraysThatAreNotMallocedByUsers(cPtrAmbi, tonalColors['ambient']);
     freeArraysThatAreNotMallocedByUsers(cPtrSpot, tonalColors['spot']);
     return result;
-}
+};
 
 CanvasKit.LTRBRect = function(l, t, r, b) {
   return {
@@ -1302,7 +1420,7 @@ CanvasKit.LTRBRect = function(l, t, r, b) {
     fRight: r,
     fBottom: b,
   };
-}
+};
 
 CanvasKit.XYWHRect = function(x, y, w, h) {
   return {
@@ -1311,7 +1429,7 @@ CanvasKit.XYWHRect = function(x, y, w, h) {
     fRight: x+w,
     fBottom: y+h,
   };
-}
+};
 
 // RRectXY returns an RRect with the given rect and a radiusX and radiusY for
 // all 4 corners.
@@ -1327,14 +1445,7 @@ CanvasKit.RRectXY = function(rect, rx, ry) {
     rx4: rx,
     ry4: ry,
   };
-}
-
-CanvasKit.MakePathFromCmds = function(cmds) {
-  var ptrLen = loadCmdsTypedArray(cmds);
-  var path = CanvasKit._MakePathFromCmds(ptrLen[0], ptrLen[1]);
-  CanvasKit._free(ptrLen[0]);
-  return path;
-}
+};
 
 // data is a TypedArray or ArrayBuffer e.g. from fetch().then(resp.arrayBuffer())
 CanvasKit.MakeAnimatedImageFromEncoded = function(data) {
@@ -1364,7 +1475,40 @@ CanvasKit.MakeImageFromEncoded = function(data) {
   return img;
 }
 
-// pixels must be a Uint8Array with bytes representing the pixel values
+// A variable to hold a canvasElement which can be reused once created the first time.
+var memoizedCanvas2dElement = null;
+
+// Alternative to CanvasKit.MakeImageFromEncoded. Allows for CanvasKit users to take advantage of
+// browser APIs to decode images instead of using codecs included in the CanvasKit wasm binary.
+// Expects that the canvasImageSource has already loaded/decoded.
+// CanvasImageSource reference: https://developer.mozilla.org/en-US/docs/Web/API/CanvasImageSource
+CanvasKit.MakeImageFromCanvasImageSource = function(canvasImageSource) {
+  var width = canvasImageSource.width;
+  var height = canvasImageSource.height;
+
+  if (!memoizedCanvas2dElement) {
+    memoizedCanvas2dElement = document.createElement('canvas');
+  }
+  memoizedCanvas2dElement.width = width;
+  memoizedCanvas2dElement.height = height;
+
+  var ctx2d = memoizedCanvas2dElement.getContext('2d');
+  ctx2d.drawImage(canvasImageSource, 0, 0);
+
+  var imageData = ctx2d.getImageData(0, 0, width, height);
+
+  return CanvasKit.MakeImage(
+    imageData.data,
+    width,
+    height,
+    CanvasKit.AlphaType.Unpremul,
+    CanvasKit.ColorType.RGBA_8888,
+    CanvasKit.SkColorSpace.SRGB
+  );
+}
+
+// pixels may be any Typed Array, but Uint8Array or Uint8ClampedArray is recommended,
+// with bytes representing the pixel values.
 // (e.g. each set of 4 bytes could represent RGBA values for a single pixel).
 CanvasKit.MakeImage = function(pixels, width, height, alphaType, colorType, colorSpace) {
   var bytesPerPixel = pixels.length / (width * height);
@@ -1421,7 +1565,6 @@ CanvasKit.MakeSkVertices = function(mode, positions, textureCoordinates, colors,
     copy1dArray(indices, "HEAPU16", builder.indices());
   }
 
-  var idxCount = (indices && indices.length) || 0;
   // Create the vertices, which owns the memory that the builder had allocated.
   return builder.detach();
 };

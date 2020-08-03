@@ -5,7 +5,7 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrPath.h"
@@ -32,11 +32,11 @@ GrStencilAndCoverPathRenderer::GrStencilAndCoverPathRenderer(GrResourceProvider*
 }
 
 static bool has_matrix(const GrFragmentProcessor& fp) {
-    if (fp.sampleMatrix().fKind != SkSL::SampleMatrix::Kind::kNone) {
+    if (fp.sampleUsage().hasMatrix()) {
         return true;
     }
     for (int i = fp.numChildProcessors() - 1; i >= 0; --i) {
-        if (has_matrix(fp.childProcessor(i))) {
+        if (fp.childProcessor(i) && has_matrix(*fp.childProcessor(i))) {
             return true;
         }
     }
@@ -60,11 +60,9 @@ GrStencilAndCoverPathRenderer::onCanDrawPath(const CanDrawPathArgs& args) const 
     // The lack of vertex shaders means we can't move transform matrices into the vertex shader. We
     // could do the transform in the fragment processor, but that would be very slow, so instead we
     // just avoid using this path renderer in the face of transformed FPs.
-    if (args.fPaint) {
-        for (int i = args.fPaint->numColorFragmentProcessors() - 1; i >= 0; --i) {
-            if (has_matrix(*args.fPaint->getColorFragmentProcessor(i))) {
-                return CanDrawPath::kNo;
-            }
+    if (args.fPaint && args.fPaint->hasColorFragmentProcessor()) {
+        if (has_matrix(*args.fPaint->getColorFragmentProcessor())) {
+            return CanDrawPath::kNo;
         }
     }
     return CanDrawPath::kYes;
@@ -125,9 +123,9 @@ bool GrStencilAndCoverPathRenderer::onDrawPath(const DrawPathArgs& args) {
 
         // fake inverse with a stencil and cover
         GrAppliedClip appliedClip(args.fRenderTargetContext->dimensions());
-        if (args.fClip && !args.fClip->apply(
+        if (args.fClip && args.fClip->apply(
                 args.fContext, args.fRenderTargetContext, doStencilMSAA, true, &appliedClip,
-                &devBounds)) {
+                &devBounds) == GrClip::Effect::kClippedOut) {
             return true;
         }
         GrStencilClip stencilClip(args.fRenderTargetContext->dimensions(),

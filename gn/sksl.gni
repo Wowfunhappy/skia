@@ -5,11 +5,15 @@
 
 # Things are easiest for everyone if these source paths are absolute.
 _src = get_path_info("../src", "abspath")
+_include = get_path_info("../include", "abspath")
 
 skia_sksl_sources = [
+  "$_include/private/SkSLSampleUsage.h",
   "$_src/sksl/SkSLASTFile.h",
   "$_src/sksl/SkSLASTNode.cpp",
   "$_src/sksl/SkSLASTNode.h",
+  "$_src/sksl/SkSLAnalysis.cpp",
+  "$_src/sksl/SkSLAnalysis.h",
   "$_src/sksl/SkSLByteCode.cpp",
   "$_src/sksl/SkSLByteCode.h",
   "$_src/sksl/SkSLByteCodeGenerator.cpp",
@@ -20,6 +24,7 @@ skia_sksl_sources = [
   "$_src/sksl/SkSLCompiler.h",
   "$_src/sksl/SkSLContext.h",
   "$_src/sksl/SkSLDefines.h",
+  "$_src/sksl/SkSLDehydrator.cpp",
   "$_src/sksl/SkSLErrorReporter.h",
   "$_src/sksl/SkSLExternalValue.h",
   "$_src/sksl/SkSLFileOutputStream.h",
@@ -32,8 +37,8 @@ skia_sksl_sources = [
   "$_src/sksl/SkSLParser.cpp",
   "$_src/sksl/SkSLParser.h",
   "$_src/sksl/SkSLPosition.h",
-  "$_src/sksl/SkSLSampleMatrix.cpp",
-  "$_src/sksl/SkSLSampleMatrix.h",
+  "$_src/sksl/SkSLRehydrator.cpp",
+  "$_src/sksl/SkSLSampleUsage.cpp",
   "$_src/sksl/SkSLSectionAndParameterHelper.cpp",
   "$_src/sksl/SkSLSectionAndParameterHelper.h",
   "$_src/sksl/SkSLString.cpp",
@@ -76,6 +81,7 @@ skia_sksl_gpu_sources = [
 skia_gpu_processor_sources = [
   "$_src/gpu/effects/GrAARectEffect.fp",
   "$_src/gpu/effects/GrAlphaThresholdFragmentProcessor.fp",
+  "$_src/gpu/effects/GrArithmeticProcessor.fp",
   "$_src/gpu/effects/GrBlurredEdgeFragmentProcessor.fp",
   "$_src/gpu/effects/GrCircleBlurFragmentProcessor.fp",
   "$_src/gpu/effects/GrCircleEffect.fp",
@@ -85,8 +91,10 @@ skia_gpu_processor_sources = [
   "$_src/gpu/effects/GrConfigConversionEffect.fp",
   "$_src/gpu/effects/GrConstColorProcessor.fp",
   "$_src/gpu/effects/GrDeviceSpaceEffect.fp",
+  "$_src/gpu/effects/GrDitherEffect.fp",
   "$_src/gpu/effects/GrEllipseEffect.fp",
   "$_src/gpu/effects/GrHSLToRGBFilterEffect.fp",
+  "$_src/gpu/effects/GrHighContrastFilterEffect.fp",
   "$_src/gpu/effects/GrLumaColorFilterEffect.fp",
   "$_src/gpu/effects/GrMagnifierEffect.fp",
   "$_src/gpu/effects/GrMixerEffect.fp",
@@ -100,8 +108,17 @@ skia_gpu_processor_sources = [
   "$_src/gpu/gradients/GrRadialGradientLayout.fp",
   "$_src/gpu/gradients/GrSingleIntervalGradientColorizer.fp",
   "$_src/gpu/gradients/GrSweepGradientLayout.fp",
-  "$_src/gpu/gradients/GrTextureGradientColorizer.fp",
   "$_src/gpu/gradients/GrTiledGradientEffect.fp",
   "$_src/gpu/gradients/GrTwoPointConicalGradientLayout.fp",
   "$_src/gpu/gradients/GrUnrolledBinaryGradientColorizer.fp",
+]
+
+skia_dehydrate_sksl_sources = [
+  "$_src/sksl/generated/sksl_fp.sksl",
+  "$_src/sksl/sksl_frag.sksl",
+  "$_src/sksl/sksl_geom.sksl",
+  "$_src/sksl/sksl_gpu.sksl",
+  "$_src/sksl/sksl_interp.sksl",
+  "$_src/sksl/sksl_pipeline.sksl",
+  "$_src/sksl/sksl_vert.sksl",
 ]

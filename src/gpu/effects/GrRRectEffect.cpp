@@ -45,9 +45,8 @@ public:
 
     // The flags are used to indicate which corners are circluar (unflagged corners are assumed to
     // be square).
-    static std::unique_ptr<GrFragmentProcessor> Make(std::unique_ptr<GrFragmentProcessor> inputFP,
-                                                     GrClipEdgeType,
-                                                     uint32_t circularCornerFlags, const SkRRect&);
+    static GrFPResult Make(std::unique_ptr<GrFragmentProcessor>, GrClipEdgeType,
+                           uint32_t circularCornerFlags, const SkRRect&);
 
     ~CircularRRectEffect() override {}
 
@@ -61,11 +60,10 @@ public:
 
     GrClipEdgeType getEdgeType() const { return fEdgeType; }
 
-    int getInputFPIndex() const { return fInputFPIndex; }
-
 private:
     CircularRRectEffect(std::unique_ptr<GrFragmentProcessor> inputFP,
                         GrClipEdgeType, uint32_t circularCornerFlags, const SkRRect&);
+    CircularRRectEffect(const CircularRRectEffect& that);
 
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
 
@@ -76,21 +74,20 @@ private:
     SkRRect           fRRect;
     GrClipEdgeType    fEdgeType;
     uint32_t          fCircularCornerFlags;
-    int               fInputFPIndex;
 
     GR_DECLARE_FRAGMENT_PROCESSOR_TEST
 
     typedef GrFragmentProcessor INHERITED;
 };
 
-std::unique_ptr<GrFragmentProcessor> CircularRRectEffect::Make(
-        std::unique_ptr<GrFragmentProcessor> inputFP, GrClipEdgeType edgeType,
-        uint32_t circularCornerFlags, const SkRRect& rrect) {
+GrFPResult CircularRRectEffect::Make(std::unique_ptr<GrFragmentProcessor> inputFP,
+                                     GrClipEdgeType edgeType,
+                                     uint32_t circularCornerFlags, const SkRRect& rrect) {
     if (GrClipEdgeType::kFillAA != edgeType && GrClipEdgeType::kInverseFillAA != edgeType) {
-        return nullptr;
+        return GrFPFailure(std::move(inputFP));
     }
-    return std::unique_ptr<GrFragmentProcessor>(
-            new CircularRRectEffect(std::move(inputFP), edgeType, circularCornerFlags, rrect));
+    return GrFPSuccess(std::unique_ptr<GrFragmentProcessor>(
+                new CircularRRectEffect(std::move(inputFP), edgeType, circularCornerFlags, rrect)));
 }
 
 CircularRRectEffect::CircularRRectEffect(std::unique_ptr<GrFragmentProcessor> inputFP,
@@ -103,23 +100,19 @@ CircularRRectEffect::CircularRRectEffect(std::unique_ptr<GrFragmentProcessor> in
         , fRRect(rrect)
         , fEdgeType(edgeType)
         , fCircularCornerFlags(circularCornerFlags) {
-    fInputFPIndex = inputFP
-            ? this->registerChildProcessor(std::move(inputFP))
-            : -1;
+    this->registerChild(std::move(inputFP));
+}
+
+CircularRRectEffect::CircularRRectEffect(const CircularRRectEffect& that)
+        : INHERITED(kCircularRRectEffect_ClassID, that.optimizationFlags())
+        , fRRect(that.fRRect)
+        , fEdgeType(that.fEdgeType)
+        , fCircularCornerFlags(that.fCircularCornerFlags) {
+    this->cloneAndRegisterAllChildProcessors(that);
 }
 
 std::unique_ptr<GrFragmentProcessor> CircularRRectEffect::clone() const {
-    std::unique_ptr<GrFragmentProcessor> inputFPClone;
-    if (fInputFPIndex >= 0) {
-        const GrFragmentProcessor& inputFP = this->childProcessor(fInputFPIndex);
-        inputFPClone = inputFP.clone();
-        if (inputFP.isSampledWithExplicitCoords()) {
-            inputFPClone->setSampledWithExplicitCoords();
-        }
-    }
-
-    return std::unique_ptr<GrFragmentProcessor>(new CircularRRectEffect(
-            std::move(inputFPClone), fEdgeType, fCircularCornerFlags, fRRect));
+    return std::unique_ptr<GrFragmentProcessor>(new CircularRRectEffect(*this));
 }
 
 bool CircularRRectEffect::onIsEqual(const GrFragmentProcessor& other) const {
@@ -139,12 +132,14 @@ std::unique_ptr<GrFragmentProcessor> CircularRRectEffect::TestCreate(GrProcessor
     SkScalar r = d->fRandom->nextRangeF(kRadiusMin, 9.f);
     SkRRect rrect;
     rrect.setRectXY(SkRect::MakeWH(w, h), r, r);
-    std::unique_ptr<GrFragmentProcessor> fp;
+    std::unique_ptr<GrFragmentProcessor> fp = d->inputFP();
+    bool success;
     do {
         GrClipEdgeType et =
                 (GrClipEdgeType)d->fRandom->nextULessThan(kGrClipEdgeTypeCnt);
-        fp = GrRRectEffect::Make(et, rrect, *d->caps()->shaderCaps());
-    } while (nullptr == fp);
+        std::tie(success, fp) = GrRRectEffect::Make(std::move(fp), et, rrect,
+                                                    *d->caps()->shaderCaps());
+    } while (!success);
     return fp;
 }
 #endif
@@ -301,9 +296,7 @@ void GLCircularRRectEffect::emitCode(EmitArgs& args) {
         fragBuilder->codeAppend("alpha = 1.0 - alpha;");
     }
 
-    SkString inputSample = (crre.getInputFPIndex() >= 0)
-                ? this->invokeChild(crre.getInputFPIndex(), args.fInputColor, args)
-                : SkString(args.fInputColor);
+    SkString inputSample = this->invokeChild(/*childIndex=*/0, args);
 
     fragBuilder->codeAppendf("%s = %s * alpha;", args.fOutputColor, inputSample.c_str());
 }
@@ -410,7 +403,7 @@ GrGLSLFragmentProcessor* CircularRRectEffect::onCreateGLSLInstance() const  {
 
 class EllipticalRRectEffect : public GrFragmentProcessor {
 public:
-    static std::unique_ptr<GrFragmentProcessor> Make(GrClipEdgeType, const SkRRect&);
+    static GrFPResult Make(std::unique_ptr<GrFragmentProcessor>, GrClipEdgeType, const SkRRect&);
 
     ~EllipticalRRectEffect() override {}
 
@@ -423,7 +416,8 @@ public:
     GrClipEdgeType getEdgeType() const { return fEdgeType; }
 
 private:
-    EllipticalRRectEffect(GrClipEdgeType, const SkRRect&);
+    EllipticalRRectEffect(std::unique_ptr<GrFragmentProcessor>, GrClipEdgeType, const SkRRect&);
+    EllipticalRRectEffect(const EllipticalRRectEffect& that);
 
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
 
@@ -439,22 +433,35 @@ private:
     typedef GrFragmentProcessor INHERITED;
 };
 
-std::unique_ptr<GrFragmentProcessor> EllipticalRRectEffect::Make(GrClipEdgeType edgeType,
-                                                                 const SkRRect& rrect) {
+GrFPResult EllipticalRRectEffect::Make(std::unique_ptr<GrFragmentProcessor> inputFP,
+                                       GrClipEdgeType edgeType, const SkRRect& rrect) {
     if (GrClipEdgeType::kFillAA != edgeType && GrClipEdgeType::kInverseFillAA != edgeType) {
-        return nullptr;
+        return GrFPFailure(std::move(inputFP));
     }
-    return std::unique_ptr<GrFragmentProcessor>(new EllipticalRRectEffect(edgeType, rrect));
+    return GrFPSuccess(std::unique_ptr<GrFragmentProcessor>(
+                new EllipticalRRectEffect(std::move(inputFP), edgeType, rrect)));
 }
 
-EllipticalRRectEffect::EllipticalRRectEffect(GrClipEdgeType edgeType, const SkRRect& rrect)
-        : INHERITED(kEllipticalRRectEffect_ClassID, kCompatibleWithCoverageAsAlpha_OptimizationFlag)
+EllipticalRRectEffect::EllipticalRRectEffect(std::unique_ptr<GrFragmentProcessor> inputFP,
+                                             GrClipEdgeType edgeType, const SkRRect& rrect)
+        : INHERITED(
+              kEllipticalRRectEffect_ClassID,
+              (inputFP ? ProcessorOptimizationFlags(inputFP.get()) : kAll_OptimizationFlags) &
+                  kCompatibleWithCoverageAsAlpha_OptimizationFlag)
         , fRRect(rrect)
         , fEdgeType(edgeType) {
+    this->registerChild(std::move(inputFP));
+}
+
+EllipticalRRectEffect::EllipticalRRectEffect(const EllipticalRRectEffect& that)
+        : INHERITED(kEllipticalRRectEffect_ClassID, that.optimizationFlags())
+        , fRRect(that.fRRect)
+        , fEdgeType(that.fEdgeType) {
+    this->cloneAndRegisterAllChildProcessors(that);
 }
 
 std::unique_ptr<GrFragmentProcessor> EllipticalRRectEffect::clone() const {
-    return std::unique_ptr<GrFragmentProcessor>(new EllipticalRRectEffect(fEdgeType, fRRect));
+    return std::unique_ptr<GrFragmentProcessor>(new EllipticalRRectEffect(*this));
 }
 
 bool EllipticalRRectEffect::onIsEqual(const GrFragmentProcessor& other) const {
@@ -494,11 +501,13 @@ std::unique_ptr<GrFragmentProcessor> EllipticalRRectEffect::TestCreate(GrProcess
         rrect.setRectXY(SkRect::MakeWH(w, h), r[SkRRect::kUpperLeft_Corner].fX,
                                               r[SkRRect::kUpperLeft_Corner].fY);
     }
-    std::unique_ptr<GrFragmentProcessor> fp;
+    std::unique_ptr<GrFragmentProcessor> fp = d->inputFP();
+    bool success;
     do {
         GrClipEdgeType et = (GrClipEdgeType)d->fRandom->nextULessThan(kGrClipEdgeTypeCnt);
-        fp = GrRRectEffect::Make(et, rrect, *d->caps()->shaderCaps());
-    } while (nullptr == fp);
+        std::tie(success, fp) = GrRRectEffect::Make(std::move(fp), et, rrect,
+                                                    *d->caps()->shaderCaps());
+    } while (!success);
     return fp;
 }
 #endif
@@ -545,8 +554,8 @@ void GLEllipticalRRectEffect::emitCode(EmitArgs& args) {
     // The code below is a simplified version of the above that performs maxs on the vector
     // components before computing distances and alpha values so that only one distance computation
     // need be computed to determine the min alpha.
-    fragBuilder->codeAppendf("float2 dxy0 = %s.xy - sk_FragCoord.xy;", rectName);
-    fragBuilder->codeAppendf("float2 dxy1 = sk_FragCoord.xy - %s.zw;", rectName);
+    fragBuilder->codeAppendf("float2 dxy0 = %s.LT - sk_FragCoord.xy;", rectName);
+    fragBuilder->codeAppendf("float2 dxy1 = sk_FragCoord.xy - %s.RB;", rectName);
 
     // If we're on a device where float != fp32 then we'll do the distance computation in a space
     // that is normalized by the largest radius. The scale uniform will be scale, 1/scale. The
@@ -614,7 +623,9 @@ void GLEllipticalRRectEffect::emitCode(EmitArgs& args) {
         fragBuilder->codeAppend("half alpha = clamp(0.5 + approx_dist, 0.0, 1.0);");
     }
 
-    fragBuilder->codeAppendf("%s = %s * alpha;", args.fOutputColor, args.fInputColor);
+    SkString inputSample = this->invokeChild(/*childIndex=*/0, args);
+
+    fragBuilder->codeAppendf("%s = %s * alpha;", args.fOutputColor, inputSample.c_str());
 }
 
 void GLEllipticalRRectEffect::GenKey(const GrProcessor& effect, const GrShaderCaps&,
@@ -696,15 +707,15 @@ GrGLSLFragmentProcessor* EllipticalRRectEffect::onCreateGLSLInstance() const  {
 
 //////////////////////////////////////////////////////////////////////////////
 
-std::unique_ptr<GrFragmentProcessor> GrRRectEffect::Make(GrClipEdgeType edgeType,
-                                                         const SkRRect& rrect,
-                                                         const GrShaderCaps& caps) {
+GrFPResult GrRRectEffect::Make(std::unique_ptr<GrFragmentProcessor> inputFP,
+                               GrClipEdgeType edgeType, const SkRRect& rrect,
+                               const GrShaderCaps& caps) {
     if (rrect.isRect()) {
-        return GrConvexPolyEffect::Make(edgeType, rrect.getBounds());
+        return GrConvexPolyEffect::Make(std::move(inputFP), edgeType, rrect.getBounds());
     }
 
     if (rrect.isOval()) {
-        return GrOvalEffect::Make(/*inputFP=*/nullptr, edgeType, rrect.getBounds(), caps);
+        return GrOvalEffect::Make(std::move(inputFP), edgeType, rrect.getBounds(), caps);
     }
 
     if (rrect.isSimple()) {
@@ -712,13 +723,13 @@ std::unique_ptr<GrFragmentProcessor> GrRRectEffect::Make(GrClipEdgeType edgeType
             SkRRectPriv::GetSimpleRadii(rrect).fY < kRadiusMin) {
             // In this case the corners are extremely close to rectangular and we collapse the
             // clip to a rectangular clip.
-            return GrConvexPolyEffect::Make(edgeType, rrect.getBounds());
+            return GrConvexPolyEffect::Make(std::move(inputFP), edgeType, rrect.getBounds());
         }
         if (SkRRectPriv::GetSimpleRadii(rrect).fX == SkRRectPriv::GetSimpleRadii(rrect).fY) {
-            return CircularRRectEffect::Make(/*inputFP=*/nullptr, edgeType,
+            return CircularRRectEffect::Make(std::move(inputFP), edgeType,
                                              CircularRRectEffect::kAll_CornerFlags, rrect);
         } else {
-            return EllipticalRRectEffect::Make(edgeType, rrect);
+            return EllipticalRRectEffect::Make(std::move(inputFP), edgeType, rrect);
         }
     }
 
@@ -775,24 +786,24 @@ std::unique_ptr<GrFragmentProcessor> GrRRectEffect::Make(GrClipEdgeType edgeType
                 if (squashedRadii) {
                     rr.writable()->setRectRadii(rrect.getBounds(), radii);
                 }
-                return CircularRRectEffect::Make(/*inputFP=*/nullptr, edgeType, cornerFlags, *rr);
+                return CircularRRectEffect::Make(std::move(inputFP), edgeType, cornerFlags, *rr);
             }
-            case CircularRRectEffect::kNone_CornerFlags:
-                return GrConvexPolyEffect::Make(edgeType, rrect.getBounds());
+            case CircularRRectEffect::kNone_CornerFlags: {
+                return GrConvexPolyEffect::Make(std::move(inputFP), edgeType, rrect.getBounds());
+            }
             default: {
                 if (squashedRadii) {
                     // If we got here then we squashed some but not all the radii to zero. (If all
                     // had been squashed cornerFlags would be 0.) The elliptical effect doesn't
                     // support some rounded and some square corners.
-                    return nullptr;
+                    return GrFPFailure(std::move(inputFP));
                 }
                 if (rrect.isNinePatch()) {
-                    return EllipticalRRectEffect::Make(edgeType, rrect);
+                    return EllipticalRRectEffect::Make(std::move(inputFP), edgeType, rrect);
                 }
-                return nullptr;
+                return GrFPFailure(std::move(inputFP));
             }
         }
     }
-
-    return nullptr;
+    return GrFPFailure(std::move(inputFP));
 }

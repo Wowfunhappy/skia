@@ -7,10 +7,11 @@
 
 
 #include "include/gpu/GrContextOptions.h"
+#include "include/gpu/GrDirectContext.h"
 #include "src/core/SkOpts.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrProcessor.h"
-#include "src/gpu/GrRenderTargetPriv.h"
+#include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrStencilSettings.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
@@ -31,7 +32,7 @@ struct GrVkResourceProvider::PipelineStateCache::Entry {
 
     ~Entry() {
         if (fPipelineState) {
-            fPipelineState->freeGPUResources();
+            fPipelineState->freeGPUResources(fGpu);
         }
     }
 
@@ -75,9 +76,9 @@ GrVkPipelineState* GrVkResourceProvider::PipelineStateCache::findOrCreatePipelin
         VkRenderPass compatibleRenderPass) {
 #ifdef SK_DEBUG
     if (programInfo.pipeline().isStencilEnabled()) {
-        SkASSERT(renderTarget->renderTargetPriv().getStencilAttachment());
-        SkASSERT(renderTarget->renderTargetPriv().numStencilBits() == 8);
-        SkASSERT(renderTarget->renderTargetPriv().getStencilAttachment()->numSamples() ==
+        SkASSERT(renderTarget->getStencilAttachment());
+        SkASSERT(renderTarget->numStencilBits() == 8);
+        SkASSERT(renderTarget->getStencilAttachment()->numSamples() ==
                  programInfo.numStencilSamples());
     }
 #endif

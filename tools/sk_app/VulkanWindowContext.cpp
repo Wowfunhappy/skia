@@ -11,7 +11,7 @@
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrBackendSemaphore.h"
 #include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "src/core/SkAutoMalloc.h"
 
 #include "include/gpu/vk/GrVkExtensions.h"
@@ -49,6 +49,7 @@ VulkanWindowContext::VulkanWindowContext(const DisplayParams& params,
 }
 
 void VulkanWindowContext::initializeContext() {
+    SkASSERT(!fContext);
     // any config code here (particularly for msaa)?
 
     PFN_vkGetInstanceProcAddr getInstanceProc = fGetInstanceProcAddr;
@@ -117,7 +118,7 @@ void VulkanWindowContext::initializeContext() {
     GET_DEV_PROC(QueuePresentKHR);
     GET_DEV_PROC(GetDeviceQueue);
 
-    fContext = GrContext::MakeVulkan(backendContext, fDisplayParams.fGrContextOptions);
+    fContext = GrDirectContext::MakeVulkan(backendContext, fDisplayParams.fGrContextOptions);
 
     fSurface = fCreateVkSurfaceFn(fInstance);
     if (VK_NULL_HANDLE == fSurface) {
@@ -530,7 +531,7 @@ void VulkanWindowContext::swapBuffers() {
     info.fSignalSemaphores = &beSemaphore;
     GrBackendSurfaceMutableState presentState(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, fPresentQueueIndex);
     surface->flush(info, &presentState);
-    surface->getContext()->submit();
+    surface->recordingContext()->asDirectContext()->submit();
 
     // Submit present operation to present queue
     const VkPresentInfoKHR presentInfo =

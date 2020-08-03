@@ -9,7 +9,6 @@
 #include "src/gpu/GrContextThreadSafeProxyPriv.h"
 
 #include "include/core/SkSurfaceCharacterization.h"
-#include "include/gpu/GrContext.h"
 #include "src/gpu/GrBaseContextPriv.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/effects/GrSkSLFP.h"
@@ -37,6 +36,7 @@ GrContextThreadSafeProxy::~GrContextThreadSafeProxy() = default;
 
 void GrContextThreadSafeProxy::init(sk_sp<const GrCaps> caps) {
     fCaps = std::move(caps);
+    fTextBlobCache.reset(new GrTextBlobCache(fContextID));
 }
 
 SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
@@ -58,7 +58,7 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
         return SkSurfaceCharacterization(); // return an invalid characterization
     }
 
-    if (!fCaps->mipMapSupport()) {
+    if (!fCaps->mipmapSupport()) {
         isMipMapped = false;
     }
 
@@ -127,11 +127,13 @@ GrBackendFormat GrContextThreadSafeProxy::defaultBackendFormat(SkColorType skCol
 }
 
 void GrContextThreadSafeProxy::abandonContext() {
-    fAbandoned.store(true, std::memory_order_relaxed);
+    if (!fAbandoned.exchange(true)) {
+        fTextBlobCache->freeAll();
+    }
 }
 
 bool GrContextThreadSafeProxy::abandoned() const {
-    return fAbandoned.load(std::memory_order_relaxed);
+    return fAbandoned;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

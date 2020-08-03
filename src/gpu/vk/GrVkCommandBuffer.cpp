@@ -44,6 +44,7 @@ void GrVkCommandBuffer::freeGPUData(const GrGpu* gpu, VkCommandPool cmdPool) con
     SkASSERT(!fIsActive);
     SkASSERT(!fTrackedResources.count());
     SkASSERT(!fTrackedRecycledResources.count());
+    SkASSERT(!fTrackedGpuBuffers.count());
     SkASSERT(cmdPool != VK_NULL_HANDLE);
     SkASSERT(!this->isWrapped());
 
@@ -75,6 +76,8 @@ void GrVkCommandBuffer::releaseResources() {
         fTrackedResources.rewind();
         fTrackedRecycledResources.rewind();
     }
+
+    fTrackedGpuBuffers.reset();
 
     this->invalidateState();
 
@@ -176,36 +179,39 @@ void GrVkCommandBuffer::submitPipelineBarriers(const GrVkGpu* gpu) {
 
 
 void GrVkCommandBuffer::bindInputBuffer(GrVkGpu* gpu, uint32_t binding,
-                                        const GrVkMeshBuffer* vbuffer) {
-    VkBuffer vkBuffer = vbuffer->buffer();
+                                        sk_sp<const GrBuffer> buffer) {
+    auto* vkMeshBuffer = static_cast<const GrVkMeshBuffer*>(buffer.get());
+    VkBuffer vkBuffer = vkMeshBuffer->buffer();
     SkASSERT(VK_NULL_HANDLE != vkBuffer);
     SkASSERT(binding < kMaxInputBuffers);
     // TODO: once vbuffer->offset() no longer always returns 0, we will need to track the offset
     // to know if we can skip binding or not.
     if (vkBuffer != fBoundInputBuffers[binding]) {
-        VkDeviceSize offset = vbuffer->offset();
+        VkDeviceSize offset = vkMeshBuffer->offset();
         GR_VK_CALL(gpu->vkInterface(), CmdBindVertexBuffers(fCmdBuffer,
                                                             binding,
                                                             1,
                                                             &vkBuffer,
                                                             &offset));
         fBoundInputBuffers[binding] = vkBuffer;
-        this->addResource(vbuffer->resource());
+        this->addResource(vkMeshBuffer->resource());
+        this->addGrBuffer(std::move(buffer));
     }
 }
 
-void GrVkCommandBuffer::bindIndexBuffer(GrVkGpu* gpu, const GrVkMeshBuffer* ibuffer) {
-    VkBuffer vkBuffer = ibuffer->buffer();
+void GrVkCommandBuffer::bindIndexBuffer(GrVkGpu* gpu, sk_sp<const GrBuffer> buffer) {
+    auto* vkMeshBuffer = static_cast<const GrVkMeshBuffer*>(buffer.get());
+    VkBuffer vkBuffer = vkMeshBuffer->buffer();
     SkASSERT(VK_NULL_HANDLE != vkBuffer);
     // TODO: once ibuffer->offset() no longer always returns 0, we will need to track the offset
     // to know if we can skip binding or not.
     if (vkBuffer != fBoundIndexBuffer) {
         GR_VK_CALL(gpu->vkInterface(), CmdBindIndexBuffer(fCmdBuffer,
-                                                          vkBuffer,
-                                                          ibuffer->offset(),
+                                                          vkBuffer, vkMeshBuffer->offset(),
                                                           VK_INDEX_TYPE_UINT16));
         fBoundIndexBuffer = vkBuffer;
-        this->addResource(ibuffer->resource());
+        this->addResource(vkMeshBuffer->resource());
+        this->addGrBuffer(std::move(buffer));
     }
 }
 
@@ -376,41 +382,6 @@ void GrVkCommandBuffer::addingWork(const GrVkGpu* gpu) {
     this->submitPipelineBarriers(gpu);
     fHasWork = true;
 }
-
-#ifdef SK_DEBUG
-bool GrVkCommandBuffer::validateNoSharedImageResources(const GrVkCommandBuffer* other) {
-    auto resourceIsInCommandBuffer = [this](const GrManagedResource* resource) {
-        if (!resource->asVkImageResource()) {
-            return false;
-        }
-
-        for (int i = 0; i < fTrackedResources.count(); ++i) {
-            if (resource == fTrackedResources[i]->asVkImageResource()) {
-                return true;
-            }
-        }
-        for (int i = 0; i < fTrackedRecycledResources.count(); ++i) {
-            if (resource == fTrackedRecycledResources[i]->asVkImageResource()) {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    for (int i = 0; i < other->fTrackedResources.count(); ++i) {
-        if (resourceIsInCommandBuffer(other->fTrackedResources[i])) {
-            return false;
-        }
-    }
-
-    for (int i = 0; i < other->fTrackedRecycledResources.count(); ++i) {
-        if (resourceIsInCommandBuffer(other->fTrackedRecycledResources[i])) {
-            return false;
-        }
-    }
-    return true;
-}
-#endif
 
 ///////////////////////////////////////////////////////////////////////////////
 // PrimaryCommandBuffer

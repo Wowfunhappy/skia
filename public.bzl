@@ -235,6 +235,10 @@ BASE_SRCS_ALL = struct(
         # Conflicting dependencies among Lua versions. See cl/107087297.
         "src/utils/SkLua*",
 
+        # Exclude all GL specific files
+        "src/gpu/gl/*",
+        "src/gpu/gl/builders/*",
+
         # Currently exclude all vulkan specific files
         "src/gpu/vk/*",
 
@@ -266,7 +270,8 @@ def codec_srcs(limited):
 
 GL_SRCS_UNIX = struct(
     include = [
-        "src/gpu/gl/GrGLMakeNativeInterface_none.cpp",
+        "src/gpu/gl/*",
+        "src/gpu/gl/builders/*",
     ],
     exclude = [],
 )
@@ -296,9 +301,13 @@ PORTS_SRCS_UNIX = struct(
 
 GL_SRCS_ANDROID = struct(
     include = [
+        "src/gpu/gl/*",
+        "src/gpu/gl/builders/*",
         "src/gpu/gl/android/*.cpp",
     ],
-    exclude = [],
+    exclude = [
+        "src/gpu/gl/GrGLMakeNativeInterface_none.cpp",
+    ],
 )
 PORTS_SRCS_ANDROID = struct(
     include = [
@@ -327,9 +336,13 @@ PORTS_SRCS_ANDROID = struct(
 
 GL_SRCS_IOS = struct(
     include = [
+        "src/gpu/gl/*",
+        "src/gpu/gl/builders/*",
         "src/gpu/gl/iOS/GrGLMakeNativeInterface_iOS.cpp",
     ],
-    exclude = [],
+    exclude = [
+        "src/gpu/gl/GrGLMakeNativeInterface_none.cpp",
+    ],
 )
 PORTS_SRCS_IOS = struct(
     include = [
@@ -362,10 +375,14 @@ PORTS_SRCS_IOS = struct(
 
 GL_SRCS_WASM = struct(
     include = [
+        "src/gpu/gl/*",
+        "src/gpu/gl/builders/*",
         "src/gpu/gl/GrGLMakeNativeInterface_egl.cpp",
         "src/gpu/gl/egl/GrGLMakeNativeInterface_egl.cpp",
     ],
-    exclude = [],
+    exclude = [
+        "src/gpu/gl/GrGLMakeNativeInterface_none.cpp",
+    ],
 )
 PORTS_SRCS_WASM = struct(
     include = [
@@ -403,7 +420,7 @@ PORTS_SRCS_WASM = struct(
 
 GL_SRCS_FUCHSIA = struct(
     include = [
-        "src/gpu/gl/GrGLMakeNativeInterface_none.cpp",
+        "src/gpu/vk/*",
     ],
     exclude = [],
 )
@@ -439,6 +456,18 @@ PORTS_SRCS_FUCHSIA = struct(
     ],
 )
 
+GL_SRCS_MACOS = struct(
+    include = [
+        "src/gpu/gl/*",
+        "src/gpu/gl/builders/*",
+        "src/gpu/gl/mac/GrGLMakeNativeInterface_mac.cpp",
+    ],
+    exclude = [
+        "src/gpu/gl/GrGLMakeNativeInterface_none.cpp",
+    ],
+)
+PORTS_SRCS_MACOS = PORTS_SRCS_IOS
+
 def base_srcs():
     return skia_glob(BASE_SRCS_ALL)
 
@@ -451,6 +480,7 @@ def ports_srcs(os_conditions):
             skia_glob(PORTS_SRCS_IOS),
             skia_glob(PORTS_SRCS_WASM),
             skia_glob(PORTS_SRCS_FUCHSIA),
+            skia_glob(PORTS_SRCS_MACOS),
         ],
     )
 
@@ -463,6 +493,7 @@ def gl_srcs(os_conditions):
             skia_glob(GL_SRCS_IOS),
             skia_glob(GL_SRCS_WASM),
             skia_glob(GL_SRCS_FUCHSIA),
+            skia_glob(GL_SRCS_MACOS),
         ],
     )
 
@@ -628,6 +659,7 @@ def dm_srcs(os_conditions):
             [],  # iOS
             [],  # WASM
             [],  # Fuchsia
+            [],  # macOS
         ],
     )
 
@@ -668,6 +700,7 @@ def base_copts(os_conditions):
             [],  # iOS
             [],  # wasm
             [],  # Fuchsia
+            [],  # macOS
         ],
     )
 
@@ -707,6 +740,7 @@ def base_defines(os_conditions):
                 "SK_ENCODE_PNG",
                 "SK_ENCODE_WEBP",
                 "SK_R32_SHIFT=16",
+                "SK_GL",
             ],
             # ANDROID
             [
@@ -715,6 +749,7 @@ def base_defines(os_conditions):
                 "SK_CODEC_DECODES_WEBP",
                 "SK_ENCODE_PNG",
                 "SK_ENCODE_WEBP",
+                "SK_GL",
             ],
             # IOS
             [
@@ -722,11 +757,13 @@ def base_defines(os_conditions):
                 "SK_BUILD_NO_OPTS",
                 "SKNX_NO_SIMD",
                 "SK_NO_COMMAND_BUFFER",  # Test tools that use thread_local.
+                "SK_GL",
             ],
             # WASM
             [
                 "SK_DISABLE_LEGACY_SHADERCONTEXT",
                 "SK_DISABLE_TRACING",
+                "SK_GL",
                 "GR_GL_CHECK_ALLOC_WITH_GET_ERROR=0",
                 "SK_SUPPORT_GPU=1",
                 "SK_DISABLE_AAA",
@@ -742,6 +779,13 @@ def base_defines(os_conditions):
                 "SK_ENCODE_PNG",
                 "SK_ENCODE_WEBP",
                 "SK_R32_SHIFT=16",
+                "SK_VULKAN",
+            ],
+            # MACOS
+            [
+                "SK_BUILD_FOR_MAC",
+                "SK_BUILD_NO_OPTS",
+                "SK_GL",
             ],
         ],
     )
@@ -772,6 +816,14 @@ def base_linkopts(os_conditions):
             ],
             [],  # wasm
             [],  # Fuchsia
+            # MACOS
+            [
+                "-framework CoreFoundation",
+                "-framework CoreGraphics",
+                "-framework CoreText",
+                "-framework ImageIO",
+                "-framework ApplicationServices",
+            ],
         ],
     )
 
@@ -848,6 +900,18 @@ def skottie_lib_srcs():
     )
 
 ################################################################################
+## skottie_utils
+################################################################################
+
+SKOTTIE_UTILS_HDRS = [
+    "modules/skottie/utils/SkottieUtils.h",
+]
+
+SKOTTIE_UTILS_SRCS = [
+    "modules/skottie/utils/SkottieUtils.cpp",
+]
+
+################################################################################
 ## skottie_shaper
 ################################################################################
 
@@ -881,6 +945,8 @@ SKSHAPER_HARFBUZZ_SRCS = [
     "modules/skshaper/src/SkShaper.cpp",
     "modules/skshaper/src/SkShaper_harfbuzz.cpp",
     "modules/skshaper/src/SkShaper_primitive.cpp",
+    "modules/skshaper/src/SkUnicode.h",
+    "modules/skshaper/src/SkUnicode_icu.cpp",
 ]
 
 SKSHAPER_PRIMITIVE_SRCS = [

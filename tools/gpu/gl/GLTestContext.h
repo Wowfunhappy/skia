@@ -33,10 +33,6 @@ public:
 
     virtual void destroyEGLImage(GrEGLImage) const { }
 
-    /** Used for testing GL_TEXTURE_RECTANGLE integration. */
-    GrGLuint createTextureRectangle(int width, int height, GrGLenum internalFormat,
-                                    GrGLenum externalFormat, GrGLenum externalType, GrGLvoid* data);
-
     /**
      * Used for testing EGLImage integration. Takes a EGLImage and wraps it in a
      * GL_TEXTURE_EXTERNAL_OES.
@@ -70,7 +66,7 @@ public:
         }
     }
 
-    sk_sp<GrContext> makeGrContext(const GrContextOptions& options) override;
+    sk_sp<GrDirectContext> makeContext(const GrContextOptions& options) override;
 
 protected:
     GLTestContext();

@@ -9,7 +9,6 @@
 #define SKSL_EXPRESSION
 
 #include "src/sksl/ir/SkSLType.h"
-#include "src/sksl/ir/SkSLVariable.h"
 
 #include <unordered_map>
 
@@ -17,6 +16,7 @@ namespace SkSL {
 
 struct Expression;
 class IRGenerator;
+struct Variable;
 
 typedef std::unordered_map<const Variable*, std::unique_ptr<Expression>*> DefinitionMap;
 
@@ -61,7 +61,7 @@ struct Expression : public IRNode {
      * Returns true if this expression is constant. compareConstant must be implemented for all
      * constants!
      */
-    virtual bool isConstant() const {
+    virtual bool isCompileTimeConstant() const {
         return false;
     }
 
@@ -95,8 +95,8 @@ struct Expression : public IRNode {
      * same result with no side effects.
      */
     virtual bool isConstantOrUniform() const {
-        SkASSERT(!this->isConstant() || !this->hasSideEffects());
-        return this->isConstant();
+        SkASSERT(!this->isCompileTimeConstant() || !this->hasSideEffects());
+        return this->isCompileTimeConstant();
     }
 
     virtual bool hasProperty(Property property) const = 0;

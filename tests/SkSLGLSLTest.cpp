@@ -106,21 +106,21 @@ DEF_TEST(SkSLFunctions, r) {
          "out vec4 sk_FragColor;\n"
          "void main() {\n"
          "    float x = 10.0;\n"
-         "    float inlineArg161_0 = x;\n"
+         "    float _inlineArgvoidbarfloat2_0 = x;\n"
          "    {\n"
          "        float y[2], z;\n"
-         "        y[0] = inlineArg161_0;\n"
-         "        y[1] = inlineArg161_0 * 2.0;\n"
-         "        float inlineResult117;\n"
-         "        float[2] inlineArg117_0 = y;\n"
+         "        y[0] = _inlineArgvoidbarfloat2_0;\n"
+         "        y[1] = _inlineArgvoidbarfloat2_0 * 2.0;\n"
+         "        float _inlineResultfloatfoofloat20;\n"
+         "        float[2] _inlineArgfloatfoofloat21_0 = y;\n"
          "        {\n"
-         "            inlineResult117 = inlineArg117_0[0] * inlineArg117_0[1];\n"
+         "            _inlineResultfloatfoofloat20 = _inlineArgfloatfoofloat21_0[0] * _inlineArgfloatfoofloat21_0[1];\n"
          "        }\n"
-         "        z = inlineResult117;\n"
+         "        z = _inlineResultfloatfoofloat20;\n"
          "\n"
-         "        inlineArg161_0 = z;\n"
+         "        _inlineArgvoidbarfloat2_0 = z;\n"
          "    }\n"
-         "    x = inlineArg161_0;\n"
+         "    x = _inlineArgvoidbarfloat2_0;\n"
          "\n"
          "    sk_FragColor = vec4(x);\n"
          "}\n");
@@ -1654,7 +1654,9 @@ DEF_TEST(SkSLSwitch, r) {
          "out vec4 sk_FragColor;\n"
          "void main() {\n"
          "    {\n"
-         "        sk_FragColor = vec4(0.0);\n"
+         "        {\n"
+         "            sk_FragColor = vec4(0.0);\n"
+         "        }\n"
          "    }\n"
          "}\n");
     // static test w/ static conditional break in a block
@@ -1674,7 +1676,9 @@ DEF_TEST(SkSLSwitch, r) {
          "out vec4 sk_FragColor;\n"
          "void main() {\n"
          "    {\n"
-         "        sk_FragColor = vec4(0.0);\n"
+         "        {\n"
+         "            sk_FragColor = vec4(0.0);\n"
+         "        }\n"
          "    }\n"
          "}\n");
     // static test w/ non-static conditional break in a block
@@ -2540,5 +2544,26 @@ DEF_TEST(SkSLNegatedVectorLiteral, r) {
          "out vec4 sk_FragColor;\n"
          "void main() {\n"
          "    sk_FragColor = vec4(0.0, 1.0, 0.0, 1.0);\n"
+         "}\n");
+}
+
+DEF_TEST(SkSLDiscard, r) {
+    test(r,
+         "void main() {"
+         "half x;"
+         "    @switch (1) {"
+         "       case 0: x = 0; break;"
+         "       default: x = 1; discard;"
+         "    }"
+         "    sk_FragColor = half4(x);"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "void main() {\n"
+         "    float x;\n"
+         "    {\n"
+         "        x = 1.0;\n"
+         "        discard;\n"
+         "    }\n"
          "}\n");
 }

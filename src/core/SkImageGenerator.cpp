@@ -10,10 +10,25 @@
 #include "include/core/SkYUVAIndex.h"
 #include "src/core/SkNextID.h"
 
+#if SK_SUPPORT_GPU
+#include "include/gpu/GrDirectContext.h"
+#endif
+
 SkImageGenerator::SkImageGenerator(const SkImageInfo& info, uint32_t uniqueID)
     : fInfo(info)
     , fUniqueID(kNeedNewImageUniqueID == uniqueID ? SkNextID::ImageID() : uniqueID)
 {}
+
+bool SkImageGenerator::isValid(GrContext* context) const {
+#if SK_SUPPORT_GPU
+    return this->isValid(static_cast<GrRecordingContext*>(context));
+#else
+    if (context) {
+        return false;
+    }
+    return this->isValid(static_cast<GrRecordingContext*>(nullptr));
+#endif
+}
 
 bool SkImageGenerator::getPixels(const SkImageInfo& info, void* pixels, size_t rowBytes) {
     if (kUnknown_SkColorType == info.colorType()) {
@@ -64,7 +79,7 @@ bool SkImageGenerator::getYUVA8Planes(const SkYUVASizeInfo& sizeInfo,
 GrSurfaceProxyView SkImageGenerator::generateTexture(GrRecordingContext* ctx,
                                                      const SkImageInfo& info,
                                                      const SkIPoint& origin,
-                                                     GrMipMapped mipMapped,
+                                                     GrMipmapped mipMapped,
                                                      GrImageTexGenPolicy texGenPolicy) {
     SkIRect srcRect = SkIRect::MakeXYWH(origin.x(), origin.y(), info.width(), info.height());
     if (!SkIRect::MakeWH(fInfo.width(), fInfo.height()).contains(srcRect)) {
@@ -76,7 +91,7 @@ GrSurfaceProxyView SkImageGenerator::generateTexture(GrRecordingContext* ctx,
 GrSurfaceProxyView SkImageGenerator::onGenerateTexture(GrRecordingContext*,
                                                        const SkImageInfo&,
                                                        const SkIPoint&,
-                                                       GrMipMapped,
+                                                       GrMipmapped,
                                                        GrImageTexGenPolicy) {
     return {};
 }

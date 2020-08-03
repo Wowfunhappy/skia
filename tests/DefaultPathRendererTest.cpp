@@ -17,8 +17,8 @@
 #include "include/core/SkSurface.h"
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrContext.h"
 #include "include/gpu/GrContextOptions.h"
+#include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
 #include "include/private/GrTypesPriv.h"
 #include "include/private/SkColorData.h"
@@ -74,7 +74,7 @@ static const int kPad = 3;
 // When the bug manifests the GrDefaultPathRenderer/GrMSAAPathRenderer is/was leaving the stencil
 // buffer outside of the first content rect in a bad state and the second draw would be incorrect.
 
-static void run_test(GrContext* ctx, skiatest::Reporter* reporter) {
+static void run_test(GrRecordingContext* rContext, skiatest::Reporter* reporter) {
     SkPath invPath = make_path(SkRect::MakeXYWH(0, 0, kBigSize, kBigSize),
                                kBigSize/2-1, SkPathFillType::kInverseWinding);
     SkPath path = make_path(SkRect::MakeXYWH(0, 0, kBigSize, kBigSize),
@@ -84,7 +84,7 @@ static void run_test(GrContext* ctx, skiatest::Reporter* reporter) {
 
     {
         auto rtc = GrRenderTargetContext::Make(
-            ctx, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox,
+            rContext, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kApprox,
             {kBigSize/2 + 1, kBigSize/2 + 1});
 
         rtc->clear(SK_PMColor4fBLACK);
@@ -92,8 +92,8 @@ static void run_test(GrContext* ctx, skiatest::Reporter* reporter) {
         GrPaint paint;
 
         const SkPMColor4f color = { 1.0f, 0.0f, 0.0f, 1.0f };
-        auto fp = GrConstColorProcessor::Make(color, GrConstColorProcessor::InputMode::kIgnore);
-        paint.addColorFragmentProcessor(std::move(fp));
+        auto fp = GrConstColorProcessor::Make(color);
+        paint.setColorFragmentProcessor(std::move(fp));
 
         rtc->drawPath(nullptr, std::move(paint), GrAA::kNo,
                       SkMatrix::I(), invPath, style);
@@ -103,15 +103,15 @@ static void run_test(GrContext* ctx, skiatest::Reporter* reporter) {
 
     {
         auto rtc = GrRenderTargetContext::Make(
-            ctx, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact, {kBigSize, kBigSize});
+            rContext, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact, {kBigSize, kBigSize});
 
         rtc->clear(SK_PMColor4fBLACK);
 
         GrPaint paint;
 
         const SkPMColor4f color = { 0.0f, 1.0f, 0.0f, 1.0f };
-        auto fp = GrConstColorProcessor::Make(color, GrConstColorProcessor::InputMode::kIgnore);
-        paint.addColorFragmentProcessor(std::move(fp));
+        auto fp = GrConstColorProcessor::Make(color);
+        paint.setColorFragmentProcessor(std::move(fp));
 
         rtc->drawPath(nullptr, std::move(paint), GrAA::kNo,
                       SkMatrix::I(), path, style);
@@ -126,13 +126,12 @@ static void run_test(GrContext* ctx, skiatest::Reporter* reporter) {
             }
         }
     }
-
 }
 
 DEF_GPUTEST_FOR_CONTEXTS(GrDefaultPathRendererTest,
                          sk_gpu_test::GrContextFactory::IsRenderingContext,
                          reporter, ctxInfo, only_allow_default) {
-    GrContext* ctx = ctxInfo.grContext();
+    auto ctx = ctxInfo.directContext();
 
     run_test(ctx, reporter);
 }

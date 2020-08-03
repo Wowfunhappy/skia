@@ -358,8 +358,8 @@ public:
     const std::unique_ptr<Type> fSkArgs_Type;
     const std::unique_ptr<Type> fFragmentProcessor_Type;
 
-    // dummy expression used to mark that a variable has a value during dataflow analysis (when it
-    // could have several different values, or the analyzer is otherwise unable to assign it a
+    // sentinel expression used to mark that a variable has a value during dataflow analysis (when
+    // it could have several different values, or the analyzer is otherwise unable to assign it a
     // specific expression)
     const std::unique_ptr<Expression> fDefined_Expression;
 
@@ -395,7 +395,6 @@ private:
         Modifiers mods(Layout(), Modifiers::kConst_Flag);
         std::vector<Type::Field> fields = {
             Type::Field(mods, "numTextureSamplers", intType),
-            Type::Field(mods, "numCoordTransforms", intType),
             Type::Field(mods, "numChildProcessors", intType),
             Type::Field(mods, "usesLocalCoords", boolType),
             Type::Field(mods, "compatibleWithCoverageAsAlpha", boolType),

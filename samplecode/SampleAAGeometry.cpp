@@ -541,9 +541,7 @@ struct BiControl : public UniControl {
         ,  fValHi(fMax) {
     }
 
-    virtual ~BiControl() {}
-
-    virtual void draw(SkCanvas* canvas, const ControlPaints& paints) {
+    void draw(SkCanvas* canvas, const ControlPaints& paints) override {
         UniControl::draw(canvas, paints);
         if (!fVisible || fValHi == fValLo) {
             return;
@@ -1315,7 +1313,6 @@ public:
 
     static uint8_t* set_up_dist_map(const SkImageInfo& imageInfo, SkBitmap* distMap) {
         distMap->setInfo(imageInfo);
-        distMap->setIsVolatile(true);
         SkAssertResult(distMap->tryAllocPixels());
         SkASSERT((int) distMap->rowBytes() == imageInfo.width());
         return distMap->getAddr8(0, 0);

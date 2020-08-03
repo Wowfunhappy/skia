@@ -15,13 +15,12 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTypes.h"
-#include "include/gpu/GrContext.h"
 #include "include/gpu/GrContextOptions.h"
+#include "include/gpu/GrDirectContext.h"
 #include "include/private/GrTypesPriv.h"
 #include "include/private/SkColorData.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/gpu/GrColor.h"
-#include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrRenderTargetContext.h"
 #include "tests/Test.h"
@@ -60,12 +59,12 @@ static bool check_rect(GrRenderTargetContext* rtc, const SkIRect& rect, uint32_t
     return true;
 }
 
-std::unique_ptr<GrRenderTargetContext> newRTC(GrContext* context, int w, int h) {
+std::unique_ptr<GrRenderTargetContext> newRTC(GrRecordingContext* rContext, int w, int h) {
     return GrRenderTargetContext::Make(
-            context, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact, {w, h});
+            rContext, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact, {w, h});
 }
 
-static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
+static void clear_op_test(skiatest::Reporter* reporter, GrRecordingContext* rContext) {
     static const int kW = 10;
     static const int kH = 10;
 
@@ -96,7 +95,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
     static const SkPMColor4f kColor1f = SkPMColor4f::FromBytes_RGBA(kColor1);
     static const SkPMColor4f kColor2f = SkPMColor4f::FromBytes_RGBA(kColor2);
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Check a full clear
@@ -106,7 +105,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Check two full clears, same color
@@ -117,7 +116,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Check two full clears, different colors
@@ -128,7 +127,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Test a full clear followed by a same color inset clear
@@ -139,7 +138,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Test a inset clear followed by same color full clear
@@ -150,7 +149,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Test a full clear followed by a different color inset clear
@@ -168,7 +167,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Test a inset clear followed by a different full clear
@@ -179,7 +178,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Check three nested clears from largest to smallest where outermost and innermost are same
@@ -206,7 +205,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
                failX, failY);
     }
 
-    rtContext = newRTC(context, kW, kH);
+    rtContext = newRTC(rContext, kW, kH);
     SkASSERT(rtContext);
 
     // Swap the order of the second two clears in the above test.
@@ -228,7 +227,7 @@ static void clear_op_test(skiatest::Reporter* reporter, GrContext* context) {
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ClearOp, reporter, ctxInfo) {
     // Regular clear
-    clear_op_test(reporter, ctxInfo.grContext());
+    clear_op_test(reporter, ctxInfo.directContext());
 
     // Force drawing for clears
     GrContextOptions options(ctxInfo.options());
@@ -237,10 +236,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ClearOp, reporter, ctxInfo) {
     clear_op_test(reporter, workaroundFactory.get(ctxInfo.type()));
 }
 
-void fullscreen_clear_with_layer_test(skiatest::Reporter* reporter, GrContext* context) {
+void fullscreen_clear_with_layer_test(skiatest::Reporter* reporter, GrRecordingContext* rContext) {
     const SkImageInfo ii = SkImageInfo::Make(400, 77, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
 
-    sk_sp<SkSurface> surf = SkSurface::MakeRenderTarget(context, SkBudgeted::kYes, ii);
+    sk_sp<SkSurface> surf = SkSurface::MakeRenderTarget(rContext, SkBudgeted::kYes, ii);
     SkCanvas* canvas = surf->getCanvas();
 
     SkPaint paints[2];
@@ -294,7 +293,7 @@ void fullscreen_clear_with_layer_test(skiatest::Reporter* reporter, GrContext* c
 // From crbug.com/768134
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(FullScreenClearWithLayers, reporter, ctxInfo) {
     // Regular clear
-    fullscreen_clear_with_layer_test(reporter, ctxInfo.grContext());
+    fullscreen_clear_with_layer_test(reporter, ctxInfo.directContext());
 
     // Use draws for clears
     GrContextOptions options(ctxInfo.options());

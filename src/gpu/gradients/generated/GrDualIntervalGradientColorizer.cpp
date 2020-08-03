@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrDualIntervalGradientColorizer.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -45,10 +46,18 @@ public:
         thresholdVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag,
                                                         kHalf_GrSLType, "threshold");
         fragBuilder->codeAppendf(
-                "half t = %s.x;\nfloat4 scale, bias;\nif (t < %s) {\n    scale = %s;\n    bias = "
-                "%s;\n} else {\n    scale = %s;\n    bias = %s;\n}\n%s = half4(float(t) * scale + "
-                "bias);\n",
-                args.fInputColor, args.fUniformHandler->getUniformCStr(thresholdVar),
+                R"SkSL(half t = half(%s.x);
+float4 scale, bias;
+if (t < %s) {
+    scale = %s;
+    bias = %s;
+} else {
+    scale = %s;
+    bias = %s;
+}
+%s = half4(float(t) * scale + bias);
+)SkSL",
+                args.fSampleCoord, args.fUniformHandler->getUniformCStr(thresholdVar),
                 args.fUniformHandler->getUniformCStr(scale01Var),
                 args.fUniformHandler->getUniformCStr(bias01Var),
                 args.fUniformHandler->getUniformCStr(scale23Var),
@@ -121,7 +130,10 @@ GrDualIntervalGradientColorizer::GrDualIntervalGradientColorizer(
         , bias01(src.bias01)
         , scale23(src.scale23)
         , bias23(src.bias23)
-        , threshold(src.threshold) {}
+        , threshold(src.threshold) {
+    this->cloneAndRegisterAllChildProcessors(src);
+    this->setUsesSampleCoordsDirectly();
+}
 std::unique_ptr<GrFragmentProcessor> GrDualIntervalGradientColorizer::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrDualIntervalGradientColorizer(*this));
 }

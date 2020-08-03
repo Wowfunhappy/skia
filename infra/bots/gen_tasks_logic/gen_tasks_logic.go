@@ -220,6 +220,7 @@ type Config struct {
 	Project string `json:"project"`
 
 	// Service accounts.
+	ServiceAccountCanary       string `json:"service_account_canary"`
 	ServiceAccountCompile      string `json:"service_account_compile"`
 	ServiceAccountHousekeeper  string `json:"service_account_housekeeper"`
 	ServiceAccountRecreateSKPs string `json:"service_account_recreate_skps"`
@@ -391,10 +392,7 @@ func (b *taskBuilder) kitchenTaskNoBundle(recipe string, outputDir string) {
 	}
 
 	// Attempts.
-	if b.extraConfig("Framework") && b.extraConfig("Android", "G3") {
-		// Both bots can be long running. No need to retry them.
-		b.attempts(1)
-	} else if !b.role("Build", "Upload") && b.extraConfig("ASAN", "MSAN", "TSAN", "Valgrind") {
+	if !b.role("Build", "Upload") && b.extraConfig("ASAN", "MSAN", "TSAN", "Valgrind") {
 		// Sanitizers often find non-deterministic issues that retries would hide.
 		b.attempts(1)
 	} else {
@@ -441,9 +439,10 @@ func (b *jobBuilder) deriveCompileTaskName() string {
 			ignore := []string{
 				"Skpbench", "AbandonGpuContext", "PreAbandonGpuContext", "Valgrind",
 				"ReleaseAndAbandonGpuContext", "CCPR", "FSAA", "FAAA", "FDAA", "NativeFonts", "GDI",
-				"NoGPUThreads", "ProcDump", "DDL1", "DDL3", "T8888", "DDLTotal", "DDLRecord", "9x9",
-				"BonusConfigs", "SkottieTracing", "SkottieWASM", "GpuTess", "NonNVPR", "Mskp",
-				"Docker", "PDF", "SkVM", "Puppeteer", "SkottieFrames", "RenderSKP"}
+				"NoGPUThreads", "ProcDump", "DDL1", "DDL3", "OOPRDDL", "T8888",
+				"DDLTotal", "DDLRecord", "9x9", "BonusConfigs", "SkottieTracing", "SkottieWASM",
+				"GpuTess", "NonNVPR", "Mskp", "Docker", "PDF", "SkVM", "Puppeteer",
+				"SkottieFrames", "RenderSKP", "CanvasPerf"}
 			keep := make([]string, 0, len(ec))
 			for _, part := range ec {
 				if !In(part, ignore) {
@@ -467,6 +466,10 @@ func (b *jobBuilder) deriveCompileTaskName() string {
 		} else if b.os("iOS") {
 			ec = append([]string{task_os}, ec...)
 			task_os = "Mac"
+			// iPhone11 requires xcode 11.4.1 which requires >10.15.2.
+			if b.parts["model"] == "iPhone11" {
+				task_os = "Mac10.15.5"
+			}
 		} else if b.matchOs("Win") {
 			task_os = "Win"
 		} else if b.compiler("GCC") {
@@ -530,21 +533,22 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 	}
 	if os, ok := b.parts["os"]; ok {
 		d["os"], ok = map[string]string{
-			"Android":  "Android",
-			"ChromeOS": "ChromeOS",
-			"Debian9":  DEFAULT_OS_LINUX_GCE, // Runs in Deb9 Docker.
-			"Debian10": DEFAULT_OS_LINUX_GCE,
-			"Mac":      DEFAULT_OS_MAC,
-			"Mac10.13": "Mac-10.13.6",
-			"Mac10.14": "Mac-10.14.3",
-			"Mac10.15": "Mac-10.15.1",
-			"Ubuntu18": "Ubuntu-18.04",
-			"Win":      DEFAULT_OS_WIN,
-			"Win10":    "Windows-10-18363",
-			"Win2019":  DEFAULT_OS_WIN,
-			"Win7":     "Windows-7-SP1",
-			"Win8":     "Windows-8.1-SP0",
-			"iOS":      "iOS-13.3.1",
+			"Android":    "Android",
+			"ChromeOS":   "ChromeOS",
+			"Debian9":    DEFAULT_OS_LINUX_GCE, // Runs in Deb9 Docker.
+			"Debian10":   DEFAULT_OS_LINUX_GCE,
+			"Mac":        DEFAULT_OS_MAC,
+			"Mac10.13":   "Mac-10.13.6",
+			"Mac10.14":   "Mac-10.14.3",
+			"Mac10.15":   "Mac-10.15.1",
+			"Mac10.15.5": "Mac-10.15.5", // We have some builders at 10.15.5 to run Xcode 11.4.1
+			"Ubuntu18":   "Ubuntu-18.04",
+			"Win":        DEFAULT_OS_WIN,
+			"Win10":      "Windows-10-18363",
+			"Win2019":    DEFAULT_OS_WIN,
+			"Win7":       "Windows-7-SP1",
+			"Win8":       "Windows-8.1-SP0",
+			"iOS":        "iOS-13.3.1",
 		}[os]
 		if !ok {
 			log.Fatalf("Entry %q not found in OS mapping.", os)
@@ -564,6 +568,9 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 		if b.parts["model"] == "iPhone6" {
 			// This is the latest iOS that supports iPhone6.
 			d["os"] = "iOS-12.4.5"
+		}
+		if b.parts["model"] == "iPhone11" {
+			d["os"] = "iOS-13.6"
 		}
 	} else {
 		d["os"] = DEFAULT_OS_DEBIAN
@@ -588,7 +595,7 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 				"Pixel2XL":        {"taimen", "PPR1.180610.009"},
 				"Pixel3":          {"blueline", "PQ1A.190105.004"},
 				"Pixel3a":         {"sargo", "QP1A.190711.020"},
-				"Pixel4":          {"flame", "QD1A.190821.011.C4"},
+				"Pixel4":          {"flame", "RPB2.200611.009"}, // R Preview
 				"Pixel4XL":        {"coral", "QD1A.190821.011.C4"},
 				"TecnoSpark3Pro":  {"TECNO-KB8", "PPR1.180610.011"},
 			}[b.parts["model"]]
@@ -985,6 +992,12 @@ func (b *taskBuilder) maybeAddIosDevImage() {
 				asset = "ios-dev-image-12.4"
 			case "13.3.1":
 				asset = "ios-dev-image-13.3"
+			case "13.4.1":
+				asset = "ios-dev-image-13.4"
+			case "13.5.1":
+				asset = "ios-dev-image-13.5"
+			case "13.6":
+				asset = "ios-dev-image-13.6"
 			default:
 				log.Fatalf("Unable to determine correct ios-dev-image asset for %s. If %s is a new iOS release, you must add a CIPD package containing the corresponding iOS dev image; see ios-dev-image-11.4 for an example.", b.Name, m[1])
 			}
@@ -1119,6 +1132,23 @@ func (b *jobBuilder) checkGeneratedFiles() {
 	})
 }
 
+// checkGnToBp verifies that the gn_to_bp.py script continues to work.
+func (b *jobBuilder) checkGnToBp() {
+	b.addTask(b.Name, func(b *taskBuilder) {
+		b.isolate("compile.isolate")
+		b.dep(b.buildTaskDrivers())
+		b.cmd("./run_gn_to_bp",
+			"--local=false",
+			"--project_id", "skia-swarming-bots",
+			"--task_id", specs.PLACEHOLDER_TASK_ID,
+			"--task_name", b.Name,
+			"--alsologtostderr")
+		b.linuxGceDimensions(MACHINE_TYPE_SMALL)
+		b.usesPython()
+		b.serviceAccount(b.cfg.ServiceAccountHousekeeper)
+	})
+}
+
 // housekeeper generates a Housekeeper task.
 func (b *jobBuilder) housekeeper() {
 	b.addTask(b.Name, func(b *taskBuilder) {
@@ -1131,33 +1161,29 @@ func (b *jobBuilder) housekeeper() {
 	})
 }
 
-// androidFrameworkCompile generates an Android Framework Compile task. Returns
+// g3FrameworkCanary generates a G3 Framework Canary task. Returns
 // the name of the last task in the generated chain of tasks, which the Job
 // should add as a dependency.
-func (b *jobBuilder) androidFrameworkCompile() {
+func (b *jobBuilder) g3FrameworkCanary() {
 	b.addTask(b.Name, func(b *taskBuilder) {
-		b.recipeProps(EXTRA_PROPS)
-		b.kitchenTask("android_compile", OUTPUT_NONE)
-		b.isolate("compile_android_framework.isolate")
-		b.serviceAccount("skia-android-framework-compile@skia-swarming-bots.iam.gserviceaccount.com")
+		b.isolate("empty.isolate")
+		b.dep(b.buildTaskDrivers())
+		b.cmd("./g3_canary",
+			"--local=false",
+			"--project_id", "skia-swarming-bots",
+			"--task_id", specs.PLACEHOLDER_TASK_ID,
+			"--task_name", b.Name,
+			"--repo", specs.PLACEHOLDER_REPO,
+			"--revision", specs.PLACEHOLDER_REVISION,
+			"--patch_issue", specs.PLACEHOLDER_ISSUE,
+			"--patch_set", specs.PLACEHOLDER_PATCHSET,
+			"--patch_server", specs.PLACEHOLDER_CODEREVIEW_SERVER,
+			"--alsologtostderr")
 		b.linuxGceDimensions(MACHINE_TYPE_SMALL)
-		b.timeout(2 * time.Hour)
-		b.usesGit()
-	})
-}
-
-// g3FrameworkCompile generates a G3 Framework Compile task. Returns
-// the name of the last task in the generated chain of tasks, which the Job
-// should add as a dependency.
-func (b *jobBuilder) g3FrameworkCompile() {
-	b.addTask(b.Name, func(b *taskBuilder) {
-		b.recipeProps(EXTRA_PROPS)
-		b.kitchenTask("g3_compile", OUTPUT_NONE)
-		b.isolate("compile_g3_framework.isolate")
+		b.cipd(CIPD_PKG_LUCI_AUTH)
 		b.serviceAccount("skia-g3-framework-compile@skia-swarming-bots.iam.gserviceaccount.com")
-		b.linuxGceDimensions(MACHINE_TYPE_SMALL)
 		b.timeout(3 * time.Hour)
-		b.usesGit()
+		b.attempts(1)
 	})
 }
 
@@ -1302,7 +1328,11 @@ func (b *jobBuilder) dm() {
 			isolate = "canvaskit.isolate"
 			recipe = "test_canvaskit"
 		} else if b.extraConfig("LottieWeb") {
-			isolate = "lottie_web.isolate"
+			// lottie_ci.isolate differs from lottie_web.isolate in that it includes more of the files,
+			// especially those brought in via DEPS in the lottie-ci repo. The main difference between
+			// Perf.+LottieWeb and Test.+LottieWeb is that the former pulls in the lottie build via
+			// npm and the latter always tests at lottie's ToT.
+			isolate = "lottie_ci.isolate"
 			recipe = "test_lottie_web"
 		}
 		b.recipeProp("gold_hashes_url", b.cfg.GoldHashesURL)
@@ -1395,6 +1425,32 @@ func (b *jobBuilder) fm() {
 	})
 }
 
+// canary generates a task that uses TaskDrivers to trigger canary manual rolls on autorollers.
+// Canary-G3 does not use this path because it is very different from other autorollers.
+func (b *jobBuilder) canary(rollerName string) {
+	b.addTask(b.Name, func(b *taskBuilder) {
+		b.isolate("empty.isolate")
+		b.dep(b.buildTaskDrivers())
+		b.cmd("./canary",
+			"--local=false",
+			"--project_id", "skia-swarming-bots",
+			"--task_id", specs.PLACEHOLDER_TASK_ID,
+			"--task_name", b.Name,
+			"--roller_name", rollerName,
+			"--repo", specs.PLACEHOLDER_REPO,
+			"--revision", specs.PLACEHOLDER_REVISION,
+			"--patch_issue", specs.PLACEHOLDER_ISSUE,
+			"--patch_set", specs.PLACEHOLDER_PATCHSET,
+			"--patch_server", specs.PLACEHOLDER_CODEREVIEW_SERVER,
+			"--alsologtostderr")
+		b.linuxGceDimensions(MACHINE_TYPE_SMALL)
+		b.cipd(CIPD_PKG_LUCI_AUTH)
+		b.serviceAccount(b.cfg.ServiceAccountCanary)
+		b.timeout(3 * time.Hour)
+		b.attempts(1)
+	})
+}
+
 // puppeteer generates a task that uses TaskDrivers combined with a node script and puppeteer to
 // benchmark something using Chromium (e.g. CanvasKit, LottieWeb).
 func (b *jobBuilder) puppeteer() {
@@ -1408,6 +1464,11 @@ func (b *jobBuilder) puppeteer() {
 		b.timeout(20 * time.Minute)
 		b.isolate("perf_puppeteer.isolate")
 		b.serviceAccount(b.cfg.ServiceAccountCompile)
+
+		webglversion := "2"
+		if b.extraConfig("WebGL1") {
+			webglversion = "1"
+		}
 
 		if b.extraConfig("SkottieFrames") {
 			b.cmd(
@@ -1425,6 +1486,7 @@ func (b *jobBuilder) puppeteer() {
 				"--model_trace", b.parts["model"],
 				"--cpu_or_gpu_trace", b.parts["cpu_or_gpu"],
 				"--cpu_or_gpu_value_trace", b.parts["cpu_or_gpu_value"],
+				"--webgl_version", webglversion, // ignore when running with cpu backend
 				"--alsologtostderr",
 			)
 			// This CIPD package was made by hand with the following invocation:
@@ -1454,6 +1516,26 @@ func (b *jobBuilder) puppeteer() {
 				"--model_trace", b.parts["model"],
 				"--cpu_or_gpu_trace", b.parts["cpu_or_gpu"],
 				"--cpu_or_gpu_value_trace", b.parts["cpu_or_gpu_value"],
+				"--webgl_version", webglversion,
+				"--alsologtostderr",
+			)
+			b.asset("skp")
+		} else if b.extraConfig("CanvasPerf") { // refers to the canvas_perf.js test suite
+			b.cmd(
+				"./perf_puppeteer_canvas",
+				"--project_id", "skia-swarming-bots",
+				"--git_hash", specs.PLACEHOLDER_REVISION,
+				"--task_id", specs.PLACEHOLDER_TASK_ID,
+				"--task_name", b.Name,
+				"--canvaskit_bin_path", "./build",
+				"--node_bin_path", "./node/node/bin",
+				"--benchmark_path", "./tools/perf-canvaskit-puppeteer",
+				"--output_path", OUTPUT_PERF,
+				"--os_trace", b.parts["os"],
+				"--model_trace", b.parts["model"],
+				"--cpu_or_gpu_trace", b.parts["cpu_or_gpu"],
+				"--cpu_or_gpu_value_trace", b.parts["cpu_or_gpu_value"],
+				"--webgl_version", webglversion,
 				"--alsologtostderr",
 			)
 			b.asset("skp")

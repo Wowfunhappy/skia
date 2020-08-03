@@ -67,7 +67,7 @@
 #include "include/gpu/gl/GrGLInterface.h"
 #include "include/gpu/gl/GrGLTypes.h"
 
-#include <GL/gl.h>
+#include <GLES3/gl3.h>
 #include <emscripten/html5.h>
 #endif
 
@@ -151,24 +151,28 @@ sk_sp<GrContext> MakeGrContext(EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context)
 }
 
 sk_sp<SkSurface> MakeOnScreenGLSurface(sk_sp<GrContext> grContext, int width, int height,
-    sk_sp<SkColorSpace> colorSpace) {
+                                       sk_sp<SkColorSpace> colorSpace) {
+    // WebGL should already be clearing the color and stencil buffers, but do it again here to
+    // ensure Skia receives them in the expected state.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(0, 0, 0, 0);
     glClearStencil(0);
     glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    grContext->resetContext(kRenderTarget_GrGLBackendState | kMisc_GrGLBackendState);
 
-    // Wrap the frame buffer object attached to the screen in a Skia render
-    // target so Skia can render to it
-    GrGLint buffer;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &buffer);
+    // The on-screen canvas is FBO 0. Wrap it in a Skia render target so Skia can render to it.
     GrGLFramebufferInfo info;
-    info.fFBOID = (GrGLuint) buffer;
+    info.fFBOID = 0;
+
+    GrGLint sampleCnt;
+    glGetIntegerv(GL_SAMPLES, &sampleCnt);
 
     GrGLint stencil;
     glGetIntegerv(GL_STENCIL_BITS, &stencil);
 
     const auto colorSettings = ColorSettings(colorSpace);
     info.fFormat = colorSettings.pixFormat;
-    GrBackendRenderTarget target(width, height, 0, stencil, info);
+    GrBackendRenderTarget target(width, height, sampleCnt, stencil, info);
     sk_sp<SkSurface> surface(SkSurface::MakeFromBackendRenderTarget(grContext.get(), target,
         kBottomLeft_GrSurfaceOrigin, colorSettings.colorType, colorSpace, nullptr));
     return surface;
@@ -240,13 +244,12 @@ void ApplyAddRoundRect(SkPath& path, SkScalar left, SkScalar top,
                       ccw ? SkPathDirection::kCCW : SkPathDirection::kCW);
 }
 
-
-void ApplyArcTo(SkPath& p, SkScalar x1, SkScalar y1, SkScalar x2, SkScalar y2,
+void ApplyArcToTangent(SkPath& p, SkScalar x1, SkScalar y1, SkScalar x2, SkScalar y2,
                 SkScalar radius) {
     p.arcTo(x1, y1, x2, y2, radius);
 }
 
-void ApplyArcToAngle(SkPath& p, SkRect& oval, SkScalar startAngle, SkScalar sweepAngle, bool forceMoveTo) {
+void ApplyArcToOval(SkPath& p, SkRect& oval, SkScalar startAngle, SkScalar sweepAngle, bool forceMoveTo) {
     p.arcTo(oval, startAngle, sweepAngle, forceMoveTo);
 }
 
@@ -482,6 +485,76 @@ SkPathOrNull MakePathFromCmds(uintptr_t /* float* */ cptr, int numCmds) {
     #undef CHECK_NUM_ARGS
 
     return emscripten::val(path);
+}
+
+void PathAddVerbsPointsWeights(SkPath& path, uintptr_t /* uint8_t* */ verbsPtr, int numVerbs,
+                                             uintptr_t /* float* */ ptsPtr, int numPts,
+                                             uintptr_t /* float* */ wtsPtr, int numWts) {
+    const uint8_t* verbs = reinterpret_cast<const uint8_t*>(verbsPtr);
+    const float* pts = reinterpret_cast<const float*>(ptsPtr);
+    const float* weights = reinterpret_cast<const float*>(wtsPtr);
+
+    #define CHECK_NUM_POINTS(n) \
+        if ((ptIdx + n) > numPts) { \
+            SkDebugf("Not enough points to match the verbs. Saw %d points\n", numPts); \
+            return; \
+        }
+    #define CHECK_NUM_WEIGHTS(n) \
+        if ((wtIdx + n) > numWts) { \
+            SkDebugf("Not enough weights to match the verbs. Saw %d weights\n", numWts); \
+            return; \
+        }
+
+    path.incReserve(numPts);
+    int ptIdx = 0;
+    int wtIdx = 0;
+    for (int v = 0; v < numVerbs; ++v) {
+         switch (verbs[v]) {
+              case MOVE:
+                  CHECK_NUM_POINTS(2);
+                  path.moveTo(pts[ptIdx], pts[ptIdx+1]);
+                  ptIdx += 2;
+                  break;
+              case LINE:
+                  CHECK_NUM_POINTS(2);
+                  path.lineTo(pts[ptIdx], pts[ptIdx+1]);
+                  ptIdx += 2;
+                  break;
+              case QUAD:
+                  CHECK_NUM_POINTS(4);
+                  path.quadTo(pts[ptIdx], pts[ptIdx+1], pts[ptIdx+2], pts[ptIdx+3]);
+                  ptIdx += 4;
+                  break;
+              case CONIC:
+                  CHECK_NUM_POINTS(4);
+                  CHECK_NUM_WEIGHTS(1);
+                  path.conicTo(pts[ptIdx], pts[ptIdx+1], pts[ptIdx+2], pts[ptIdx+3],
+                               weights[wtIdx]);
+                  ptIdx += 4;
+                  wtIdx++;
+                  break;
+              case CUBIC:
+                  CHECK_NUM_POINTS(6);
+                  path.cubicTo(pts[ptIdx  ], pts[ptIdx+1],
+                               pts[ptIdx+2], pts[ptIdx+3],
+                               pts[ptIdx+4], pts[ptIdx+5]);
+                  ptIdx += 6;
+                  break;
+              case CLOSE:
+                  path.close();
+                  break;
+        }
+    }
+    #undef CHECK_NUM_POINTS
+    #undef CHECK_NUM_WEIGHTS
+}
+
+SkPath MakePathFromVerbsPointsWeights(uintptr_t /* uint8_t* */ verbsPtr, int numVerbs,
+                                      uintptr_t ptsPtr, int numPts,
+                                      uintptr_t wtsPtr, int numWts) {
+    SkPath path;
+    PathAddVerbsPointsWeights(path, verbsPtr, numVerbs, ptsPtr, numPts, wtsPtr, numWts);
+    return path;
 }
 
 //========================================================================================
@@ -755,7 +828,6 @@ EMSCRIPTEN_BINDINGS(Skia) {
         // Adds a little helper because emscripten doesn't expose default params.
         return SkMaskFilter::MakeBlur(style, sigma, respectCTM);
     }), allow_raw_pointers());
-    function("_MakePathFromCmds", &MakePathFromCmds);
 #ifdef SK_INCLUDE_PATHOPS
     function("MakePathFromOp", &MakePathFromOp);
 #endif
@@ -1379,6 +1451,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
     class_<SkPath>("SkPath")
         .constructor<>()
         .constructor<const SkPath&>()
+        .class_function("_MakeFromCmds", &MakePathFromCmds)
+        .class_function("_MakeFromVerbsPointsWeights", &MakePathFromVerbsPointsWeights)
         .function("_addArc", &ApplyAddArc)
         // interface.js has 3 overloads of addPath
         .function("_addOval", &ApplyAddOval)
@@ -1394,9 +1468,10 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("_addRect", &ApplyAddRect)
         // interface.js has 4 overloads of addRoundRect
         .function("_addRoundRect", &ApplyAddRoundRect)
-        .function("_arcTo", &ApplyArcTo)
-        .function("_arcTo", &ApplyArcToAngle)
-        .function("_arcTo", &ApplyArcToArcSize)
+        .function("_addVerbsPointsWeights", &PathAddVerbsPointsWeights)
+        .function("_arcToOval", &ApplyArcToOval)
+        .function("_arcToRotated", &ApplyArcToArcSize)
+        .function("_arcToTangent", ApplyArcToTangent)
         .function("_close", &ApplyClose)
         .function("_conicTo", &ApplyConicTo)
         .function("countPoints", &SkPath::countPoints)
@@ -1560,10 +1635,20 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("makeSurface", optional_override([](SkSurface& self, SimpleImageInfo sii)->sk_sp<SkSurface> {
             return self.makeSurface(toSkImageInfo(sii));
         }), allow_raw_pointers())
-        .function("width", &SkSurface::width)
-        .function("reportBackendType", optional_override([](SkSurface& self)->std::string {
-            return self.getCanvas()->getGrContext() == nullptr ? "CPU" : "GPU";
-        }));
+#ifdef SK_GL
+        .function("reportBackendTypeIsGPU", optional_override([](SkSurface& self) -> bool {
+            return self.getCanvas()->getGrContext() != nullptr;
+        }))
+        .function("sampleCnt", optional_override([](SkSurface& self)->int {
+            auto backendRT = self.getBackendRenderTarget(SkSurface::kFlushRead_BackendHandleAccess);
+            return (backendRT.isValid()) ? backendRT.sampleCnt() : 0;
+        }))
+#else
+        .function("reportBackendTypeIsGPU", optional_override([](SkSurface& self) -> bool {
+            return false;
+        }))
+#endif
+        .function("width", &SkSurface::width);
 
 #ifndef SK_NO_FONTS
     class_<SkTextBlob>("SkTextBlob")

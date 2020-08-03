@@ -8,8 +8,8 @@
 
 #include "src/gpu/GrPathRendererChain.h"
 
-#include "include/gpu/GrContext.h"
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrDirectContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpu.h"
@@ -32,7 +32,7 @@ GrPathRendererChain::GrPathRendererChain(GrRecordingContext* context, const Opti
         fChain.push_back(sk_make_sp<GrDashLinePathRenderer>());
     }
     if (options.fGpuPathRenderers & GpuPathRenderers::kTessellation) {
-        if (caps.drawInstancedSupport()) {
+        if (GrTessellationPathRenderer::IsSupported(caps)) {
             auto tess = sk_make_sp<GrTessellationPathRenderer>(caps);
             context->priv().addOnFlushCallbackObject(tess.get());
             fChain.push_back(std::move(tess));
@@ -63,7 +63,7 @@ GrPathRendererChain::GrPathRendererChain(GrRecordingContext* context, const Opti
         fChain.push_back(std::move(spr));
     }
     if (options.fGpuPathRenderers & GpuPathRenderers::kStencilAndCover) {
-        auto direct = context->priv().asDirectContext();
+        auto direct = context->asDirectContext();
         if (direct) {
             auto resourceProvider = direct->priv().resourceProvider();
 

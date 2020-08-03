@@ -41,16 +41,17 @@ std::unique_ptr<GrFragmentProcessor> GrRRectBlurEffect::Make(
         return nullptr;
     }
 
-    GrSurfaceProxyView mask =
-            find_or_create_rrect_blur_mask(context, rrectToDraw, dimensions, xformedSigma);
-    if (!mask) {
+    std::unique_ptr<GrFragmentProcessor> maskFP =
+            find_or_create_rrect_blur_mask_fp(context, rrectToDraw, dimensions, xformedSigma);
+    if (!maskFP) {
         return nullptr;
     }
 
     return std::unique_ptr<GrFragmentProcessor>(
             new GrRRectBlurEffect(std::move(inputFP), xformedSigma, devRRect.getBounds(),
-                                  SkRRectPriv::GetSimpleRadii(devRRect).fX, std::move(mask)));
+                                  SkRRectPriv::GetSimpleRadii(devRRect).fX, std::move(maskFP)));
 }
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -77,35 +78,35 @@ public:
         blurRadiusVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag,
                                                          kHalf_GrSLType, "blurRadius");
         fragBuilder->codeAppendf(
-                "half2 translatedFragPos = half2(sk_FragCoord.xy - %s.xy);\nhalf2 proxyCenter = "
-                "half2((%s.zw - %s.xy) * 0.5);\nhalf edgeSize = (2.0 * %s + %s) + "
-                "0.5;\ntranslatedFragPos -= proxyCenter;\nhalf2 fragDirection = "
-                "sign(translatedFragPos);\ntranslatedFragPos = "
-                "abs(translatedFragPos);\ntranslatedFragPos -= proxyCenter - "
-                "edgeSize;\ntranslatedFragPos = max(translatedFragPos, 0.0);\ntranslatedFragPos *= "
-                "fragDirection;\ntranslatedFragPos += half2(edgeSize);\nhalf2 proxyDims = "
-                "half2(2.0 * edgeSize);\nhalf2 texCoord = tra",
+                R"SkSL(half2 translatedFragPos = half2(sk_FragCoord.xy - %s.xy);
+half2 proxyCenter = half2((%s.zw - %s.xy) * 0.5);
+half edgeSize = (2.0 * %s + %s) + 0.5;
+translatedFragPos -= proxyCenter;
+half2 fragDirection = sign(translatedFragPos);
+translatedFragPos = abs(translatedFragPos);
+translatedFragPos -= proxyCenter - edgeSize;
+translatedFragPos = max(translatedFragPos, 0.0);
+translatedFragPos *= fragDirection;
+translatedFragPos += half2(edgeSize);
+half2 proxyDims = half2(2.0 * edgeSize);
+half2 texCoord = translatedFragPos / proxyDims;)SkSL",
                 args.fUniformHandler->getUniformCStr(proxyRectVar),
                 args.fUniformHandler->getUniformCStr(proxyRectVar),
                 args.fUniformHandler->getUniformCStr(proxyRectVar),
                 args.fUniformHandler->getUniformCStr(blurRadiusVar),
                 args.fUniformHandler->getUniformCStr(cornerRadiusVar));
-        fragBuilder->codeAppendf("nslatedFragPos / proxyDims;");
-        SkString _input8931 = SkStringPrintf("%s", args.fInputColor);
-        SkString _sample8931;
-        if (_outer.inputFP_index >= 0) {
-            _sample8931 = this->invokeChild(_outer.inputFP_index, _input8931.c_str(), args);
-        } else {
-            _sample8931 = _input8931;
-        }
+        SkString _sample9554 = this->invokeChild(0, args);
         fragBuilder->codeAppendf(
-                "\nhalf4 inputColor = %s;\n%s = inputColor * sample(%s, float2(texCoord)).%s;\n",
-                _sample8931.c_str(), args.fOutputColor,
-                fragBuilder->getProgramBuilder()->samplerVariable(args.fTexSamplers[0]),
-                fragBuilder->getProgramBuilder()
-                        ->samplerSwizzle(args.fTexSamplers[0])
-                        .asString()
-                        .c_str());
+                R"SkSL(
+half4 inputColor = %s;)SkSL",
+                _sample9554.c_str());
+        SkString _coords9602("float2(texCoord)");
+        SkString _sample9602 = this->invokeChild(1, args, _coords9602.c_str());
+        fragBuilder->codeAppendf(
+                R"SkSL(
+%s = inputColor * %s;
+)SkSL",
+                args.fOutputColor, _sample9602.c_str());
     }
 
 private:
@@ -119,9 +120,6 @@ private:
         (void)rect;
         UniformHandle& cornerRadius = cornerRadiusVar;
         (void)cornerRadius;
-        const GrSurfaceProxyView& ninePatchSamplerView = _outer.textureSampler(0).view();
-        GrTexture& ninePatchSampler = *ninePatchSamplerView.proxy()->peekTexture();
-        (void)ninePatchSampler;
         UniformHandle& proxyRect = proxyRectVar;
         (void)proxyRect;
         UniformHandle& blurRadius = blurRadiusVar;
@@ -149,29 +147,17 @@ bool GrRRectBlurEffect::onIsEqual(const GrFragmentProcessor& other) const {
     if (sigma != that.sigma) return false;
     if (rect != that.rect) return false;
     if (cornerRadius != that.cornerRadius) return false;
-    if (ninePatchSampler != that.ninePatchSampler) return false;
     return true;
 }
 GrRRectBlurEffect::GrRRectBlurEffect(const GrRRectBlurEffect& src)
         : INHERITED(kGrRRectBlurEffect_ClassID, src.optimizationFlags())
         , sigma(src.sigma)
         , rect(src.rect)
-        , cornerRadius(src.cornerRadius)
-        , ninePatchSampler(src.ninePatchSampler) {
-    if (src.inputFP_index >= 0) {
-        auto inputFP_clone = src.childProcessor(src.inputFP_index).clone();
-        if (src.childProcessor(src.inputFP_index).isSampledWithExplicitCoords()) {
-            inputFP_clone->setSampledWithExplicitCoords();
-        }
-        inputFP_index = this->registerChildProcessor(std::move(inputFP_clone));
-    }
-    this->setTextureSamplerCnt(1);
+        , cornerRadius(src.cornerRadius) {
+    this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrRRectBlurEffect::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrRRectBlurEffect(*this));
-}
-const GrFragmentProcessor::TextureSampler& GrRRectBlurEffect::onTextureSampler(int index) const {
-    return IthTextureSampler(index, ninePatchSampler);
 }
 GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrRRectBlurEffect);
 #if GR_TEST_UTILS
@@ -182,6 +168,6 @@ std::unique_ptr<GrFragmentProcessor> GrRRectBlurEffect::TestCreate(GrProcessorTe
     SkScalar sigma = d->fRandom->nextRangeF(1.f, 10.f);
     SkRRect rrect;
     rrect.setRectXY(SkRect::MakeWH(w, h), r, r);
-    return GrRRectBlurEffect::Make(/*inputFP=*/nullptr, d->context(), sigma, sigma, rrect, rrect);
+    return GrRRectBlurEffect::Make(d->inputFP(), d->context(), sigma, sigma, rrect, rrect);
 }
 #endif

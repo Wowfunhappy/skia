@@ -47,6 +47,7 @@ var CanvasKit = {
   MakeImage: function() {},
   /** @return {CanvasKit.SkImage} */
   MakeImageFromEncoded: function() {},
+  MakeImageFromCanvasImageSource: function() {},
   MakeOnScreenGLSurface: function() {},
   MakePathFromCmds: function() {},
   MakePathFromOp: function() {},
@@ -81,7 +82,6 @@ var CanvasKit = {
   _computeTonalColors: function() {},
   _MakeImage: function() {},
   _MakeLinearGradientShader: function() {},
-  _MakePathFromCmds: function() {},
   _MakeRadialGradientShader: function() {},
   _MakeSweepGradientShader: function() {},
   _MakeManagedAnimation: function() {},
@@ -339,6 +339,7 @@ var CanvasKit = {
   SkM44: {
     identity: function() {},
     invert: function() {},
+    mustInvert: function() {},
     multiply: function() {},
     rotatedUnitSinCos: function() {},
     rotated: function() {},
@@ -348,6 +349,7 @@ var CanvasKit = {
     perspective: function() {},
     rc: function() {},
     transpose: function() {},
+    setupCamera: function() {},
   },
 
   SkMatrix: {
@@ -433,7 +435,9 @@ var CanvasKit = {
   },
 
   SkPath: {
-    // public API (from C++ bindings)
+    // public API (from C++ and JS bindings)
+    MakeFromCmds: function() {},
+    MakeFromVerbsPointsWeights: function() {},
     computeTightBounds: function() {},
     contains: function() {},
     /** @return {CanvasKit.SkPath} */
@@ -449,17 +453,24 @@ var CanvasKit = {
     rewind: function() {},
     setFillType: function() {},
     setIsVolatile: function() {},
+    toCmds: function() {},
     toSVGString: function() {},
 
     // private API
+    _MakeFromCmds: function() {},
+    _MakeFromVerbsPointsWeights: function() {},
     _addArc: function() {},
     _addOval: function() {},
     _addPath: function() {},
     _addRect: function() {},
     _addPoly: function() {},
     _addRoundRect: function() {},
+    _addVerbsPointsWeights: function() {},
     _arc: function() {},
     _arcTo: function() {},
+    _arcToOval: function() {},
+    _arcToTangent: function() {},
+    _arcToRotated: function() {},
     _close: function() {},
     _conicTo: function() {},
     _cubicTo: function() {},
@@ -542,8 +553,10 @@ var CanvasKit = {
     /** @return {CanvasKit.SkImage} */
     makeImageSnapshot: function() {},
     makeSurface: function() {},
-    reportBackendType: function() {},
+    sampleCnt: function() {},
+    reportBackendTypeIsGPU: function() {},
     grContext: {},
+    openGLversion: {},
 
     // private API
     _flush: function() {},
@@ -868,8 +881,12 @@ CanvasKit.SkPath.prototype.addPath = function() {};
 CanvasKit.SkPath.prototype.addPoly = function() {};
 CanvasKit.SkPath.prototype.addRect = function() {};
 CanvasKit.SkPath.prototype.addRoundRect = function() {};
+CanvasKit.SkPath.prototype.addVerbsPointsWeights = function() {};
 CanvasKit.SkPath.prototype.arc = function() {};
 CanvasKit.SkPath.prototype.arcTo = function() {};
+CanvasKit.SkPath.prototype.arcToOval = function() {};
+CanvasKit.SkPath.prototype.arcToTangent = function() {};
+CanvasKit.SkPath.prototype.arcToRotated = function() {};
 CanvasKit.SkPath.prototype.close = function() {};
 CanvasKit.SkPath.prototype.conicTo = function() {};
 CanvasKit.SkPath.prototype.cubicTo = function() {};
@@ -951,6 +968,9 @@ HTMLCanvas.prototype.getContext = function() {};
 HTMLCanvas.prototype.loadFont = function() {};
 HTMLCanvas.prototype.makePath2D = function() {};
 HTMLCanvas.prototype.toDataURL = function() {};
+
+var ImageBitmapRenderingContext = {};
+ImageBitmapRenderingContext.prototype.transferFromImageBitmap = function() {};
 
 var CanvasRenderingContext2D = {};
 CanvasRenderingContext2D.prototype.addHitRegion = function() {};
@@ -1036,3 +1056,11 @@ var DOMMatrix = {
 
 // Not sure why this is needed - might be a bug in emsdk that this isn't properly declared.
 function loadWebAssemblyModule() {};
+
+// This is a part of emscripten's webgl glue code. Preserving this attribute is necessary
+// to override it in the puppeteer tests
+var LibraryEGL = {
+  contextAttributes: {
+    majorVersion: {}
+  }
+}

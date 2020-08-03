@@ -21,7 +21,6 @@
 #include "modules/skshaper/include/SkShaper.h"
 #include "src/core/SkSpan.h"
 
-#include <unicode/ubidi.h>
 #include <algorithm>
 #include <iterator>
 #include <limits>
@@ -131,21 +130,20 @@ TextLine::TextLine(ParagraphImpl* master,
 
     // This is just chosen to catch the common/fast cases. Feel free to tweak.
     constexpr int kPreallocCount = 4;
-
-    SkAutoSTArray<kPreallocCount, UBiDiLevel> runLevels(numRuns);
-
+    SkAutoSTArray<kPreallocCount, BidiLevel> runLevels(numRuns);
     size_t runLevelsIndex = 0;
     for (auto runIndex = start.runIndex(); runIndex <= end.runIndex(); ++runIndex) {
         auto& run = fMaster->run(runIndex);
         runLevels[runLevelsIndex++] = run.fBidiLevel;
-        fMaxRunMetrics.add(InternalLineMetrics(run.fFontMetrics.fAscent, run.fFontMetrics.fDescent,
-                                               run.fFontMetrics.fLeading));
+        fMaxRunMetrics.add(
+            InternalLineMetrics(run.fFontMetrics.fAscent, run.fFontMetrics.fDescent, run.fFontMetrics.fLeading));
     }
     SkASSERT(runLevelsIndex == numRuns);
 
     SkAutoSTArray<kPreallocCount, int32_t> logicalOrder(numRuns);
 
-    ubidi_reorderVisual(runLevels.data(), SkToU32(numRuns), logicalOrder.data());
+    // TODO: hide all these logic in SkUnicode?
+    fMaster->getICU()->reorderVisual(runLevels.data(), numRuns, logicalOrder.data());
     auto firstRunIndex = start.runIndex();
     for (auto index : logicalOrder) {
         fRunsInVisualOrder.push_back(firstRunIndex + index);
@@ -162,7 +160,12 @@ TextLine::TextLine(ParagraphImpl* master,
 
 SkRect TextLine::calculateBoundaries() {
 
-    auto boundaries = SkRect::MakeIWH(fAdvance.fX, fAdvance.fY);
+    // For flutter: height and/or width and/or baseline! can be Inf
+    // (coming from placeholders - we should ignore it)
+    auto boundaries = SkRect::MakeWH(
+        SkScalarIsFinite(fAdvance.fX) ? fAdvance.fX : 0,
+        SkScalarIsFinite(fAdvance.fY) ? fAdvance.fY : 0);
+    auto baseline = SkScalarIsFinite(this->baseline()) ? this->baseline() : 0;
     auto clusters = fMaster->clusters(fClusterRange);
     Run* run = nullptr;
     auto runShift = 0.0f;
@@ -218,8 +221,8 @@ SkRect TextLine::calculateBoundaries() {
         boundaries.fBottom += shadowRect.fBottom;
     }
 
-    boundaries.offset(this->offset());         // Line offset from the beginning of the para
-    boundaries.offset(0, this->baseline()); // Down by baseline
+    boundaries.offset(this->offset());    // Line offset from the beginning of the para
+    boundaries.offset(0, baseline);         // Down by baseline
 
     return boundaries;
 }
@@ -886,8 +889,9 @@ LineMetrics TextLine::getMetrics() const {
     result.fUnscaledAscent = - fMaxRunMetrics.ascent(); // TODO: implement
     result.fHeight = littleRound(fAdvance.fY);
     result.fWidth = littleRound(fAdvance.fX);
-    result.fLeft = fOffset.fX;
-    result.fBaseline = fMaxRunMetrics.baseline() + (this - fMaster->lines().begin()) * result.fHeight;
+    result.fLeft = this->offset().fX;
+    // This is Flutter definition of a baseline
+    result.fBaseline = this->offset().fY + this->height() - this->sizes().descent();
     result.fLineNumber = this - fMaster->lines().begin();
 
     // Fill out the style parts
@@ -1124,36 +1128,25 @@ PositionWithAffinity TextLine::getGlyphPositionAtCoordinate(SkScalar dx) {
     this->iterateThroughVisualRuns(true,
         [this, dx, &result]
         (const Run* run, SkScalar runOffsetInLine, TextRange textRange, SkScalar* runWidthInLine) {
-            bool lookingForHit = true;
+            bool keepLooking = true;
             *runWidthInLine = this->iterateThroughSingleRunByStyles(
             run, runOffsetInLine, textRange, StyleType::kNone,
-            [this, dx, &result, &lookingForHit]
+            [this, dx, &result, &keepLooking]
             (TextRange textRange, const TextStyle& style, const TextLine::ClipContext& context) {
 
-                auto findCodepointByTextIndex = [this](ClusterIndex clusterIndex8) {
-                    auto codepoints = fMaster->codepoints();
-                    auto codepoint = std::lower_bound(
-                        codepoints.begin(), codepoints.end(),
-                        clusterIndex8,
-                        [](const CodepointRepresentation& lhs, size_t rhs) -> bool { return lhs.fTextIndex < rhs; });
-
-                    return codepoint - codepoints.begin();
-                };
-
-                auto offsetX = this->offset().fX;
+                SkScalar offsetX = this->offset().fX;
                 if (dx < context.clip.fLeft + offsetX) {
                     // All the other runs are placed right of this one
-                    auto codepointIndex = findCodepointByTextIndex(context.run->globalClusterIndex(context.pos));
-                    result = { SkToS32(codepointIndex), kDownstream };
-                    lookingForHit = false;
-                    return false;
+                    auto utf16Index = fMaster->getUTF16Index(context.run->globalClusterIndex(context.pos));
+                    result = { SkToS32(utf16Index), kDownstream };
+                    return keepLooking = false;
                 }
 
                 if (dx >= context.clip.fRight + offsetX) {
                     // We have to keep looking ; just in case keep the last one as the closest
-                    auto codepointIndex = findCodepointByTextIndex(context.run->globalClusterIndex(context.pos + context.size));
-                    result = { SkToS32(codepointIndex), kUpstream };
-                    return true;
+                    auto utf16Index = fMaster->getUTF16Index(context.run->globalClusterIndex(context.pos + context.size));
+                    result = { SkToS32(utf16Index), kUpstream };
+                    return keepLooking = true;
                 }
 
                 // So we found the run that contains our coordinates
@@ -1169,60 +1162,40 @@ PositionWithAffinity TextLine::getGlyphPositionAtCoordinate(SkScalar dx) {
                     found = index;
                 }
 
-                auto glyphStart = context.run->positionX(found) + context.fTextShift + offsetX;
-                auto glyphWidth = context.run->positionX(found + 1) - context.run->positionX(found);
+                SkScalar glyphemePosLeft = context.run->positionX(found) + context.fTextShift + offsetX;
+                SkScalar glyphemePosWidth = context.run->positionX(found + 1) - context.run->positionX(found);
+
+                // Find the grapheme range that contains the point
                 auto clusterIndex8 = context.run->globalClusterIndex(found);
                 auto clusterEnd8 = context.run->globalClusterIndex(found + 1);
+                TextIndex graphemeUtf8Start = fMaster->findGraphemeStart(clusterIndex8);
+                TextIndex graphemeUtf8Width = fMaster->findGraphemeStart(clusterEnd8) - graphemeUtf8Start;
+                size_t utf16Index = fMaster->getUTF16Index(clusterIndex8);
 
-                // Find the grapheme positions in codepoints that contains the point
-                auto codepointIndex = findCodepointByTextIndex(clusterIndex8);
-                CodepointRange codepoints(codepointIndex, codepointIndex);
-                auto masterCodepoints = fMaster->codepoints();
-                if (context.run->leftToRight()) {
-                    for (codepoints.end = codepointIndex;
-                         codepoints.end < masterCodepoints.size(); ++codepoints.end) {
-                        auto& cp = masterCodepoints[codepoints.end];
-                        if (cp.fTextIndex >= clusterEnd8) {
-                            break;
-                        }
-                    }
+                SkScalar center = glyphemePosLeft + glyphemePosWidth / 2;
+                bool insideGlypheme = false;
+                if (graphemeUtf8Width > 1) {
+                    // TODO: the average width of a code unit (especially UTF-8) is meaningless.
+                    // Probably want the average width of a grapheme or codepoint?
+                    SkScalar averageUtf8Width = glyphemePosWidth / graphemeUtf8Width;
+                    SkScalar delta = dx - glyphemePosLeft;
+                    int insideUtf8Offset = SkScalarNearlyZero(averageUtf8Width)
+                                         ? 0
+                                         : SkScalarFloorToInt(delta / averageUtf8Width);
+                    insideGlypheme = averageUtf8Width < delta && delta < glyphemePosWidth - averageUtf8Width;
+                    center = glyphemePosLeft + averageUtf8Width * insideUtf8Offset + averageUtf8Width / 2;
+                    utf16Index += insideUtf8Offset; // TODO: adding a utf8 offset to a utf16 index
+                }
+                if ((dx < center) == context.run->leftToRight() || insideGlypheme) {
+                    result = { SkToS32(utf16Index), kDownstream };
                 } else {
-                    for (codepoints.end = codepointIndex;
-                         codepoints.end > 0; --codepoints.end) {
-                        auto& cp = masterCodepoints[codepoints.end];
-                        if (cp.fTextIndex <= clusterEnd8) {
-                            break;
-                        }
-                    }
-                    std::swap(codepoints.start, codepoints.end);
+                    result = { SkToS32(utf16Index + 1), kUpstream };
                 }
 
-                auto graphemeSize = codepoints.width();
-
-                // We only need to inspect one glyph (maybe not even the entire glyph)
-                SkScalar center;
-                bool insideGlyph = false;
-                if (graphemeSize > 1) {
-                    auto averageCodepointWidth = glyphWidth / graphemeSize;
-                    auto delta = dx - glyphStart;
-                    auto insideIndex = SkScalarFloorToInt(delta / averageCodepointWidth);
-                    insideGlyph = delta > averageCodepointWidth;
-                    center = glyphStart + averageCodepointWidth * insideIndex + averageCodepointWidth / 2;
-                    codepointIndex += insideIndex;
-                } else {
-                    center = glyphStart + glyphWidth / 2;
-                }
-                if ((dx < center) == context.run->leftToRight() || insideGlyph) {
-                    result = { SkToS32(codepointIndex), kDownstream };
-                } else {
-                    result = { SkToS32(codepointIndex + 1), kUpstream };
-                }
-                // No need to continue
-                lookingForHit = false;
-                return false;
+                return keepLooking = false;
 
             });
-          return lookingForHit;
+          return keepLooking;
         }
     );
     return result;

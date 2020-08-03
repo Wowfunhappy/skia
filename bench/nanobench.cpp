@@ -19,6 +19,7 @@
 #include "bench/SKPAnimationBench.h"
 #include "bench/SKPBench.h"
 #include "bench/SkGlyphCacheBench.h"
+#include "bench/SkSLBench.h"
 #include "include/codec/SkAndroidCodec.h"
 #include "include/codec/SkCodec.h"
 #include "include/core/SkCanvas.h"
@@ -68,6 +69,7 @@ extern bool gSkVMJITViaDylib;
 
 #endif
 
+#include "include/gpu/GrDirectContext.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/SkGr.h"
@@ -138,8 +140,8 @@ static DEFINE_bool(skvm, false, "sets gUseSkVMBlitter and gSkVMJITViaDylib");
 static DEFINE_bool2(pre_log, p, false,
                     "Log before running each test. May be incomprehensible when threading");
 
-static DEFINE_bool(cpu, true, "master switch for running CPU-bound work.");
-static DEFINE_bool(gpu, true, "master switch for running GPU-bound work.");
+static DEFINE_bool(cpu, true, "Run CPU-bound work?");
+static DEFINE_bool(gpu, true, "Run GPU-bound work?");
 static DEFINE_bool(dryRun, false,
                    "just print the tests that would be run, without actually running them.");
 static DEFINE_string(images, "",
@@ -215,6 +217,13 @@ struct GPUTarget : public Target {
     ContextInfo contextInfo;
     std::unique_ptr<GrContextFactory> factory;
 
+    ~GPUTarget() override {
+        // For Vulkan we need to release all our refs to the GrContext before destroy the vulkan
+        // context which happens at the end of this destructor. Thus we need to release the surface
+        // here which holds a ref to the GrContext.
+        surface.reset();
+    }
+
     void setup() override {
         this->contextInfo.testContext()->makeCurrent();
         // Make sure we're done with whatever came before.
@@ -222,7 +231,7 @@ struct GPUTarget : public Target {
     }
     void endTiming() override {
         if (this->contextInfo.testContext()) {
-            this->contextInfo.testContext()->flushAndWaitOnSync(contextInfo.grContext());
+            this->contextInfo.testContext()->flushAndWaitOnSync(contextInfo.directContext());
         }
     }
     void fence() override { this->contextInfo.testContext()->finish(); }
@@ -260,7 +269,7 @@ struct GPUTarget : public Target {
         const GrGLubyte* version;
         if (this->contextInfo.backend() == GrBackendApi::kOpenGL) {
             const GrGLInterface* gl =
-                    static_cast<GrGLGpu*>(this->contextInfo.grContext()->priv().getGpu())
+                    static_cast<GrGLGpu*>(this->contextInfo.directContext()->priv().getGpu())
                             ->glInterface();
             GR_GL_CALL_RET(gl, version, GetString(GR_GL_VERSION));
             log.appendString("GL_VERSION", (const char*)(version));
@@ -278,9 +287,11 @@ struct GPUTarget : public Target {
     }
 
     void dumpStats() override {
-        this->contextInfo.grContext()->priv().printCacheStats();
-        this->contextInfo.grContext()->priv().printGpuStats();
-        this->contextInfo.grContext()->priv().printContextStats();
+        auto context = this->contextInfo.directContext();
+
+        context->priv().printCacheStats();
+        context->priv().printGpuStats();
+        context->priv().printContextStats();
     }
 };
 
@@ -466,7 +477,7 @@ static void create_config(const SkCommandLineConfig* config, SkTArray<Config>* c
         }
 
         GrContextFactory factory(grContextOpts);
-        if (const GrContext* ctx = factory.get(ctxType, ctxOverrides)) {
+        if (const auto ctx = factory.get(ctxType, ctxOverrides)) {
             GrBackendFormat format = ctx->defaultBackendFormat(colorType, GrRenderable::kYes);
             int supportedSampleCount =
                     ctx->priv().caps()->getRenderTargetSampleCount(sampleCount, format);
@@ -1454,6 +1465,8 @@ int main(int argc, char** argv) {
     log.appendS32("max_rss_mb", sk_tools::getMaxResidentSetSizeMB());
     log.endObject(); // config
     log.endBench();
+
+    RunSkSLMemoryBenchmarks(&log);
 
     log.endObject(); // results
     log.endObject(); // root

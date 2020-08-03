@@ -15,6 +15,7 @@
 #include "src/sksl/SkSLIRGenerator.h"
 #include "src/sksl/SkSLMetalCodeGenerator.h"
 #include "src/sksl/SkSLPipelineStageCodeGenerator.h"
+#include "src/sksl/SkSLRehydrator.h"
 #include "src/sksl/SkSLSPIRVCodeGenerator.h"
 #include "src/sksl/SkSLSPIRVtoHLSL.h"
 #include "src/sksl/ir/SkSLEnum.h"
@@ -38,42 +39,43 @@
 #include "spirv-tools/libspirv.hpp"
 #endif
 
-// include the built-in shader symbols as static strings
+// If true, we use a compact binary IR representation of the core include files; otherwise we parse
+// the actual source code for the include files at runtime. The main reason you would need to change
+// this is to make format changes easier: set it to 0, change the encoder and decoder as needed,
+// build Skia to regenerate the encoded files, then set this back to 1 to actually use the
+// newly-generated files.
+#define REHYDRATE 1
 
-#define STRINGIFY(x) #x
+#if REHYDRATE
+
+#include "src/sksl/generated/sksl_fp.dehydrated.sksl"
+#include "src/sksl/generated/sksl_frag.dehydrated.sksl"
+#include "src/sksl/generated/sksl_geom.dehydrated.sksl"
+#include "src/sksl/generated/sksl_gpu.dehydrated.sksl"
+#include "src/sksl/generated/sksl_interp.dehydrated.sksl"
+#include "src/sksl/generated/sksl_pipeline.dehydrated.sksl"
+#include "src/sksl/generated/sksl_vert.dehydrated.sksl"
+
+#else
+
+#warning SkSL rehydrator is disabled
 
 static const char* SKSL_GPU_INCLUDE =
-#include "sksl_gpu.inc"
-;
-
-static const char* SKSL_BLEND_INCLUDE =
-#include "sksl_blend.inc"
-;
-
+#include "src/sksl/generated/sksl_gpu.c.inc"
 static const char* SKSL_INTERP_INCLUDE =
-#include "sksl_interp.inc"
-;
-
+#include "src/sksl/generated/sksl_interp.c.inc"
 static const char* SKSL_VERT_INCLUDE =
-#include "sksl_vert.inc"
-;
-
+#include "src/sksl/generated/sksl_vert.c.inc"
 static const char* SKSL_FRAG_INCLUDE =
-#include "sksl_frag.inc"
-;
-
+#include "src/sksl/generated/sksl_frag.c.inc"
 static const char* SKSL_GEOM_INCLUDE =
-#include "sksl_geom.inc"
-;
-
+#include "src/sksl/generated/sksl_geom.c.inc"
 static const char* SKSL_FP_INCLUDE =
-#include "sksl_enums.inc"
-#include "sksl_fp.inc"
-;
-
+#include "src/sksl/generated/sksl_fp.c.inc"
 static const char* SKSL_PIPELINE_INCLUDE =
-#include "sksl_pipeline.inc"
-;
+#include "src/sksl/generated/sksl_pipeline.c.inc"
+
+#endif
 
 namespace SkSL {
 
@@ -85,7 +87,7 @@ static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
             case ProgramElement::kFunction_Kind: {
                 FunctionDefinition& f = (FunctionDefinition&) *element;
                 SkASSERT(f.fDeclaration.fBuiltin);
-                String key = f.fDeclaration.declaration();
+                String key = f.fDeclaration.description();
                 SkASSERT(target->find(key) == target->end());
                 (*target)[key] = std::make_pair(std::move(element), false);
                 iter = src->erase(iter);
@@ -106,17 +108,14 @@ static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
     }
 }
 
-
 Compiler::Compiler(Flags flags)
 : fFlags(flags)
 , fContext(new Context())
 , fErrorCount(0) {
-    auto types = std::shared_ptr<SymbolTable>(new SymbolTable(this));
-    auto symbols = std::shared_ptr<SymbolTable>(new SymbolTable(types, this));
+    auto symbols = std::shared_ptr<SymbolTable>(new SymbolTable(this));
     fIRGenerator = new IRGenerator(fContext.get(), symbols, *this);
-    fTypes = types;
-    #define ADD_TYPE(t) types->addWithoutOwnership(fContext->f ## t ## _Type->fName, \
-                                                   fContext->f ## t ## _Type.get())
+    #define ADD_TYPE(t) symbols->addWithoutOwnership(fContext->f ## t ## _Type->fName, \
+                                                     fContext->f ## t ## _Type.get())
     ADD_TYPE(Void);
     ADD_TYPE(Float);
     ADD_TYPE(Float2);
@@ -239,7 +238,7 @@ Compiler::Compiler(Flags flags)
     ADD_TYPE(Texture2D);
 
     StringFragment fpAliasName("shader");
-    fTypes->addWithoutOwnership(fpAliasName, fContext->fFragmentProcessor_Type.get());
+    symbols->addWithoutOwnership(fpAliasName, fContext->fFragmentProcessor_Type.get());
 
     StringFragment skCapsName("sk_Caps");
     Variable* skCaps = new Variable(-1, Modifiers(), skCapsName,
@@ -253,12 +252,10 @@ Compiler::Compiler(Flags flags)
 
     fIRGenerator->fIntrinsics = &fGPUIntrinsics;
     std::vector<std::unique_ptr<ProgramElement>> gpuIntrinsics;
+    std::vector<std::unique_ptr<ProgramElement>> interpIntrinsics;
+#if !REHYDRATE
     this->processIncludeFile(Program::kFragment_Kind, SKSL_GPU_INCLUDE, strlen(SKSL_GPU_INCLUDE),
                              symbols, &gpuIntrinsics, &fGpuSymbolTable);
-    this->processIncludeFile(Program::kFragment_Kind, SKSL_BLEND_INCLUDE,
-                             strlen(SKSL_BLEND_INCLUDE), std::move(fGpuSymbolTable), &gpuIntrinsics,
-                             &fGpuSymbolTable);
-    grab_intrinsics(&gpuIntrinsics, &fGPUIntrinsics);
     // need to hang on to the source so that FunctionDefinition.fSource pointers in this file
     // remain valid
     fGpuIncludeSource = std::move(fIRGenerator->fFile);
@@ -266,20 +263,89 @@ Compiler::Compiler(Flags flags)
                              fGpuSymbolTable, &fVertexInclude, &fVertexSymbolTable);
     this->processIncludeFile(Program::kFragment_Kind, SKSL_FRAG_INCLUDE, strlen(SKSL_FRAG_INCLUDE),
                              fGpuSymbolTable, &fFragmentInclude, &fFragmentSymbolTable);
-    this->processIncludeFile(Program::kGeometry_Kind, SKSL_GEOM_INCLUDE, strlen(SKSL_GEOM_INCLUDE),
-                             fGpuSymbolTable, &fGeometryInclude, &fGeometrySymbolTable);
-    this->processIncludeFile(Program::kPipelineStage_Kind, SKSL_PIPELINE_INCLUDE,
-                             strlen(SKSL_PIPELINE_INCLUDE), fGpuSymbolTable, &fPipelineInclude,
-                             &fPipelineSymbolTable);
-    std::vector<std::unique_ptr<ProgramElement>> interpIntrinsics;
-    this->processIncludeFile(Program::kGeneric_Kind, SKSL_INTERP_INCLUDE,
-                             strlen(SKSL_INTERP_INCLUDE), symbols, &fInterpreterInclude,
-                             &fInterpreterSymbolTable);
+#else
+    {
+        Rehydrator rehydrator(fContext.get(), symbols, this, SKSL_INCLUDE_sksl_gpu,
+                          SKSL_INCLUDE_sksl_gpu_LENGTH);
+        fGpuSymbolTable = rehydrator.symbolTable();
+        gpuIntrinsics = rehydrator.elements();
+    }
+    {
+        Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this, SKSL_INCLUDE_sksl_vert,
+                          SKSL_INCLUDE_sksl_vert_LENGTH);
+        fVertexSymbolTable = rehydrator.symbolTable();
+        fVertexInclude = rehydrator.elements();
+    }
+    {
+        Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this, SKSL_INCLUDE_sksl_frag,
+                          SKSL_INCLUDE_sksl_frag_LENGTH);
+        fFragmentSymbolTable = rehydrator.symbolTable();
+        fFragmentInclude = rehydrator.elements();
+    }
+#endif
+    grab_intrinsics(&gpuIntrinsics, &fGPUIntrinsics);
     grab_intrinsics(&interpIntrinsics, &fInterpreterIntrinsics);
 }
 
 Compiler::~Compiler() {
     delete fIRGenerator;
+}
+
+void Compiler::loadGeometryIntrinsics() {
+    if (fGeometrySymbolTable) {
+        return;
+    }
+    #if REHYDRATE
+        {
+            Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this, SKSL_INCLUDE_sksl_geom,
+                              SKSL_INCLUDE_sksl_geom_LENGTH);
+            fGeometrySymbolTable = rehydrator.symbolTable();
+            fGeometryInclude = rehydrator.elements();
+        }
+    #else
+        this->processIncludeFile(Program::kGeometry_Kind, SKSL_GEOM_INCLUDE,
+                                 strlen(SKSL_GEOM_INCLUDE), fGpuSymbolTable, &fGeometryInclude,
+                                 &fGeometrySymbolTable);
+    #endif
+}
+
+void Compiler::loadPipelineIntrinsics() {
+    if (fPipelineSymbolTable) {
+        return;
+    }
+    #if REHYDRATE
+        {
+            Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this,
+                                  SKSL_INCLUDE_sksl_pipeline,
+                                  SKSL_INCLUDE_sksl_pipeline_LENGTH);
+            fPipelineSymbolTable = rehydrator.symbolTable();
+            fPipelineInclude = rehydrator.elements();
+        }
+    #else
+        this->processIncludeFile(Program::kPipelineStage_Kind, SKSL_PIPELINE_INCLUDE,
+                                 strlen(SKSL_PIPELINE_INCLUDE), fGpuSymbolTable, &fPipelineInclude,
+                                 &fPipelineSymbolTable);
+    #endif
+}
+
+void Compiler::loadInterpreterIntrinsics() {
+    if (fInterpreterSymbolTable) {
+        return;
+    }
+    this->loadPipelineIntrinsics();
+    #if REHYDRATE
+        {
+            Rehydrator rehydrator(fContext.get(), fPipelineSymbolTable, this,
+                                  SKSL_INCLUDE_sksl_interp,
+                                  SKSL_INCLUDE_sksl_interp_LENGTH);
+            fInterpreterSymbolTable = rehydrator.symbolTable();
+            fInterpreterInclude = rehydrator.elements();
+        }
+    #else
+        this->processIncludeFile(Program::kGeneric_Kind, SKSL_INTERP_INCLUDE,
+                                 strlen(SKSL_INTERP_INCLUDE), fIRGenerator->fSymbolTable,
+                                 &fInterpreterInclude, &fInterpreterSymbolTable);
+    #endif
 }
 
 void Compiler::processIncludeFile(Program::Kind kind, const char* src, size_t length,
@@ -290,24 +356,30 @@ void Compiler::processIncludeFile(Program::Kind kind, const char* src, size_t le
     String source(src, length);
     fSource = &source;
 #endif
-    fIRGenerator->fSymbolTable = std::move(base);
+    std::shared_ptr<SymbolTable> old = fIRGenerator->fSymbolTable;
+    if (base) {
+        fIRGenerator->fSymbolTable = std::move(base);
+    }
     Program::Settings settings;
 #if !defined(SKSL_STANDALONE) & SK_SUPPORT_GPU
     GrContextOptions opts;
     GrShaderCaps caps(opts);
     settings.fCaps = &caps;
 #endif
-    fIRGenerator->start(&settings, nullptr);
-    fIRGenerator->convertProgram(kind, src, length, *fTypes, outElements);
+    SkASSERT(fIRGenerator->fCanInline);
+    fIRGenerator->fCanInline = false;
+    fIRGenerator->start(&settings, nullptr, true);
+    fIRGenerator->convertProgram(kind, src, length, outElements);
+    fIRGenerator->fCanInline = true;
     if (this->fErrorCount) {
         printf("Unexpected errors: %s\n", this->fErrorText.c_str());
     }
     SkASSERT(!fErrorCount);
-    fIRGenerator->fSymbolTable->markAllFunctionsBuiltin();
     *outSymbolTable = fIRGenerator->fSymbolTable;
 #ifdef SK_DEBUG
     fSource = nullptr;
 #endif
+    fIRGenerator->fSymbolTable = std::move(old);
 }
 
 // add the definition created by assigning to the lvalue to the definition set
@@ -595,7 +667,7 @@ bool is_constant(const Expression& expr, double value) {
             Constructor& c = (Constructor&) expr;
             bool isFloat = c.fType.columns() > 1 ? c.fType.componentType().isFloat()
                                                  : c.fType.isFloat();
-            if (c.fType.kind() == Type::kVector_Kind && c.isConstant()) {
+            if (c.fType.kind() == Type::kVector_Kind && c.isCompileTimeConstant()) {
                 for (int i = 0; i < c.fType.columns(); ++i) {
                     if (isFloat) {
                         if (c.getFVecComponent(i) != value) {
@@ -1030,27 +1102,36 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
     }
 }
 
-// returns true if this statement could potentially execute a break at the current level (we ignore
-// nested loops and switches, since any breaks inside of them will merely break the loop / switch)
-static bool contains_conditional_break(Statement& s, bool inConditional) {
+// Implementation-detail recursive helper function for `contains_conditional_break`.
+static bool contains_conditional_break_impl(Statement& s, bool inConditional) {
     switch (s.fKind) {
         case Statement::kBlock_Kind:
-            for (const auto& sub : ((Block&) s).fStatements) {
-                if (contains_conditional_break(*sub, inConditional)) {
+            for (const std::unique_ptr<Statement>& sub : static_cast<Block&>(s).fStatements) {
+                if (contains_conditional_break_impl(*sub, inConditional)) {
                     return true;
                 }
             }
             return false;
+
         case Statement::kBreak_Kind:
             return inConditional;
+
         case Statement::kIf_Kind: {
-            const IfStatement& i = (IfStatement&) s;
-            return contains_conditional_break(*i.fIfTrue, true) ||
-                   (i.fIfFalse && contains_conditional_break(*i.fIfFalse, true));
+            const IfStatement& i = static_cast<IfStatement&>(s);
+            return contains_conditional_break_impl(*i.fIfTrue, /*inConditional=*/true) ||
+                   (i.fIfFalse &&
+                    contains_conditional_break_impl(*i.fIfFalse, /*inConditional=*/true));
         }
+
         default:
             return false;
     }
+}
+
+// Returns true if this statement could potentially execute a break at the current level. We ignore
+// nested loops and switches, since any breaks inside of them will merely break the loop / switch.
+static bool contains_conditional_break(Statement& s) {
+    return contains_conditional_break_impl(s, /*inConditional=*/false);
 }
 
 // returns true if this statement definitely executes a break at the current level (we ignore
@@ -1058,31 +1139,47 @@ static bool contains_conditional_break(Statement& s, bool inConditional) {
 static bool contains_unconditional_break(Statement& s) {
     switch (s.fKind) {
         case Statement::kBlock_Kind:
-            for (const auto& sub : ((Block&) s).fStatements) {
+            for (const std::unique_ptr<Statement>& sub : static_cast<Block&>(s).fStatements) {
                 if (contains_unconditional_break(*sub)) {
                     return true;
                 }
             }
             return false;
+
         case Statement::kBreak_Kind:
             return true;
+
         default:
             return false;
     }
 }
 
-static void copy_all_but_break(std::unique_ptr<Statement>& stmt,
-                          std::vector<std::unique_ptr<Statement>*>* target) {
+static void move_all_but_break(std::unique_ptr<Statement>& stmt,
+                               std::vector<std::unique_ptr<Statement>>* target) {
     switch (stmt->fKind) {
-        case Statement::kBlock_Kind:
-            for (auto& s : ((Block&) *stmt).fStatements) {
-                copy_all_but_break(s, target);
+        case Statement::kBlock_Kind: {
+            // Recurse into the block.
+            Block& block = static_cast<Block&>(*stmt);
+
+            std::vector<std::unique_ptr<Statement>> blockStmts;
+            blockStmts.reserve(block.fStatements.size());
+            for (std::unique_ptr<Statement>& statementInBlock : block.fStatements) {
+                move_all_but_break(statementInBlock, &blockStmts);
             }
+
+            target->push_back(std::make_unique<Block>(block.fOffset, std::move(blockStmts),
+                                                      block.fSymbols, block.fIsScope));
             break;
+        }
+
         case Statement::kBreak_Kind:
-            return;
+            // Do not append a break to the target.
+            break;
+
         default:
-            target->push_back(&stmt);
+            // Append normal statements to the target.
+            target->push_back(std::move(stmt));
+            break;
     }
 }
 
@@ -1091,35 +1188,73 @@ static void copy_all_but_break(std::unique_ptr<Statement>& stmt,
 // broken by this call and must then be discarded).
 // Returns null (and leaves the switch unmodified) if no such simple reduction is possible, such as
 // when break statements appear inside conditionals.
-static std::unique_ptr<Statement> block_for_case(SwitchStatement* s, SwitchCase* c) {
-    bool capturing = false;
-    std::vector<std::unique_ptr<Statement>*> statementPtrs;
-    for (const auto& current : s->fCases) {
-        if (current.get() == c) {
-            capturing = true;
+static std::unique_ptr<Statement> block_for_case(SwitchStatement* switchStatement,
+                                                 SwitchCase* caseToCapture) {
+    // We have to be careful to not move any of the pointers until after we're sure we're going to
+    // succeed, so before we make any changes at all, we check the switch-cases to decide on a plan
+    // of action. First, find the switch-case we are interested in.
+    auto iter = switchStatement->fCases.begin();
+    for (; iter != switchStatement->fCases.end(); ++iter) {
+        if (iter->get() == caseToCapture) {
+            break;
         }
-        if (capturing) {
-            for (auto& stmt : current->fStatements) {
-                if (contains_conditional_break(*stmt, s->fKind == Statement::kIf_Kind)) {
-                    return nullptr;
-                }
-                if (contains_unconditional_break(*stmt)) {
-                    capturing = false;
-                    copy_all_but_break(stmt, &statementPtrs);
-                    break;
-                }
-                statementPtrs.push_back(&stmt);
+    }
+
+    // Next, walk forward through the rest of the switch. If we find a conditional break, we're
+    // stuck and can't simplify at all. If we find an unconditional break, we have a range of
+    // statements that we can use for simplification.
+    auto startIter = iter;
+    Statement* unconditionalBreakStmt = nullptr;
+    for (; iter != switchStatement->fCases.end(); ++iter) {
+        for (std::unique_ptr<Statement>& stmt : (*iter)->fStatements) {
+            if (contains_conditional_break(*stmt)) {
+                // We can't reduce switch-cases to a block when they have conditional breaks.
+                return nullptr;
             }
-            if (!capturing) {
+
+            if (contains_unconditional_break(*stmt)) {
+                // We found an unconditional break. We can use this block, but we need to strip
+                // out the break statement.
+                unconditionalBreakStmt = stmt.get();
                 break;
             }
         }
+
+        if (unconditionalBreakStmt != nullptr) {
+            break;
+        }
     }
-    std::vector<std::unique_ptr<Statement>> statements;
-    for (const auto& s : statementPtrs) {
-        statements.push_back(std::move(*s));
+
+    // We fell off the bottom of the switch or encountered a break. We know the range of statements
+    // that we need to move over, and we know it's safe to do so.
+    std::vector<std::unique_ptr<Statement>> caseStmts;
+
+    // We can move over most of the statements as-is.
+    while (startIter != iter) {
+        for (std::unique_ptr<Statement>& stmt : (*startIter)->fStatements) {
+            caseStmts.push_back(std::move(stmt));
+        }
+        ++startIter;
     }
-    return std::unique_ptr<Statement>(new Block(-1, std::move(statements), s->fSymbols));
+
+    // If we found an unconditional break at the end, we need to move what we can while avoiding
+    // that break.
+    if (unconditionalBreakStmt != nullptr) {
+        for (std::unique_ptr<Statement>& stmt : (*startIter)->fStatements) {
+            if (stmt.get() == unconditionalBreakStmt) {
+                move_all_but_break(stmt, &caseStmts);
+                unconditionalBreakStmt = nullptr;
+                break;
+            }
+
+            caseStmts.push_back(std::move(stmt));
+        }
+    }
+
+    SkASSERT(unconditionalBreakStmt == nullptr);  // Verify that we fixed the unconditional break.
+
+    // Return our newly-synthesized block.
+    return std::make_unique<Block>(/*offset=*/-1, std::move(caseStmts), switchStatement->fSymbols);
 }
 
 void Compiler::simplifyStatement(DefinitionMap& definitions,
@@ -1188,7 +1323,7 @@ void Compiler::simplifyStatement(DefinitionMap& definitions,
         }
         case Statement::kSwitch_Kind: {
             SwitchStatement& s = (SwitchStatement&) *stmt;
-            if (s.fValue->isConstant()) {
+            if (s.fValue->isCompileTimeConstant()) {
                 // switch is constant, replace it with the case that matches
                 bool found = false;
                 SwitchCase* defaultCase = nullptr;
@@ -1300,7 +1435,22 @@ void Compiler::scanCFG(FunctionDefinition& f) {
         }
 
         updated = false;
+        bool first = true;
         for (BasicBlock& b : cfg.fBlocks) {
+            if (!first && b.fEntrances.empty()) {
+                // Block was reachable before optimization, but has since become unreachable. In
+                // addition to being dead code, it's broken - since control flow can't reach it, no
+                // prior variable definitions can reach it, and therefore variables might look to
+                // have not been properly assigned. Kill it.
+                for (BasicBlock::Node& node : b.fNodes) {
+                    if (node.fKind == BasicBlock::Node::kStatement_Kind &&
+                        (*node.statement())->fKind != Statement::kNop_Kind) {
+                        node.setStatement(std::unique_ptr<Statement>(new Nop()));
+                    }
+                }
+                continue;
+            }
+            first = false;
             DefinitionMap definitions = b.fBefore;
 
             for (auto iter = b.fNodes.begin(); iter != b.fNodes.end() && !needsRescan; ++iter) {
@@ -1381,7 +1531,7 @@ void Compiler::registerExternalValue(ExternalValue* value) {
     fIRGenerator->fRootSymbolTable->addWithoutOwnership(value->fName, value);
 }
 
-Symbol* Compiler::takeOwnership(std::unique_ptr<Symbol> symbol) {
+const Symbol* Compiler::takeOwnership(std::unique_ptr<const Symbol> symbol) {
     return fIRGenerator->fRootSymbolTable->takeOwnership(std::move(symbol));
 }
 
@@ -1405,41 +1555,53 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kGeometry_Kind:
+            this->loadGeometryIntrinsics();
             inherited = &fGeometryInclude;
             fIRGenerator->fSymbolTable = fGeometrySymbolTable;
             fIRGenerator->fIntrinsics = &fGPUIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kFragmentProcessor_Kind:
+#if REHYDRATE
+            {
+                Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this,
+                                      SKSL_INCLUDE_sksl_fp,
+                                      SKSL_INCLUDE_sksl_fp_LENGTH);
+                fFPSymbolTable = rehydrator.symbolTable();
+                fFPInclude = rehydrator.elements();
+            }
+            inherited = &fFPInclude;
+            fIRGenerator->fSymbolTable = fFPSymbolTable;
+            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+            fIRGenerator->start(&settings, inherited);
+            break;
+#else
             inherited = nullptr;
             fIRGenerator->fSymbolTable = fGpuSymbolTable;
-            fIRGenerator->start(&settings, nullptr);
+            fIRGenerator->start(&settings, nullptr, true);
             fIRGenerator->fIntrinsics = &fGPUIntrinsics;
-            fIRGenerator->convertProgram(kind, SKSL_FP_INCLUDE, strlen(SKSL_FP_INCLUDE), *fTypes,
-                                         &elements);
-            fIRGenerator->fSymbolTable->markAllFunctionsBuiltin();
+            fIRGenerator->convertProgram(kind, SKSL_FP_INCLUDE, strlen(SKSL_FP_INCLUDE), &elements);
+            fIRGenerator->fIsBuiltinCode = false;
             break;
+#endif
         case Program::kPipelineStage_Kind:
+            this->loadPipelineIntrinsics();
             inherited = &fPipelineInclude;
             fIRGenerator->fSymbolTable = fPipelineSymbolTable;
             fIRGenerator->fIntrinsics = &fGPUIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kGeneric_Kind:
+            this->loadInterpreterIntrinsics();
             inherited = &fInterpreterInclude;
             fIRGenerator->fSymbolTable = fInterpreterSymbolTable;
             fIRGenerator->fIntrinsics = &fInterpreterIntrinsics;
             fIRGenerator->start(&settings, inherited);
             break;
     }
-    for (auto& element : elements) {
-        if (element->fKind == ProgramElement::kEnum_Kind) {
-            ((Enum&) *element).fBuiltin = true;
-        }
-    }
     std::unique_ptr<String> textPtr(new String(std::move(text)));
     fSource = textPtr.get();
-    fIRGenerator->convertProgram(kind, textPtr->c_str(), textPtr->size(), *fTypes, &elements);
+    fIRGenerator->convertProgram(kind, textPtr->c_str(), textPtr->size(), &elements);
     auto result = std::unique_ptr<Program>(new Program(kind,
                                                        std::move(textPtr),
                                                        settings,

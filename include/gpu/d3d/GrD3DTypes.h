@@ -47,6 +47,7 @@ public:
     using element_type = T;
 
     constexpr gr_cp() : fObject(nullptr) {}
+    constexpr gr_cp(std::nullptr_t) : fObject(nullptr) {}
 
     /**
      *  Shares the underlying object by calling AddRef(), so that both the argument and the newly
@@ -98,6 +99,8 @@ public:
         this->reset(that.release());
         return *this;
     }
+
+    explicit operator bool() const { return this->get() != nullptr; }
 
     T* get() const { return fObject; }
     T* operator->() const { return fObject; }
@@ -196,6 +199,16 @@ struct GrD3DTextureResourceInfo {
                fSampleQualityLevel == that.fSampleQualityLevel && fProtected == that.fProtected;
     }
 #endif
+};
+
+struct GrD3DFenceInfo {
+    GrD3DFenceInfo()
+        : fFence(nullptr)
+        , fValue(0) {
+    }
+
+    gr_cp<ID3D12Fence> fFence;
+    uint64_t           fValue;  // signal value for the fence
 };
 
 #endif

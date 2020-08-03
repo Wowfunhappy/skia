@@ -9,13 +9,12 @@ in fragmentProcessor? inputFP;
 in float sigma;
 layout(ctype=SkRect) in float4 rect;
 in uniform half cornerRadius;
-in uniform sampler2D ninePatchSampler;
+in fragmentProcessor ninePatchFP;
 layout(ctype=SkRect) uniform float4 proxyRect;
 uniform half blurRadius;
 
 @header {
-    #include "include/gpu/GrContext.h"
-    #include "include/private/GrRecordingContext.h"
+    #include "include/gpu/GrRecordingContext.h"
     #include "src/core/SkBlurPriv.h"
     #include "src/core/SkGpuBlurUtils.h"
     #include "src/core/SkRRectPriv.h"
@@ -25,13 +24,15 @@ uniform half blurRadius;
     #include "src/gpu/GrRecordingContextPriv.h"
     #include "src/gpu/GrRenderTargetContext.h"
     #include "src/gpu/GrStyle.h"
+    #include "src/gpu/effects/GrTextureEffect.h"
 }
 
 @class {
-    static GrSurfaceProxyView find_or_create_rrect_blur_mask(GrRecordingContext* context,
-                                                             const SkRRect& rrectToDraw,
-                                                             const SkISize& dimensions,
-                                                             float xformedSigma) {
+    static std::unique_ptr<GrFragmentProcessor> find_or_create_rrect_blur_mask_fp(
+            GrRecordingContext* context,
+            const SkRRect& rrectToDraw,
+            const SkISize& dimensions,
+            float xformedSigma) {
         static const GrUniqueKey::Domain kDomain = GrUniqueKey::GenerateDomain();
         GrUniqueKey key;
         GrUniqueKey::Builder builder(&key, kDomain, 9, "RoundRect Blur Mask");
@@ -47,19 +48,26 @@ uniform half blurRadius;
         }
         builder.finish();
 
+        // It seems like we could omit this matrix and modify the shader code to not normalize
+        // the coords used to sample the texture effect. However, the "proxyDims" value in the
+        // shader is not always the actual the proxy dimensions. This is because 'dimensions' here
+        // was computed using integer corner radii as determined in
+        // SkComputeBlurredRRectParams whereas the shader code uses the float radius to compute
+        // 'proxyDims'. Why it draws correctly with these unequal values is a mystery for the ages.
+        auto m = SkMatrix::Scale(dimensions.width(), dimensions.height());
         static constexpr auto kMaskOrigin = kBottomLeft_GrSurfaceOrigin;
         GrProxyProvider* proxyProvider = context->priv().proxyProvider();
 
         if (auto view = proxyProvider->findCachedProxyWithColorTypeFallback(
                 key, kMaskOrigin, GrColorType::kAlpha_8, 1)) {
-            return view;
+            return GrTextureEffect::Make(std::move(view), kPremul_SkAlphaType, m);
         }
 
         auto rtc = GrRenderTargetContext::MakeWithFallback(
                 context, GrColorType::kAlpha_8, nullptr, SkBackingFit::kExact, dimensions, 1,
-                GrMipMapped::kNo, GrProtected::kNo, kMaskOrigin);
+                GrMipmapped::kNo, GrProtected::kNo, kMaskOrigin);
         if (!rtc) {
-            return {};
+            return nullptr;
         }
 
         GrPaint paint;
@@ -70,7 +78,7 @@ uniform half blurRadius;
 
         GrSurfaceProxyView srcView = rtc->readSurfaceView();
         if (!srcView) {
-            return {};
+            return nullptr;
         }
         SkASSERT(srcView.asTextureProxy());
         auto rtc2 = SkGpuBlurUtils::GaussianBlur(context,
@@ -85,18 +93,17 @@ uniform half blurRadius;
                                                  SkTileMode::kClamp,
                                                  SkBackingFit::kExact);
         if (!rtc2) {
-            return {};
+            return nullptr;
         }
 
         GrSurfaceProxyView mask = rtc2->readSurfaceView();
         if (!mask) {
-            return {};
+            return nullptr;
         }
         SkASSERT(mask.asTextureProxy());
         SkASSERT(mask.origin() == kMaskOrigin);
         proxyProvider->assignUniqueKeyToProxy(key, mask.asTextureProxy());
-
-        return mask;
+        return GrTextureEffect::Make(std::move(mask), kPremul_SkAlphaType, m);
     }
 }
 
@@ -150,15 +157,15 @@ uniform half blurRadius;
             return nullptr;
         }
 
-        GrSurfaceProxyView mask = find_or_create_rrect_blur_mask(context, rrectToDraw, dimensions,
-                                                                 xformedSigma);
-        if (!mask) {
+        std::unique_ptr<GrFragmentProcessor> maskFP = find_or_create_rrect_blur_mask_fp(
+                context, rrectToDraw, dimensions, xformedSigma);
+        if (!maskFP) {
             return nullptr;
         }
 
         return std::unique_ptr<GrFragmentProcessor>(
                 new GrRRectBlurEffect(std::move(inputFP), xformedSigma, devRRect.getBounds(),
-                                      SkRRectPriv::GetSimpleRadii(devRRect).fX, std::move(mask)));
+                                      SkRRectPriv::GetSimpleRadii(devRRect).fX, std::move(maskFP)));
     }
 }
 
@@ -169,7 +176,7 @@ uniform half blurRadius;
     SkScalar sigma = d->fRandom->nextRangeF(1.f,10.f);
     SkRRect rrect;
     rrect.setRectXY(SkRect::MakeWH(w, h), r, r);
-    return GrRRectBlurEffect::Make(/*inputFP=*/nullptr, d->context(), sigma, sigma, rrect, rrect);
+    return GrRRectBlurEffect::Make(d->inputFP(), d->context(), sigma, sigma, rrect, rrect);
 }
 
 void main() {
@@ -207,8 +214,8 @@ void main() {
     half2 proxyDims = half2(2.0 * edgeSize);
     half2 texCoord = translatedFragPos / proxyDims;
 
-    half4 inputColor = sample(inputFP, sk_InColor);
-    sk_OutColor = inputColor * sample(ninePatchSampler, texCoord);
+    half4 inputColor = sample(inputFP);
+    sk_OutColor = inputColor * sample(ninePatchFP, texCoord);
 }
 
 @setData(pdman) {

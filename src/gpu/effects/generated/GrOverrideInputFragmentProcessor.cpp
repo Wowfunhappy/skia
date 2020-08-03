@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrOverrideInputFragmentProcessor.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -35,17 +36,24 @@ public:
                                                                kHalf4_GrSLType, "uniformColor");
         }
         fragBuilder->codeAppendf(
-                "half4 constColor;\n@if (%s) {\n    constColor = %s;\n} else {\n    constColor = "
-                "half4(%f, %f, %f, %f);\n}",
+                R"SkSL(half4 constColor;
+@if (%s) {
+    constColor = %s;
+} else {
+    constColor = half4(%f, %f, %f, %f);
+})SkSL",
                 (_outer.useUniform ? "true" : "false"),
                 uniformColorVar.isValid() ? args.fUniformHandler->getUniformCStr(uniformColorVar)
                                           : "half4(0)",
                 _outer.literalColor.fR, _outer.literalColor.fG, _outer.literalColor.fB,
                 _outer.literalColor.fA);
         SkString _input1992("constColor");
-        SkString _sample1992;
-        _sample1992 = this->invokeChild(_outer.fp_index, _input1992.c_str(), args);
-        fragBuilder->codeAppendf("\n%s = %s;\n", args.fOutputColor, _sample1992.c_str());
+        SkString _sample1992 = this->invokeChild(0, _input1992.c_str(), args);
+        fragBuilder->codeAppendf(
+                R"SkSL(
+%s = %s;
+)SkSL",
+                args.fOutputColor, _sample1992.c_str());
     }
 
 private:
@@ -66,7 +74,7 @@ GrGLSLFragmentProcessor* GrOverrideInputFragmentProcessor::onCreateGLSLInstance(
 }
 void GrOverrideInputFragmentProcessor::onGetGLSLProcessorKey(const GrShaderCaps& caps,
                                                              GrProcessorKeyBuilder* b) const {
-    b->add32((int32_t)useUniform);
+    b->add32((uint32_t)useUniform);
     if (!useUniform) {
         uint16_t red = SkFloatToHalf(literalColor.fR);
         uint16_t green = SkFloatToHalf(literalColor.fG);
@@ -90,13 +98,7 @@ GrOverrideInputFragmentProcessor::GrOverrideInputFragmentProcessor(
         , useUniform(src.useUniform)
         , uniformColor(src.uniformColor)
         , literalColor(src.literalColor) {
-    {
-        auto fp_clone = src.childProcessor(src.fp_index).clone();
-        if (src.childProcessor(src.fp_index).isSampledWithExplicitCoords()) {
-            fp_clone->setSampledWithExplicitCoords();
-        }
-        fp_index = this->registerChildProcessor(std::move(fp_clone));
-    }
+    this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrOverrideInputFragmentProcessor::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrOverrideInputFragmentProcessor(*this));

@@ -12,46 +12,6 @@
 #include "src/gpu/gl/GrGLUtil.h"
 #include <stdio.h>
 
-void GrGLClearErr(const GrGLInterface* gl) {
-    while (GR_GL_NO_ERROR != gl->fFunctions.fGetError()) {}
-}
-
-namespace {
-const char *get_error_string(uint32_t err) {
-    switch (err) {
-    case GR_GL_NO_ERROR:
-        return "";
-    case GR_GL_INVALID_ENUM:
-        return "Invalid Enum";
-    case GR_GL_INVALID_VALUE:
-        return "Invalid Value";
-    case GR_GL_INVALID_OPERATION:
-        return "Invalid Operation";
-    case GR_GL_OUT_OF_MEMORY:
-        return "Out of Memory";
-    case GR_GL_CONTEXT_LOST:
-        return "Context Lost";
-    }
-    return "Unknown";
-}
-}
-
-void GrGLCheckErr(const GrGLInterface* gl,
-                  const char* location,
-                  const char* call) {
-    uint32_t err = GR_GL_GET_ERROR(gl);
-    if (GR_GL_NO_ERROR != err) {
-        SkDebugf("---- glGetError 0x%x(%s)", err, get_error_string(err));
-        if (location) {
-            SkDebugf(" at\n\t%s", location);
-        }
-        if (call) {
-            SkDebugf("\n\t\t%s", call);
-        }
-        SkDebugf("\n");
-    }
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 #if GR_GL_LOG_CALLS
@@ -322,7 +282,7 @@ GrGLVendor GrGLGetVendorFromString(const char* vendorString) {
         if (0 == strncmp(vendorString, "Intel ", 6) || 0 == strcmp(vendorString, "Intel")) {
             return kIntel_GrGLVendor;
         }
-        if (0 == strcmp(vendorString, "Qualcomm")) {
+        if (0 == strcmp(vendorString, "Qualcomm") || 0 == strcmp(vendorString, "freedreno")) {
             return kQualcomm_GrGLVendor;
         }
         if (0 == strcmp(vendorString, "NVIDIA Corporation")) {
@@ -381,6 +341,10 @@ GrGLRenderer GrGLGetRendererFromStrings(const char* rendererString,
         }
         int adrenoNumber;
         n = sscanf(rendererString, "Adreno (TM) %d", &adrenoNumber);
+        if (n < 1) {
+            // retry with freedreno driver
+            n = sscanf(rendererString, "FD%d", &adrenoNumber);
+        }
         if (1 == n) {
             if (adrenoNumber >= 300) {
                 if (adrenoNumber < 400) {
@@ -584,6 +548,8 @@ std::tuple<GrGLANGLEBackend, GrGLANGLEVendor, GrGLANGLERenderer> GrGLGetANGLEInf
         }
     } else if (strstr(rendererString, "NVIDIA")) {
         vendor = GrGLANGLEVendor::kNVIDIA;
+    } else if (strstr(rendererString, "Radeon")) {
+        vendor = GrGLANGLEVendor::kAMD;
     }
     if (strstr(rendererString, "Direct3D11")) {
         backend = GrGLANGLEBackend::kD3D11;

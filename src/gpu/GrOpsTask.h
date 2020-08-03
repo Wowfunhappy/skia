@@ -12,7 +12,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/core/SkTypes.h"
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTDArray.h"
@@ -91,7 +91,7 @@ public:
     void addOp(GrDrawingManager* drawingMgr, std::unique_ptr<GrOp> op,
                GrTextureResolveManager textureResolveManager, const GrCaps& caps) {
         auto addDependency = [ drawingMgr, textureResolveManager, &caps, this ] (
-                GrSurfaceProxy* p, GrMipMapped mipmapped) {
+                GrSurfaceProxy* p, GrMipmapped mipmapped) {
             this->addDependency(drawingMgr, p, mipmapped, textureResolveManager, caps);
         };
 
@@ -111,7 +111,7 @@ public:
                    GrAppliedClip&& clip, const DstProxyView& dstProxyView,
                    GrTextureResolveManager textureResolveManager, const GrCaps& caps) {
         auto addDependency = [ drawingMgr, textureResolveManager, &caps, this ] (
-                GrSurfaceProxy* p, GrMipMapped mipmapped) {
+                GrSurfaceProxy* p, GrMipmapped mipmapped) {
             this->addSampledTexture(p);
             this->addDependency(drawingMgr, p, mipmapped, textureResolveManager, caps);
         };
@@ -120,7 +120,7 @@ public:
         clip.visitProxies(addDependency);
         if (dstProxyView.proxy()) {
             this->addSampledTexture(dstProxyView.proxy());
-            addDependency(dstProxyView.proxy(), GrMipMapped::kNo);
+            addDependency(dstProxyView.proxy(), GrMipmapped::kNo);
         }
 
         this->recordOp(std::move(op), processorAnalysis, clip.doesClip() ? &clip : nullptr,
@@ -197,15 +197,17 @@ private:
 
     class OpChain {
     public:
-        OpChain(const OpChain&) = delete;
-        OpChain& operator=(const OpChain&) = delete;
         OpChain(std::unique_ptr<GrOp>, GrProcessorSet::Analysis, GrAppliedClip*,
                 const DstProxyView*);
-
         ~OpChain() {
             // The ops are stored in a GrMemoryPool and must be explicitly deleted via the pool.
             SkASSERT(fList.empty());
         }
+
+        OpChain(const OpChain&) = delete;
+        OpChain& operator=(const OpChain&) = delete;
+        OpChain(OpChain&&) = default;
+        OpChain& operator=(OpChain&&) = default;
 
         void visitProxies(const GrOp::VisitProxyFunc&) const;
 
@@ -314,13 +316,13 @@ private:
 
     uint32_t fLastClipStackGenID = SK_InvalidUniqueID;
     SkIRect fLastDevClipBounds;
-    int fLastClipNumAnalyticFPs;
+    int fLastClipNumAnalyticElements;
 
     // We must track if we have a wait op so that we don't delete the op when we have a full clear.
     bool fHasWaitOp = false;
 
     // For ops/opsTask we have mean: 5 stdDev: 28
-    SkSTArray<25, OpChain, true> fOpChains;
+    SkSTArray<25, OpChain> fOpChains;
 
     // MDB TODO: 4096 for the first allocation of the clip space will be huge overkill.
     // Gather statistics to determine the correct size.

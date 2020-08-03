@@ -10,6 +10,7 @@
  **************************************************************************************************/
 #include "GrDeviceSpaceEffect.h"
 
+#include "src/core/SkUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -23,27 +24,17 @@ public:
         GrGLSLFPFragmentBuilder* fragBuilder = args.fFragBuilder;
         const GrDeviceSpaceEffect& _outer = args.fFp.cast<GrDeviceSpaceEffect>();
         (void)_outer;
-        auto matrix = _outer.matrix;
-        (void)matrix;
-        matrixVar = args.fUniformHandler->addUniform(&_outer, kFragment_GrShaderFlag,
-                                                     kFloat3x3_GrSLType, "matrix");
-        fragBuilder->codeAppendf("float3 p = %s * float3(sk_FragCoord.xy, 1);",
-                                 args.fUniformHandler->getUniformCStr(matrixVar));
-        SkString _input276 = SkStringPrintf("%s", args.fInputColor);
-        SkString _sample276;
-        SkString _coords276("p.xy / p.z");
-        _sample276 =
-                this->invokeChild(_outer.fp_index, _input276.c_str(), args, _coords276.c_str());
-        fragBuilder->codeAppendf("\n%s = %s;\n", args.fOutputColor, _sample276.c_str());
+        SkString _coords203("sk_FragCoord.xy");
+        SkString _sample203 = this->invokeChild(0, args, _coords203.c_str());
+        fragBuilder->codeAppendf(
+                R"SkSL(%s = %s;
+)SkSL",
+                args.fOutputColor, _sample203.c_str());
     }
 
 private:
     void onSetData(const GrGLSLProgramDataManager& pdman,
-                   const GrFragmentProcessor& _proc) override {
-        const GrDeviceSpaceEffect& _outer = _proc.cast<GrDeviceSpaceEffect>();
-        { pdman.setSkMatrix(matrixVar, (_outer.matrix)); }
-    }
-    UniformHandle matrixVar;
+                   const GrFragmentProcessor& _proc) override {}
 };
 GrGLSLFragmentProcessor* GrDeviceSpaceEffect::onCreateGLSLInstance() const {
     return new GrGLSLDeviceSpaceEffect();
@@ -53,18 +44,11 @@ void GrDeviceSpaceEffect::onGetGLSLProcessorKey(const GrShaderCaps& caps,
 bool GrDeviceSpaceEffect::onIsEqual(const GrFragmentProcessor& other) const {
     const GrDeviceSpaceEffect& that = other.cast<GrDeviceSpaceEffect>();
     (void)that;
-    if (matrix != that.matrix) return false;
     return true;
 }
 GrDeviceSpaceEffect::GrDeviceSpaceEffect(const GrDeviceSpaceEffect& src)
-        : INHERITED(kGrDeviceSpaceEffect_ClassID, src.optimizationFlags()), matrix(src.matrix) {
-    {
-        auto fp_clone = src.childProcessor(src.fp_index).clone();
-        if (src.childProcessor(src.fp_index).isSampledWithExplicitCoords()) {
-            fp_clone->setSampledWithExplicitCoords();
-        }
-        fp_index = this->registerChildProcessor(std::move(fp_clone));
-    }
+        : INHERITED(kGrDeviceSpaceEffect_ClassID, src.optimizationFlags()) {
+    this->cloneAndRegisterAllChildProcessors(src);
 }
 std::unique_ptr<GrFragmentProcessor> GrDeviceSpaceEffect::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrDeviceSpaceEffect(*this));
@@ -72,12 +56,6 @@ std::unique_ptr<GrFragmentProcessor> GrDeviceSpaceEffect::clone() const {
 GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrDeviceSpaceEffect);
 #if GR_TEST_UTILS
 std::unique_ptr<GrFragmentProcessor> GrDeviceSpaceEffect::TestCreate(GrProcessorTestData* d) {
-    std::unique_ptr<GrFragmentProcessor> fp;
-    // We have a restriction that explicit coords only work for FPs with zero or one
-    // coord transform.
-    do {
-        fp = GrProcessorUnitTest::MakeChildFP(d);
-    } while (fp->numCoordTransforms() > 1);
-    return GrDeviceSpaceEffect::Make(std::move(fp));
+    return GrDeviceSpaceEffect::Make(GrProcessorUnitTest::MakeChildFP(d));
 }
 #endif

@@ -18,15 +18,15 @@
 #include "src/gpu/gradients/GrGradientBitmapCache.h"
 #include "src/gpu/gradients/generated/GrDualIntervalGradientColorizer.h"
 #include "src/gpu/gradients/generated/GrSingleIntervalGradientColorizer.h"
-#include "src/gpu/gradients/generated/GrTextureGradientColorizer.h"
 #include "src/gpu/gradients/generated/GrUnrolledBinaryGradientColorizer.h"
 
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrColor.h"
 #include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/SkGr.h"
+#include "src/gpu/effects/GrTextureEffect.h"
 
 // Intervals smaller than this (that aren't hard stops) on low-precision-only devices force us to
 // use the textured gradient
@@ -65,7 +65,8 @@ static std::unique_ptr<GrFragmentProcessor> make_textured_colorizer(const SkPMCo
         return nullptr;
     }
 
-    return GrTextureGradientColorizer::Make(std::move(view));
+    auto m = SkMatrix::Scale(view.width(), 1.f);
+    return GrTextureEffect::Make(std::move(view), alphaType, m, GrSamplerState::Filter::kLinear);
 }
 
 // Analyze the shader's color stops and positions and chooses an appropriate colorizer to represent

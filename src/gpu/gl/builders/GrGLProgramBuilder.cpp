@@ -7,7 +7,7 @@
 
 #include "src/gpu/gl/builders/GrGLProgramBuilder.h"
 
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "src/core/SkATrace.h"
 #include "src/core/SkAutoMalloc.h"
 #include "src/core/SkReadBuffer.h"
@@ -15,7 +15,6 @@
 #include "src/core/SkWriteBuffer.h"
 #include "src/gpu/GrAutoLocaleSetter.h"
 #include "src/gpu/GrContextPriv.h"
-#include "src/gpu/GrCoordTransform.h"
 #include "src/gpu/GrPersistentCacheUtils.h"
 #include "src/gpu/GrProgramDesc.h"
 #include "src/gpu/GrShaderCaps.h"
@@ -275,11 +274,11 @@ sk_sp<GrGLProgram> GrGLProgramBuilder::finalize(const GrGLPrecompiledProgram* pr
                 if (!reader.isValid()) {
                     break;
                 }
-                GrGLClearErr(this->gpu()->glInterface());
+                this->gpu()->clearErrorsAndCheckForOOM();
                 GR_GL_CALL_NOERRCHECK(this->gpu()->glInterface(),
                                       ProgramBinary(programID, binaryFormat,
                                                     const_cast<void*>(binary), length));
-                if (GR_GL_GET_ERROR(this->gpu()->glInterface()) == GR_GL_NO_ERROR) {
+                if (this->gpu()->getErrorAndCheckForOOM() == GR_GL_NO_ERROR) {
                     if (checkLinked) {
                         cached = this->checkLinkStatus(programID, errorHandler, nullptr, nullptr);
                     }
@@ -391,7 +390,8 @@ sk_sp<GrGLProgram> GrGLProgramBuilder::finalize(const GrGLPrecompiledProgram* pr
             }
 
             SkString tessControlShader = primProc.getTessControlShaderGLSL(
-                    versionAndExtensionDecls.c_str(), *this->shaderCaps());
+                    fGeometryProcessor.get(), versionAndExtensionDecls.c_str(), fUniformHandler,
+                    *this->shaderCaps());
             if (!this->compileAndAttachShaders(tessControlShader.c_str(), programID,
                                                GR_GL_TESS_CONTROL_SHADER, &shadersToDelete,
                                                errorHandler)) {
@@ -400,7 +400,8 @@ sk_sp<GrGLProgram> GrGLProgramBuilder::finalize(const GrGLPrecompiledProgram* pr
             }
 
             SkString tessEvaluationShader = primProc.getTessEvaluationShaderGLSL(
-                    versionAndExtensionDecls.c_str(), *this->shaderCaps());
+                    fGeometryProcessor.get(), versionAndExtensionDecls.c_str(), fUniformHandler,
+                    *this->shaderCaps());
             if (!this->compileAndAttachShaders(tessEvaluationShader.c_str(), programID,
                                                GR_GL_TESS_EVALUATION_SHADER, &shadersToDelete,
                                                errorHandler)) {
@@ -558,7 +559,6 @@ sk_sp<GrGLProgram> GrGLProgramBuilder::createProgram(GrGLuint programID) {
                              std::move(fGeometryProcessor),
                              std::move(fXferProcessor),
                              std::move(fFragmentProcessors),
-                             fFragmentProcessorCnt,
                              std::move(fAttributes),
                              fVertexAttributeCnt,
                              fInstanceAttributeCnt,

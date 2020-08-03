@@ -23,39 +23,21 @@ public:
         }
     }
 
-    static const int kVerticesPerGlyph = GrTextBlob::kVerticesPerGlyph;
+    static const int kVerticesPerGlyph = GrAtlasSubRun::kVerticesPerGlyph;
     static const int kIndicesPerGlyph = 6;
 
     struct Geometry {
-        SkMatrix    fDrawMatrix;
-        SkIRect     fClipRect;
-        GrTextBlob* fBlob;
-        SkPoint     fDrawOrigin;
-        GrTextBlob::SubRun* fSubRunPtr;
-        SkPMColor4f fColor;
-
         void fillVertexData(void* dst, int offset, int count) const;
+
+        const GrAtlasSubRun& fSubRun;
+        const SkMatrix       fDrawMatrix;
+        const SkPoint        fDrawOrigin;
+        const SkIRect        fClipRect;
+        GrTextBlob* const    fBlob;  // mutable to make unref call in Op dtor.
+
+        // Strangely, the color is mutated as part of the onPrepare process.
+        SkPMColor4f          fColor;
     };
-
-    static std::unique_ptr<GrAtlasTextOp> MakeBitmap(GrRecordingContext* context,
-                                                     GrPaint&& paint,
-                                                     GrTextBlob::SubRun* subrun,
-                                                     const SkMatrix& drawMatrix,
-                                                     SkPoint drawOrigin,
-                                                     const SkIRect& clipRect,
-                                                     const SkPMColor4f& filteredColor);
-
-    static std::unique_ptr<GrAtlasTextOp> MakeDistanceField(
-            GrRecordingContext*,
-            GrPaint&&,
-            GrTextBlob::SubRun*,
-            const SkMatrix& drawMatrix,
-            SkPoint drawOrigin,
-            const SkIRect& clipRect,
-            const SkPMColor4f& filteredColor,
-            bool useGammaCorrectDistanceTable,
-            SkColor luminanceColor,
-            const SkSurfaceProps&);
 
     const char* name() const override { return "AtlasTextOp"; }
 
@@ -99,15 +81,21 @@ private:
     static constexpr auto kMinGeometryAllocated = 12;
 
     GrAtlasTextOp(MaskType maskType,
-                  GrPaint&& paint,
-                  GrTextBlob::SubRun* subrun,
-                  const SkMatrix& drawMatrix,
-                  SkPoint drawOrigin,
-                  const SkIRect& clipRect,
-                  const SkPMColor4f& filteredColor,
+                  bool needsTransform,
+                  int glyphCount,
+                  SkRect deviceRect,
+                  const Geometry& geo,
+                  GrPaint&& paint);
+
+    GrAtlasTextOp(MaskType maskType,
+                  bool needsTransform,
+                  int glyphCount,
+                  SkRect deviceRect,
                   SkColor luminanceColor,
                   bool useGammaCorrectDistanceTable,
-                  uint32_t DFGPFlags);
+                  uint32_t DFGPFlags,
+                  const Geometry& geo,
+                  GrPaint&& paint);
 
     struct FlushInfo {
         sk_sp<const GrBuffer> fVertexBuffer;

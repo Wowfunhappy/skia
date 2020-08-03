@@ -13,6 +13,7 @@
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkDistanceFieldGen.h"
 #include "src/core/SkDraw.h"
+#include "src/core/SkMatrixPriv.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkPointPriv.h"
 #include "src/core/SkRasterClip.h"
@@ -276,7 +277,7 @@ public:
         const GrSurfaceProxyView* views = fAtlas->getViews();
         for (uint32_t i = 0; i < fAtlas->numActivePages(); ++i) {
             SkASSERT(views[i].proxy());
-            func(views[i].proxy(), GrMipMapped::kNo);
+            func(views[i].proxy(), GrMipmapped::kNo);
         }
     }
 
@@ -372,7 +373,7 @@ private:
             }
             flushInfo.fGeometryProcessor = GrDistanceFieldPathGeoProc::Make(
                     target->allocator(), *target->caps().shaderCaps(), *matrix, fWideColor,
-                    fAtlas->getViews(), fAtlas->numActivePages(), GrSamplerState::Filter::kBilerp,
+                    fAtlas->getViews(), fAtlas->numActivePages(), GrSamplerState::Filter::kLinear,
                     flags);
         } else {
             SkMatrix invert;
@@ -768,7 +769,7 @@ private:
             if (fUsesDistanceField) {
                 reinterpret_cast<GrDistanceFieldPathGeoProc*>(gp)->addNewViews(
                         fAtlas->getViews(), fAtlas->numActivePages(),
-                        GrSamplerState::Filter::kBilerp);
+                        GrSamplerState::Filter::kLinear);
             } else {
                 reinterpret_cast<GrBitmapTextGeoProc*>(gp)->addNewViews(
                         fAtlas->getViews(), fAtlas->numActivePages(),

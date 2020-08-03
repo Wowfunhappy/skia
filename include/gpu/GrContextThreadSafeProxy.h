@@ -18,6 +18,7 @@
 class GrBackendFormat;
 class GrCaps;
 class GrContextThreadSafeProxyPriv;
+class GrTextBlobCache;
 class SkSurfaceCharacterization;
 class SkSurfaceProps;
 
@@ -63,8 +64,10 @@ public:
      */
     SkSurfaceCharacterization createCharacterization(
                                   size_t cacheMaxResourceBytes,
-                                  const SkImageInfo& ii, const GrBackendFormat& backendFormat,
-                                  int sampleCount, GrSurfaceOrigin origin,
+                                  const SkImageInfo& ii,
+                                  const GrBackendFormat& backendFormat,
+                                  int sampleCount,
+                                  GrSurfaceOrigin origin,
                                   const SkSurfaceProps& surfaceProps,
                                   bool isMipMapped,
                                   bool willUseGLFBO0 = false,
@@ -108,11 +111,12 @@ private:
     // `init` method on GrContext_Base).
     void init(sk_sp<const GrCaps>);
 
-    const GrBackendApi          fBackend;
-    const GrContextOptions      fOptions;
-    const uint32_t              fContextID;
-    sk_sp<const GrCaps>         fCaps;
-    std::atomic<bool>           fAbandoned{false};
+    const GrBackendApi               fBackend;
+    const GrContextOptions           fOptions;
+    const uint32_t                   fContextID;
+    sk_sp<const GrCaps>              fCaps;
+    std::unique_ptr<GrTextBlobCache> fTextBlobCache;
+    std::atomic<bool>                fAbandoned{false};
 };
 
 #endif

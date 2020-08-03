@@ -14,7 +14,8 @@
 #include "include/core/SkM44.h"
 #include "include/core/SkTypes.h"
 
-#include "src/gpu/GrCoordTransform.h"
+#include "src/gpu/effects/GrTextureEffect.h"
+
 #include "src/gpu/GrFragmentProcessor.h"
 
 class GrCircleBlurFragmentProcessor : public GrFragmentProcessor {
@@ -26,35 +27,30 @@ public:
     GrCircleBlurFragmentProcessor(const GrCircleBlurFragmentProcessor& src);
     std::unique_ptr<GrFragmentProcessor> clone() const override;
     const char* name() const override { return "CircleBlurFragmentProcessor"; }
-    int inputFP_index = -1;
     SkRect circleRect;
-    float textureRadius;
     float solidRadius;
-    TextureSampler blurProfileSampler;
+    float textureRadius;
 
 private:
     GrCircleBlurFragmentProcessor(std::unique_ptr<GrFragmentProcessor> inputFP,
                                   SkRect circleRect,
-                                  float textureRadius,
                                   float solidRadius,
-                                  GrSurfaceProxyView blurProfileSampler)
+                                  float textureRadius,
+                                  std::unique_ptr<GrFragmentProcessor> blurProfile)
             : INHERITED(kGrCircleBlurFragmentProcessor_ClassID,
                         (OptimizationFlags)(inputFP ? ProcessorOptimizationFlags(inputFP.get())
                                                     : kAll_OptimizationFlags) &
                                 kCompatibleWithCoverageAsAlpha_OptimizationFlag)
             , circleRect(circleRect)
-            , textureRadius(textureRadius)
             , solidRadius(solidRadius)
-            , blurProfileSampler(std::move(blurProfileSampler)) {
-        if (inputFP) {
-            inputFP_index = this->registerChildProcessor(std::move(inputFP));
-        }
-        this->setTextureSamplerCnt(1);
+            , textureRadius(textureRadius) {
+        this->registerChild(std::move(inputFP), SkSL::SampleUsage::PassThrough());
+        SkASSERT(blurProfile);
+        this->registerChild(std::move(blurProfile), SkSL::SampleUsage::Explicit());
     }
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
     void onGetGLSLProcessorKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override;
     bool onIsEqual(const GrFragmentProcessor&) const override;
-    const TextureSampler& onTextureSampler(int) const override;
     GR_DECLARE_FRAGMENT_PROCESSOR_TEST
     typedef GrFragmentProcessor INHERITED;
 };

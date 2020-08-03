@@ -15,7 +15,7 @@
 class SkDeferredDisplayListPriv;
 
 #if SK_SUPPORT_GPU
-#include "include/private/GrRecordingContext.h"
+#include "include/gpu/GrRecordingContext.h"
 #include "include/private/SkTArray.h"
 #include <map>
 class GrRenderTask;
@@ -29,7 +29,7 @@ using GrRenderTargetProxy = SkRefCnt;
  * This class contains pre-processed gpu operations that can be replayed into
  * an SkSurface via SkSurface::draw(SkDeferredDisplayList*).
  */
-class SkDeferredDisplayList {
+class SkDeferredDisplayList : public SkNVRefCnt<SkDeferredDisplayList> {
 public:
     SK_API ~SkDeferredDisplayList();
 

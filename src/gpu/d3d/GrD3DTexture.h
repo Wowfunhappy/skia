@@ -11,6 +11,7 @@
 #include "src/core/SkLRUCache.h"
 #include "src/gpu/GrSamplerState.h"
 #include "src/gpu/GrTexture.h"
+#include "src/gpu/d3d/GrD3DDescriptorHeap.h"
 #include "src/gpu/d3d/GrD3DTextureResource.h"
 
 class GrD3DTexture : public GrTexture, public virtual GrD3DTextureResource {
@@ -20,7 +21,7 @@ public:
                                               SkISize dimensions,
                                               const D3D12_RESOURCE_DESC&,
                                               GrProtected,
-                                              GrMipMapsStatus);
+                                              GrMipmapStatus);
 
     static sk_sp<GrD3DTexture> MakeWrappedTexture(GrD3DGpu*,
                                                   SkISize dimensions,
@@ -34,7 +35,7 @@ public:
     GrBackendTexture getBackendTexture() const override;
 
     GrBackendFormat backendFormat() const override { return this->getBackendFormat(); }
-    D3D12_CPU_DESCRIPTOR_HANDLE shaderResourceView() { return fShaderResourceView; }
+    D3D12_CPU_DESCRIPTOR_HANDLE shaderResourceView() { return fShaderResourceView.fHandle; }
 
     void textureParamsModified() override {}
 
@@ -46,8 +47,8 @@ protected:
                  SkISize dimensions,
                  const GrD3DTextureResourceInfo&,
                  sk_sp<GrD3DResourceState>,
-                 const D3D12_CPU_DESCRIPTOR_HANDLE& shaderResourceView,
-                 GrMipMapsStatus);
+                 const GrD3DDescriptorHeap::CPUHandle& shaderResourceView,
+                 GrMipmapStatus);
 
     GrD3DGpu* getD3DGpu() const;
 
@@ -62,11 +63,13 @@ protected:
 
 private:
     GrD3DTexture(GrD3DGpu*, SkBudgeted, SkISize dimensions, const GrD3DTextureResourceInfo&,
-                 sk_sp<GrD3DResourceState>, const D3D12_CPU_DESCRIPTOR_HANDLE& shaderResourceView,
-                 GrMipMapsStatus);
+                 sk_sp<GrD3DResourceState>,
+                 const GrD3DDescriptorHeap::CPUHandle& shaderResourceView,
+                 GrMipmapStatus);
     GrD3DTexture(GrD3DGpu*, SkISize dimensions, const GrD3DTextureResourceInfo&,
-                 sk_sp<GrD3DResourceState>, const D3D12_CPU_DESCRIPTOR_HANDLE& shaderResourceView,
-                 GrMipMapsStatus, GrWrapCacheable, GrIOType);
+                 sk_sp<GrD3DResourceState>,
+                 const GrD3DDescriptorHeap::CPUHandle& shaderResourceView,
+                 GrMipmapStatus, GrWrapCacheable, GrIOType);
 
     // In D3D we call the release proc after we are finished with the underlying
     // GrSurfaceResource::Resource object (which occurs after the GPU has finished all work on it).
@@ -78,12 +81,10 @@ private:
     void removeFinishIdleProcs();
 
     struct SamplerHash {
-        uint32_t operator()(GrSamplerState state) const {
-            return GrSamplerState::GenerateKey(state);
-        }
+        uint32_t operator()(GrSamplerState state) const { return state.asIndex(); }
     };
 
-    D3D12_CPU_DESCRIPTOR_HANDLE fShaderResourceView;
+    GrD3DDescriptorHeap::CPUHandle fShaderResourceView;
 
     typedef GrTexture INHERITED;
 };

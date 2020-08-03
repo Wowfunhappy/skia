@@ -6,6 +6,7 @@
  */
 
 #include "include/core/SkCanvas.h"
+#include "include/core/SkFontMgr.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkMallocPixelRef.h"
 #include "include/core/SkPictureRecorder.h"
@@ -18,7 +19,6 @@
 #include "include/private/SkTemplates.h"
 #include "src/core/SkAnnotationKeys.h"
 #include "src/core/SkAutoMalloc.h"
-#include "src/core/SkFontDescriptor.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkPicturePriv.h"
@@ -302,9 +302,9 @@ static void TestColorFilterSerialization(skiatest::Reporter* reporter) {
     for (int i = 0; i < 256; ++i) {
         table[i] = (i * 41) % 256;
     }
-    auto colorFilter(SkTableColorFilter::Make(table));
+    auto filter = SkTableColorFilter::Make(table);
     sk_sp<SkColorFilter> copy(
-        TestFlattenableSerialization<SkColorFilter>(colorFilter.get(), true, reporter));
+        TestFlattenableSerialization(as_CFB(filter.get()), true, reporter));
 }
 
 static SkBitmap draw_picture(SkPicture& picture) {
@@ -335,9 +335,38 @@ static void compare_bitmaps(skiatest::Reporter* reporter,
     }
     REPORTER_ASSERT(reporter, 0 == pixelErrors);
 }
-static void serialize_and_compare_typeface(sk_sp<SkTypeface> typeface, const char* text,
-                                           skiatest::Reporter* reporter)
-{
+
+static sk_sp<SkData> serialize_typeface_proc(SkTypeface* typeface, void* ctx) {
+    // Write out typeface ID followed by entire typeface.
+    SkDynamicMemoryWStream stream;
+    sk_sp<SkData> data(typeface->serialize(SkTypeface::SerializeBehavior::kDoIncludeData));
+    uint32_t typeface_id = typeface->uniqueID();
+    stream.write(&typeface_id, sizeof(typeface_id));
+    stream.write(data->data(), data->size());
+    return stream.detachAsData();
+}
+
+static sk_sp<SkTypeface> deserialize_typeface_proc(const void* data, size_t length, void* ctx) {
+    SkStream* stream;
+    if (length < sizeof(stream)) {
+        return nullptr;
+    }
+    memcpy(&stream, data, sizeof(stream));
+
+    SkFontID id;
+    if (!stream->read(&id, sizeof(id))) {
+        return nullptr;
+    }
+
+    sk_sp<SkTypeface> typeface = SkTypeface::MakeDeserialize(stream);
+    return typeface;
+}
+
+static void serialize_and_compare_typeface(sk_sp<SkTypeface> typeface,
+                                           const char* text,
+                                           const SkSerialProcs* serial_procs,
+                                           const SkDeserialProcs* deserial_procs,
+                                           skiatest::Reporter* reporter) {
     // Create a font with the typeface.
     SkPaint paint;
     paint.setColor(SK_ColorGRAY);
@@ -355,9 +384,9 @@ static void serialize_and_compare_typeface(sk_sp<SkTypeface> typeface, const cha
 
     // Serlialize picture and create its clone from stream.
     SkDynamicMemoryWStream stream;
-    picture->serialize(&stream);
+    picture->serialize(&stream, serial_procs);
     std::unique_ptr<SkStream> inputStream(stream.detachAsStream());
-    sk_sp<SkPicture> loadedPicture(SkPicture::MakeFromStream(inputStream.get()));
+    sk_sp<SkPicture> loadedPicture(SkPicture::MakeFromStream(inputStream.get(), deserial_procs));
 
     // Draw both original and clone picture and compare bitmaps -- they should be identical.
     SkBitmap origBitmap = draw_picture(*picture);
@@ -365,31 +394,56 @@ static void serialize_and_compare_typeface(sk_sp<SkTypeface> typeface, const cha
     compare_bitmaps(reporter, origBitmap, destBitmap);
 }
 
-static void TestPictureTypefaceSerialization(skiatest::Reporter* reporter) {
+static sk_sp<SkTypeface> makeDistortableWithNonDefaultAxes(skiatest::Reporter* reporter) {
+    std::unique_ptr<SkStreamAsset> distortable(GetResourceAsStream("fonts/Distortable.ttf"));
+    if (!distortable) {
+        REPORT_FAILURE(reporter, "distortable", SkString());
+        return nullptr;
+    }
+
+    const SkFontArguments::VariationPosition::Coordinate position[] = {
+        { SkSetFourByteTag('w','g','h','t'), SK_ScalarSqrt2 },
+    };
+    SkFontArguments params;
+    params.setVariationDesignPosition({position, SK_ARRAY_COUNT(position)});
+
+    sk_sp<SkFontMgr> fm = SkFontMgr::RefDefault();
+
+    sk_sp<SkTypeface> typeface = fm->makeFromStream(std::move(distortable), params);
+    if (!typeface) {
+        return nullptr;  // Not all SkFontMgr can makeFromStream().
+    }
+
+    int count = typeface->getVariationDesignPosition(nullptr, 0);
+    if (count == -1) {
+        return nullptr;  // The number of axes is unknown.
+    }
+
+    return typeface;
+}
+
+static void TestPictureTypefaceSerialization(const SkSerialProcs* serial_procs,
+                                             const SkDeserialProcs* deserial_procs,
+                                             skiatest::Reporter* reporter) {
     {
         // Load typeface from file to test CreateFromFile with index.
         auto typeface = MakeResourceAsTypeface("fonts/test.ttc", 1);
         if (!typeface) {
             INFOF(reporter, "Could not run fontstream test because test.ttc not found.");
         } else {
-            serialize_and_compare_typeface(std::move(typeface), "A!", reporter);
+            serialize_and_compare_typeface(std::move(typeface), "A!", serial_procs, deserial_procs,
+                                           reporter);
         }
     }
 
     {
         // Load typeface as stream to create with axis settings.
-        std::unique_ptr<SkStreamAsset> distortable(GetResourceAsStream("fonts/Distortable.ttf"));
-        if (!distortable) {
-            INFOF(reporter, "Could not run fontstream test because Distortable.ttf not found.");
+        auto typeface = makeDistortableWithNonDefaultAxes(reporter);
+        if (!typeface) {
+            INFOF(reporter, "Could not run fontstream test because Distortable.ttf not created.");
         } else {
-            SkFixed axis = SK_FixedSqrt2;
-            sk_sp<SkTypeface> typeface(SkTypeface::MakeFromFontData(
-                std::make_unique<SkFontData>(std::move(distortable), 0, &axis, 1)));
-            if (!typeface) {
-                INFOF(reporter, "Could not run fontstream test because Distortable.ttf not created.");
-            } else {
-                serialize_and_compare_typeface(std::move(typeface), "ab", reporter);
-            }
+            serialize_and_compare_typeface(std::move(typeface), "ab", serial_procs,
+                                            deserial_procs, reporter);
         }
     }
 }
@@ -634,7 +688,13 @@ DEF_TEST(Serialization, reporter) {
         }
     }
 
-    TestPictureTypefaceSerialization(reporter);
+    TestPictureTypefaceSerialization(nullptr, nullptr, reporter);
+
+    SkSerialProcs serial_procs;
+    serial_procs.fTypefaceProc = serialize_typeface_proc;
+    SkDeserialProcs deserial_procs;
+    deserial_procs.fTypefaceProc = deserialize_typeface_proc;
+    TestPictureTypefaceSerialization(&serial_procs, &deserial_procs, reporter);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -668,12 +728,12 @@ public:
         , fCurrIndex(0)
     {}
 
-    ~TestAnnotationCanvas() {
+    ~TestAnnotationCanvas() override {
         REPORTER_ASSERT(fReporter, fCount == fCurrIndex);
     }
 
 protected:
-    void onDrawAnnotation(const SkRect& rect, const char key[], SkData* value) {
+    void onDrawAnnotation(const SkRect& rect, const char key[], SkData* value) override {
         REPORTER_ASSERT(fReporter, fCurrIndex < fCount);
         REPORTER_ASSERT(fReporter, rect == fRec[fCurrIndex].fRect);
         REPORTER_ASSERT(fReporter, !strcmp(key, fRec[fCurrIndex].fKey));

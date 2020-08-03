@@ -14,7 +14,6 @@
 #include "include/core/SkM44.h"
 #include "include/core/SkTypes.h"
 
-#include "src/gpu/GrCoordTransform.h"
 #include "src/gpu/GrFragmentProcessor.h"
 
 class GrOverrideInputFragmentProcessor : public GrFragmentProcessor {
@@ -45,7 +44,6 @@ public:
     GrOverrideInputFragmentProcessor(const GrOverrideInputFragmentProcessor& src);
     std::unique_ptr<GrFragmentProcessor> clone() const override;
     const char* name() const override { return "OverrideInputFragmentProcessor"; }
-    int fp_index = -1;
     bool useUniform;
     SkPMColor4f uniformColor;
     SkPMColor4f literalColor;
@@ -61,7 +59,7 @@ private:
             , uniformColor(uniformColor)
             , literalColor(literalColor) {
         SkASSERT(fp);
-        fp_index = this->registerChildProcessor(std::move(fp));
+        this->registerChild(std::move(fp), SkSL::SampleUsage::PassThrough());
     }
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
     void onGetGLSLProcessorKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override;
