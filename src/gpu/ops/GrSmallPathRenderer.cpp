@@ -30,6 +30,7 @@
 #include "src/gpu/geometry/GrQuad.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
 #include "src/gpu/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
+#include "src/gpu/ops/GrSmallPathShapeData.h"
 
 static constexpr size_t kMaxAtlasTextureBytes = 2048 * 2048;
 static constexpr size_t kPlotWidth = 512;
@@ -48,99 +49,54 @@ static constexpr SkScalar kMaxDim = 73;
 static constexpr SkScalar kMinSize = SK_ScalarHalf;
 static constexpr SkScalar kMaxSize = 2*kMaxMIP;
 
-class ShapeDataKey {
-public:
-    ShapeDataKey() {}
-    ShapeDataKey(const ShapeDataKey& that) { *this = that; }
-    ShapeDataKey(const GrStyledShape& shape, uint32_t dim) { this->set(shape, dim); }
-    ShapeDataKey(const GrStyledShape& shape, const SkMatrix& ctm) { this->set(shape, ctm); }
+namespace GrSmallPathAtlasMgr {
 
-    ShapeDataKey& operator=(const ShapeDataKey& that) {
-        fKey.reset(that.fKey.count());
-        memcpy(fKey.get(), that.fKey.get(), fKey.count() * sizeof(uint32_t));
-        return *this;
+static const GrSurfaceProxyView* GetViews(GrDrawOpAtlas* atlas, int* numActiveProxies) {
+    *numActiveProxies = atlas->numActivePages();
+    return atlas->getViews();
+}
+
+static void SetUseToken(GrDrawOpAtlas* atlas,
+                        GrSmallPathShapeData* shapeData,
+                        GrDeferredUploadToken token) {
+     atlas->setLastUseToken(shapeData->fAtlasLocator, token);
+}
+
+static GrSmallPathShapeData* FindOrCreate(GrDrawOpAtlas* atlas,
+                                          GrSmallPathRenderer::ShapeCache* shapeCache,
+                                          GrSmallPathRenderer::ShapeDataList* shapeList,
+                                          const GrSmallPathShapeDataKey& key) {
+    auto shapeData = shapeCache->find(key);
+    if (!shapeData) {
+        shapeData = new GrSmallPathShapeData(key);
+        shapeCache->add(shapeData);
+        shapeList->addToTail(shapeData);
+#ifdef DF_PATH_TRACKING
+        ++g_NumCachedPaths;
+#endif
+    } else if (!atlas->hasID(shapeData->fAtlasLocator.plotLocator())) {
+        shapeData->fAtlasLocator.invalidatePlotLocator();
     }
 
-    // for SDF paths
-    void set(const GrStyledShape& shape, uint32_t dim) {
-        // Shapes' keys are for their pre-style geometry, but by now we shouldn't have any
-        // relevant styling information.
-        SkASSERT(shape.style().isSimpleFill());
-        SkASSERT(shape.hasUnstyledKey());
-        int shapeKeySize = shape.unstyledKeySize();
-        fKey.reset(1 + shapeKeySize);
-        fKey[0] = dim;
-        shape.writeUnstyledKey(&fKey[1]);
-    }
+    return shapeData;
+}
 
-    // for bitmap paths
-    void set(const GrStyledShape& shape, const SkMatrix& ctm) {
-        // Shapes' keys are for their pre-style geometry, but by now we shouldn't have any
-        // relevant styling information.
-        SkASSERT(shape.style().isSimpleFill());
-        SkASSERT(shape.hasUnstyledKey());
-        // We require the upper left 2x2 of the matrix to match exactly for a cache hit.
-        SkScalar sx = ctm.get(SkMatrix::kMScaleX);
-        SkScalar sy = ctm.get(SkMatrix::kMScaleY);
-        SkScalar kx = ctm.get(SkMatrix::kMSkewX);
-        SkScalar ky = ctm.get(SkMatrix::kMSkewY);
-        SkScalar tx = ctm.get(SkMatrix::kMTransX);
-        SkScalar ty = ctm.get(SkMatrix::kMTransY);
-        // Allow 8 bits each in x and y of subpixel positioning.
-        tx -= SkScalarFloorToScalar(tx);
-        ty -= SkScalarFloorToScalar(ty);
-        SkFixed fracX = SkScalarToFixed(tx) & 0x0000FF00;
-        SkFixed fracY = SkScalarToFixed(ty) & 0x0000FF00;
-        int shapeKeySize = shape.unstyledKeySize();
-        fKey.reset(5 + shapeKeySize);
-        fKey[0] = SkFloat2Bits(sx);
-        fKey[1] = SkFloat2Bits(sy);
-        fKey[2] = SkFloat2Bits(kx);
-        fKey[3] = SkFloat2Bits(ky);
-        fKey[4] = fracX | (fracY >> 8);
-        shape.writeUnstyledKey(&fKey[5]);
-    }
+static void DeleteCacheEntry(GrSmallPathRenderer::ShapeCache* shapeCache,
+                             GrSmallPathRenderer::ShapeDataList* shapeList,
+                             GrSmallPathShapeData* shapeData) {
+    shapeCache->remove(shapeData->fKey);
+    shapeList->remove(shapeData);
+    delete shapeData;
+}
 
-    bool operator==(const ShapeDataKey& that) const {
-        return fKey.count() == that.fKey.count() &&
-                0 == memcmp(fKey.get(), that.fKey.get(), sizeof(uint32_t) * fKey.count());
-    }
-
-    int count32() const { return fKey.count(); }
-    const uint32_t* data() const { return fKey.get(); }
-
-private:
-    // The key is composed of the GrStyledShape's key, and either the dimensions of the DF
-    // generated for the path (32x32 max, 64x64 max, 128x128 max) if an SDF image or
-    // the matrix for the path with only fractional translation.
-    SkAutoSTArray<24, uint32_t> fKey;
-};
-
-class ShapeData {
-public:
-    ShapeDataKey                fKey;
-    SkRect                      fBounds;
-    GrDrawOpAtlas::AtlasLocator fAtlasLocator;
-
-    SK_DECLARE_INTERNAL_LLIST_INTERFACE(ShapeData);
-
-    static inline const ShapeDataKey& GetKey(const ShapeData& data) {
-        return data.fKey;
-    }
-
-    static inline uint32_t Hash(const ShapeDataKey& key) {
-        return SkOpts::hash(key.data(), sizeof(uint32_t) * key.count32());
-    }
-};
-
-
+}  // namespace GrSmallPathAtlasMgr
 
 // Callback to clear out internal path cache when eviction occurs
 void GrSmallPathRenderer::evict(GrDrawOpAtlas::PlotLocator plotLocator) {
     // remove any paths that use this plot
     ShapeDataList::Iter iter;
     iter.init(fShapeList, ShapeDataList::Iter::kHead_IterStart);
-    ShapeData* shapeData;
+    GrSmallPathShapeData* shapeData;
     while ((shapeData = iter.get())) {
         iter.next();
         if (plotLocator == shapeData->fAtlasLocator.plotLocator()) {
@@ -160,7 +116,7 @@ GrSmallPathRenderer::GrSmallPathRenderer() : fAtlas(nullptr) {}
 GrSmallPathRenderer::~GrSmallPathRenderer() {
     ShapeDataList::Iter iter;
     iter.init(fShapeList, ShapeDataList::Iter::kHead_IterStart);
-    ShapeData* shapeData;
+    GrSmallPathShapeData* shapeData;
     while ((shapeData = iter.get())) {
         iter.next();
         delete shapeData;
@@ -225,7 +181,7 @@ private:
 public:
     DEFINE_OP_CLASS_ID
 
-    using ShapeCache = SkTDynamicHash<ShapeData, ShapeDataKey>;
+    using ShapeCache = SkTDynamicHash<GrSmallPathShapeData, GrSmallPathShapeDataKey>;
     using ShapeDataList = GrSmallPathRenderer::ShapeDataList;
 
     static std::unique_ptr<GrDrawOp> Make(GrRecordingContext* context,
@@ -273,12 +229,6 @@ public:
 
     void visitProxies(const VisitProxyFunc& func) const override {
         fHelper.visitProxies(func);
-
-        const GrSurfaceProxyView* views = fAtlas->getViews();
-        for (uint32_t i = 0; i < fAtlas->numActivePages(); ++i) {
-            SkASSERT(views[i].proxy());
-            func(views[i].proxy(), GrMipmapped::kNo);
-        }
     }
 
 #ifdef SK_DEBUG
@@ -341,8 +291,9 @@ private:
 
         FlushInfo flushInfo;
         flushInfo.fPrimProcProxies = target->allocPrimProcProxyPtrs(kMaxTextures);
-        int numActiveProxies = fAtlas->numActivePages();
-        const auto views = fAtlas->getViews();
+
+        int numActiveProxies;
+        const GrSurfaceProxyView* views = GrSmallPathAtlasMgr::GetViews(fAtlas, &numActiveProxies);
         for (int i = 0; i < numActiveProxies; ++i) {
             // This op does not know its atlas proxies when it is added to a GrOpsTasks, so the
             // proxies don't get added during the visitProxies call. Thus we add them here.
@@ -373,7 +324,7 @@ private:
             }
             flushInfo.fGeometryProcessor = GrDistanceFieldPathGeoProc::Make(
                     target->allocator(), *target->caps().shaderCaps(), *matrix, fWideColor,
-                    fAtlas->getViews(), fAtlas->numActivePages(), GrSamplerState::Filter::kLinear,
+                    views, numActiveProxies, GrSamplerState::Filter::kLinear,
                     flags);
         } else {
             SkMatrix invert;
@@ -385,7 +336,7 @@ private:
 
             flushInfo.fGeometryProcessor = GrBitmapTextGeoProc::Make(
                     target->allocator(), *target->caps().shaderCaps(), this->color(), fWideColor,
-                    fAtlas->getViews(), fAtlas->numActivePages(), GrSamplerState::Filter::kNearest,
+                    views, numActiveProxies, GrSamplerState::Filter::kNearest,
                     kA8_GrMaskFormat, invert, false);
         }
 
@@ -411,7 +362,7 @@ private:
         for (int i = 0; i < instanceCount; i++) {
             const Entry& args = fShapes[i];
 
-            ShapeData* shapeData;
+            GrSmallPathShapeData* shapeData;
             if (fUsesDistanceField) {
                 // get mip level
                 SkScalar maxScale;
@@ -458,18 +409,11 @@ private:
                 SkScalar desiredDimension = std::min(mipSize, kMaxMIP);
 
                 // check to see if df path is cached
-                ShapeDataKey key(args.fShape, SkScalarCeilToInt(desiredDimension));
-                shapeData = fShapeCache->find(key);
-                if (!shapeData || !fAtlas->hasID(shapeData->fAtlasLocator.plotLocator())) {
-                    // Remove the stale cache entry
-                    if (shapeData) {
-                        fShapeCache->remove(shapeData->fKey);
-                        fShapeList->remove(shapeData);
-                        delete shapeData;
-                    }
+                GrSmallPathShapeDataKey key(args.fShape, SkScalarCeilToInt(desiredDimension));
+                shapeData = GrSmallPathAtlasMgr::FindOrCreate(fAtlas, fShapeCache, fShapeList, key);
+                if (!shapeData->fAtlasLocator.plotLocator().isValid()) {
                     SkScalar scale = desiredDimension / maxDim;
 
-                    shapeData = new ShapeData;
                     if (!this->addDFPathToAtlas(target,
                                                 &flushInfo,
                                                 fAtlas,
@@ -477,40 +421,32 @@ private:
                                                 args.fShape,
                                                 SkScalarCeilToInt(desiredDimension),
                                                 scale)) {
-                        delete shapeData;
+                        GrSmallPathAtlasMgr::DeleteCacheEntry(fShapeCache, fShapeList, shapeData);
                         continue;
                     }
                 }
             } else {
                 // check to see if bitmap path is cached
-                ShapeDataKey key(args.fShape, args.fViewMatrix);
-                shapeData = fShapeCache->find(key);
-                if (!shapeData || !fAtlas->hasID(shapeData->fAtlasLocator.plotLocator())) {
-                    // Remove the stale cache entry
-                    if (shapeData) {
-                        fShapeCache->remove(shapeData->fKey);
-                        fShapeList->remove(shapeData);
-                        delete shapeData;
-                    }
-
-                    shapeData = new ShapeData;
+                GrSmallPathShapeDataKey key(args.fShape, args.fViewMatrix);
+                shapeData = GrSmallPathAtlasMgr::FindOrCreate(fAtlas, fShapeCache, fShapeList, key);
+                if (!shapeData->fAtlasLocator.plotLocator().isValid()) {
                     if (!this->addBMPathToAtlas(target,
                                                 &flushInfo,
                                                 fAtlas,
                                                 shapeData,
                                                 args.fShape,
                                                 args.fViewMatrix)) {
-                        delete shapeData;
+                        GrSmallPathAtlasMgr::DeleteCacheEntry(fShapeCache, fShapeList, shapeData);
                         continue;
                     }
                 }
             }
 
             auto uploadTarget = target->deferredUploadTarget();
-            fAtlas->setLastUseToken(
-                    shapeData->fAtlasLocator, uploadTarget->tokenTracker()->nextDrawToken());
+            GrSmallPathAtlasMgr::SetUseToken(fAtlas, shapeData,
+                                             uploadTarget->tokenTracker()->nextDrawToken());
 
-            this->writePathVertices(fAtlas, vertices, GrVertexColor(args.fColor, fWideColor),
+            this->writePathVertices(vertices, GrVertexColor(args.fColor, fWideColor),
                                     args.fViewMatrix, shapeData);
             flushInfo.fInstancesToFlush++;
         }
@@ -541,8 +477,8 @@ private:
     }
 
     bool addDFPathToAtlas(GrMeshDrawOp::Target* target, FlushInfo* flushInfo,
-                          GrDrawOpAtlas* atlas, ShapeData* shapeData, const GrStyledShape& shape,
-                          uint32_t dimension, SkScalar scale) const {
+                          GrDrawOpAtlas* atlas, GrSmallPathShapeData* shapeData,
+                          const GrStyledShape& shape, uint32_t dimension, SkScalar scale) const {
 
         const SkRect& bounds = shape.bounds();
 
@@ -630,27 +566,18 @@ private:
 
         shapeData->fAtlasLocator.insetSrc(SK_DistanceFieldPad);
 
-        // add to cache
-        shapeData->fKey.set(shape, dimension);
-
         shapeData->fBounds = SkRect::Make(devPathBounds);
         shapeData->fBounds.offset(-translateX, -translateY);
         shapeData->fBounds.fLeft /= scale;
         shapeData->fBounds.fTop /= scale;
         shapeData->fBounds.fRight /= scale;
         shapeData->fBounds.fBottom /= scale;
-
-        fShapeCache->add(shapeData);
-        fShapeList->addToTail(shapeData);
-#ifdef DF_PATH_TRACKING
-        ++g_NumCachedPaths;
-#endif
         return true;
     }
 
     bool addBMPathToAtlas(GrMeshDrawOp::Target* target, FlushInfo* flushInfo,
-                          GrDrawOpAtlas* atlas, ShapeData* shapeData, const GrStyledShape& shape,
-                          const SkMatrix& ctm) const {
+                          GrDrawOpAtlas* atlas, GrSmallPathShapeData* shapeData,
+                          const GrStyledShape& shape, const SkMatrix& ctm) const {
         const SkRect& bounds = shape.bounds();
         if (bounds.isEmpty()) {
             return false;
@@ -715,25 +642,15 @@ private:
             return false;
         }
 
-        // add to cache
-        shapeData->fKey.set(shape, ctm);
-
         shapeData->fBounds = SkRect::Make(devPathBounds);
         shapeData->fBounds.offset(-translateX, -translateY);
-
-        fShapeCache->add(shapeData);
-        fShapeList->addToTail(shapeData);
-#ifdef DF_PATH_TRACKING
-        ++g_NumCachedPaths;
-#endif
         return true;
     }
 
-    void writePathVertices(GrDrawOpAtlas* atlas,
-                           GrVertexWriter& vertices,
+    void writePathVertices(GrVertexWriter& vertices,
                            const GrVertexColor& color,
                            const SkMatrix& ctm,
-                           const ShapeData* shapeData) const {
+                           const GrSmallPathShapeData* shapeData) const {
         SkRect translatedBounds(shapeData->fBounds);
         if (!fUsesDistanceField) {
             translatedBounds.offset(SkScalarFloorToScalar(ctm.get(SkMatrix::kMTransX)),
@@ -755,11 +672,14 @@ private:
     }
 
     void flush(GrMeshDrawOp::Target* target, FlushInfo* flushInfo) const {
+
+        int numActiveProxies;
+        const GrSurfaceProxyView* views = GrSmallPathAtlasMgr::GetViews(fAtlas, &numActiveProxies);
+
         GrGeometryProcessor* gp = flushInfo->fGeometryProcessor;
-        int numAtlasTextures = SkToInt(fAtlas->numActivePages());
-        const auto views = fAtlas->getViews();
-        if (gp->numTextureSamplers() != numAtlasTextures) {
-            for (int i = gp->numTextureSamplers(); i < numAtlasTextures; ++i) {
+
+        if (gp->numTextureSamplers() != numActiveProxies) {
+            for (int i = gp->numTextureSamplers(); i < numActiveProxies; ++i) {
                 flushInfo->fPrimProcProxies[i] = views[i].proxy();
                 // This op does not know its atlas proxies when it is added to a GrOpsTasks, so the
                 // proxies don't get added during the visitProxies call. Thus we add them here.
@@ -769,12 +689,10 @@ private:
             // Update the proxies used in the GP to match.
             if (fUsesDistanceField) {
                 reinterpret_cast<GrDistanceFieldPathGeoProc*>(gp)->addNewViews(
-                        fAtlas->getViews(), fAtlas->numActivePages(),
-                        GrSamplerState::Filter::kLinear);
+                        views, numActiveProxies, GrSamplerState::Filter::kLinear);
             } else {
                 reinterpret_cast<GrBitmapTextGeoProc*>(gp)->addNewViews(
-                        fAtlas->getViews(), fAtlas->numActivePages(),
-                        GrSamplerState::Filter::kNearest);
+                        views, numActiveProxies, GrSamplerState::Filter::kNearest);
             }
         }
 
@@ -904,7 +822,7 @@ struct GrSmallPathRenderer::PathTestStruct : public GrDrawOpAtlas::EvictionCallb
     void reset() {
         ShapeDataList::Iter iter;
         iter.init(fShapeList, ShapeDataList::Iter::kHead_IterStart);
-        ShapeData* shapeData;
+        GrSmallPathShapeData* shapeData;
         while ((shapeData = iter.get())) {
             iter.next();
             fShapeList.remove(shapeData);
@@ -918,7 +836,7 @@ struct GrSmallPathRenderer::PathTestStruct : public GrDrawOpAtlas::EvictionCallb
         // remove any paths that use this plot
         ShapeDataList::Iter iter;
         iter.init(fShapeList, ShapeDataList::Iter::kHead_IterStart);
-        ShapeData* shapeData;
+        GrSmallPathShapeData* shapeData;
         while ((shapeData = iter.get())) {
             iter.next();
             if (plotLocator == shapeData->fAtlasLocator.plotLocator()) {
