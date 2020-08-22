@@ -21,26 +21,15 @@ namespace SkSL {
  * instances.
  */
 struct VarDeclaration : public Statement {
+    static constexpr Kind kStatementKind = kVarDeclaration_Kind;
+
     VarDeclaration(const Variable* var,
                    std::vector<std::unique_ptr<Expression>> sizes,
                    std::unique_ptr<Expression> value)
-    : INHERITED(var->fOffset, Statement::kVarDeclaration_Kind)
+    : INHERITED(var->fOffset, kStatementKind)
     , fVar(var)
     , fSizes(std::move(sizes))
     , fValue(std::move(value)) {}
-
-    int nodeCount() const override {
-        int result = 1;
-        for (const auto& s : fSizes) {
-            if (s) {
-                result += s->nodeCount();
-            }
-        }
-        if (fValue) {
-            result += fValue->nodeCount();
-        }
-        return result;
-    }
 
     std::unique_ptr<Statement> clone() const override {
         std::vector<std::unique_ptr<Expression>> sizesClone;
@@ -81,21 +70,15 @@ struct VarDeclaration : public Statement {
  * A variable declaration statement, which may consist of one or more individual variables.
  */
 struct VarDeclarations : public ProgramElement {
+    static constexpr Kind kProgramElementKind = kVar_Kind;
+
     VarDeclarations(int offset, const Type* baseType,
                     std::vector<std::unique_ptr<VarDeclaration>> vars)
-    : INHERITED(offset, kVar_Kind)
+    : INHERITED(offset, kProgramElementKind)
     , fBaseType(*baseType) {
         for (auto& var : vars) {
             fVars.push_back(std::unique_ptr<Statement>(var.release()));
         }
-    }
-
-    int nodeCount() const override {
-        int result = 1;
-        for (const auto& v : fVars) {
-            result += v->nodeCount();
-        }
-        return result;
     }
 
     std::unique_ptr<ProgramElement> clone() const override {

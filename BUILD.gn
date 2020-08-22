@@ -49,7 +49,10 @@ config("skia_public") {
   } else if (skia_gl_standard == "gl") {
     defines += [ "SK_ASSUME_GL=1" ]
   } else if (skia_gl_standard == "webgl") {
-    defines += [ "SK_ASSUME_WEBGL=1" ]
+    defines += [
+      "SK_ASSUME_WEBGL=1",
+      "SK_USE_WEBGL",
+    ]
   }
 
   # Some older versions of the Clang toolchain change the visibility of
@@ -271,6 +274,7 @@ template("optional") {
                                "public_deps",
                                "deps",
                                "libs",
+                               "frameworks",
                                "sources",
                                "sources_when_disabled",
                                "configs_to_remove",
@@ -454,7 +458,7 @@ optional("fontmgr_mac_ct") {
   ]
 
   if (is_mac) {
-    libs = [
+    frameworks = [
       # AppKit symbols NSFontWeightXXX may be dlsym'ed.
       "AppKit.framework",
       "ApplicationServices.framework",
@@ -462,7 +466,7 @@ optional("fontmgr_mac_ct") {
   }
 
   if (is_ios) {
-    libs = [
+    frameworks = [
       "CoreFoundation.framework",
       "CoreGraphics.framework",
       "CoreText.framework",
@@ -572,21 +576,6 @@ if (skia_compile_processors) {
     ]
   }
 
-  action("create_sksl_fp") {
-    script = "gn/create_sksl_fp.py"
-    sources = [
-      "include/private/GrSharedEnums.h",
-      "src/sksl/sksl_fp_raw.sksl",
-    ]
-    outputs = [ "$target_out_dir/" +
-                rebase_path("src/sksl/generated/sksl_fp.sksl", target_out_dir) ]
-    args = [
-      rebase_path(sources[0]),
-      rebase_path(sources[1]),
-      rebase_path(outputs[0]),
-    ]
-  }
-
   skslc_path = "$root_out_dir/"
   if (host_toolchain != default_toolchain_name) {
     skslc_path += "$host_toolchain/"
@@ -596,27 +585,67 @@ if (skia_compile_processors) {
     skslc_path += ".exe"
   }
 
+  action("create_sksl_fp") {
+    script = "gn/create_sksl_fp.py"
+    sources = [
+      "include/private/GrSharedEnums.h",
+      "src/sksl/sksl_fp_raw.sksl",
+    ]
+    outputs = [ "$root_out_dir/sksl_fp.sksl" ]
+    args = [
+      rebase_path(sources[0]),
+      rebase_path(sources[1]),
+      rebase_path(outputs[0]),
+    ]
+  }
+
+  copy("sksl_pre_includes") {
+    sources = [
+      "src/sksl/sksl_frag.sksl",
+      "src/sksl/sksl_geom.sksl",
+      "src/sksl/sksl_gpu.sksl",
+      "src/sksl/sksl_interp.sksl",
+      "src/sksl/sksl_pipeline.sksl",
+      "src/sksl/sksl_vert.sksl",
+    ]
+    outputs = [ "$root_out_dir/{{source_file_part}}" ]
+  }
+
+  dehydrate_sksl_sources = get_target_outputs(":sksl_pre_includes")
+  dehydrate_sksl_sources += get_target_outputs(":create_sksl_fp")
+
+  dehydrate_sksl_outputs = []
+  foreach(src, dehydrate_sksl_sources) {
+    name = get_path_info(src, "name")
+
+    # GN insists its outputs should go somewhere underneath target_out_dir, so we trick it with a
+    # path that starts with target_out_dir and then uses ".." to back up into the src dir.
+    dehydrate_sksl_outputs += [ "$target_out_dir/" + rebase_path(
+                                    "src/sksl/generated/$name.dehydrated.sksl",
+                                    target_out_dir) ]
+  }
+
   action("dehydrate_sksl") {
     script = "gn/dehydrate_sksl.py"
-    deps = [ ":skslc(//gn/toolchain:$host_toolchain)" ]
-    sources = skia_dehydrate_sksl_sources
-
-    # we can't list the true outputs because it would cause a circular dependency, so we create a
-    # fake file just to satisfy gn
-    output = "$target_out_dir/" +
-             rebase_path("src/sksl/generated/fake.output", target_out_dir)
-    outputs = [ output ]
+    deps = [
+      ":create_sksl_fp",
+      ":sksl_pre_includes",
+      ":skslc(//gn/toolchain:$host_toolchain)",
+    ]
+    sources = dehydrate_sksl_sources
+    outputs = dehydrate_sksl_outputs
     args = [
       rebase_path(skslc_path),
-      rebase_path(output),
+      rebase_path("src/sksl/generated"),
     ]
-    args += rebase_path(skia_dehydrate_sksl_sources)
+    args += rebase_path(dehydrate_sksl_sources)
   }
 
   action("compile_processors") {
     script = "gn/compile_processors.py"
     deps = [
       ":create_sksl_fp",
+      ":sksl_pre_includes",
       ":skslc(//gn/toolchain:$host_toolchain)",
     ]
     sources = skia_gpu_processor_sources
@@ -662,6 +691,7 @@ optional("gpu") {
   }
 
   libs = []
+  frameworks = []
 
   if (skia_use_gl) {
     public_defines += [ "SK_GL" ]
@@ -675,6 +705,8 @@ optional("gpu") {
     } else if (skia_use_egl) {
       sources += [ "src/gpu/gl/egl/GrGLMakeNativeInterface_egl.cpp" ]
       libs += [ "EGL" ]
+    } else if (skia_use_webgl) {
+      sources += [ "src/gpu/gl/webgl/GrGLMakeNativeInterface_webgl.cpp" ]
     } else if (is_linux && skia_use_x11) {
       sources += [ "src/gpu/gl/glx/GrGLMakeNativeInterface_glx.cpp" ]
       libs += [ "GL" ]
@@ -734,7 +766,7 @@ optional("gpu") {
         "d3dcompiler.lib",
       ]
     } else if (dawn_enable_metal) {
-      libs += [ "Metal.framework" ]
+      frameworks += [ "Metal.framework" ]
     }
   }
 
@@ -756,9 +788,9 @@ optional("gpu") {
   if (skia_use_metal) {
     public_defines += [ "SK_METAL" ]
     sources += skia_metal_sources
-    libs += [ "Metal.framework" ]
-    libs += [ "MetalKit.framework" ]
-    libs += [ "Foundation.framework" ]
+    frameworks += [ "Metal.framework" ]
+    frameworks += [ "MetalKit.framework" ]
+    frameworks += [ "Foundation.framework" ]
     cflags_objcc += [ "-fobjc-arc" ]
   }
 
@@ -820,10 +852,14 @@ optional("jpeg_encode") {
   ]
 }
 
-optional("ndk_decode") {
-  enabled = skia_use_ndk_decode
-  public_defines = [ "SK_ENABLE_NDK_DECODING" ]
-  sources = [ "src/ports/SkImageGeneratorNDK.cpp" ]
+optional("ndk_images") {
+  enabled = skia_use_ndk_images
+  public_defines = [ "SK_ENABLE_NDK_IMAGES" ]
+  sources = [
+    "src/ports/SkImageEncoder_NDK.cpp",
+    "src/ports/SkImageGeneratorNDK.cpp",
+    "src/ports/SkNDKConversions.cpp",
+  ]
   libs = [ "jnigraphics" ]
 }
 
@@ -937,29 +973,7 @@ optional("webp_encode") {
 
 optional("wuffs") {
   enabled = skia_use_wuffs
-  public_defines = [
-    "SK_HAS_WUFFS_LIBRARY",
-
-    # SK_FAVOR_WUFFS_V_0_3_OVER_V_0_2 is temporary, used during a multiple step
-    # transition (perhaps a month or two in mid 2020), distributed across
-    # multiple repositories:
-    #
-    #  1.  Let Skia work with either Wuffs v0.3 or v0.2. The default everywhere
-    #      remains at v0.2, but users may now opt in to v0.3.
-    #  2a. Update users' Skia version (automatic if they update regularly).
-    #  2b. Update users to the latest Wuffs rev, which provides both versions.
-    #  3a. Have users opt in to v0.3.
-    #  3b. Update Skia's default configuration (and those who copy it) to v0.3.
-    #  4.  Flip Skia-uses-Wuffs-v0.3 from opt-in to opt-out.
-    #  5.  Remove the option for Skia to work wih Wuffs v0.2, which will remove
-    #      this SK_FAVOR_WUFFS_V_0_3_OVER_V_0_2 macro as well as many #ifdef's
-    #      in SkWuffsCodec.cpp.
-    #
-    # Steps 2a and 2b can occur concurrently. Similarly for 3a and 3b.
-    #
-    # "Users" means software that uses Skia+Wuffs, such as Chromium or Flutter.
-    "SK_FAVOR_WUFFS_V_0_3_OVER_V_0_2",
-  ]
+  public_defines = [ "SK_HAS_WUFFS_LIBRARY" ]
 
   deps = [ "//third_party/wuffs" ]
   sources = [ "src/codec/SkWuffsCodec.cpp" ]
@@ -985,8 +999,8 @@ optional("sksl_interpreter") {
 }
 
 optional("skvm_jit") {
-  enabled = skia_enable_skvm_jit
-  public_defines = [ "SKVM_JIT" ]
+  enabled = skia_enable_skvm_jit_when_possible
+  public_defines = [ "SKVM_JIT_WHEN_POSSIBLE" ]
   if (skia_vtune_path != "") {
     public_defines += [ "SKVM_JIT_VTUNE" ]
     public_include_dirs = [ "$skia_vtune_path/include" ]
@@ -1051,7 +1065,7 @@ component("skia") {
     ":hsw",
     ":jpeg_decode",
     ":jpeg_encode",
-    ":ndk_decode",
+    ":ndk_images",
     ":none",
     ":png_decode",
     ":png_encode",
@@ -1169,7 +1183,7 @@ component("skia") {
       "src/ports/SkImageEncoder_CG.cpp",
       "src/ports/SkImageGeneratorCG.cpp",
     ]
-    libs += [
+    frameworks = [
       "ApplicationServices.framework",
       "OpenGL.framework",
     ]
@@ -1181,7 +1195,7 @@ component("skia") {
       "src/ports/SkImageEncoder_CG.cpp",
       "src/ports/SkImageGeneratorCG.cpp",
     ]
-    libs += [
+    frameworks = [
       "CoreFoundation.framework",
       "ImageIO.framework",
       "MobileCoreServices.framework",
@@ -1512,13 +1526,14 @@ if (skia_enable_tools) {
     ]
 
     libs = []
+    frameworks = []
 
     if (skia_use_gl) {
       sources +=
           [ "tools/gpu/gl/command_buffer/GLTestContext_command_buffer.cpp" ]
       if (is_ios) {
         sources += [ "tools/gpu/gl/iOS/CreatePlatformGLTestContext_iOS.mm" ]
-        libs += [ "OpenGLES.framework" ]
+        frameworks += [ "OpenGLES.framework" ]
       } else if (is_mac) {
         sources += [ "tools/gpu/gl/mac/CreatePlatformGLTestContext_mac.cpp" ]
       }
@@ -1668,17 +1683,18 @@ if (skia_enable_tools) {
       sources += [ "tools/CrashHandler.cpp" ]
     }
     libs = []
+    frameworks = []
     if (is_ios) {
       sources += [ "tools/ios_utils.m" ]
       sources += [ "tools/ios_utils.h" ]
       if (skia_use_metal) {
         sources += [ "tools/AutoreleasePool.mm" ]
       }
-      libs += [ "Foundation.framework" ]
+      frameworks += [ "Foundation.framework" ]
     } else if (is_mac) {
       if (skia_use_metal) {
         sources += [ "tools/AutoreleasePool.mm" ]
-        libs += [ "Foundation.framework" ]
+        frameworks += [ "Foundation.framework" ]
       }
     } else if (is_win) {
       libs += [ "DbgHelp.lib" ]
@@ -2169,10 +2185,7 @@ if (skia_enable_tools) {
   }
 
   test_app("dump_record") {
-    sources = [
-      "tools/DumpRecord.cpp",
-      "tools/dump_record.cpp",
-    ]
+    sources = [ "tools/dump_record.cpp" ]
     deps = [
       ":flags",
       ":skia",
@@ -2310,6 +2323,7 @@ if (skia_enable_tools) {
       "tools/sk_app/WindowContext.h",
     ]
     libs = []
+    frameworks = []
 
     if (is_android) {
       sources += [
@@ -2352,7 +2366,7 @@ if (skia_enable_tools) {
         "tools/sk_app/mac/Window_mac.mm",
         "tools/sk_app/mac/main_mac.mm",
       ]
-      libs += [
+      frameworks += [
         "QuartzCore.framework",
         "Cocoa.framework",
         "Foundation.framework",
@@ -2365,7 +2379,7 @@ if (skia_enable_tools) {
         "tools/sk_app/ios/Window_ios.mm",
         "tools/sk_app/ios/main_ios.mm",
       ]
-      libs += [ "QuartzCore.framework" ]
+      frameworks += [ "QuartzCore.framework" ]
     }
 
     if (skia_use_gl) {
@@ -2503,6 +2517,7 @@ if (skia_enable_tools) {
         ":tool_utils",
         ":trace",
         "experimental/skrive",
+        "modules/audioplayer",
         "modules/particles",
         "modules/skottie",
         "modules/skottie:utils",

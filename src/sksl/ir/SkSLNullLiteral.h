@@ -17,11 +17,13 @@ namespace SkSL {
  * Represents 'null'.
  */
 struct NullLiteral : public Expression {
+    static constexpr Kind kExpressionKind = kNullLiteral_Kind;
+
     NullLiteral(const Context& context, int offset)
-    : INHERITED(offset, kNullLiteral_Kind, *context.fNull_Type) {}
+    : INHERITED(offset, kExpressionKind, *context.fNull_Type) {}
 
     NullLiteral(int offset, const Type& type)
-    : INHERITED(offset, kNullLiteral_Kind, type) {}
+    : INHERITED(offset, kExpressionKind, type) {}
 
     String description() const override {
         return "null";
@@ -37,10 +39,6 @@ struct NullLiteral : public Expression {
 
     bool compareConstant(const Context& context, const Expression& other) const override {
         return true;
-    }
-
-    int nodeCount() const override {
-        return 1;
     }
 
     std::unique_ptr<Expression> clone() const override {

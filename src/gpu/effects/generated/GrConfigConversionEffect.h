@@ -24,7 +24,7 @@
 
 class GrConfigConversionEffect : public GrFragmentProcessor {
 public:
-    static bool TestForPreservingPMConversions(GrDirectContext* context);
+    static bool TestForPreservingPMConversions(GrDirectContext* dContext);
 
     static std::unique_ptr<GrFragmentProcessor> Make(std::unique_ptr<GrFragmentProcessor> fp,
                                                      PMConversion pmConversion) {
@@ -50,6 +50,9 @@ private:
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
     void onGetGLSLProcessorKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override;
     bool onIsEqual(const GrFragmentProcessor&) const override;
+#if GR_TEST_UTILS
+    SkString onDumpInfo() const override;
+#endif
     GR_DECLARE_FRAGMENT_PROCESSOR_TEST
     typedef GrFragmentProcessor INHERITED;
 };

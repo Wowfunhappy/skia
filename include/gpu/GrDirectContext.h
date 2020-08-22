@@ -11,6 +11,7 @@
 #include "include/gpu/GrContext.h"
 
 class GrAtlasManager;
+class GrSmallPathAtlasMgr;
 
 class SK_API GrDirectContext : public GrContext {
 public:
@@ -79,12 +80,15 @@ protected:
 
     bool init() override;
 
-    GrAtlasManager* onGetAtlasManager() override { return fAtlasManager; }
+    GrAtlasManager* onGetAtlasManager() override { return fAtlasManager.get(); }
+    GrSmallPathAtlasMgr* onGetSmallPathAtlasMgr() override;
 
     GrDirectContext* asDirectContext() override { return this; }
 
 private:
-    GrAtlasManager* fAtlasManager;
+    std::unique_ptr<GrAtlasManager> fAtlasManager;
+
+    std::unique_ptr<GrSmallPathAtlasMgr> fSmallPathAtlasMgr;
 
     typedef GrContext INHERITED;
 };

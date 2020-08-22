@@ -37,13 +37,10 @@ GrVkRenderTarget::GrVkRenderTarget(GrVkGpu* gpu,
         , fColorAttachmentView(colorAttachmentView)
         , fMSAAImage(new GrVkImage(gpu, msaaInfo, std::move(msaaMutableState),
                                    GrBackendObjectOwnership::kOwned))
-        , fResolveAttachmentView(resolveAttachmentView)
-        , fCachedFramebuffer(nullptr)
-        , fCachedStencilFramebuffer(nullptr)
-        , fCachedSimpleRenderPass(nullptr)
-        , fCachedStencilRenderPass(nullptr) {
+        , fResolveAttachmentView(resolveAttachmentView) {
     SkASSERT(info.fProtected == msaaInfo.fProtected);
     SkASSERT(sampleCnt > 1);
+    SkASSERT(SkToBool(info.fImageUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT));
     this->registerWithCacheWrapped(GrWrapCacheable::kNo);
 }
 
@@ -66,13 +63,10 @@ GrVkRenderTarget::GrVkRenderTarget(GrVkGpu* gpu,
         , fColorAttachmentView(colorAttachmentView)
         , fMSAAImage(new GrVkImage(gpu, msaaInfo, std::move(msaaMutableState),
                                    GrBackendObjectOwnership::kOwned))
-        , fResolveAttachmentView(resolveAttachmentView)
-        , fCachedFramebuffer(nullptr)
-        , fCachedStencilFramebuffer(nullptr)
-        , fCachedSimpleRenderPass(nullptr)
-        , fCachedStencilRenderPass(nullptr) {
+        , fResolveAttachmentView(resolveAttachmentView) {
     SkASSERT(info.fProtected == msaaInfo.fProtected);
     SkASSERT(sampleCnt > 1);
+    SkASSERT(SkToBool(info.fImageUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT));
 }
 
 // We're virtually derived from GrSurface (via GrRenderTarget) so its
@@ -87,11 +81,8 @@ GrVkRenderTarget::GrVkRenderTarget(GrVkGpu* gpu,
         , GrRenderTarget(gpu, dimensions, 1, info.fProtected)
         , fColorAttachmentView(colorAttachmentView)
         , fMSAAImage(nullptr)
-        , fResolveAttachmentView(nullptr)
-        , fCachedFramebuffer(nullptr)
-        , fCachedStencilFramebuffer(nullptr)
-        , fCachedSimpleRenderPass(nullptr)
-        , fCachedStencilRenderPass(nullptr) {
+        , fResolveAttachmentView(nullptr) {
+    SkASSERT(SkToBool(info.fImageUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT));
     this->registerWithCacheWrapped(GrWrapCacheable::kNo);
 }
 
@@ -108,11 +99,9 @@ GrVkRenderTarget::GrVkRenderTarget(GrVkGpu* gpu,
         , GrRenderTarget(gpu, dimensions, 1, info.fProtected)
         , fColorAttachmentView(colorAttachmentView)
         , fMSAAImage(nullptr)
-        , fResolveAttachmentView(nullptr)
-        , fCachedFramebuffer(nullptr)
-        , fCachedStencilFramebuffer(nullptr)
-        , fCachedSimpleRenderPass(nullptr)
-        , fCachedStencilRenderPass(nullptr) {}
+        , fResolveAttachmentView(nullptr) {
+    SkASSERT(SkToBool(info.fImageUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT));
+}
 
 GrVkRenderTarget::GrVkRenderTarget(GrVkGpu* gpu,
                                    SkISize dimensions,
@@ -126,12 +115,10 @@ GrVkRenderTarget::GrVkRenderTarget(GrVkGpu* gpu,
         , fColorAttachmentView(nullptr)
         , fMSAAImage(nullptr)
         , fResolveAttachmentView(nullptr)
-        , fCachedFramebuffer(nullptr)
-        , fCachedStencilFramebuffer(nullptr)
         , fCachedSimpleRenderPass(renderPass)
-        , fCachedStencilRenderPass(nullptr)
         , fSecondaryCommandBuffer(secondaryCommandBuffer) {
     SkASSERT(fSecondaryCommandBuffer != VK_NULL_HANDLE);
+    SkASSERT(SkToBool(info.fImageUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT));
     this->registerWithCacheWrapped(GrWrapCacheable::kNo);
 }
 
@@ -229,6 +216,8 @@ sk_sp<GrVkRenderTarget> GrVkRenderTarget::MakeSecondaryCBRenderTarget(
     GrVkImageInfo info;
     info.fImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     info.fFormat = vkInfo.fFormat;
+    info.fImageUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     sk_sp<GrBackendSurfaceMutableStateImpl> mutableState(new GrBackendSurfaceMutableStateImpl(
             VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_QUEUE_FAMILY_IGNORED));
@@ -244,55 +233,96 @@ bool GrVkRenderTarget::completeStencilAttachment() {
     return true;
 }
 
-const GrVkRenderPass* GrVkRenderTarget::getSimpleRenderPass(bool withStencil) {
+const GrVkRenderPass* GrVkRenderTarget::getSimpleRenderPass(bool withStencil,
+                                                            bool needsXferBarrier) {
     if (withStencil) {
-        if (fCachedStencilRenderPass) {
-            return fCachedStencilRenderPass;
+        if (needsXferBarrier) {
+            if (fCachedStencilSelfDepRenderPass) {
+                return fCachedStencilSelfDepRenderPass;
+            }
+        } else {
+            if (fCachedStencilRenderPass) {
+                return fCachedStencilRenderPass;
+            }
         }
     } else {
-        if (fCachedSimpleRenderPass) {
-            return fCachedSimpleRenderPass;
+        if (needsXferBarrier) {
+            if (fCachedSelfDepRenderPass) {
+                return fCachedSelfDepRenderPass;
+            }
+        } else {
+            if (fCachedSimpleRenderPass) {
+                return fCachedSimpleRenderPass;
+            }
         }
     }
 
-    return this->createSimpleRenderPass(withStencil);
+    return this->createSimpleRenderPass(withStencil, needsXferBarrier);
 }
 
-const GrVkRenderPass* GrVkRenderTarget::createSimpleRenderPass(bool withStencil) {
+const GrVkRenderPass* GrVkRenderTarget::createSimpleRenderPass(bool withStencil,
+                                                               bool needsXferBarrier) {
     SkASSERT(!this->wrapsSecondaryCommandBuffer());
 
     GrVkResourceProvider& rp = this->getVkGpu()->resourceProvider();
     if (withStencil) {
-        SkASSERT(!fCachedStencilRenderPass);
-        fCachedStencilRenderPass = rp.findCompatibleRenderPass(*this, &fCompatibleStencilRPHandle,
-                                                               withStencil);
-        return fCachedStencilRenderPass;
+        if (needsXferBarrier) {
+            SkASSERT(!fCachedStencilSelfDepRenderPass);
+            fCachedStencilSelfDepRenderPass = rp.findCompatibleRenderPass(
+                    *this, &fCompatibleStencilSelfDepRPHandle, withStencil, needsXferBarrier);
+            return fCachedStencilSelfDepRenderPass;
+        } else {
+            SkASSERT(!fCachedStencilRenderPass);
+            fCachedStencilRenderPass = rp.findCompatibleRenderPass(
+                    *this, &fCompatibleStencilRPHandle, withStencil, needsXferBarrier);
+            return fCachedStencilRenderPass;
+        }
     } else {
-        SkASSERT(!fCachedSimpleRenderPass);
-        fCachedSimpleRenderPass = rp.findCompatibleRenderPass(*this, &fCompatibleRPHandle,
-                                                              withStencil);
-        return fCachedSimpleRenderPass;
+        if (needsXferBarrier) {
+            SkASSERT(!fCachedSelfDepRenderPass);
+            fCachedSelfDepRenderPass = rp.findCompatibleRenderPass(
+                    *this, &fCompatibleSelfDepRPHandle, withStencil, needsXferBarrier);
+            return fCachedSelfDepRenderPass;
+        } else {
+            SkASSERT(!fCachedSimpleRenderPass);
+            fCachedSimpleRenderPass = rp.findCompatibleRenderPass(
+                    *this, &fCompatibleRPHandle, withStencil, needsXferBarrier);
+            return fCachedSimpleRenderPass;
+        }
     }
 }
 
-const GrVkFramebuffer* GrVkRenderTarget::getFramebuffer(bool withStencil) {
+const GrVkFramebuffer* GrVkRenderTarget::getFramebuffer(bool withStencil, bool needsXferBarrier) {
     if (withStencil) {
-        if (fCachedStencilFramebuffer) {
-            return fCachedStencilFramebuffer;
+        if (needsXferBarrier) {
+            if (fCachedStencilSelfDepFramebuffer) {
+                return fCachedStencilSelfDepFramebuffer;
+            }
+        } else {
+            if (fCachedStencilFramebuffer) {
+                return fCachedStencilFramebuffer;
+            }
         }
     } else {
-        if (fCachedFramebuffer) {
-            return fCachedFramebuffer;
+        if (needsXferBarrier) {
+            if (fCachedSelfDepFramebuffer) {
+                return fCachedSelfDepFramebuffer;
+            }
+        } else {
+            if (fCachedFramebuffer) {
+                return fCachedFramebuffer;
+            }
         }
     }
-    return this->createFramebuffer(withStencil);
+    return this->createFramebuffer(withStencil, needsXferBarrier);
 }
 
-const GrVkFramebuffer* GrVkRenderTarget::createFramebuffer(bool withStencil) {
+const GrVkFramebuffer* GrVkRenderTarget::createFramebuffer(bool withStencil,
+                                                           bool needsXferBarrier) {
     SkASSERT(!this->wrapsSecondaryCommandBuffer());
     GrVkGpu* gpu = this->getVkGpu();
 
-    const GrVkRenderPass* renderPass = this->getSimpleRenderPass(withStencil);
+    const GrVkRenderPass* renderPass = this->getSimpleRenderPass(withStencil, needsXferBarrier);
     if (!renderPass) {
         return nullptr;
     }
@@ -304,11 +334,21 @@ const GrVkFramebuffer* GrVkRenderTarget::createFramebuffer(bool withStencil) {
                                                            stencilView);
 
     if (withStencil) {
-        SkASSERT(!fCachedStencilFramebuffer);
-        fCachedStencilFramebuffer = frameBuffer;
+        if (needsXferBarrier) {
+            SkASSERT(!fCachedStencilSelfDepFramebuffer);
+            fCachedStencilSelfDepFramebuffer = frameBuffer;
+        } else {
+            SkASSERT(!fCachedStencilFramebuffer);
+            fCachedStencilFramebuffer = frameBuffer;
+        }
     } else {
-        SkASSERT(!fCachedFramebuffer);
-        fCachedFramebuffer = frameBuffer;
+        if (needsXferBarrier) {
+            SkASSERT(!fCachedSelfDepFramebuffer);
+            fCachedSelfDepFramebuffer = frameBuffer;
+        } else {
+            SkASSERT(!fCachedFramebuffer);
+            fCachedFramebuffer = frameBuffer;
+        }
     }
 
     return frameBuffer;
@@ -379,12 +419,17 @@ GrVkRenderTarget::~GrVkRenderTarget() {
     SkASSERT(!fColorAttachmentView);
     SkASSERT(!fCachedFramebuffer);
     SkASSERT(!fCachedStencilFramebuffer);
+    SkASSERT(!fCachedSelfDepFramebuffer);
+    SkASSERT(!fCachedStencilSelfDepFramebuffer);
     SkASSERT(!fCachedSimpleRenderPass);
     SkASSERT(!fCachedStencilRenderPass);
+    SkASSERT(!fCachedSelfDepRenderPass);
+    SkASSERT(!fCachedStencilSelfDepRenderPass);
 }
 
-void GrVkRenderTarget::addResources(GrVkCommandBuffer& commandBuffer, bool withStencil) {
-    commandBuffer.addResource(this->getFramebuffer(withStencil));
+void GrVkRenderTarget::addResources(GrVkCommandBuffer& commandBuffer, bool withStencil,
+                                    bool needsXferBarrier) {
+    commandBuffer.addResource(this->getFramebuffer(withStencil, needsXferBarrier));
     commandBuffer.addResource(this->colorAttachmentView());
     commandBuffer.addResource(this->msaaImageResource() ? this->msaaImageResource()
                                                         : this->resource());
@@ -416,6 +461,14 @@ void GrVkRenderTarget::releaseInternalObjects() {
         fCachedStencilFramebuffer->unref();
         fCachedStencilFramebuffer = nullptr;
     }
+    if (fCachedSelfDepFramebuffer) {
+        fCachedSelfDepFramebuffer->unref();
+        fCachedSelfDepFramebuffer = nullptr;
+    }
+    if (fCachedStencilSelfDepFramebuffer) {
+        fCachedStencilSelfDepFramebuffer->unref();
+        fCachedStencilSelfDepFramebuffer = nullptr;
+    }
     if (fCachedSimpleRenderPass) {
         fCachedSimpleRenderPass->unref();
         fCachedSimpleRenderPass = nullptr;
@@ -423,6 +476,14 @@ void GrVkRenderTarget::releaseInternalObjects() {
     if (fCachedStencilRenderPass) {
         fCachedStencilRenderPass->unref();
         fCachedStencilRenderPass = nullptr;
+    }
+    if (fCachedSelfDepRenderPass) {
+        fCachedSelfDepRenderPass->unref();
+        fCachedSelfDepRenderPass = nullptr;
+    }
+    if (fCachedStencilSelfDepRenderPass) {
+        fCachedStencilSelfDepRenderPass->unref();
+        fCachedStencilSelfDepRenderPass = nullptr;
     }
     for (int i = 0; i < fGrSecondaryCommandBuffers.count(); ++i) {
         SkASSERT(fGrSecondaryCommandBuffers[i]);

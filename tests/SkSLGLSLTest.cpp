@@ -126,6 +126,83 @@ DEF_TEST(SkSLFunctions, r) {
          "}\n");
 }
 
+DEF_TEST(SkSLFunctionInlineThreshold, r) {
+    test(r,
+         "void tooBig(inout int x) {"
+         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
+         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
+         "}"
+         "void main() { int x = 0; tooBig(x); }",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "void tooBig(inout int x) {\n"
+         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
+         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
+         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
+         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
+         "    ++x;\n    ++x;\n"
+         "}\n"
+         "void main() {\n"
+         "    int x = 0;\n"
+         "    tooBig(x);\n"
+         "}\n"
+         );
+    test(r,
+         "inline void tooBig(inout int x) {"
+         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
+         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
+         "}"
+         "void main() { int x = 0; tooBig(x); }",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "void main() {\n"
+         "    int x = 0;\n"
+         "    int _inlineArgvoidtooBigint0_0 = x;\n"
+         "    {\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
+         "    }\n"
+         "    x = _inlineArgvoidtooBigint0_0;\n"
+         "\n"
+         "}\n"
+         );
+    test(r,
+         "inline void cantActuallyInline(inout int x) {"
+         "    for (;;) {"
+         "        ++x;"
+         "        if (x > 10) return;"
+         "    }"
+         "}"
+         "void main() { int x = 0; cantActuallyInline(x); }",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "void cantActuallyInline(inout int x) {\n"
+         "    for (; ; ) {\n"
+         "        ++x;\n"
+         "        if (x > 10) return;\n"
+         "    }\n"
+         "}\n"
+         "void main() {\n"
+         "    int x = 0;\n"
+         "    cantActuallyInline(x);\n"
+         "}\n");
+}
+
 DEF_TEST(SkSLOperators, r) {
     test(r,
          "void main() {"
@@ -2426,11 +2503,9 @@ DEF_TEST(SkSLSwizzleConstants, r) {
          "void main() {"
          "    half4 v = half4(half(sqrt(1)));"
          "    sk_FragColor = half4(v.x, 1, 1, 1);"
-         "    sk_FragColor = half4(v.1, 1, 1, 1);"
          "    sk_FragColor = half4(v.xy, 1, 1);"
          "    sk_FragColor = half4(v.x1, 1, 1);"
          "    sk_FragColor = half4(v.0y, 1, 1);"
-         "    sk_FragColor = half4(v.10, 1, 1);"
          "    sk_FragColor = half4(v.xyz, 1);"
          "    sk_FragColor = half4(v.xy1, 1);"
          "    sk_FragColor = half4(v.x0z, 1);"
@@ -2438,7 +2513,6 @@ DEF_TEST(SkSLSwizzleConstants, r) {
          "    sk_FragColor = half4(v.1yz, 1);"
          "    sk_FragColor = half4(v.0y1, 1);"
          "    sk_FragColor = half4(v.11z, 1);"
-         "    sk_FragColor = half4(v.101, 1);"
          "    sk_FragColor = v.xyzw;"
          "    sk_FragColor = v.xyz1;"
          "    sk_FragColor = v.xy0w;"
@@ -2454,7 +2528,6 @@ DEF_TEST(SkSLSwizzleConstants, r) {
          "    sk_FragColor = v.00zw;"
          "    sk_FragColor = v.00z1;"
          "    sk_FragColor = v.011w;"
-         "    sk_FragColor = v.1101;"
          "}",
          *SkSL::ShaderCapsFactory::RemovePowWithConstantExponent(),
          "#version 400\n"
@@ -2462,11 +2535,9 @@ DEF_TEST(SkSLSwizzleConstants, r) {
          "void main() {\n"
          "    vec4 v = vec4(sqrt(1.0));\n"
          "    sk_FragColor = vec4(v.x, 1.0, 1.0, 1.0);\n"
-         "    sk_FragColor = vec4(1, 1.0, 1.0, 1.0);\n"
          "    sk_FragColor = vec4(v.xy, 1.0, 1.0);\n"
          "    sk_FragColor = vec4(vec2(v.x, 1), 1.0, 1.0);\n"
          "    sk_FragColor = vec4(vec2(0, v.y), 1.0, 1.0);\n"
-         "    sk_FragColor = vec4(vec2(1, 0), 1.0, 1.0);\n"
          "    sk_FragColor = vec4(v.xyz, 1.0);\n"
          "    sk_FragColor = vec4(vec3(v.xy, 1), 1.0);\n"
          "    sk_FragColor = vec4(vec3(v.xz, 0).xzy, 1.0);\n"
@@ -2474,7 +2545,6 @@ DEF_TEST(SkSLSwizzleConstants, r) {
          "    sk_FragColor = vec4(vec3(1, v.yz), 1.0);\n"
          "    sk_FragColor = vec4(vec3(v.y, 0, 1).yxz, 1.0);\n"
          "    sk_FragColor = vec4(vec3(1, 1, v.z), 1.0);\n"
-         "    sk_FragColor = vec4(vec3(1, 0, 1), 1.0);\n"
          "    sk_FragColor = v;\n"
          "    sk_FragColor = vec4(v.xyz, 1);\n"
          "    sk_FragColor = vec4(v.xyw, 0).xywz;\n"
@@ -2490,7 +2560,6 @@ DEF_TEST(SkSLSwizzleConstants, r) {
          "    sk_FragColor = vec4(0, 0, v.zw);\n"
          "    sk_FragColor = vec4(v.z, 0, 0, 1).yzxw;\n"
          "    sk_FragColor = vec4(0, 1, 1, v.w);\n"
-         "    sk_FragColor = vec4(1, 1, 0, 1);\n"
          "}\n",
          SkSL::Program::kFragment_Kind
          );
@@ -2505,8 +2574,6 @@ DEF_TEST(SkSLSwizzleOpt, r) {
          "    sk_FragColor = half4(v).rgba.00ra;"
          "    sk_FragColor = half4(v).rgba.rrra.00ra.11ab;"
          "    sk_FragColor = half4(v).abga.gb11;"
-         "    sk_FragColor = half4(half3(v).rrr.000, 1);"
-         "    sk_FragColor = half4(half3(v).000.rrr, 1);"
          "    sk_FragColor = half4(v).abgr.abgr;"
          "    sk_FragColor = half4(half4(v).rrrr.bb, 1, 1);"
          "    sk_FragColor = half4(half4(v).ba.grgr);"
@@ -2521,8 +2588,6 @@ DEF_TEST(SkSLSwizzleOpt, r) {
          "    sk_FragColor = vec4(0, 0, vec4(v).xw);\n"
          "    sk_FragColor = vec4(1, 1, vec4(v).wx);\n"
          "    sk_FragColor = vec4(vec4(v).zy, 1, 1);\n"
-         "    sk_FragColor = vec4(vec3(0, 0, 0), 1.0);\n"
-         "    sk_FragColor = vec4(vec3(0, 0, 0), 1.0);\n"
          "    sk_FragColor = vec4(v);\n"
          "    sk_FragColor = vec4(vec4(v).xx, 1.0, 1.0);\n"
          "    sk_FragColor = vec4(v).wzwz;\n"
@@ -2575,6 +2640,64 @@ DEF_TEST(SkSLSwizzleScalar, r) {
          "    float _tmpSwizzle0 = sqrt(4.0);\n"
          "    sk_FragColor = vec4(0, _tmpSwizzle0, 0, _tmpSwizzle0);\n"
          "\n"
+         "}\n");
+}
+
+DEF_TEST(SkSLStackingVectorCasts, r) {
+    test(r,
+         "void main() {"
+         "    if (half4(0, 0, 1, 1) == half4(int4(0, 0, 1, 1)))"
+         "        sk_FragColor = half4(0, 1, 0, 1);"
+         "    else"
+         "        sk_FragColor = half4(1, 0, 0, 1);"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "out vec4 sk_FragColor;\n"
+         "void main() {\n"
+         "    sk_FragColor = vec4(0.0, 1.0, 0.0, 1.0);\n"
+         "}\n");
+    test(r,
+         "void main() {"
+         "    if (half4(int4(0, 0, 1, 1)) == half4(int4(half4(0, 0, 1, 1))))"
+         "        sk_FragColor = half4(0, 1, 0, 1);"
+         "    else"
+         "        sk_FragColor = half4(1, 0, 0, 1);"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "out vec4 sk_FragColor;\n"
+         "void main() {\n"
+         "    sk_FragColor = vec4(0.0, 1.0, 0.0, 1.0);\n"
+         "}\n");
+}
+
+DEF_TEST(SkSLCastsRoundTowardZero, r) {
+    test(r,
+         "void main() {"
+         "    if (half4(int4(0, 0, 1, 2)) == half4(int4(half4(0.01, 0.99, 1.49, 2.75))))"
+         "        sk_FragColor = half4(0, 1, 0, 1);"
+         "    else"
+         "        sk_FragColor = half4(1, 0, 0, 1);"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "out vec4 sk_FragColor;\n"
+         "void main() {\n"
+         "    sk_FragColor = vec4(0.0, 1.0, 0.0, 1.0);\n"
+         "}\n");
+    test(r,
+         "void main() {"
+         "    if (half4(int4(0, 0, -1, -2)) == half4(int4(half4(-0.01, -0.99, -1.49, -2.75))))"
+         "        sk_FragColor = half4(0, 1, 0, 1);"
+         "    else"
+         "        sk_FragColor = half4(1, 0, 0, 1);"
+         "}",
+         *SkSL::ShaderCapsFactory::Default(),
+         "#version 400\n"
+         "out vec4 sk_FragColor;\n"
+         "void main() {\n"
+         "    sk_FragColor = vec4(0.0, 1.0, 0.0, 1.0);\n"
          "}\n");
 }
 

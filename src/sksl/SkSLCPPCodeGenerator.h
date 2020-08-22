@@ -13,6 +13,8 @@
 
 #include <set>
 
+#if defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
+
 namespace SkSL {
 
 class CPPCodeGenerator : public GLSLCodeGenerator {
@@ -36,8 +38,6 @@ private:
     String getTypeName(const Type& type) override;
 
     void writeBinaryExpression(const BinaryExpression& b, Precedence parentPrecedence) override;
-
-    void writeIndexExpression(const IndexExpression& i) override;
 
     void writeIntLiteral(const IntLiteral& i) override;
 
@@ -67,6 +67,8 @@ private:
 
     // writes a printf escape that will be filled in at runtime by the given C++ expression string
     void writeRuntimeValue(const Type& type, const Layout& layout, const String& cppCode);
+    String formatRuntimeValue(const Type& type, const Layout& layout, const String& cppCode,
+                              std::vector<String>* formatArgs);
 
     void writeVarInitializer(const Variable& var, const Expression& value) override;
 
@@ -87,6 +89,8 @@ private:
     void writeOnTextureSampler();
 
     void writeClone();
+
+    void writeDumpInfo();
 
     void writeTest();
 
@@ -141,4 +145,6 @@ private:
 
 }  // namespace SkSL
 
-#endif
+#endif // defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
+
+#endif // SKSL_CPPCODEGENERATOR

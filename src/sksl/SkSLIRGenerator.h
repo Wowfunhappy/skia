@@ -9,6 +9,8 @@
 #define SKSL_IRGENERATOR
 
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "src/sksl/SkSLASTFile.h"
 #include "src/sksl/SkSLASTNode.h"
@@ -56,8 +58,6 @@ public:
                                              Token::Kind op,
                                              const Expression& right) const;
 
-    std::unique_ptr<Expression> getArg(int offset, String name) const;
-
     Program::Inputs fInputs;
     const Program::Settings* fSettings;
     const Context& fContext;
@@ -80,6 +80,7 @@ private:
     void pushSymbolTable();
     void popSymbolTable();
 
+    void checkModifiers(int offset, const Modifiers& modifiers, int permitted);
     std::unique_ptr<VarDeclarations> convertVarDeclarations(const ASTNode& decl,
                                                             Variable::Storage storage);
     void convertFunction(const ASTNode& f);
@@ -89,19 +90,22 @@ private:
     std::unique_ptr<ModifiersDeclaration> convertModifiersDeclaration(const ASTNode& m);
 
     const Type* convertType(const ASTNode& type);
-    std::unique_ptr<Expression> inlineExpression(int offset,
-                                                 std::map<const Variable*, const Variable*>* varMap,
-                                                 const Expression& expression);
-    std::unique_ptr<Statement> inlineStatement(int offset,
-                                               std::map<const Variable*, const Variable*>* varMap,
-                                               const Variable* returnVar,
-                                               bool haveEarlyReturns,
-                                               const Statement& statement);
+    std::unique_ptr<Expression> inlineExpression(
+            int offset,
+            std::unordered_map<const Variable*, const Variable*>* varMap,
+            const Expression& expression);
+    std::unique_ptr<Statement> inlineStatement(
+            int offset,
+            std::unordered_map<const Variable*, const Variable*>* varMap,
+            const Variable* returnVar,
+            bool haveEarlyReturns,
+            const Statement& statement);
     std::unique_ptr<Expression> inlineCall(int offset, const FunctionDefinition& function,
                                            std::vector<std::unique_ptr<Expression>> arguments);
     std::unique_ptr<Expression> call(int offset,
                                      const FunctionDeclaration& function,
                                      std::vector<std::unique_ptr<Expression>> arguments);
+    bool isSafeToInline(const FunctionDefinition& function);
     int callCost(const FunctionDeclaration& function,
                  const std::vector<std::unique_ptr<Expression>>& arguments);
     std::unique_ptr<Expression> call(int offset, std::unique_ptr<Expression> function,
@@ -162,8 +166,8 @@ private:
     std::unique_ptr<Statement> getNormalizeSkPositionCode();
 
     void checkValid(const Expression& expr);
-    bool setRefKind(const Expression& expr, VariableReference::RefKind kind);
-    void getConstantInt(const Expression& value, int64_t* out);
+    bool setRefKind(Expression& expr, VariableReference::RefKind kind);
+    bool getConstantInt(const Expression& value, int64_t* out);
     bool checkSwizzleWrite(const Swizzle& swizzle);
     void copyIntrinsicIfNeeded(const FunctionDeclaration& function);
 
@@ -178,7 +182,7 @@ private:
     // Symbols which have definitions in the include files. The bool tells us whether this
     // intrinsic has been included already.
     std::map<String, std::pair<std::unique_ptr<ProgramElement>, bool>>* fIntrinsics = nullptr;
-    std::set<const FunctionDeclaration*> fReferencedIntrinsics;
+    std::unordered_set<const FunctionDeclaration*> fReferencedIntrinsics;
     int fLoopLevel;
     int fSwitchLevel;
     ErrorReporter& fErrors;
@@ -197,6 +201,7 @@ private:
     friend class AutoSymbolTable;
     friend class AutoLoopLevel;
     friend class AutoSwitchLevel;
+    friend class AutoDisableInline;
     friend class Compiler;
 };
 

@@ -4,11 +4,26 @@ This file includes a list of high level updates for each milestone release.
 
 * * *
 
+Milestone 87
+------------
+
+  * <insert new release notes here>
+
+  * Added VkImageUsageFlags to GrVkImageInfo struct.
+
+* * *
+
 Milestone 86
 ------------
 
-  * Add SkImageGeneratorNDK for using Android's NDK APIs to decode.
-    https://review.skia.org/305689
+  * Remove support for 'in' variables from SkRuntimeEffect. API now exclusively refers to inputs
+    as 'uniforms'.
+    https://review.skia.org/309050
+
+  * Add SkImageGeneratorNDK and SkEncodeImageWithNDK for using Android's NDK APIs to decode and
+    encode.
+    https://review.skia.org/308185
+    https://review.skia.org/308800
 
   * SkImage:remove DecodeToRaster, DecodeToTexture
     https://review.skia.org/306331

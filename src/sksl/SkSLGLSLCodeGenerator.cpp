@@ -189,46 +189,46 @@ void GLSLCodeGenerator::writeType(const Type& type) {
 void GLSLCodeGenerator::writeExpression(const Expression& expr, Precedence parentPrecedence) {
     switch (expr.fKind) {
         case Expression::kBinary_Kind:
-            this->writeBinaryExpression((BinaryExpression&) expr, parentPrecedence);
+            this->writeBinaryExpression(expr.as<BinaryExpression>(), parentPrecedence);
             break;
         case Expression::kBoolLiteral_Kind:
-            this->writeBoolLiteral((BoolLiteral&) expr);
+            this->writeBoolLiteral(expr.as<BoolLiteral>());
             break;
         case Expression::kConstructor_Kind:
-            this->writeConstructor((Constructor&) expr, parentPrecedence);
+            this->writeConstructor(expr.as<Constructor>(), parentPrecedence);
             break;
         case Expression::kIntLiteral_Kind:
-            this->writeIntLiteral((IntLiteral&) expr);
+            this->writeIntLiteral(expr.as<IntLiteral>());
             break;
         case Expression::kFieldAccess_Kind:
-            this->writeFieldAccess(((FieldAccess&) expr));
+            this->writeFieldAccess(expr.as<FieldAccess>());
             break;
         case Expression::kFloatLiteral_Kind:
-            this->writeFloatLiteral(((FloatLiteral&) expr));
+            this->writeFloatLiteral(expr.as<FloatLiteral>());
             break;
         case Expression::kFunctionCall_Kind:
-            this->writeFunctionCall((FunctionCall&) expr);
+            this->writeFunctionCall(expr.as<FunctionCall>());
             break;
         case Expression::kPrefix_Kind:
-            this->writePrefixExpression((PrefixExpression&) expr, parentPrecedence);
+            this->writePrefixExpression(expr.as<PrefixExpression>(), parentPrecedence);
             break;
         case Expression::kPostfix_Kind:
-            this->writePostfixExpression((PostfixExpression&) expr, parentPrecedence);
+            this->writePostfixExpression(expr.as<PostfixExpression>(), parentPrecedence);
             break;
         case Expression::kSetting_Kind:
-            this->writeSetting((Setting&) expr);
+            this->writeSetting(expr.as<Setting>());
             break;
         case Expression::kSwizzle_Kind:
-            this->writeSwizzle((Swizzle&) expr);
+            this->writeSwizzle(expr.as<Swizzle>());
             break;
         case Expression::kVariableReference_Kind:
-            this->writeVariableReference((VariableReference&) expr);
+            this->writeVariableReference(expr.as<VariableReference>());
             break;
         case Expression::kTernary_Kind:
-            this->writeTernaryExpression((TernaryExpression&) expr, parentPrecedence);
+            this->writeTernaryExpression(expr.as<TernaryExpression>(), parentPrecedence);
             break;
         case Expression::kIndex_Kind:
-            this->writeIndexExpression((IndexExpression&) expr);
+            this->writeIndexExpression(expr.as<IndexExpression>());
             break;
         default:
 #ifdef SK_DEBUG
@@ -242,7 +242,7 @@ static bool is_abs(Expression& expr) {
     if (expr.fKind != Expression::kFunctionCall_Kind) {
         return false;
     }
-    return ((FunctionCall&) expr).fFunction.fName == "abs";
+    return expr.as<FunctionCall>().fFunction.fName == "abs";
 }
 
 // turns min(abs(x), y) into ((tmpVar1 = abs(x)) < (tmpVar2 = y) ? tmpVar1 : tmpVar2) to avoid a
@@ -1245,7 +1245,7 @@ void GLSLCodeGenerator::writeFunction(const FunctionDefinition& f) {
     OutputStream* oldOut = fOut;
     StringStream buffer;
     fOut = &buffer;
-    this->writeStatements(((Block&) *f.fBody).fStatements);
+    this->writeStatements(f.fBody->as<Block>().fStatements);
     if (fProgramKind != Program::kPipelineStage_Kind) {
         fIndentation--;
         this->writeLine("}");
@@ -1416,7 +1416,7 @@ void GLSLCodeGenerator::writeVarDeclarations(const VarDeclarations& decl, bool g
     }
     bool wroteType = false;
     for (const auto& stmt : decl.fVars) {
-        VarDeclaration& var = (VarDeclaration&) *stmt;
+        const VarDeclaration& var = stmt->as<VarDeclaration>();
         if (wroteType) {
             this->write(", ");
         } else {
@@ -1460,32 +1460,32 @@ void GLSLCodeGenerator::writeVarDeclarations(const VarDeclarations& decl, bool g
 void GLSLCodeGenerator::writeStatement(const Statement& s) {
     switch (s.fKind) {
         case Statement::kBlock_Kind:
-            this->writeBlock((Block&) s);
+            this->writeBlock(s.as<Block>());
             break;
         case Statement::kExpression_Kind:
-            this->writeExpression(*((ExpressionStatement&) s).fExpression, kTopLevel_Precedence);
+            this->writeExpression(*s.as<ExpressionStatement>().fExpression, kTopLevel_Precedence);
             this->write(";");
             break;
         case Statement::kReturn_Kind:
-            this->writeReturnStatement((ReturnStatement&) s);
+            this->writeReturnStatement(s.as<ReturnStatement>());
             break;
         case Statement::kVarDeclarations_Kind:
-            this->writeVarDeclarations(*((VarDeclarationsStatement&) s).fDeclaration, false);
+            this->writeVarDeclarations(*s.as<VarDeclarationsStatement>().fDeclaration, false);
             break;
         case Statement::kIf_Kind:
-            this->writeIfStatement((IfStatement&) s);
+            this->writeIfStatement(s.as<IfStatement>());
             break;
         case Statement::kFor_Kind:
-            this->writeForStatement((ForStatement&) s);
+            this->writeForStatement(s.as<ForStatement>());
             break;
         case Statement::kWhile_Kind:
-            this->writeWhileStatement((WhileStatement&) s);
+            this->writeWhileStatement(s.as<WhileStatement>());
             break;
         case Statement::kDo_Kind:
-            this->writeDoStatement((DoStatement&) s);
+            this->writeDoStatement(s.as<DoStatement>());
             break;
         case Statement::kSwitch_Kind:
-            this->writeSwitchStatement((SwitchStatement&) s);
+            this->writeSwitchStatement(s.as<SwitchStatement>());
             break;
         case Statement::kBreak_Kind:
             this->write("break;");
@@ -1666,19 +1666,19 @@ void GLSLCodeGenerator::writeHeader() {
 void GLSLCodeGenerator::writeProgramElement(const ProgramElement& e) {
     switch (e.fKind) {
         case ProgramElement::kExtension_Kind:
-            this->writeExtension(((Extension&) e).fName);
+            this->writeExtension(e.as<Extension>().fName);
             break;
         case ProgramElement::kVar_Kind: {
-            VarDeclarations& decl = (VarDeclarations&) e;
+            const VarDeclarations& decl = e.as<VarDeclarations>();
             if (decl.fVars.size() > 0) {
-                int builtin = ((VarDeclaration&) *decl.fVars[0]).fVar->fModifiers.fLayout.fBuiltin;
+                int builtin = decl.fVars[0]->as<VarDeclaration>().fVar->fModifiers.fLayout.fBuiltin;
                 if (builtin == -1) {
                     // normal var
                     this->writeVarDeclarations(decl, true);
                     this->writeLine();
                 } else if (builtin == SK_FRAGCOLOR_BUILTIN &&
                            fProgram.fSettings.fCaps->mustDeclareFragmentShaderOutput() &&
-                           ((VarDeclaration&) *decl.fVars[0]).fVar->fWriteCount) {
+                           decl.fVars[0]->as<VarDeclaration>().fVar->fWriteCount) {
                     if (fProgram.fSettings.fFragColorIsInOut) {
                         this->write("inout ");
                     } else {
@@ -1693,13 +1693,13 @@ void GLSLCodeGenerator::writeProgramElement(const ProgramElement& e) {
             break;
         }
         case ProgramElement::kInterfaceBlock_Kind:
-            this->writeInterfaceBlock((InterfaceBlock&) e);
+            this->writeInterfaceBlock(e.as<InterfaceBlock>());
             break;
         case ProgramElement::kFunction_Kind:
-            this->writeFunction((FunctionDefinition&) e);
+            this->writeFunction(e.as<FunctionDefinition>());
             break;
         case ProgramElement::kModifiers_Kind: {
-            const Modifiers& modifiers = ((ModifiersDeclaration&) e).fModifiers;
+            const Modifiers& modifiers = e.as<ModifiersDeclaration>().fModifiers;
             if (!fFoundGSInvocations && modifiers.fLayout.fInvocations >= 0) {
                 if (fProgram.fSettings.fCaps->gsInvocationsExtensionString()) {
                     this->writeExtension(fProgram.fSettings.fCaps->gsInvocationsExtensionString());

@@ -21,9 +21,11 @@ namespace SkSL {
 struct Symbol;
 
 struct Enum : public ProgramElement {
+    static constexpr Kind kProgramElementKind = kEnum_Kind;
+
     Enum(int offset, StringFragment typeName, std::shared_ptr<SymbolTable> symbols,
          bool isBuiltin = true)
-    : INHERITED(offset, kEnum_Kind)
+    : INHERITED(offset, kProgramElementKind)
     , fTypeName(typeName)
     , fSymbols(std::move(symbols))
     , fBuiltin(isBuiltin) {}
@@ -42,10 +44,9 @@ struct Enum : public ProgramElement {
         std::sort(sortedSymbols.begin(), sortedSymbols.end(),
                   [](const Symbol* a, const Symbol* b) { return a->fName < b->fName; });
         for (const auto& s : sortedSymbols) {
-            const Expression& initialValue = *((Variable*) s)->fInitialValue;
-            SkASSERT(initialValue.fKind == Expression::kIntLiteral_Kind);
+            const Expression& initialValue = *s->as<Variable>().fInitialValue;
             result += separator + "    " + s->fName + " = " +
-                      to_string(((IntLiteral&) initialValue).fValue);
+                      to_string(initialValue.as<IntLiteral>().fValue);
             separator = ",\n";
         }
         result += "\n};";

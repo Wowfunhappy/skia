@@ -140,7 +140,8 @@ GrOpsRenderPass* GrDawnGpu::getOpsRenderPass(
             GrSurfaceOrigin origin, const SkIRect& bounds,
             const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
             const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
-            const SkTArray<GrSurfaceProxy*, true>& sampledProxies) {
+            const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+            bool usesXferBarriers) {
     fOpsRenderPass.reset(new GrDawnOpsRenderPass(this, rt, origin, colorInfo, stencilInfo));
     return fOpsRenderPass.get();
 }
@@ -384,9 +385,8 @@ bool GrDawnGpu::onUpdateBackendTexture(const GrBackendTexture& backendTexture,
                 src += origRowBytes;
             }
         }
-        wgpu::BufferCopyView srcBuffer;
+        wgpu::BufferCopyView srcBuffer = {};
         srcBuffer.buffer = static_cast<GrDawnBuffer*>(stagingBuffer.fBuffer)->get();
-        srcBuffer.bytesPerRow = 0; // TODO: remove this once the deprecated fields are gone.
         srcBuffer.layout.offset = stagingBuffer.fOffset;
         srcBuffer.layout.bytesPerRow = rowBytes;
         srcBuffer.layout.rowsPerImage = h;
@@ -588,9 +588,8 @@ bool GrDawnGpu::onReadPixels(GrSurface* surface, int left, int top, int width, i
     srcTexture.texture = tex;
     srcTexture.origin = {(uint32_t) left, (uint32_t) top, 0};
 
-    wgpu::BufferCopyView dstBuffer;
+    wgpu::BufferCopyView dstBuffer = {};
     dstBuffer.buffer = buf;
-    dstBuffer.bytesPerRow = 0; // TODO: remove this once the deprecated fields are gone.
     dstBuffer.layout.offset = 0;
     dstBuffer.layout.bytesPerRow = rowBytes;
     dstBuffer.layout.rowsPerImage = height;

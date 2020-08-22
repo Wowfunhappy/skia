@@ -47,7 +47,7 @@ using U32 = skvx::Vec<VecWidth, uint32_t>;
 
 static const uint8_t* DisassembleInstruction(const uint8_t* ip) {
     auto inst = READ_INST();
-    printf("%04x ", (int)inst);
+    printf("%02x ", (int)inst);
     switch (inst) {
         DISASSEMBLE_COUNT(kAddF, "addf")
         DISASSEMBLE_COUNT(kAddI, "addi")
@@ -265,7 +265,7 @@ static void CallExternal(const ByteCode* byteCode, const uint8_t*& ip, VValue*& 
     int argumentCount = READ8();
     int returnCount = READ8();
     int target = READ8();
-    ExternalValue* v = byteCode->fExternalValues[target];
+    const ExternalValue* v = byteCode->fExternalValues[target];
     sp -= argumentCount - 1;
 
     float tmpArgs[4];

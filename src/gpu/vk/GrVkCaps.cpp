@@ -371,6 +371,8 @@ void GrVkCaps::init(const GrContextOptions& contextOptions, const GrVkInterface*
         fShouldAlwaysUseDedicatedImageMemory = true;
     }
 
+    fMaxInputAttachmentDescriptors = properties.limits.maxDescriptorSetInputAttachments;
+
     this->initGrCaps(vkInterface, physDev, properties, memoryProperties, features, extensions);
     this->initShaderCaps(properties, features);
 
@@ -417,12 +419,6 @@ void GrVkCaps::init(const GrContextOptions& contextOptions, const GrVkInterface*
 }
 
 void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDeviceProperties& properties) {
-    if (kQualcomm_VkVendor == properties.vendorID) {
-        fMustDoCopiesFromOrigin = true;
-        // Transfer doesn't support this workaround.
-        fTransferFromSurfaceToBufferSupport = false;
-    }
-
 #if defined(SK_BUILD_FOR_WIN)
     if (kNvidia_VkVendor == properties.vendorID || kIntel_VkVendor == properties.vendorID) {
         fMustSleepOnTearDown = true;
@@ -596,9 +592,7 @@ void GrVkCaps::initGrCaps(const GrVkInterface* vkInterface,
             if (blendFeatures && blendFeatures->advancedBlendCoherentOperations == VK_TRUE) {
                 fBlendEquationSupport = kAdvancedCoherent_BlendEquationSupport;
             } else {
-                // TODO: Currently non coherent blends are not supported in our vulkan backend. They
-                // require us to support self dependencies in our render passes.
-                // fBlendEquationSupport = kAdvanced_BlendEquationSupport;
+                fBlendEquationSupport = kAdvanced_BlendEquationSupport;
             }
         }
     }
@@ -1238,6 +1232,9 @@ void GrVkCaps::FormatInfo::InitFormatFlags(VkFormatFeatureFlags vkFlags, uint16_
             *flags = *flags | kRenderable_Flag;
         }
     }
+    // TODO: For Vk w/ VK_KHR_maintenance1 extension support, check
+    //  VK_FORMAT_FEATURE_TRANSFER_[SRC|DST]_BIT_KHR explicitly to set copy flags
+    //  Can do similar check for VK_KHR_sampler_ycbcr_conversion added bits
 
     if (SkToBool(VK_FORMAT_FEATURE_BLIT_SRC_BIT & vkFlags)) {
         *flags = *flags | kBlitSrc_Flag;
@@ -1713,12 +1710,17 @@ GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progra
     // GrVkPipelineStateBuilder.cpp).
     b.add32(GrVkGpu::kShader_PersistentCacheKeyType);
 
+    // Currently we only support blend barriers with the advanced blend function. Thus we pass in
+    // nullptr for the texture.
+    auto barrierType = programInfo.pipeline().xferBarrierType(nullptr, *this);
+    bool usesXferBarriers = barrierType == kBlend_GrXferBarrierType;
+
     if (rt) {
         GrVkRenderTarget* vkRT = (GrVkRenderTarget*) rt;
 
         bool needsStencil = programInfo.numStencilSamples() || programInfo.isStencilEnabled();
         // TODO: support failure in getSimpleRenderPass
-        const GrVkRenderPass* rp = vkRT->getSimpleRenderPass(needsStencil);
+        const GrVkRenderPass* rp = vkRT->getSimpleRenderPass(needsStencil, usesXferBarriers);
         SkASSERT(rp);
         rp->genKey(&b);
 
@@ -1731,7 +1733,7 @@ GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progra
             GrVkRenderTarget::ReconstructAttachmentsDescriptor(*this, programInfo,
                                                                &attachmentsDescriptor,
                                                                &attachmentFlags);
-            SkASSERT(rp->isCompatible(attachmentsDescriptor, attachmentFlags));
+            SkASSERT(rp->isCompatible(attachmentsDescriptor, attachmentFlags, usesXferBarriers));
         }
 #endif
     } else {
@@ -1744,7 +1746,7 @@ GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progra
         // kExternal_AttachmentFlag is only set for wrapped secondary command buffers - which
         // will always go through the above 'rt' path (i.e., we can always pass 0 as the final
         // parameter to GenKey).
-        GrVkRenderPass::GenKey(&b, attachmentFlags, attachmentsDescriptor, 0);
+        GrVkRenderPass::GenKey(&b, attachmentFlags, attachmentsDescriptor, usesXferBarriers, 0);
     }
 
     GrStencilSettings stencil = programInfo.nonGLStencilSettings();

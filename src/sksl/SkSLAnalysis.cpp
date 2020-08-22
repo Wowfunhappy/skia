@@ -87,7 +87,7 @@ protected:
     bool visitExpression(const Expression& e) override {
         // Looking for sample(fp, inColor?, ...)
         if (e.fKind == Expression::kFunctionCall_Kind) {
-            const FunctionCall& fc = (const FunctionCall&) e;
+            const FunctionCall& fc = e.as<FunctionCall>();
             if (is_sample_call_to_fp(fc, fFP)) {
                 // Determine the type of call at this site, and merge it with the accumulated state
                 const Expression* lastArg = fc.fArguments.back().get();
@@ -136,13 +136,43 @@ public:
 
     bool visitExpression(const Expression& e) override {
         if (e.fKind == Expression::kVariableReference_Kind) {
-            const VariableReference& var = (const VariableReference&) e;
+            const VariableReference& var = e.as<VariableReference>();
             return var.fVariable.fModifiers.fLayout.fBuiltin == fBuiltin;
         }
         return this->INHERITED::visitExpression(e);
     }
 
     int fBuiltin;
+
+    typedef ProgramVisitor INHERITED;
+};
+
+// Visitor that counts the number of nodes visited
+class NodeCountVisitor : public ProgramVisitor {
+public:
+    int visit(const Statement& s) {
+        fCount = 0;
+        this->visitStatement(s);
+        return fCount;
+    }
+
+    bool visitExpression(const Expression& e) override {
+        ++fCount;
+        return this->INHERITED::visitExpression(e);
+    }
+
+    bool visitProgramElement(const ProgramElement& p) override {
+        ++fCount;
+        return this->INHERITED::visitProgramElement(p);
+    }
+
+    bool visitStatement(const Statement& s) override {
+        ++fCount;
+        return this->INHERITED::visitStatement(s);
+    }
+
+private:
+    int fCount;
 
     typedef ProgramVisitor INHERITED;
 };
@@ -168,6 +198,10 @@ bool Analysis::ReferencesSampleCoords(const Program& program) {
 
 bool Analysis::ReferencesFragCoords(const Program& program) {
     return Analysis::ReferencesBuiltin(program, SK_FRAGCOORD_BUILTIN);
+}
+
+int Analysis::NodeCount(const FunctionDefinition& function) {
+    return NodeCountVisitor().visit(*function.fBody);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -202,37 +236,37 @@ bool ProgramVisitor::visitExpression(const Expression& e) {
             // Leaf expressions return false
             return false;
         case Expression::kBinary_Kind: {
-            const BinaryExpression& b = (const BinaryExpression&) e;
+            const BinaryExpression& b = e.as<BinaryExpression>();
             return this->visitExpression(*b.fLeft) || this->visitExpression(*b.fRight); }
         case Expression::kConstructor_Kind: {
-            const Constructor& c = (const Constructor&) e;
+            const Constructor& c = e.as<Constructor>();
             for (const auto& arg : c.fArguments) {
                 if (this->visitExpression(*arg)) { return true; }
             }
             return false; }
         case Expression::kExternalFunctionCall_Kind: {
-            const ExternalFunctionCall& c = (const ExternalFunctionCall&) e;
+            const ExternalFunctionCall& c = e.as<ExternalFunctionCall>();
             for (const auto& arg : c.fArguments) {
                 if (this->visitExpression(*arg)) { return true; }
             }
             return false; }
         case Expression::kFunctionCall_Kind: {
-            const FunctionCall& c = (const FunctionCall&) e;
+            const FunctionCall& c = e.as<FunctionCall>();
             for (const auto& arg : c.fArguments) {
                 if (this->visitExpression(*arg)) { return true; }
             }
             return false; }
         case Expression::kIndex_Kind:{
-            const IndexExpression& i = (const IndexExpression&) e;
+            const IndexExpression& i = e.as<IndexExpression>();
             return this->visitExpression(*i.fBase) || this->visitExpression(*i.fIndex); }
         case Expression::kPostfix_Kind:
-            return this->visitExpression(*((const PostfixExpression&) e).fOperand);
+            return this->visitExpression(*e.as<PostfixExpression>().fOperand);
         case Expression::kPrefix_Kind:
-            return this->visitExpression(*((const PrefixExpression&) e).fOperand);
+            return this->visitExpression(*e.as<PrefixExpression>().fOperand);
         case Expression::kSwizzle_Kind:
-            return this->visitExpression(*((const Swizzle&) e).fBase);
+            return this->visitExpression(*e.as<Swizzle>().fBase);
         case Expression::kTernary_Kind: {
-            const TernaryExpression& t = (const TernaryExpression&) e;
+            const TernaryExpression& t = e.as<TernaryExpression>();
             return this->visitExpression(*t.fTest) ||
                    this->visitExpression(*t.fIfTrue) ||
                    this->visitExpression(*t.fIfFalse); }
@@ -250,31 +284,31 @@ bool ProgramVisitor::visitStatement(const Statement& s) {
             // Leaf statements just return false
             return false;
         case Statement::kBlock_Kind:
-            for (const auto& s : ((const Block&) s).fStatements) {
+            for (const auto& s : s.as<Block>().fStatements) {
                 if (this->visitStatement(*s)) { return true; }
             }
             return false;
         case Statement::kDo_Kind: {
-            const DoStatement& d = (const DoStatement&) s;
+            const DoStatement& d = s.as<DoStatement>();
             return this->visitExpression(*d.fTest) || this->visitStatement(*d.fStatement); }
         case Statement::kExpression_Kind:
-            return this->visitExpression(*((const ExpressionStatement&) s).fExpression);
+            return this->visitExpression(*s.as<ExpressionStatement>().fExpression);
         case Statement::kFor_Kind: {
-            const ForStatement& f = (const ForStatement&) s;
+            const ForStatement& f = s.as<ForStatement>();
             return (f.fInitializer && this->visitStatement(*f.fInitializer)) ||
-                   (f.fInitializer && this->visitExpression(*f.fTest)) ||
+                   (f.fTest && this->visitExpression(*f.fTest)) ||
                    (f.fNext && this->visitExpression(*f.fNext)) ||
                    this->visitStatement(*f.fStatement); }
         case Statement::kIf_Kind: {
-            const IfStatement& i = (const IfStatement&) s;
+            const IfStatement& i = s.as<IfStatement>();
             return this->visitExpression(*i.fTest) ||
                    this->visitStatement(*i.fIfTrue) ||
                    (i.fIfFalse && this->visitStatement(*i.fIfFalse)); }
         case Statement::kReturn_Kind: {
-            const ReturnStatement& r = (const ReturnStatement&) s;
+            const ReturnStatement& r = s.as<ReturnStatement>();
             return r.fExpression && this->visitExpression(*r.fExpression); }
         case Statement::kSwitch_Kind: {
-            const SwitchStatement& sw = (const SwitchStatement&) s;
+            const SwitchStatement& sw = s.as<SwitchStatement>();
             if (this->visitExpression(*sw.fValue)) { return true; }
             for (const auto& c : sw.fCases) {
                 if (c->fValue && this->visitExpression(*c->fValue)) { return true; }
@@ -284,23 +318,23 @@ bool ProgramVisitor::visitStatement(const Statement& s) {
             }
             return false; }
         case Statement::kVarDeclaration_Kind: {
-            const VarDeclaration& v = (const VarDeclaration&) s;
+            const VarDeclaration& v = s.as<VarDeclaration>();
             for (const auto& s : v.fSizes) {
-                if (this->visitExpression(*s)) { return true; }
+                if (s && this->visitExpression(*s)) { return true; }
             }
             return v.fValue && this->visitExpression(*v.fValue); }
         case Statement::kVarDeclarations_Kind: {
             // Technically this statement points to a program element, but it's convenient
             // to have program element > statement > expression, so visit the declaration elements
             // directly without going up to visitProgramElement.
-            const VarDeclarations& vars = *((const VarDeclarationsStatement&) s).fDeclaration;
+            const VarDeclarations& vars = *s.as<VarDeclarationsStatement>().fDeclaration;
             for (const auto& v : vars.fVars) {
                 if (this->visitStatement(*v)) { return true; }
             }
             return false;
         }
         case Statement::kWhile_Kind: {
-            const WhileStatement& w = (const WhileStatement&) s;
+            const WhileStatement& w = s.as<WhileStatement>();
             return this->visitExpression(*w.fTest) || this->visitStatement(*w.fStatement); }
         default:
             SkUNREACHABLE;
@@ -316,14 +350,14 @@ bool ProgramVisitor::visitProgramElement(const ProgramElement& pe) {
             // Leaf program elements just return false by default
             return false;
         case ProgramElement::kFunction_Kind:
-            return this->visitStatement(*((const FunctionDefinition&) pe).fBody);
+            return this->visitStatement(*pe.as<FunctionDefinition>().fBody);
         case ProgramElement::kInterfaceBlock_Kind:
-            for (const auto& e : ((const InterfaceBlock&) pe).fSizes) {
+            for (const auto& e : pe.as<InterfaceBlock>().fSizes) {
                 if (this->visitExpression(*e)) { return true; }
             }
             return false;
         case ProgramElement::kVar_Kind:
-            for (const auto& v : ((const VarDeclarations&) pe).fVars) {
+            for (const auto& v : pe.as<VarDeclarations>().fVars) {
                 if (this->visitStatement(*v)) { return true; }
             }
             return false;

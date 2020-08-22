@@ -75,12 +75,6 @@ public:
         return SkToBool(FormatInfo::kBlitSrc_Flag & flags);
     }
 
-    // On Adreno vulkan, they do not respect the imageOffset parameter at least in
-    // copyImageToBuffer. This flag says that we must do the copy starting from the origin always.
-    bool mustDoCopiesFromOrigin() const {
-        return fMustDoCopiesFromOrigin;
-    }
-
     // Sometimes calls to QueueWaitIdle return before actually signalling the fences
     // on the command buffers even though they have completed. This causes an assert to fire when
     // destroying the command buffers. Therefore we add a sleep to make sure the fence signals.
@@ -165,6 +159,8 @@ public:
     int maxPerPoolCachedSecondaryCommandBuffers() const {
         return fMaxPerPoolCachedSecondaryCommandBuffers;
     }
+
+    uint32_t maxInputAttachmentDescriptors() const { return fMaxInputAttachmentDescriptors; }
 
     bool mustInvalidatePrimaryCmdBufferStateAfterClearAttachments() const {
         return fMustInvalidatePrimaryCmdBufferStateAfterClearAttachments;
@@ -312,7 +308,6 @@ private:
 
     SkSTArray<1, GrVkYcbcrConversionInfo> fYcbcrInfos;
 
-    bool fMustDoCopiesFromOrigin = false;
     bool fMustSleepOnTearDown = false;
     bool fShouldAlwaysUseDedicatedImageMemory = false;
 
@@ -342,6 +337,8 @@ private:
     // submission in the GrDrawingManager, so we shouldn't be going over 100 secondary command
     // buffers per primary anyways.
     int fMaxPerPoolCachedSecondaryCommandBuffers = 100;
+
+    uint32_t fMaxInputAttachmentDescriptors = 0;
 
     typedef GrCaps INHERITED;
 };

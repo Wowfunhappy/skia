@@ -357,8 +357,7 @@ ASTNode::ID Parser::enumDeclaration() {
     if (!this->expect(Token::Kind::TK_LBRACE, "'{'")) {
         return ASTNode::ID::Invalid();
     }
-    fSymbols.add(this->text(name), std::unique_ptr<Symbol>(new Type(this->text(name),
-                                                                    Type::kEnum_Kind)));
+    fSymbols.add(this->text(name), std::make_unique<Type>(this->text(name), Type::kEnum_Kind));
     CREATE_NODE(result, name.fOffset, ASTNode::Kind::kEnum, this->text(name));
     if (!this->checkNext(Token::Kind::TK_RBRACE)) {
         Token id;
@@ -937,7 +936,7 @@ Layout Parser::layout() {
 
 /* layout? (UNIFORM | CONST | IN | OUT | INOUT | LOWP | MEDIUMP | HIGHP | FLAT | NOPERSPECTIVE |
             READONLY | WRITEONLY | COHERENT | VOLATILE | RESTRICT | BUFFER | PLS | PLSIN |
-            PLSOUT | VARYING)* */
+            PLSOUT | VARYING | INLINE)* */
 Modifiers Parser::modifiers() {
     Layout layout = this->layout();
     int flags = 0;
@@ -1016,6 +1015,10 @@ Modifiers Parser::modifiers() {
             case Token::Kind::TK_VARYING:
                 this->nextToken();
                 flags |= Modifiers::kVarying_Flag;
+                break;
+            case Token::Kind::TK_INLINE:
+                this->nextToken();
+                flags |= Modifiers::kInline_Flag;
                 break;
             default:
                 return Modifiers(layout, flags);

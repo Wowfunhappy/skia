@@ -8,6 +8,7 @@
 #include "src/sksl/SkSLCompiler.h"
 
 #include <memory>
+#include <unordered_set>
 
 #include "src/sksl/SkSLByteCodeGenerator.h"
 #include "src/sksl/SkSLCFGGenerator.h"
@@ -43,14 +44,7 @@
 #include "spirv-tools/libspirv.hpp"
 #endif
 
-// If true, we use a compact binary IR representation of the core include files; otherwise we parse
-// the actual source code for the include files at runtime. The main reason you would need to change
-// this is to make format changes easier: set it to 0, change the encoder and decoder as needed,
-// build Skia to regenerate the encoded files, then set this back to 1 to actually use the
-// newly-generated files.
-#define REHYDRATE 1
-
-#if REHYDRATE
+#if !SKSL_STANDALONE
 
 #include "src/sksl/generated/sksl_fp.dehydrated.sksl"
 #include "src/sksl/generated/sksl_frag.dehydrated.sksl"
@@ -62,15 +56,14 @@
 
 #else
 
-#warning SkSL rehydrator is disabled
-
-static const char SKSL_GPU_INCLUDE[]      = "../../src/sksl/sksl_gpu.sksl";
-static const char SKSL_INTERP_INCLUDE[]   = "../../src/sksl/sksl_interp.sksl";
-static const char SKSL_VERT_INCLUDE[]     = "../../src/sksl/sksl_vert.sksl";
-static const char SKSL_FRAG_INCLUDE[]     = "../../src/sksl/sksl_frag.sksl";
-static const char SKSL_GEOM_INCLUDE[]     = "../../src/sksl/sksl_geom.sksl";
-static const char SKSL_FP_INCLUDE[]       = "../../src/sksl/generated/sksl_fp.sksl";
-static const char SKSL_PIPELINE_INCLUDE[] = "../../src/sksl/sksl_pipeline.sksl";
+// GN generates or copies all of these files to the skslc executable directory
+static const char SKSL_GPU_INCLUDE[]      = "sksl_gpu.sksl";
+static const char SKSL_INTERP_INCLUDE[]   = "sksl_interp.sksl";
+static const char SKSL_VERT_INCLUDE[]     = "sksl_vert.sksl";
+static const char SKSL_FRAG_INCLUDE[]     = "sksl_frag.sksl";
+static const char SKSL_GEOM_INCLUDE[]     = "sksl_geom.sksl";
+static const char SKSL_FP_INCLUDE[]       = "sksl_fp.sksl";
+static const char SKSL_PIPELINE_INCLUDE[] = "sksl_pipeline.sksl";
 
 #endif
 
@@ -82,7 +75,7 @@ static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
         std::unique_ptr<ProgramElement>& element = *iter;
         switch (element->fKind) {
             case ProgramElement::kFunction_Kind: {
-                FunctionDefinition& f = (FunctionDefinition&) *element;
+                FunctionDefinition& f = element->as<FunctionDefinition>();
                 SkASSERT(f.fDeclaration.fBuiltin);
                 String key = f.fDeclaration.description();
                 SkASSERT(target->find(key) == target->end());
@@ -91,7 +84,7 @@ static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
                 break;
             }
             case ProgramElement::kEnum_Kind: {
-                Enum& e = (Enum&) *element;
+                Enum& e = element->as<Enum>();
                 StringFragment name = e.fTypeName;
                 SkASSERT(target->find(name) == target->end());
                 (*target)[name] = std::make_pair(std::move(element), false);
@@ -238,14 +231,15 @@ Compiler::Compiler(Flags flags)
     symbols->addWithoutOwnership(fpAliasName, fContext->fFragmentProcessor_Type.get());
 
     StringFragment skCapsName("sk_Caps");
-    Variable* skCaps = new Variable(-1, Modifiers(), skCapsName,
-                                    *fContext->fSkCaps_Type, Variable::kGlobal_Storage);
-    fIRGenerator->fSymbolTable->add(skCapsName, std::unique_ptr<Symbol>(skCaps));
+    fIRGenerator->fSymbolTable->add(
+            skCapsName,
+            std::make_unique<Variable>(/*offset=*/-1, Modifiers(), skCapsName,
+                                       *fContext->fSkCaps_Type, Variable::kGlobal_Storage));
 
     fIRGenerator->fIntrinsics = &fGPUIntrinsics;
     std::vector<std::unique_ptr<ProgramElement>> gpuIntrinsics;
     std::vector<std::unique_ptr<ProgramElement>> interpIntrinsics;
-#if !REHYDRATE
+#if SKSL_STANDALONE
     this->processIncludeFile(Program::kFragment_Kind, SKSL_GPU_INCLUDE, symbols, &gpuIntrinsics,
                              &fGpuSymbolTable);
     this->processIncludeFile(Program::kVertex_Kind, SKSL_VERT_INCLUDE, fGpuSymbolTable,
@@ -284,7 +278,7 @@ void Compiler::loadGeometryIntrinsics() {
     if (fGeometrySymbolTable) {
         return;
     }
-    #if REHYDRATE
+    #if !SKSL_STANDALONE
         {
             Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this, SKSL_INCLUDE_sksl_geom,
                               SKSL_INCLUDE_sksl_geom_LENGTH);
@@ -301,7 +295,7 @@ void Compiler::loadPipelineIntrinsics() {
     if (fPipelineSymbolTable) {
         return;
     }
-    #if REHYDRATE
+    #if !SKSL_STANDALONE
         {
             Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this,
                                   SKSL_INCLUDE_sksl_pipeline,
@@ -320,7 +314,7 @@ void Compiler::loadInterpreterIntrinsics() {
         return;
     }
     this->loadPipelineIntrinsics();
-    #if REHYDRATE
+    #if !SKSL_STANDALONE
         {
             Rehydrator rehydrator(fContext.get(), fPipelineSymbolTable, this,
                                   SKSL_INCLUDE_sksl_interp,
@@ -383,7 +377,7 @@ void Compiler::addDefinition(const Expression* lvalue, std::unique_ptr<Expressio
                              DefinitionMap* definitions) {
     switch (lvalue->fKind) {
         case Expression::kVariableReference_Kind: {
-            const Variable& var = ((VariableReference*) lvalue)->fVariable;
+            const Variable& var = lvalue->as<VariableReference>().fVariable;
             if (var.fStorage == Variable::kLocal_Storage) {
                 (*definitions)[&var] = expr;
             }
@@ -396,19 +390,19 @@ void Compiler::addDefinition(const Expression* lvalue, std::unique_ptr<Expressio
             // (we write to foo.x, and then pass foo to a function which happens to only read foo.x,
             // but since we pass foo as a whole it is flagged as an error) unless we perform a much
             // more complicated whole-program analysis. This is probably good enough.
-            this->addDefinition(((Swizzle*) lvalue)->fBase.get(),
+            this->addDefinition(lvalue->as<Swizzle>().fBase.get(),
                                 (std::unique_ptr<Expression>*) &fContext->fDefined_Expression,
                                 definitions);
             break;
         case Expression::kIndex_Kind:
             // see comments in Swizzle
-            this->addDefinition(((IndexExpression*) lvalue)->fBase.get(),
+            this->addDefinition(lvalue->as<IndexExpression>().fBase.get(),
                                 (std::unique_ptr<Expression>*) &fContext->fDefined_Expression,
                                 definitions);
             break;
         case Expression::kFieldAccess_Kind:
             // see comments in Swizzle
-            this->addDefinition(((FieldAccess*) lvalue)->fBase.get(),
+            this->addDefinition(lvalue->as<FieldAccess>().fBase.get(),
                                 (std::unique_ptr<Expression>*) &fContext->fDefined_Expression,
                                 definitions);
             break;
@@ -416,10 +410,10 @@ void Compiler::addDefinition(const Expression* lvalue, std::unique_ptr<Expressio
             // To simplify analysis, we just pretend that we write to both sides of the ternary.
             // This allows for false positives (meaning we fail to detect that a variable might not
             // have been assigned), but is preferable to false negatives.
-            this->addDefinition(((TernaryExpression*) lvalue)->fIfTrue.get(),
+            this->addDefinition(lvalue->as<TernaryExpression>().fIfTrue.get(),
                                 (std::unique_ptr<Expression>*) &fContext->fDefined_Expression,
                                 definitions);
-            this->addDefinition(((TernaryExpression*) lvalue)->fIfFalse.get(),
+            this->addDefinition(lvalue->as<TernaryExpression>().fIfFalse.get(),
                                 (std::unique_ptr<Expression>*) &fContext->fDefined_Expression,
                                 definitions);
             break;
@@ -437,10 +431,10 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
     switch (node.fKind) {
         case BasicBlock::Node::kExpression_Kind: {
             SkASSERT(node.expression());
-            const Expression* expr = (Expression*) node.expression()->get();
+            Expression* expr = node.expression()->get();
             switch (expr->fKind) {
                 case Expression::kBinary_Kind: {
-                    BinaryExpression* b = (BinaryExpression*) expr;
+                    BinaryExpression* b = &expr->as<BinaryExpression>();
                     if (b->fOperator == Token::Kind::TK_EQ) {
                         this->addDefinition(b->fLeft.get(), &b->fRight, definitions);
                     } else if (Compiler::IsAssignment(b->fOperator)) {
@@ -453,7 +447,7 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
                     break;
                 }
                 case Expression::kFunctionCall_Kind: {
-                    const FunctionCall& c = (const FunctionCall&) *expr;
+                    const FunctionCall& c = expr->as<FunctionCall>();
                     for (size_t i = 0; i < c.fFunction.fParameters.size(); ++i) {
                         if (c.fFunction.fParameters[i]->fModifiers.fFlags & Modifiers::kOut_Flag) {
                             this->addDefinition(
@@ -465,7 +459,7 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
                     break;
                 }
                 case Expression::kPrefix_Kind: {
-                    const PrefixExpression* p = (PrefixExpression*) expr;
+                    const PrefixExpression* p = &expr->as<PrefixExpression>();
                     if (p->fOperator == Token::Kind::TK_MINUSMINUS ||
                         p->fOperator == Token::Kind::TK_PLUSPLUS) {
                         this->addDefinition(
@@ -476,7 +470,7 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
                     break;
                 }
                 case Expression::kPostfix_Kind: {
-                    const PostfixExpression* p = (PostfixExpression*) expr;
+                    const PostfixExpression* p = &expr->as<PostfixExpression>();
                     if (p->fOperator == Token::Kind::TK_MINUSMINUS ||
                         p->fOperator == Token::Kind::TK_PLUSPLUS) {
                         this->addDefinition(
@@ -487,7 +481,7 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
                     break;
                 }
                 case Expression::kVariableReference_Kind: {
-                    const VariableReference* v = (VariableReference*) expr;
+                    const VariableReference* v = &expr->as<VariableReference>();
                     if (v->fRefKind != VariableReference::kRead_RefKind) {
                         this->addDefinition(
                                       v,
@@ -502,9 +496,9 @@ void Compiler::addDefinitions(const BasicBlock::Node& node,
             break;
         }
         case BasicBlock::Node::kStatement_Kind: {
-            const Statement* stmt = (Statement*) node.statement()->get();
+            Statement* stmt = node.statement()->get();
             if (stmt->fKind == Statement::kVarDeclaration_Kind) {
-                VarDeclaration& vd = (VarDeclaration&) *stmt;
+                VarDeclaration& vd = stmt->as<VarDeclaration>();
                 if (vd.fValue) {
                     (*definitions)[vd.fVar] = &vd.fValue;
                 }
@@ -564,10 +558,10 @@ static DefinitionMap compute_start_state(const CFG& cfg) {
                 SkASSERT(node.statement());
                 const Statement* s = node.statement()->get();
                 if (s->fKind == Statement::kVarDeclarations_Kind) {
-                    const VarDeclarationsStatement* vd = (const VarDeclarationsStatement*) s;
+                    const VarDeclarationsStatement* vd = &s->as<VarDeclarationsStatement>();
                     for (const auto& decl : vd->fDeclaration->fVars) {
                         if (decl->fKind == Statement::kVarDeclaration_Kind) {
-                            result[((VarDeclaration&) *decl).fVar] = nullptr;
+                            result[decl->as<VarDeclaration>().fVar] = nullptr;
                         }
                     }
                 }
@@ -583,18 +577,18 @@ static DefinitionMap compute_start_state(const CFG& cfg) {
 static bool is_dead(const Expression& lvalue) {
     switch (lvalue.fKind) {
         case Expression::kVariableReference_Kind:
-            return ((VariableReference&) lvalue).fVariable.dead();
+            return lvalue.as<VariableReference>().fVariable.dead();
         case Expression::kSwizzle_Kind:
-            return is_dead(*((Swizzle&) lvalue).fBase);
+            return is_dead(*lvalue.as<Swizzle>().fBase);
         case Expression::kFieldAccess_Kind:
-            return is_dead(*((FieldAccess&) lvalue).fBase);
+            return is_dead(*lvalue.as<FieldAccess>().fBase);
         case Expression::kIndex_Kind: {
-            const IndexExpression& idx = (IndexExpression&) lvalue;
+            const IndexExpression& idx = lvalue.as<IndexExpression>();
             return is_dead(*idx.fBase) &&
                    !idx.fIndex->hasProperty(Expression::Property::kSideEffects);
         }
         case Expression::kTernary_Kind: {
-            const TernaryExpression& t = (TernaryExpression&) lvalue;
+            const TernaryExpression& t = lvalue.as<TernaryExpression>();
             return !t.fTest->hasSideEffects() && is_dead(*t.fIfTrue) && is_dead(*t.fIfFalse);
         }
         case Expression::kExternalValue_Kind:
@@ -637,9 +631,9 @@ void Compiler::computeDataFlow(CFG* cfg) {
  * the newly-inserted element. Otherwise updates only the IR and returns false (and the CFG will
  * need to be regenerated).
  */
-bool try_replace_expression(BasicBlock* b,
-                            std::vector<BasicBlock::Node>::iterator* iter,
-                            std::unique_ptr<Expression>* newExpression) {
+static bool try_replace_expression(BasicBlock* b,
+                                   std::vector<BasicBlock::Node>::iterator* iter,
+                                   std::unique_ptr<Expression>* newExpression) {
     std::unique_ptr<Expression>* target = (*iter)->expression();
     if (!b->tryRemoveExpression(iter)) {
         *target = std::move(*newExpression);
@@ -653,27 +647,43 @@ bool try_replace_expression(BasicBlock* b,
  * Returns true if the expression is a constant numeric literal with the specified value, or a
  * constant vector with all elements equal to the specified value.
  */
-bool is_constant(const Expression& expr, double value) {
+template <typename T = double>
+static bool is_constant(const Expression& expr, T value) {
     switch (expr.fKind) {
         case Expression::kIntLiteral_Kind:
-            return ((IntLiteral&) expr).fValue == value;
+            return expr.as<IntLiteral>().fValue == value;
+
         case Expression::kFloatLiteral_Kind:
-            return ((FloatLiteral&) expr).fValue == value;
+            return expr.as<FloatLiteral>().fValue == value;
+
         case Expression::kConstructor_Kind: {
-            Constructor& c = (Constructor&) expr;
-            bool isFloat = c.fType.columns() > 1 ? c.fType.componentType().isFloat()
-                                                 : c.fType.isFloat();
-            if (c.fType.kind() == Type::kVector_Kind && c.isCompileTimeConstant()) {
-                for (int i = 0; i < c.fType.columns(); ++i) {
-                    if (isFloat) {
-                        if (c.getFVecComponent(i) != value) {
-                            return false;
+            const Constructor& constructor = expr.as<Constructor>();
+            if (constructor.isCompileTimeConstant()) {
+                bool isFloat = constructor.fType.columns() > 1
+                                       ? constructor.fType.componentType().isFloat()
+                                       : constructor.fType.isFloat();
+                switch (constructor.fType.kind()) {
+                    case Type::kVector_Kind:
+                        for (int i = 0; i < constructor.fType.columns(); ++i) {
+                            if (isFloat) {
+                                if (constructor.getFVecComponent(i) != value) {
+                                    return false;
+                                }
+                            } else {
+                                if (constructor.getIVecComponent(i) != value) {
+                                    return false;
+                                }
+                            }
                         }
-                    } else if (c.getIVecComponent(i) != value) {
+                        return true;
+
+                    case Type::kScalar_Kind:
+                        SkASSERT(constructor.fArguments.size() == 1);
+                        return is_constant<T>(*constructor.fArguments[0], value);
+
+                    default:
                         return false;
-                    }
                 }
-                return true;
             }
             return false;
         }
@@ -686,14 +696,13 @@ bool is_constant(const Expression& expr, double value) {
  * Collapses the binary expression pointed to by iter down to just the right side (in both the IR
  * and CFG structures).
  */
-void delete_left(BasicBlock* b,
-                 std::vector<BasicBlock::Node>::iterator* iter,
-                 bool* outUpdated,
-                 bool* outNeedsRescan) {
+static void delete_left(BasicBlock* b,
+                        std::vector<BasicBlock::Node>::iterator* iter,
+                        bool* outUpdated,
+                        bool* outNeedsRescan) {
     *outUpdated = true;
     std::unique_ptr<Expression>* target = (*iter)->expression();
-    SkASSERT((*target)->fKind == Expression::kBinary_Kind);
-    BinaryExpression& bin = (BinaryExpression&) **target;
+    BinaryExpression& bin = (*target)->as<BinaryExpression>();
     SkASSERT(!bin.fLeft->hasSideEffects());
     bool result;
     if (bin.fOperator == Token::Kind::TK_EQ) {
@@ -724,14 +733,13 @@ void delete_left(BasicBlock* b,
  * Collapses the binary expression pointed to by iter down to just the left side (in both the IR and
  * CFG structures).
  */
-void delete_right(BasicBlock* b,
-                  std::vector<BasicBlock::Node>::iterator* iter,
-                  bool* outUpdated,
-                  bool* outNeedsRescan) {
+static void delete_right(BasicBlock* b,
+                         std::vector<BasicBlock::Node>::iterator* iter,
+                         bool* outUpdated,
+                         bool* outNeedsRescan) {
     *outUpdated = true;
     std::unique_ptr<Expression>* target = (*iter)->expression();
-    SkASSERT((*target)->fKind == Expression::kBinary_Kind);
-    BinaryExpression& bin = (BinaryExpression&) **target;
+    BinaryExpression& bin = (*target)->as<BinaryExpression>();
     SkASSERT(!bin.fRight->hasSideEffects());
     if (!b->tryRemoveExpressionBefore(iter, bin.fRight.get())) {
         *target = std::move(bin.fLeft);
@@ -797,7 +805,7 @@ static void vectorize_left(BasicBlock* b,
                            std::vector<BasicBlock::Node>::iterator* iter,
                            bool* outUpdated,
                            bool* outNeedsRescan) {
-    BinaryExpression& bin = (BinaryExpression&) **(*iter)->expression();
+    BinaryExpression& bin = (*(*iter)->expression())->as<BinaryExpression>();
     vectorize(b, iter, bin.fRight->fType, &bin.fLeft, outUpdated, outNeedsRescan);
 }
 
@@ -809,25 +817,25 @@ static void vectorize_right(BasicBlock* b,
                             std::vector<BasicBlock::Node>::iterator* iter,
                             bool* outUpdated,
                             bool* outNeedsRescan) {
-    BinaryExpression& bin = (BinaryExpression&) **(*iter)->expression();
+    BinaryExpression& bin = (*(*iter)->expression())->as<BinaryExpression>();
     vectorize(b, iter, bin.fLeft->fType, &bin.fRight, outUpdated, outNeedsRescan);
 }
 
 // Mark that an expression which we were writing to is no longer being written to
-void clear_write(const Expression& expr) {
+static void clear_write(Expression& expr) {
     switch (expr.fKind) {
         case Expression::kVariableReference_Kind: {
-            ((VariableReference&) expr).setRefKind(VariableReference::kRead_RefKind);
+            expr.as<VariableReference>().setRefKind(VariableReference::kRead_RefKind);
             break;
         }
         case Expression::kFieldAccess_Kind:
-            clear_write(*((FieldAccess&) expr).fBase);
+            clear_write(*expr.as<FieldAccess>().fBase);
             break;
         case Expression::kSwizzle_Kind:
-            clear_write(*((Swizzle&) expr).fBase);
+            clear_write(*expr.as<Swizzle>().fBase);
             break;
         case Expression::kIndex_Kind:
-            clear_write(*((IndexExpression&) expr).fBase);
+            clear_write(*expr.as<IndexExpression>().fBase);
             break;
         default:
             ABORT("shouldn't be writing to this kind of expression\n");
@@ -857,7 +865,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
     }
     switch (expr->fKind) {
         case Expression::kVariableReference_Kind: {
-            const VariableReference& ref = (VariableReference&) *expr;
+            const VariableReference& ref = expr->as<VariableReference>();
             const Variable& var = ref.fVariable;
             if (ref.refKind() != VariableReference::kWrite_RefKind &&
                 ref.refKind() != VariableReference::kPointer_RefKind &&
@@ -870,11 +878,11 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
             break;
         }
         case Expression::kTernary_Kind: {
-            TernaryExpression* t = (TernaryExpression*) expr;
+            TernaryExpression* t = &expr->as<TernaryExpression>();
             if (t->fTest->fKind == Expression::kBoolLiteral_Kind) {
                 // ternary has a constant test, replace it with either the true or
                 // false branch
-                if (((BoolLiteral&) *t->fTest).fValue) {
+                if (t->fTest->as<BoolLiteral>().fValue) {
                     (*iter)->setExpression(std::move(t->fIfTrue));
                 } else {
                     (*iter)->setExpression(std::move(t->fIfFalse));
@@ -885,7 +893,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
             break;
         }
         case Expression::kBinary_Kind: {
-            BinaryExpression* bin = (BinaryExpression*) expr;
+            BinaryExpression* bin = &expr->as<BinaryExpression>();
             if (dead_assignment(*bin)) {
                 delete_left(&b, iter, outUpdated, outNeedsRescan);
                 break;
@@ -1051,7 +1059,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
             break;
         }
         case Expression::kSwizzle_Kind: {
-            Swizzle& s = (Swizzle&) *expr;
+            Swizzle& s = expr->as<Swizzle>();
             // detect identity swizzles like foo.rgba
             if ((int) s.fComponents.size() == s.fBase->fType.columns()) {
                 bool identity = true;
@@ -1073,7 +1081,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
             }
             // detect swizzles of swizzles, e.g. replace foo.argb.r000 with foo.a000
             if (s.fBase->fKind == Expression::kSwizzle_Kind) {
-                Swizzle& base = (Swizzle&) *s.fBase;
+                Swizzle& base = s.fBase->as<Swizzle>();
                 std::vector<int> final;
                 for (int c : s.fComponents) {
                     if (c == SKSL_SWIZZLE_0 || c == SKSL_SWIZZLE_1) {
@@ -1102,7 +1110,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
 static bool contains_conditional_break_impl(Statement& s, bool inConditional) {
     switch (s.fKind) {
         case Statement::kBlock_Kind:
-            for (const std::unique_ptr<Statement>& sub : static_cast<Block&>(s).fStatements) {
+            for (const std::unique_ptr<Statement>& sub : s.as<Block>().fStatements) {
                 if (contains_conditional_break_impl(*sub, inConditional)) {
                     return true;
                 }
@@ -1113,7 +1121,7 @@ static bool contains_conditional_break_impl(Statement& s, bool inConditional) {
             return inConditional;
 
         case Statement::kIf_Kind: {
-            const IfStatement& i = static_cast<IfStatement&>(s);
+            const IfStatement& i = s.as<IfStatement>();
             return contains_conditional_break_impl(*i.fIfTrue, /*inConditional=*/true) ||
                    (i.fIfFalse &&
                     contains_conditional_break_impl(*i.fIfFalse, /*inConditional=*/true));
@@ -1262,7 +1270,7 @@ void Compiler::simplifyStatement(DefinitionMap& definitions,
     Statement* stmt = (*iter)->statement()->get();
     switch (stmt->fKind) {
         case Statement::kVarDeclaration_Kind: {
-            const auto& varDecl = (VarDeclaration&) *stmt;
+            const auto& varDecl = stmt->as<VarDeclaration>();
             if (varDecl.fVar->dead() &&
                 (!varDecl.fValue ||
                  !varDecl.fValue->hasSideEffects())) {
@@ -1278,10 +1286,10 @@ void Compiler::simplifyStatement(DefinitionMap& definitions,
             break;
         }
         case Statement::kIf_Kind: {
-            IfStatement& i = (IfStatement&) *stmt;
+            IfStatement& i = stmt->as<IfStatement>();
             if (i.fTest->fKind == Expression::kBoolLiteral_Kind) {
                 // constant if, collapse down to a single branch
-                if (((BoolLiteral&) *i.fTest).fValue) {
+                if (i.fTest->as<BoolLiteral>().fValue) {
                     SkASSERT(i.fIfTrue);
                     (*iter)->setStatement(std::move(i.fIfTrue));
                 } else {
@@ -1318,22 +1326,21 @@ void Compiler::simplifyStatement(DefinitionMap& definitions,
             break;
         }
         case Statement::kSwitch_Kind: {
-            SwitchStatement& s = (SwitchStatement&) *stmt;
+            SwitchStatement& s = stmt->as<SwitchStatement>();
             if (s.fValue->isCompileTimeConstant()) {
                 // switch is constant, replace it with the case that matches
                 bool found = false;
                 SwitchCase* defaultCase = nullptr;
-                for (const auto& c : s.fCases) {
+                for (const std::unique_ptr<SwitchCase>& c : s.fCases) {
                     if (!c->fValue) {
                         defaultCase = c.get();
                         continue;
                     }
-                    SkASSERT(c->fValue->fKind == s.fValue->fKind);
-                    found = c->fValue->compareConstant(*fContext, *s.fValue);
-                    if (found) {
+                    if (is_constant<int64_t>(*s.fValue, c->fValue->getConstantInt())) {
                         std::unique_ptr<Statement> newBlock = block_for_case(&s, c.get());
                         if (newBlock) {
                             (*iter)->setStatement(std::move(newBlock));
+                            found = true;
                             break;
                         } else {
                             if (s.fIsStatic && !(fFlags & kPermitInvalidStaticTests_Flag)) {
@@ -1369,7 +1376,7 @@ void Compiler::simplifyStatement(DefinitionMap& definitions,
             break;
         }
         case Statement::kExpression_Kind: {
-            ExpressionStatement& e = (ExpressionStatement&) *stmt;
+            ExpressionStatement& e = stmt->as<ExpressionStatement>();
             SkASSERT((*iter)->statement()->get() == &e);
             if (!e.fExpression->hasSideEffects()) {
                 // Expression statement with no side effects, kill it
@@ -1475,21 +1482,21 @@ void Compiler::scanCFG(FunctionDefinition& f) {
                 const Statement& s = **iter->statement();
                 switch (s.fKind) {
                     case Statement::kIf_Kind:
-                        if (((const IfStatement&) s).fIsStatic &&
+                        if (s.as<IfStatement>().fIsStatic &&
                             !(fFlags & kPermitInvalidStaticTests_Flag)) {
                             this->error(s.fOffset, "static if has non-static test");
                         }
                         ++iter;
                         break;
                     case Statement::kSwitch_Kind:
-                        if (((const SwitchStatement&) s).fIsStatic &&
+                        if (s.as<SwitchStatement>().fIsStatic &&
                              !(fFlags & kPermitInvalidStaticTests_Flag)) {
                             this->error(s.fOffset, "static switch has non-static test");
                         }
                         ++iter;
                         break;
                     case Statement::kVarDeclarations_Kind: {
-                        VarDeclarations& decls = *((VarDeclarationsStatement&) s).fDeclaration;
+                        VarDeclarations& decls = *s.as<VarDeclarationsStatement>().fDeclaration;
                         for (auto varIter = decls.fVars.begin(); varIter != decls.fVars.end();) {
                             if ((*varIter)->fKind == Statement::kNop_Kind) {
                                 varIter = decls.fVars.erase(varIter);
@@ -1558,7 +1565,7 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kFragmentProcessor_Kind: {
-#if REHYDRATE
+#if !SKSL_STANDALONE
             {
                 Rehydrator rehydrator(fContext.get(), fGpuSymbolTable, this,
                                       SKSL_INCLUDE_sksl_fp,
@@ -1630,7 +1637,7 @@ bool Compiler::optimize(Program& program) {
         fIRGenerator->fSettings = &program.fSettings;
         for (auto& element : program) {
             if (element.fKind == ProgramElement::kFunction_Kind) {
-                this->scanCFG((FunctionDefinition&) element);
+                this->scanCFG(element.as<FunctionDefinition>());
             }
         }
         // we wait until after analysis to remove dead functions so that we still report errors
@@ -1638,7 +1645,7 @@ bool Compiler::optimize(Program& program) {
         if (program.fSettings.fRemoveDeadFunctions) {
             for (auto iter = program.fElements.begin(); iter != program.fElements.end(); ) {
                 if ((*iter)->fKind == ProgramElement::kFunction_Kind) {
-                    const FunctionDefinition& f = (const FunctionDefinition&) **iter;
+                    const FunctionDefinition& f = (*iter)->as<FunctionDefinition>();
                     if (!f.fDeclaration.fCallCount && f.fDeclaration.fName != "main") {
                         iter = program.fElements.erase(iter);
                         continue;
@@ -1650,9 +1657,9 @@ bool Compiler::optimize(Program& program) {
         if (program.fKind != Program::kFragmentProcessor_Kind) {
             for (auto iter = program.fElements.begin(); iter != program.fElements.end();) {
                 if ((*iter)->fKind == ProgramElement::kVar_Kind) {
-                    VarDeclarations& vars = (VarDeclarations&) **iter;
+                    VarDeclarations& vars = (*iter)->as<VarDeclarations>();
                     for (auto varIter = vars.fVars.begin(); varIter != vars.fVars.end();) {
-                        const Variable& var = *((VarDeclaration&) **varIter).fVar;
+                        const Variable& var = *(*varIter)->as<VarDeclaration>().fVar;
                         if (var.dead()) {
                             varIter = vars.fVars.erase(varIter);
                         } else {
@@ -1669,30 +1676,6 @@ bool Compiler::optimize(Program& program) {
         }
     }
     return fErrorCount == 0;
-}
-
-std::unique_ptr<Program> Compiler::specialize(
-                   Program& program,
-                   const std::unordered_map<SkSL::String, SkSL::Program::Settings::Value>& inputs) {
-    std::vector<std::unique_ptr<ProgramElement>> elements;
-    for (const auto& e : program) {
-        elements.push_back(e.clone());
-    }
-    Program::Settings settings;
-    settings.fCaps = program.fSettings.fCaps;
-    for (auto iter = inputs.begin(); iter != inputs.end(); ++iter) {
-        settings.fArgs.insert(*iter);
-    }
-    std::unique_ptr<String> sourceCopy(new String(*program.fSource));
-    std::unique_ptr<Program> result(new Program(program.fKind,
-                                                std::move(sourceCopy),
-                                                settings,
-                                                program.fContext,
-                                                program.fInheritedElements,
-                                                std::move(elements),
-                                                program.fSymbols,
-                                                program.fInputs));
-    return result;
 }
 
 #if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU
@@ -1788,6 +1771,7 @@ bool Compiler::toMetal(Program& program, String* out) {
     return result;
 }
 
+#if defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
 bool Compiler::toCPP(Program& program, String name, OutputStream& out) {
     if (!this->optimize(program)) {
         return false;
@@ -1809,12 +1793,15 @@ bool Compiler::toH(Program& program, String name, OutputStream& out) {
     fSource = nullptr;
     return result;
 }
+#endif // defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
 
-#endif
+#endif // defined(SKSL_STANDALONE) || SK_SUPPORT_GPU
 
 #if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-bool Compiler::toPipelineStage(const Program& program, PipelineStageArgs* outArgs) {
-    SkASSERT(program.fIsOptimized);
+bool Compiler::toPipelineStage(Program& program, PipelineStageArgs* outArgs) {
+    if (!this->optimize(program)) {
+        return false;
+    }
     fSource = program.fSource.get();
     StringStream buffer;
     PipelineStageCodeGenerator cg(fContext.get(), &program, this, &buffer, outArgs);

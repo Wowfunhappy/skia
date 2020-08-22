@@ -26,9 +26,7 @@
 
 #define SK_FRAGCOLOR_BUILTIN           10001
 #define SK_IN_BUILTIN                  10002
-#define SK_INCOLOR_BUILTIN             10003
 #define SK_OUTCOLOR_BUILTIN            10004
-#define SK_TEXTURESAMPLERS_BUILTIN     10006
 #define SK_OUT_BUILTIN                 10007
 #define SK_LASTFRAGCOLOR_BUILTIN       10008
 #define SK_MAIN_COORDS_BUILTIN         10009
@@ -77,7 +75,6 @@ public:
 
     struct FormatArg {
         enum class Kind {
-            kInput,
             kOutput,
             kCoords,
             kUniform,
@@ -128,9 +125,6 @@ public:
 
     bool optimize(Program& program);
 
-    std::unique_ptr<Program> specialize(Program& program,
-                    const std::unordered_map<SkSL::String, SkSL::Program::Settings::Value>& inputs);
-
     bool toSPIRV(Program& program, OutputStream& out);
 
     bool toSPIRV(Program& program, String* out);
@@ -145,14 +139,16 @@ public:
 
     bool toMetal(Program& program, String* out);
 
+#if defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
     bool toCPP(Program& program, String name, OutputStream& out);
 
     bool toH(Program& program, String name, OutputStream& out);
+#endif
 
     std::unique_ptr<ByteCode> toByteCode(Program& program);
 
 #if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-    bool toPipelineStage(const Program& program, PipelineStageArgs* outArgs);
+    bool toPipelineStage(Program& program, PipelineStageArgs* outArgs);
 #endif
 
     /**

@@ -244,25 +244,6 @@ public:
         }
     }
 
-#ifdef SK_DEBUG
-    SkString dumpInfo() const override {
-        SkString string;
-        for (const auto& geo : fLines) {
-            string.appendf("Pt0: [%.2f, %.2f], Pt1: [%.2f, %.2f], Width: %.2f, Ival0: %.2f, "
-                           "Ival1 : %.2f, Phase: %.2f\n",
-                           geo.fPtsRot[0].fX, geo.fPtsRot[0].fY,
-                           geo.fPtsRot[1].fX, geo.fPtsRot[1].fY,
-                           geo.fSrcStrokeWidth,
-                           geo.fIntervals[0],
-                           geo.fIntervals[1],
-                           geo.fPhase);
-        }
-        string += fProcessorSet.dumpProcessors();
-        string += INHERITED::dumpInfo();
-        return string;
-    }
-#endif
-
     FixedFunctionFlags fixedFunctionFlags() const override {
         FixedFunctionFlags flags = FixedFunctionFlags::kNone;
         if (AAMode::kCoverageWithMSAA == fAAMode) {
@@ -564,7 +545,7 @@ private:
                 lineDone = true;
 
                 SkPoint devicePts[2];
-                args.fViewMatrix.mapPoints(devicePts, draw.fPtsRot, 2);
+                args.fSrcRotInv.mapPoints(devicePts, draw.fPtsRot, 2);
                 SkScalar lineLength = SkPoint::Distance(devicePts[0], devicePts[1]);
                 if (hasCap) {
                     lineLength += 2.f * halfDevStroke;
@@ -584,7 +565,7 @@ private:
 
             if (!lineDone) {
                 SkPoint devicePts[2];
-                args.fViewMatrix.mapPoints(devicePts, draw.fPtsRot, 2);
+                args.fSrcRotInv.mapPoints(devicePts, draw.fPtsRot, 2);
                 draw.fLineLength = SkPoint::Distance(devicePts[0], devicePts[1]);
                 if (hasCap) {
                     draw.fLineLength += 2.f * halfDevStroke;
@@ -714,6 +695,24 @@ private:
         return CombineResult::kMerged;
     }
 
+#if GR_TEST_UTILS
+    SkString onDumpInfo() const override {
+        SkString string;
+        for (const auto& geo : fLines) {
+            string.appendf("Pt0: [%.2f, %.2f], Pt1: [%.2f, %.2f], Width: %.2f, Ival0: %.2f, "
+                           "Ival1 : %.2f, Phase: %.2f\n",
+                           geo.fPtsRot[0].fX, geo.fPtsRot[0].fY,
+                           geo.fPtsRot[1].fX, geo.fPtsRot[1].fY,
+                           geo.fSrcStrokeWidth,
+                           geo.fIntervals[0],
+                           geo.fIntervals[1],
+                           geo.fPhase);
+        }
+        string += fProcessorSet.dumpProcessors();
+        return string;
+    }
+#endif
+
     const SkPMColor4f& color() const { return fColor; }
     const SkMatrix& viewMatrix() const { return fLines[0].fViewMatrix; }
     AAMode aaMode() const { return fAAMode; }
@@ -772,8 +771,7 @@ std::unique_ptr<GrDrawOp> GrDashOp::MakeDashLineOp(GrRecordingContext* context,
     }
 
     // Scale corrections of intervals and stroke from view matrix
-    calc_dash_scaling(&lineData.fParallelScale, &lineData.fPerpendicularScale, viewMatrix,
-                      lineData.fPtsRot);
+    calc_dash_scaling(&lineData.fParallelScale, &lineData.fPerpendicularScale, viewMatrix, pts);
     if (SkScalarNearlyZero(lineData.fParallelScale) ||
         SkScalarNearlyZero(lineData.fPerpendicularScale)) {
         return nullptr;
