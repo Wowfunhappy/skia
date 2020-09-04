@@ -347,16 +347,12 @@ static skvm::Color program_fn(skvm::Builder* p,
     auto push = [&](skvm::F32 x) { stack.push_back(x); };
     auto pop  = [&]{ skvm::F32 x = stack.back(); stack.pop_back(); return x; };
 
-    // main(inout half4 color) or main(float2 local, inout half4 color)
-    SkASSERT(fn.getParameterCount() == 4 || fn.getParameterCount() == 6);
-    if (fn.getParameterCount() == 6) {
+    // half4 main() or half4 main(float2 local)
+    SkASSERT(fn.getParameterCount() == 0 || fn.getParameterCount() == 2);
+    if (fn.getParameterCount() == 2) {
         push(local.x);
         push(local.y);
     }
-    push(inColor.r);
-    push(inColor.g);
-    push(inColor.b);
-    push(inColor.a);
 
     for (int i = 0; i < fn.getLocalCount(); i++) {
         push(p->splat(0.0f));
@@ -591,20 +587,21 @@ static skvm::Color program_fn(skvm::Builder* p,
             } break;
 
             case Inst::kReturn: {
-                SkAssertResult(u8() == 0);
-                SkASSERT(ip == end);
+                SkAssertResult(u8() == 4);
+                // We'd like to assert that (ip == end) -> there is only one return, but ByteCode
+                // always includes a kReturn/0 at the end of each function, as a precaution.
+                SkASSERT(stack.size() >= 4);
+                skvm::F32 a = pop(),
+                          b = pop(),
+                          g = pop(),
+                          r = pop();
+                return { r, g, b, a };
             } break;
         }
     }
-    for (int i = 0; i < fn.getLocalCount(); i++) {
-        pop();
-    }
-    SkASSERT(stack.size() == (size_t)fn.getParameterCount());
-    skvm::F32 a = pop(),
-              b = pop(),
-              g = pop(),
-              r = pop();
-    return { r, g, b, a };
+
+    SkUNREACHABLE;
+    return {};
 }
 
 static sk_sp<SkData> get_xformed_uniforms(const SkRuntimeEffect* effect,
@@ -1052,6 +1049,13 @@ SkRuntimeShaderBuilder::SkRuntimeShaderBuilder(sk_sp<SkRuntimeEffect> effect)
     , fChildren(fEffect->children().count()) {}
 
 SkRuntimeShaderBuilder::~SkRuntimeShaderBuilder() = default;
+
+void* SkRuntimeShaderBuilder::writableUniformData() {
+    if (!fUniforms->unique()) {
+        fUniforms = SkData::MakeWithCopy(fUniforms->data(), fUniforms->size());
+    }
+    return fUniforms->writable_data();
+}
 
 sk_sp<SkShader> SkRuntimeShaderBuilder::makeShader(const SkMatrix* localMatrix, bool isOpaque) {
     return fEffect->makeShader(fUniforms, fChildren.data(), fChildren.size(), localMatrix, isOpaque);

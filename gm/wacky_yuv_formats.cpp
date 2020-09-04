@@ -1484,7 +1484,7 @@ private:
     sk_sp<SkColorSpace>        fTargetColorSpace;
     bool                       fGpuGeneratedImages = false;
 
-    typedef GM INHERITED;
+    using INHERITED = GM;
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1620,12 +1620,12 @@ protected:
         fImages[0][0] = fImages[0][1] = fImages[1][0] = fImages[1][1] = nullptr;
     }
 
-    DrawResult onDraw(GrRecordingContext* recording, GrRenderTargetContext*,
+    DrawResult onDraw(GrRecordingContext* rContext, GrRenderTargetContext*,
                       SkCanvas* canvas, SkString* msg) override {
         SkASSERT(fImages[0][0] && fImages[0][1] && fImages[1][0] && fImages[1][1]);
 
-        auto direct = GrAsDirectContext(recording);
-        if (recording && !direct) {
+        auto dContext = GrAsDirectContext(rContext);
+        if (rContext && !dContext) {
             *msg = "YUV ColorSpace image creation requires a direct context.";
             return DrawResult::kSkip;
         }
@@ -1641,14 +1641,14 @@ protected:
                 y += kTileWidthHeight + kPad;
 
                 if (fImages[opaque][tagged]) {
-                    auto yuv = fImages[opaque][tagged]->makeColorSpace(fTargetColorSpace, direct);
+                    auto yuv = fImages[opaque][tagged]->makeColorSpace(fTargetColorSpace, dContext);
                     SkASSERT(yuv);
                     SkASSERT(SkColorSpace::Equals(yuv->colorSpace(), fTargetColorSpace.get()));
                     canvas->drawImage(yuv, x, y);
                     y += kTileWidthHeight + kPad;
 
                     SkIRect bounds = SkIRect::MakeWH(kTileWidthHeight / 2, kTileWidthHeight / 2);
-                    auto subset = yuv->makeSubset(bounds, direct);
+                    auto subset = yuv->makeSubset(bounds, dContext);
                     SkASSERT(subset);
                     canvas->drawImage(subset, x, y);
                     y += kTileWidthHeight + kPad;
@@ -1660,7 +1660,7 @@ protected:
 
                     SkBitmap readBack;
                     readBack.allocPixels(yuv->imageInfo());
-                    SkAssertResult(yuv->readPixels(readBack.pixmap(), 0, 0));
+                    SkAssertResult(yuv->readPixels(dContext, readBack.pixmap(), 0, 0));
                     canvas->drawBitmap(readBack, x, y);
                 }
                 x += kTileWidthHeight + kPad;
@@ -1674,7 +1674,7 @@ private:
     sk_sp<SkImage> fImages[2][2];
     sk_sp<SkColorSpace> fTargetColorSpace;
 
-    typedef GM INHERITED;
+    using INHERITED = GM;
 };
 
 DEF_GM(return new YUVMakeColorSpaceGM();)
@@ -1799,6 +1799,6 @@ protected:
     }
 
 private:
-    typedef GM INHERITED;
+    using INHERITED = GM;
 };
 DEF_GM( return new YUVSplitterGM; )

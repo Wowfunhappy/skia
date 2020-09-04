@@ -429,7 +429,16 @@ public:
     bool programBinarySupport() const { return fProgramBinarySupport; }
     bool programParameterSupport() const { return fProgramParameterSupport; }
 
+    /** Are sampler objects available in this GL? */
     bool samplerObjectSupport() const { return fSamplerObjectSupport; }
+
+    /**
+     * Are we using sampler objects in favor of texture parameters? (This will only be true if
+     * samplerObjectSupport()).
+     */
+    bool useSamplerObjects() const { return fUseSamplerObjects; }
+
+    bool textureSwizzleSupport() const { return fTextureSwizzleSupport; }
 
     bool tiledRenderingSupport() const { return fTiledRenderingSupport; }
 
@@ -541,6 +550,8 @@ private:
     bool fProgramBinarySupport : 1;
     bool fProgramParameterSupport : 1;
     bool fSamplerObjectSupport : 1;
+    bool fUseSamplerObjects : 1;
+    bool fTextureSwizzleSupport : 1;
     bool fTiledRenderingSupport : 1;
     bool fFBFetchRequiresEnablePerSample : 1;
     bool fSRGBWriteControl : 1;
@@ -732,7 +743,7 @@ private:
     GrGLFormat fColorTypeToFormatTable[kGrColorTypeCnt];
     void setColorTypeFormat(GrColorType, GrGLFormat);
 
-    typedef GrCaps INHERITED;
+    using INHERITED = GrCaps;
 };
 
 #endif

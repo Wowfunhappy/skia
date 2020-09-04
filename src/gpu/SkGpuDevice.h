@@ -152,11 +152,6 @@ private:
 
     const GrClip* clip() const { return &fClip; }
 
-    sk_sp<SkSpecialImage> filterTexture(SkSpecialImage*,
-                                        int left, int top,
-                                        SkIPoint* offset,
-                                        const SkImageFilter* filter);
-
     // If not null, dstClip must be contained inside dst and will also respect the edge AA flags.
     // If 'preViewMatrix' is not null, final CTM will be this->ctm() * preViewMatrix.
     void drawImageQuad(const SkImage*, const SkRect* src, const SkRect* dst,
@@ -180,7 +175,7 @@ private:
 
     friend class GrAtlasTextContext;
     friend class SkSurface_Gpu;      // for access to surfaceProps
-    typedef SkClipStackDevice INHERITED;
+    using INHERITED = SkClipStackDevice;
 };
 
 #endif

@@ -10,6 +10,7 @@
 #include <memory>
 #include <unordered_set>
 
+#include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLByteCodeGenerator.h"
 #include "src/sksl/SkSLCFGGenerator.h"
 #include "src/sksl/SkSLCPPCodeGenerator.h"
@@ -70,7 +71,7 @@ static const char SKSL_PIPELINE_INCLUDE[] = "sksl_pipeline.sksl";
 namespace SkSL {
 
 static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
-               std::map<String, std::pair<std::unique_ptr<ProgramElement>, bool>>* target) {
+                            IRIntrinsicMap* target) {
     for (auto iter = src->begin(); iter != src->end(); ) {
         std::unique_ptr<ProgramElement>& element = *iter;
         switch (element->fKind) {
@@ -79,7 +80,7 @@ static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
                 SkASSERT(f.fDeclaration.fBuiltin);
                 String key = f.fDeclaration.description();
                 SkASSERT(target->find(key) == target->end());
-                (*target)[key] = std::make_pair(std::move(element), false);
+                (*target)[key] = IRIntrinsic{std::move(element), /*fAlreadyIncluded=*/false};
                 iter = src->erase(iter);
                 break;
             }
@@ -87,7 +88,7 @@ static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
                 Enum& e = element->as<Enum>();
                 StringFragment name = e.fTypeName;
                 SkASSERT(target->find(name) == target->end());
-                (*target)[name] = std::make_pair(std::move(element), false);
+                (*target)[name] = IRIntrinsic{std::move(element), /*fAlreadyIncluded=*/false};
                 iter = src->erase(iter);
                 break;
             }
@@ -99,11 +100,13 @@ static void grab_intrinsics(std::vector<std::unique_ptr<ProgramElement>>* src,
 }
 
 Compiler::Compiler(Flags flags)
-: fFlags(flags)
-, fContext(new Context())
+: fGPUIntrinsics(std::make_unique<IRIntrinsicMap>())
+, fInterpreterIntrinsics(std::make_unique<IRIntrinsicMap>())
+, fFlags(flags)
+, fContext(std::make_shared<Context>())
 , fErrorCount(0) {
-    auto symbols = std::shared_ptr<SymbolTable>(new SymbolTable(this));
-    fIRGenerator = new IRGenerator(fContext.get(), symbols, *this);
+    auto symbols = std::make_shared<SymbolTable>(this);
+    fIRGenerator = std::make_unique<IRGenerator>(fContext.get(), &fInliner, symbols, *this);
     #define ADD_TYPE(t) symbols->addWithoutOwnership(fContext->f ## t ## _Type->fName, \
                                                      fContext->f ## t ## _Type.get())
     ADD_TYPE(Void);
@@ -236,7 +239,7 @@ Compiler::Compiler(Flags flags)
             std::make_unique<Variable>(/*offset=*/-1, Modifiers(), skCapsName,
                                        *fContext->fSkCaps_Type, Variable::kGlobal_Storage));
 
-    fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+    fIRGenerator->fIntrinsics = fGPUIntrinsics.get();
     std::vector<std::unique_ptr<ProgramElement>> gpuIntrinsics;
     std::vector<std::unique_ptr<ProgramElement>> interpIntrinsics;
 #if SKSL_STANDALONE
@@ -266,13 +269,11 @@ Compiler::Compiler(Flags flags)
         fFragmentInclude = rehydrator.elements();
     }
 #endif
-    grab_intrinsics(&gpuIntrinsics, &fGPUIntrinsics);
-    grab_intrinsics(&interpIntrinsics, &fInterpreterIntrinsics);
+    grab_intrinsics(&gpuIntrinsics, fGPUIntrinsics.get());
+    grab_intrinsics(&interpIntrinsics, fInterpreterIntrinsics.get());
 }
 
-Compiler::~Compiler() {
-    delete fIRGenerator;
-}
+Compiler::~Compiler() {}
 
 void Compiler::loadGeometryIntrinsics() {
     if (fGeometrySymbolTable) {
@@ -1106,56 +1107,60 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
     }
 }
 
-// Implementation-detail recursive helper function for `contains_conditional_break`.
-static bool contains_conditional_break_impl(Statement& s, bool inConditional) {
-    switch (s.fKind) {
-        case Statement::kBlock_Kind:
-            for (const std::unique_ptr<Statement>& sub : s.as<Block>().fStatements) {
-                if (contains_conditional_break_impl(*sub, inConditional)) {
-                    return true;
-                }
-            }
-            return false;
-
-        case Statement::kBreak_Kind:
-            return inConditional;
-
-        case Statement::kIf_Kind: {
-            const IfStatement& i = s.as<IfStatement>();
-            return contains_conditional_break_impl(*i.fIfTrue, /*inConditional=*/true) ||
-                   (i.fIfFalse &&
-                    contains_conditional_break_impl(*i.fIfFalse, /*inConditional=*/true));
-        }
-
-        default:
-            return false;
-    }
-}
-
 // Returns true if this statement could potentially execute a break at the current level. We ignore
 // nested loops and switches, since any breaks inside of them will merely break the loop / switch.
-static bool contains_conditional_break(Statement& s) {
-    return contains_conditional_break_impl(s, /*inConditional=*/false);
+static bool contains_conditional_break(Statement& stmt) {
+    class ContainsConditionalBreak : public ProgramVisitor {
+    public:
+        bool visitStatement(const Statement& stmt) override {
+            switch (stmt.fKind) {
+                case Statement::kBlock_Kind:
+                    return this->INHERITED::visitStatement(stmt);
+
+                case Statement::kBreak_Kind:
+                    return fInConditional > 0;
+
+                case Statement::kIf_Kind: {
+                    ++fInConditional;
+                    bool result = this->INHERITED::visitStatement(stmt);
+                    --fInConditional;
+                    return result;
+                }
+
+                default:
+                    return false;
+            }
+        }
+
+        int fInConditional = 0;
+        using INHERITED = ProgramVisitor;
+    };
+
+    return ContainsConditionalBreak{}.visitStatement(stmt);
 }
 
 // returns true if this statement definitely executes a break at the current level (we ignore
 // nested loops and switches, since any breaks inside of them will merely break the loop / switch)
-static bool contains_unconditional_break(Statement& s) {
-    switch (s.fKind) {
-        case Statement::kBlock_Kind:
-            for (const std::unique_ptr<Statement>& sub : static_cast<Block&>(s).fStatements) {
-                if (contains_unconditional_break(*sub)) {
+static bool contains_unconditional_break(Statement& stmt) {
+    class ContainsUnconditionalBreak : public ProgramVisitor {
+    public:
+        bool visitStatement(const Statement& stmt) override {
+            switch (stmt.fKind) {
+                case Statement::kBlock_Kind:
+                    return this->INHERITED::visitStatement(stmt);
+
+                case Statement::kBreak_Kind:
                     return true;
-                }
+
+                default:
+                    return false;
             }
-            return false;
+        }
 
-        case Statement::kBreak_Kind:
-            return true;
+        using INHERITED = ProgramVisitor;
+    };
 
-        default:
-            return false;
-    }
+    return ContainsUnconditionalBreak{}.visitStatement(stmt);
 }
 
 static void move_all_but_break(std::unique_ptr<Statement>& stmt,
@@ -1542,26 +1547,27 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
                                                   const Program::Settings& settings) {
     fErrorText = "";
     fErrorCount = 0;
+    fInliner.reset(context(), settings);
     std::vector<std::unique_ptr<ProgramElement>>* inherited;
     std::vector<std::unique_ptr<ProgramElement>> elements;
     switch (kind) {
         case Program::kVertex_Kind:
             inherited = &fVertexInclude;
             fIRGenerator->fSymbolTable = fVertexSymbolTable;
-            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+            fIRGenerator->fIntrinsics = fGPUIntrinsics.get();
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kFragment_Kind:
             inherited = &fFragmentInclude;
             fIRGenerator->fSymbolTable = fFragmentSymbolTable;
-            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+            fIRGenerator->fIntrinsics = fGPUIntrinsics.get();
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kGeometry_Kind:
             this->loadGeometryIntrinsics();
             inherited = &fGeometryInclude;
             fIRGenerator->fSymbolTable = fGeometrySymbolTable;
-            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+            fIRGenerator->fIntrinsics = fGPUIntrinsics.get();
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kFragmentProcessor_Kind: {
@@ -1575,14 +1581,14 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
             }
             inherited = &fFPInclude;
             fIRGenerator->fSymbolTable = fFPSymbolTable;
-            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+            fIRGenerator->fIntrinsics = fGPUIntrinsics.get();
             fIRGenerator->start(&settings, inherited);
             break;
 #else
             inherited = nullptr;
             fIRGenerator->fSymbolTable = fGpuSymbolTable;
             fIRGenerator->start(&settings, /*inherited=*/nullptr, /*builtin=*/true);
-            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+            fIRGenerator->fIntrinsics = fGPUIntrinsics.get();
             std::ifstream in(SKSL_FP_INCLUDE);
             std::string stdText{std::istreambuf_iterator<char>(in),
                                 std::istreambuf_iterator<char>()};
@@ -1601,14 +1607,14 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
             this->loadPipelineIntrinsics();
             inherited = &fPipelineInclude;
             fIRGenerator->fSymbolTable = fPipelineSymbolTable;
-            fIRGenerator->fIntrinsics = &fGPUIntrinsics;
+            fIRGenerator->fIntrinsics = fGPUIntrinsics.get();
             fIRGenerator->start(&settings, inherited);
             break;
         case Program::kGeneric_Kind:
             this->loadInterpreterIntrinsics();
             inherited = &fInterpreterInclude;
             fIRGenerator->fSymbolTable = fInterpreterSymbolTable;
-            fIRGenerator->fIntrinsics = &fInterpreterIntrinsics;
+            fIRGenerator->fIntrinsics = fInterpreterIntrinsics.get();
             fIRGenerator->start(&settings, inherited);
             break;
     }
@@ -1635,44 +1641,53 @@ bool Compiler::optimize(Program& program) {
         program.fIsOptimized = true;
         fIRGenerator->fKind = program.fKind;
         fIRGenerator->fSettings = &program.fSettings;
-        for (auto& element : program) {
+
+        // Scan and optimize based on the control-flow graph for each function.
+        for (ProgramElement& element : program) {
             if (element.fKind == ProgramElement::kFunction_Kind) {
                 this->scanCFG(element.as<FunctionDefinition>());
             }
         }
-        // we wait until after analysis to remove dead functions so that we still report errors
-        // even in unused code
+
+        // Remove dead functions. We wait until after analysis so that we still report errors, even
+        // in unused code.
         if (program.fSettings.fRemoveDeadFunctions) {
-            for (auto iter = program.fElements.begin(); iter != program.fElements.end(); ) {
-                if ((*iter)->fKind == ProgramElement::kFunction_Kind) {
-                    const FunctionDefinition& f = (*iter)->as<FunctionDefinition>();
-                    if (!f.fDeclaration.fCallCount && f.fDeclaration.fName != "main") {
-                        iter = program.fElements.erase(iter);
-                        continue;
-                    }
-                }
-                ++iter;
-            }
+            program.fElements.erase(
+                    std::remove_if(program.fElements.begin(),
+                                   program.fElements.end(),
+                                   [](const std::unique_ptr<ProgramElement>& pe) {
+                                       if (pe->fKind != ProgramElement::kFunction_Kind) {
+                                           return false;
+                                       }
+                                       const FunctionDefinition& fn = pe->as<FunctionDefinition>();
+                                       return fn.fDeclaration.fCallCount == 0 &&
+                                              fn.fDeclaration.fName != "main";
+                                   }),
+                    program.fElements.end());
         }
+
         if (program.fKind != Program::kFragmentProcessor_Kind) {
-            for (auto iter = program.fElements.begin(); iter != program.fElements.end();) {
-                if ((*iter)->fKind == ProgramElement::kVar_Kind) {
-                    VarDeclarations& vars = (*iter)->as<VarDeclarations>();
-                    for (auto varIter = vars.fVars.begin(); varIter != vars.fVars.end();) {
-                        const Variable& var = *(*varIter)->as<VarDeclaration>().fVar;
-                        if (var.dead()) {
-                            varIter = vars.fVars.erase(varIter);
-                        } else {
-                            ++varIter;
-                        }
-                    }
-                    if (vars.fVars.size() == 0) {
-                        iter = program.fElements.erase(iter);
-                        continue;
-                    }
+            // Remove dead variables.
+            for (ProgramElement& element : program) {
+                if (element.fKind == ProgramElement::kVar_Kind) {
+                    VarDeclarations& vars = element.as<VarDeclarations>();
+                    vars.fVars.erase(
+                            std::remove_if(vars.fVars.begin(), vars.fVars.end(),
+                                           [](const std::unique_ptr<Statement>& stmt) {
+                                               return stmt->as<VarDeclaration>().fVar->dead();
+                                           }),
+                            vars.fVars.end());
                 }
-                ++iter;
             }
+
+            // Remove empty variable declarations with no variables left inside of them.
+            program.fElements.erase(
+                    std::remove_if(program.fElements.begin(), program.fElements.end(),
+                                   [](const std::unique_ptr<ProgramElement>& element) {
+                                       return element->fKind == ProgramElement::kVar_Kind &&
+                                              element->as<VarDeclarations>().fVars.empty();
+                                   }),
+                    program.fElements.end());
         }
     }
     return fErrorCount == 0;

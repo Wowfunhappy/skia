@@ -202,6 +202,11 @@ public:
 
     SkPathBuilder& offset(SkScalar dx, SkScalar dy);
 
+    SkPathBuilder& toggleInverseFillType() {
+        fFillType = (SkPathFillType)((unsigned)fFillType ^ 2);
+        return *this;
+    }
+
 private:
     SkTDArray<SkPoint>  fPts;
     SkTDArray<uint8_t>  fVerbs;
@@ -225,7 +230,7 @@ private:
     bool fIsACCW  = false;  // tracks direction iff fIsA is not unknown
 
     // for testing
-    SkPathConvexityType fConvexity = SkPathConvexityType::kUnknown;
+    SkPathConvexity fOverrideConvexity = SkPathConvexity::kUnknown;
 
     int countVerbs() const { return fVerbs.count(); }
 
@@ -239,8 +244,10 @@ private:
 
     SkPath make(sk_sp<SkPathRef>) const;
 
+    SkPathBuilder& privateReverseAddPath(const SkPath&);
+
     // For testing
-    void privateSetConvexityType(SkPathConvexityType c) { fConvexity = c; }
+    void privateSetConvexity(SkPathConvexity c) { fOverrideConvexity = c; }
 
     friend class SkPathPriv;
 };

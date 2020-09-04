@@ -102,105 +102,27 @@ DEF_TEST(SkSLFunctions, r) {
          "void bar(inout float x) { float y[2], z; y[0] = x; y[1] = x * 2; z = foo(y); x = z; }"
          "void main() { float x = 10; bar(x); sk_FragColor = half4(half(x)); }",
          *SkSL::ShaderCapsFactory::Default(),
-         "#version 400\n"
-         "out vec4 sk_FragColor;\n"
-         "void main() {\n"
-         "    float x = 10.0;\n"
-         "    float _inlineArgvoidbarfloat2_0 = x;\n"
-         "    {\n"
-         "        float y[2], z;\n"
-         "        y[0] = _inlineArgvoidbarfloat2_0;\n"
-         "        y[1] = _inlineArgvoidbarfloat2_0 * 2.0;\n"
-         "        float _inlineResultfloatfoofloat20;\n"
-         "        float[2] _inlineArgfloatfoofloat21_0 = y;\n"
-         "        {\n"
-         "            _inlineResultfloatfoofloat20 = _inlineArgfloatfoofloat21_0[0] * _inlineArgfloatfoofloat21_0[1];\n"
-         "        }\n"
-         "        z = _inlineResultfloatfoofloat20;\n"
-         "\n"
-         "        _inlineArgvoidbarfloat2_0 = z;\n"
-         "    }\n"
-         "    x = _inlineArgvoidbarfloat2_0;\n"
-         "\n"
-         "    sk_FragColor = vec4(x);\n"
-         "}\n");
-}
+R"__GLSL__(#version 400
+out vec4 sk_FragColor;
+void main() {
+    float x = 10.0;
+    {
+        float y[2], z;
+        y[0] = 10.0;
+        y[1] = 20.0;
+        float _0_foo;
+        {
+            _0_foo = y[0] * y[1];
+        }
 
-DEF_TEST(SkSLFunctionInlineThreshold, r) {
-    test(r,
-         "void tooBig(inout int x) {"
-         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
-         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
-         "}"
-         "void main() { int x = 0; tooBig(x); }",
-         *SkSL::ShaderCapsFactory::Default(),
-         "#version 400\n"
-         "void tooBig(inout int x) {\n"
-         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
-         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
-         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
-         "    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n    ++x;\n"
-         "    ++x;\n    ++x;\n"
-         "}\n"
-         "void main() {\n"
-         "    int x = 0;\n"
-         "    tooBig(x);\n"
-         "}\n"
-         );
-    test(r,
-         "inline void tooBig(inout int x) {"
-         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
-         "    ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x; ++x;"
-         "}"
-         "void main() { int x = 0; tooBig(x); }",
-         *SkSL::ShaderCapsFactory::Default(),
-         "#version 400\n"
-         "void main() {\n"
-         "    int x = 0;\n"
-         "    int _inlineArgvoidtooBigint0_0 = x;\n"
-         "    {\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "        ++_inlineArgvoidtooBigint0_0;\n        ++_inlineArgvoidtooBigint0_0;\n"
-         "    }\n"
-         "    x = _inlineArgvoidtooBigint0_0;\n"
-         "\n"
-         "}\n"
-         );
-    test(r,
-         "inline void cantActuallyInline(inout int x) {"
-         "    for (;;) {"
-         "        ++x;"
-         "        if (x > 10) return;"
-         "    }"
-         "}"
-         "void main() { int x = 0; cantActuallyInline(x); }",
-         *SkSL::ShaderCapsFactory::Default(),
-         "#version 400\n"
-         "void cantActuallyInline(inout int x) {\n"
-         "    for (; ; ) {\n"
-         "        ++x;\n"
-         "        if (x > 10) return;\n"
-         "    }\n"
-         "}\n"
-         "void main() {\n"
-         "    int x = 0;\n"
-         "    cantActuallyInline(x);\n"
-         "}\n");
+        z = _0_foo;
+
+        x = z;
+    }
+
+    sk_FragColor = vec4(x);
+}
+)__GLSL__");
 }
 
 DEF_TEST(SkSLOperators, r) {

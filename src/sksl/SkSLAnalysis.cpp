@@ -72,7 +72,8 @@ static bool is_sample_call_to_fp(const FunctionCall& fc, const Variable& fp) {
 // Visitor that determines the merged SampleUsage for a given child 'fp' in the program.
 class MergeSampleUsageVisitor : public ProgramVisitor {
 public:
-    MergeSampleUsageVisitor(const Variable& fp) : fFP(fp) {}
+    MergeSampleUsageVisitor(const Context& context, const Variable& fp)
+            : fContext(context), fFP(fp) {}
 
     SampleUsage visit(const Program& program) {
         fUsage = SampleUsage(); // reset to none
@@ -81,6 +82,7 @@ public:
     }
 
 protected:
+    const Context& fContext;
     const Variable& fFP;
     SampleUsage fUsage;
 
@@ -91,11 +93,10 @@ protected:
             if (is_sample_call_to_fp(fc, fFP)) {
                 // Determine the type of call at this site, and merge it with the accumulated state
                 const Expression* lastArg = fc.fArguments.back().get();
-                const Context& context = *this->program().fContext;
 
-                if (lastArg->fType == *context.fFloat2_Type) {
+                if (lastArg->fType == *fContext.fFloat2_Type) {
                     fUsage.merge(SampleUsage::Explicit());
-                } else if (lastArg->fType == *context.fFloat3x3_Type) {
+                } else if (lastArg->fType == *fContext.fFloat3x3_Type) {
                     // Determine the type of matrix for this call site
                     if (lastArg->isConstantOrUniform()) {
                         if (lastArg->fKind == Expression::Kind::kVariableReference_Kind ||
@@ -126,7 +127,7 @@ protected:
         return this->INHERITED::visitExpression(e);
     }
 
-    typedef ProgramVisitor INHERITED;
+    using INHERITED = ProgramVisitor;
 };
 
 // Visitor that searches through the program for references to a particular builtin variable
@@ -144,7 +145,7 @@ public:
 
     int fBuiltin;
 
-    typedef ProgramVisitor INHERITED;
+    using INHERITED = ProgramVisitor;
 };
 
 // Visitor that counts the number of nodes visited
@@ -174,7 +175,34 @@ public:
 private:
     int fCount;
 
-    typedef ProgramVisitor INHERITED;
+    using INHERITED = ProgramVisitor;
+};
+
+class VariableWriteVisitor : public ProgramVisitor {
+public:
+    VariableWriteVisitor(const Variable* var)
+        : fVar(var) {}
+
+    bool visit(const Statement& s) {
+        return this->visitStatement(s);
+    }
+
+    bool visitExpression(const Expression& e) override {
+        if (e.fKind == Expression::kVariableReference_Kind) {
+            const VariableReference& ref = e.as<VariableReference>();
+            if (&ref.fVariable == fVar && (ref.fRefKind == VariableReference::kWrite_RefKind ||
+                                           ref.fRefKind == VariableReference::kReadWrite_RefKind ||
+                                           ref.fRefKind == VariableReference::kPointer_RefKind)) {
+                return true;
+            }
+        }
+        return this->INHERITED::visitExpression(e);
+    }
+
+private:
+    const Variable* fVar;
+
+    using INHERITED = ProgramVisitor;
 };
 
 }  // namespace
@@ -183,7 +211,7 @@ private:
 // Analysis
 
 SampleUsage Analysis::GetSampleUsage(const Program& program, const Variable& fp) {
-    MergeSampleUsageVisitor visitor(fp);
+    MergeSampleUsageVisitor visitor(*program.fContext, fp);
     return visitor.visit(program);
 }
 
@@ -204,20 +232,20 @@ int Analysis::NodeCount(const FunctionDefinition& function) {
     return NodeCountVisitor().visit(*function.fBody);
 }
 
+bool Analysis::StatementWritesToVariable(const Statement& stmt, const Variable& var) {
+    return VariableWriteVisitor(&var).visit(stmt);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // ProgramVisitor
 
 bool ProgramVisitor::visit(const Program& program) {
-    fProgram = &program;
-    bool result = false;
-    for (const auto& pe : program) {
+    for (const ProgramElement& pe : program) {
         if (this->visitProgramElement(pe)) {
-            result = true;
-            break;
+            return true;
         }
     }
-    fProgram = nullptr;
-    return result;
+    return false;
 }
 
 bool ProgramVisitor::visitExpression(const Expression& e) {
@@ -284,8 +312,8 @@ bool ProgramVisitor::visitStatement(const Statement& s) {
             // Leaf statements just return false
             return false;
         case Statement::kBlock_Kind:
-            for (const auto& s : s.as<Block>().fStatements) {
-                if (this->visitStatement(*s)) { return true; }
+            for (const std::unique_ptr<Statement>& blockStmt : s.as<Block>().fStatements) {
+                if (this->visitStatement(*blockStmt)) { return true; }
             }
             return false;
         case Statement::kDo_Kind: {
@@ -312,27 +340,19 @@ bool ProgramVisitor::visitStatement(const Statement& s) {
             if (this->visitExpression(*sw.fValue)) { return true; }
             for (const auto& c : sw.fCases) {
                 if (c->fValue && this->visitExpression(*c->fValue)) { return true; }
-                for (const auto& st : c->fStatements) {
+                for (const std::unique_ptr<Statement>& st : c->fStatements) {
                     if (this->visitStatement(*st)) { return true; }
                 }
             }
             return false; }
         case Statement::kVarDeclaration_Kind: {
             const VarDeclaration& v = s.as<VarDeclaration>();
-            for (const auto& s : v.fSizes) {
-                if (s && this->visitExpression(*s)) { return true; }
+            for (const std::unique_ptr<Expression>& sizeExpr : v.fSizes) {
+                if (sizeExpr && this->visitExpression(*sizeExpr)) { return true; }
             }
             return v.fValue && this->visitExpression(*v.fValue); }
-        case Statement::kVarDeclarations_Kind: {
-            // Technically this statement points to a program element, but it's convenient
-            // to have program element > statement > expression, so visit the declaration elements
-            // directly without going up to visitProgramElement.
-            const VarDeclarations& vars = *s.as<VarDeclarationsStatement>().fDeclaration;
-            for (const auto& v : vars.fVars) {
-                if (this->visitStatement(*v)) { return true; }
-            }
-            return false;
-        }
+        case Statement::kVarDeclarations_Kind:
+            return this->visitProgramElement(*s.as<VarDeclarationsStatement>().fDeclaration);
         case Statement::kWhile_Kind: {
             const WhileStatement& w = s.as<WhileStatement>();
             return this->visitExpression(*w.fTest) || this->visitStatement(*w.fStatement); }

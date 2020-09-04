@@ -27,48 +27,29 @@ public:
 
     static constexpr SkScalar kW0PlaneDistance = 0.05f;
 
-    enum FirstDirection : int {
-        kCW_FirstDirection,         // == SkPathDirection::kCW
-        kCCW_FirstDirection,        // == SkPathDirection::kCCW
-        kUnknown_FirstDirection,
-    };
-
-    static FirstDirection AsFirstDirection(SkPathDirection dir) {
+    static SkPathFirstDirection AsFirstDirection(SkPathDirection dir) {
         // since we agree numerically for the values in Direction, we can just cast.
-        return (FirstDirection)dir;
+        return (SkPathFirstDirection)dir;
     }
 
     /**
      *  Return the opposite of the specified direction. kUnknown is its own
      *  opposite.
      */
-    static FirstDirection OppositeFirstDirection(FirstDirection dir) {
-        static const FirstDirection gOppositeDir[] = {
-            kCCW_FirstDirection, kCW_FirstDirection, kUnknown_FirstDirection,
+    static SkPathFirstDirection OppositeFirstDirection(SkPathFirstDirection dir) {
+        static const SkPathFirstDirection gOppositeDir[] = {
+            SkPathFirstDirection::kCCW, SkPathFirstDirection::kCW, SkPathFirstDirection::kUnknown,
         };
-        return gOppositeDir[dir];
+        return gOppositeDir[(unsigned)dir];
     }
 
     /**
-     *  Tries to quickly compute the direction of the first non-degenerate
-     *  contour. If it can be computed, return true and set dir to that
-     *  direction. If it cannot be (quickly) determined, return false and ignore
-     *  the dir parameter. If the direction was determined, it is cached to make
-     *  subsequent calls return quickly.
+     *  Tries to compute the direction of the outer-most non-degenerate
+     *  contour. If it can be computed, return that direction. If it cannot be determined,
+     *  or the contour is known to be convex, return kUnknown. If the direction was determined,
+     *  it is cached to make subsequent calls return quickly.
      */
-    static bool CheapComputeFirstDirection(const SkPath&, FirstDirection* dir);
-
-    /**
-     *  Returns true if the path's direction can be computed via
-     *  cheapComputDirection() and if that computed direction matches the
-     *  specified direction. If dir is kUnknown, returns true if the direction
-     *  cannot be computed.
-     */
-    static bool CheapIsFirstDirection(const SkPath& path, FirstDirection dir) {
-        FirstDirection computedDir = kUnknown_FirstDirection;
-        (void)CheapComputeFirstDirection(path, &computedDir);
-        return computedDir == dir;
-    }
+    static SkPathFirstDirection ComputeFirstDirection(const SkPath&);
 
     static bool IsClosedSingleContour(const SkPath& path) {
         int verbCount = path.countVerbs();
@@ -224,6 +205,11 @@ public:
         return path.fPathRef->unique();
     }
 
+    // Won't be needed once we can make path's immutable (with their bounds always computed)
+    static bool HasComputedBounds(const SkPath& path) {
+        return path.hasComputedBounds();
+    }
+
     /** Returns true if constructed by addCircle(), addOval(); and in some cases,
      addRoundRect(), addRRect(). SkPath constructed with conicTo() or rConicTo() will not
      return true though SkPath draws oval.
@@ -317,6 +303,23 @@ public:
         return gPtsInVerb[verb];
     }
 
+    // Returns number of valid points for each verb, not including the "starter"
+    // point that the Iterator adds for line/quad/conic/cubic
+    static int PtsInVerb(unsigned verb) {
+        static const uint8_t gPtsInVerb[] = {
+            1,  // kMove    pts[0]
+            1,  // kLine    pts[0..1]
+            2,  // kQuad    pts[0..2]
+            2,  // kConic   pts[0..2]
+            3,  // kCubic   pts[0..3]
+            0,  // kClose
+            0   // kDone
+        };
+
+        SkASSERT(verb < SK_ARRAY_COUNT(gPtsInVerb));
+        return gPtsInVerb[verb];
+    }
+
     static bool IsAxisAligned(const SkPath& path) {
         SkRect tmp;
         return (path.fPathRef->fIsRRect | path.fPathRef->fIsOval) || path.isRect(&tmp);
@@ -393,8 +396,25 @@ public:
         path->dirtyAfterEdit();
     }
 
-    static void SetConvexityType(SkPathBuilder* builder, SkPathConvexityType c) {
-        builder->privateSetConvexityType(c);
+    static SkPathConvexity GetConvexity(const SkPath& path) {
+        return path.getConvexity();
+    }
+    static SkPathConvexity GetConvexityOrUnknown(const SkPath& path) {
+        return path.getConvexityOrUnknown();
+    }
+    static void SetConvexity(const SkPath& path, SkPathConvexity c) {
+        path.setConvexity(c);
+    }
+    static void SetConvexity(SkPathBuilder* builder, SkPathConvexity c) {
+        builder->privateSetConvexity(c);
+    }
+    static void ForceComputeConvexity(const SkPath& path) {
+        path.setConvexity(SkPathConvexity::kUnknown);
+        (void)path.isConvex();
+    }
+
+    static void ReverseAddPath(SkPathBuilder* builder, const SkPath& reverseMe) {
+        builder->privateReverseAddPath(reverseMe);
     }
 };
 

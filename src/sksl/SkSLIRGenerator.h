@@ -8,13 +8,13 @@
 #ifndef SKSL_IRGENERATOR
 #define SKSL_IRGENERATOR
 
-#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "src/sksl/SkSLASTFile.h"
 #include "src/sksl/SkSLASTNode.h"
 #include "src/sksl/SkSLErrorReporter.h"
+#include "src/sksl/SkSLInliner.h"
 #include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExtension.h"
@@ -34,6 +34,16 @@
 namespace SkSL {
 
 struct Swizzle;
+struct FunctionCall;
+
+/**
+ * Intrinsics are passed between the Compiler and the IRGenerator using IRIntrinsicMaps.
+ */
+struct IRIntrinsic {
+    std::unique_ptr<ProgramElement> fIntrinsic;
+    bool fAlreadyIncluded = false;
+};
+using IRIntrinsicMap = std::unordered_map<String, IRIntrinsic>;
 
 /**
  * Performs semantic analysis on an abstract syntax tree (AST) and produces the corresponding
@@ -41,7 +51,7 @@ struct Swizzle;
  */
 class IRGenerator {
 public:
-    IRGenerator(const Context* context, std::shared_ptr<SymbolTable> root,
+    IRGenerator(const Context* context, Inliner* inliner, std::shared_ptr<SymbolTable> root,
                 ErrorReporter& errorReporter);
 
     void convertProgram(Program::Kind kind,
@@ -90,22 +100,9 @@ private:
     std::unique_ptr<ModifiersDeclaration> convertModifiersDeclaration(const ASTNode& m);
 
     const Type* convertType(const ASTNode& type);
-    std::unique_ptr<Expression> inlineExpression(
-            int offset,
-            std::unordered_map<const Variable*, const Variable*>* varMap,
-            const Expression& expression);
-    std::unique_ptr<Statement> inlineStatement(
-            int offset,
-            std::unordered_map<const Variable*, const Variable*>* varMap,
-            const Variable* returnVar,
-            bool haveEarlyReturns,
-            const Statement& statement);
-    std::unique_ptr<Expression> inlineCall(int offset, const FunctionDefinition& function,
-                                           std::vector<std::unique_ptr<Expression>> arguments);
     std::unique_ptr<Expression> call(int offset,
                                      const FunctionDeclaration& function,
                                      std::vector<std::unique_ptr<Expression>> arguments);
-    bool isSafeToInline(const FunctionDefinition& function);
     int callCost(const FunctionDeclaration& function,
                  const std::vector<std::unique_ptr<Expression>>& arguments);
     std::unique_ptr<Expression> call(int offset, std::unique_ptr<Expression> function,
@@ -171,6 +168,7 @@ private:
     bool checkSwizzleWrite(const Swizzle& swizzle);
     void copyIntrinsicIfNeeded(const FunctionDeclaration& function);
 
+    Inliner* fInliner = nullptr;
     std::unique_ptr<ASTFile> fFile;
     const FunctionDeclaration* fCurrentFunction;
     std::unordered_map<String, Program::Settings::Value> fCapsMap;
@@ -179,9 +177,8 @@ private:
     // additional statements that need to be inserted before the one that convertStatement is
     // currently working on
     std::vector<std::unique_ptr<Statement>> fExtraStatements;
-    // Symbols which have definitions in the include files. The bool tells us whether this
-    // intrinsic has been included already.
-    std::map<String, std::pair<std::unique_ptr<ProgramElement>, bool>>* fIntrinsics = nullptr;
+    // Symbols which have definitions in the include files.
+    IRIntrinsicMap* fIntrinsics = nullptr;
     std::unordered_set<const FunctionDeclaration*> fReferencedIntrinsics;
     int fLoopLevel;
     int fSwitchLevel;
@@ -193,7 +190,7 @@ private:
     const Variable* fRTAdjust;
     const Variable* fRTAdjustInterfaceBlock;
     int fRTAdjustFieldIndex;
-    int fInlineVarCounter;
+    int fTmpSwizzleCounter;
     bool fCanInline = true;
     // true if we are currently processing one of the built-in SkSL include files
     bool fIsBuiltinCode;

@@ -373,6 +373,16 @@ void GrVkCaps::init(const GrContextOptions& contextOptions, const GrVkInterface*
 
     fMaxInputAttachmentDescriptors = properties.limits.maxDescriptorSetInputAttachments;
 
+    // On mobile GPUs we avoid using cached cpu memory. The memory is shared between the gpu and cpu
+    // and there probably isn't any win keeping a cached copy local on the CPU. We have seen
+    // examples on ARM where coherent non-cached memory writes are faster on the cpu than using
+    // cached non-coherent memory. Additionally we don't do a lot of read and writes to cpu memory
+    // in between GPU usues. Our uses are mostly write on CPU then read on GPU.
+    if (kQualcomm_VkVendor == properties.vendorID || kARM_VkVendor == properties.vendorID ||
+        kImagination_VkVendor == properties.vendorID) {
+        fPreferCachedCpuMemory = false;
+    }
+
     this->initGrCaps(vkInterface, physDev, properties, memoryProperties, features, extensions);
     this->initShaderCaps(properties, features);
 
@@ -429,16 +439,24 @@ void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDevicePropertie
     }
 #endif
 
+    // Defaults to zero since all our workaround checks that use this consider things "fixed" once
+    // above a certain api level. So this will just default to it being less which will enable
+    // workarounds.
+    int androidAPIVersion = 0;
 #if defined(SK_BUILD_FOR_ANDROID)
+    char androidAPIVersionStr[PROP_VALUE_MAX];
+    int strLength = __system_property_get("ro.build.version.sdk", androidAPIVersionStr);
+    // Defaults to zero since most checks care if it is greater than a specific value. So this will
+    // just default to it being less.
+    androidAPIVersion = (strLength == 0) ? 0 : atoi(androidAPIVersionStr);
+#endif
+
     // Protected memory features have problems in Android P and earlier.
     if (fSupportsProtectedMemory && (kQualcomm_VkVendor == properties.vendorID)) {
-        char androidAPIVersion[PROP_VALUE_MAX];
-        int strLength = __system_property_get("ro.build.version.sdk", androidAPIVersion);
-        if (strLength == 0 || atoi(androidAPIVersion) <= 28) {
+        if (androidAPIVersion <= 28) {
             fSupportsProtectedMemory = false;
         }
     }
-#endif
 
     // On Mali galaxy s7 we see lots of rendering issues when we suballocate VkImages.
     if (kARM_VkVendor == properties.vendorID) {
@@ -446,8 +464,8 @@ void GrVkCaps::applyDriverCorrectnessWorkarounds(const VkPhysicalDevicePropertie
     }
 
     // On Mali galaxy s7 and s9 we see lots of rendering issues with image filters dropping out when
-    // using only primary command buffers.
-    if (kARM_VkVendor == properties.vendorID) {
+    // using only primary command buffers. We also see issues on the P30 running android 28.
+    if (kARM_VkVendor == properties.vendorID && androidAPIVersion <= 28) {
         fPreferPrimaryOverSecondaryCommandBuffers = false;
     }
 
@@ -1765,6 +1783,11 @@ GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progra
     }
 
     return desc;
+}
+
+GrInternalSurfaceFlags GrVkCaps::getExtraSurfaceFlagsForDeferredRT() const {
+    // We always create vulkan RT with the input attachment flag;
+    return GrInternalSurfaceFlags::kVkRTSupportsInputAttachment;
 }
 
 #if GR_TEST_UTILS

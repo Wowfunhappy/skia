@@ -75,6 +75,14 @@ static void test_failure(skiatest::Reporter* r, const char* src, const char* err
     if (!compiler.errorCount()) {
         compiler.optimize(*program);
     }
+    if (!compiler.errorCount()) {
+        SkSL::StringStream output;
+        compiler.toH(*program, "Test", output);
+    }
+    if (!compiler.errorCount()) {
+        SkSL::StringStream output;
+        compiler.toCPP(*program, "Test", output);
+    }
     SkSL::String skError(error);
     if (compiler.errorText() != skError) {
         SkDebugf("SKSL ERROR:\n    source: %s\n    expected: %s    received: %s",
@@ -115,6 +123,7 @@ public:
     GrTest(const GrTest& src);
     std::unique_ptr<GrFragmentProcessor> clone() const override;
     const char* name() const override { return "Test"; }
+    bool usesExplicitReturn() const override;
 private:
     GrTest()
     : INHERITED(kGrTest_ClassID, kNone_OptimizationFlags) {
@@ -126,7 +135,7 @@ private:
     SkString onDumpInfo() const override;
 #endif
     GR_DECLARE_FRAGMENT_PROCESSOR_TEST
-    typedef GrFragmentProcessor INHERITED;
+    using INHERITED = GrFragmentProcessor;
 };
 #endif
 )__Header__"
@@ -171,6 +180,9 @@ bool GrTest::onIsEqual(const GrFragmentProcessor& other) const {
     const GrTest& that = other.cast<GrTest>();
     (void) that;
     return true;
+}
+bool GrTest::usesExplicitReturn() const {
+    return false;
 }
 GrTest::GrTest(const GrTest& src)
 : INHERITED(kGrTest_ClassID, src.optimizationFlags()) {
@@ -261,6 +273,53 @@ SkString GrTest::onDumpInfo() const {
 }
 )__Cpp__",
         });
+}
+
+DEF_TEST(SkSLFPUseExplicitReturn, r) {
+    test(r,
+         *SkSL::ShaderCapsFactory::Default(),
+         R"__SkSL__(
+             half4 main() {
+                 return half4(0, 1, 0, 1);
+             }
+         )__SkSL__",
+         /*expectedH=*/{},
+         /*expectedCPP=*/{R"__Cpp__(
+        fragBuilder->codeAppendf(
+R"SkSL(return half4(0.0, 1.0, 0.0, 1.0);
+)SkSL"
+);
+)__Cpp__", R"__Cpp__(
+bool GrTest::usesExplicitReturn() const {
+    return true;
+}
+)__Cpp__"});
+}
+
+DEF_TEST(SkSLFPBothExplicitReturnAndSkOutColor, r) {
+    test_failure(r,
+         R"__SkSL__(
+             half4 main() {
+                 sk_OutColor = half4(1, 0, 1, 0);
+                 return half4(0, 1, 0, 1);
+             }
+         )__SkSL__",
+         "error: 4: Fragment processors must not mix sk_OutColor and return statements\n\n"
+         "1 error\n");
+}
+
+DEF_TEST(SkSLFPCannotReturnWithSkOutColor, r) {
+    // We don't support returns with sk_OutColor at all, even when it conceptually makes sense.
+    // sk_OutColor is going away, so there's no need to add engineering effort to that path.
+    test_failure(r,
+         R"__SkSL__(
+             void main() {
+                 sk_OutColor = half4(1, 0, 1, 0);
+                 return;
+             }
+         )__SkSL__",
+         "error: 4: Fragment processors must not mix sk_OutColor and return statements\n\n"
+         "1 error\n");
 }
 
 DEF_TEST(SkSLFPUniform, r) {
@@ -508,7 +567,7 @@ DEF_TEST(SkSLFPSections, r) {
              }
          )__SkSL__",
          /*expectedH=*/{
-            "const char* name() const override { return \"Test\"; }\n"
+            "bool usesExplicitReturn() const override;\n"
             " fields section private:"
          },
          /*expectedCPP=*/{});
@@ -762,8 +821,7 @@ R"SkSL(
 }
 )SkSL"
 , args.fOutputColor, _sample200.c_str(), args.fOutputColor);
-)__Cpp__",
-         });
+)__Cpp__"});
 }
 
 DEF_TEST(SkSLFPChildProcessorInlineFieldAccess, r) {
@@ -797,8 +855,7 @@ R"SkSL(
 }
 )SkSL"
 , args.fOutputColor, _sample161.c_str(), args.fOutputColor);
-)__Cpp__",
-         });
+)__Cpp__"});
 }
 
 DEF_TEST(SkSLFPChildProcessorFieldAccess, r) {
@@ -986,19 +1043,19 @@ DEF_TEST(SkSLFPFunction, r) {
 R"SkSL(return c.wzyx;
 )SkSL", &flip_name);
         fragBuilder->codeAppendf(
-R"SkSL(half4 _inlineResulthalf4fliphalf40;
-half4 _inlineArghalf4fliphalf41_0 = %s;
+R"SkSL(half4 _0_flip;
 {
-    _inlineResulthalf4fliphalf40 = _inlineArghalf4fliphalf41_0.wzyx;
+    _0_flip = %s.wzyx;
 }
-%s = _inlineResulthalf4fliphalf40;
+
+%s = _0_flip;
 
 )SkSL"
 , args.fUniformHandler->getUniformCStr(colorVar), args.fOutputColor);
 )__Cpp__"});
 }
 
-DEF_TEST(SkSLFPSwitchWithReturnInsideCannotBeInlined, r) {
+DEF_TEST(SkSLFPSwitchWithMultipleReturnsInside, r) {
     test(r,
          *SkSL::ShaderCapsFactory::Default(),
          R"__SkSL__(
@@ -1006,8 +1063,8 @@ DEF_TEST(SkSLFPSwitchWithReturnInsideCannotBeInlined, r) {
              half4 switchy(half4 c) {
                  switch (int(c.x)) {
                      case 0: return c.yyyy;
+                     default: return c.zzzz;
                  }
-                 return c.zzzz;
              }
              void main() {
                  sk_OutColor = switchy(color);
@@ -1019,197 +1076,15 @@ DEF_TEST(SkSLFPSwitchWithReturnInsideCannotBeInlined, r) {
 R"SkSL(switch (int(c.x)) {
     case 0:
         return c.yyyy;
+    default:
+        return c.zzzz;
 }
-return c.zzzz;
 )SkSL", &switchy_name);
         fragBuilder->codeAppendf(
 R"SkSL(%s = %s(%s);
 )SkSL"
 , args.fOutputColor, switchy_name.c_str(), args.fUniformHandler->getUniformCStr(colorVar));
-)__Cpp__",
-         });
-}
-
-DEF_TEST(SkSLFPSwitchWithoutReturnInsideCanBeInlined, r) {
-    test(r,
-         *SkSL::ShaderCapsFactory::Default(),
-         R"__SkSL__(
-             uniform half4 color;
-             half4 switchy(half4 c) {
-                 half4 result;
-                 switch (int(c.x)) {
-                     case 0: result = c.yyyy;
-                 }
-                 result = c.zzzz;
-                 return result;
-             }
-             void main() {
-                 sk_OutColor = switchy(color);
-             }
-         )__SkSL__",
-         /*expectedH=*/{},
-         /*expectedCPP=*/{
-         R"__Cpp__(fragBuilder->codeAppendf(
-R"SkSL(half4 _inlineResulthalf4switchyhalf40;
-half4 _inlineArghalf4switchyhalf41_0 = %s;
-{
-    half4 result;
-    switch (int(_inlineArghalf4switchyhalf41_0.x)) {
-        case 0:
-            result = _inlineArghalf4switchyhalf41_0.yyyy;
-    }
-    result = _inlineArghalf4switchyhalf41_0.zzzz;
-    _inlineResulthalf4switchyhalf40 = result;
-}
-%s = _inlineResulthalf4switchyhalf40;
-
-)SkSL"
-, args.fUniformHandler->getUniformCStr(colorVar), args.fOutputColor);
-)__Cpp__",
-         });
-}
-
-DEF_TEST(SkSLFPForLoopWithReturnInsideCannotBeInlined, r) {
-    test(r,
-         *SkSL::ShaderCapsFactory::Default(),
-         R"__SkSL__(
-             uniform half4 color;
-             half4 loopy(half4 c) {
-                 for (int x=0; x<5; ++x) {
-                     if (x == int(c.w)) return c.yyyy;
-                 }
-                 return c.zzzz;
-             }
-             void main() {
-                 sk_OutColor = loopy(color);
-             }
-         )__SkSL__",
-         /*expectedH=*/{},
-         /*expectedCPP=*/{
-         R"__Cpp__(fragBuilder->emitFunction(kHalf4_GrSLType, "loopy", 1, loopy_args,
-R"SkSL(for (int x = 0;x < 5; ++x) {
-    if (x == int(c.w)) return c.yyyy;
-}
-return c.zzzz;
-)SkSL", &loopy_name);
-        fragBuilder->codeAppendf(
-R"SkSL(%s = %s(%s);
-)SkSL"
-, args.fOutputColor, loopy_name.c_str(), args.fUniformHandler->getUniformCStr(colorVar));
-)__Cpp__",
-         });
-}
-
-DEF_TEST(SkSLFPSwitchWithCastCanBeInlined, r) {
-    test(r,
-         *SkSL::ShaderCapsFactory::Default(),
-         R"__SkSL__(
-             uniform half4 color;
-             half4 switchy(half4 c) {
-                 half4 result;
-                 switch (int(c.x)) {
-                     case 1: result = c.yyyy; break;
-                     default: result = c.zzzz; break;
-                 }
-                 return result;
-             }
-             void main() {
-                 sk_OutColor = switchy(color);
-             }
-         )__SkSL__",
-         /*expectedH=*/{},
-         /*expectedCPP=*/{R"__Cpp__(fragBuilder->codeAppendf(
-R"SkSL(half4 _inlineResulthalf4switchyhalf40;
-half4 _inlineArghalf4switchyhalf41_0 = %s;
-{
-    half4 result;
-    switch (int(_inlineArghalf4switchyhalf41_0.x)) {
-        case 1:
-            result = _inlineArghalf4switchyhalf41_0.yyyy;
-            break;
-        default:
-            result = _inlineArghalf4switchyhalf41_0.zzzz;
-            break;
-    }
-    _inlineResulthalf4switchyhalf40 = result;
-}
-%s = _inlineResulthalf4switchyhalf40;
-
-)SkSL"
-, args.fUniformHandler->getUniformCStr(colorVar), args.fOutputColor);
 )__Cpp__"});
-}
-
-DEF_TEST(SkSLFPForLoopWithoutReturnInsideCanBeInlined, r) {
-    test(r,
-         *SkSL::ShaderCapsFactory::Default(),
-         R"__SkSL__(
-             uniform half4 color;
-             half4 loopy(half4 c) {
-                 half4 pix;
-                 for (int x=0; x<5; ++x) {
-                     if (x == int(c.w)) pix = c.yyyy;
-                 }
-                 pix = c.zzzz;
-                 return pix;
-             }
-             void main() {
-                 sk_OutColor = loopy(color);
-             }
-         )__SkSL__",
-         /*expectedH=*/{},
-         /*expectedCPP=*/{
-         R"__Cpp__(fragBuilder->codeAppendf(
-R"SkSL(half4 _inlineResulthalf4loopyhalf40;
-half4 _inlineArghalf4loopyhalf41_0 = %s;
-{
-    half4 pix;
-    for (int x = 0;x < 5; ++x) {
-        if (x == int(_inlineArghalf4loopyhalf41_0.w)) pix = _inlineArghalf4loopyhalf41_0.yyyy;
-    }
-    pix = _inlineArghalf4loopyhalf41_0.zzzz;
-    _inlineResulthalf4loopyhalf40 = pix;
-}
-%s = _inlineResulthalf4loopyhalf40;
-
-)SkSL"
-, args.fUniformHandler->getUniformCStr(colorVar), args.fOutputColor);
-)__Cpp__",
-         });
-}
-
-DEF_TEST(SkSLFPIfStatementWithReturnInsideCanBeInlined, r) {
-    test(r,
-         *SkSL::ShaderCapsFactory::Default(),
-         R"__SkSL__(
-             uniform half4 color;
-             half4 branchy(half4 c) {
-                 if (c.z == c.w) return c.yyyy; else return c.zzzz;
-             }
-             void main() {
-                 sk_OutColor = branchy(color);
-             }
-         )__SkSL__",
-         /*expectedH=*/{},
-         /*expectedCPP=*/{
-         R"__Cpp__(fragBuilder->codeAppendf(
-R"SkSL(half4 _inlineResulthalf4branchyhalf40;
-half4 _inlineArghalf4branchyhalf41_0 = %s;
-do {
-    if (_inlineArghalf4branchyhalf41_0.z == _inlineArghalf4branchyhalf41_0.w) {
-        _inlineResulthalf4branchyhalf40 = _inlineArghalf4branchyhalf41_0.yyyy;
-        break;
-    } else {
-        _inlineResulthalf4branchyhalf40 = _inlineArghalf4branchyhalf41_0.zzzz;
-        break;
-    }
-} while (false);
-%s = _inlineResulthalf4branchyhalf40;
-
-)SkSL"
-, args.fUniformHandler->getUniformCStr(colorVar), args.fOutputColor);
-)__Cpp__",
-         });
 }
 
 DEF_TEST(SkSLFPGrSLTypesAreSupported, r) {
