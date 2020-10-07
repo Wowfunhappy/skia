@@ -13,7 +13,6 @@
 #include "include/core/SkString.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrGpuResource.h"
-#include "src/gpu/GrNonAtomicRef.h"
 #include "src/gpu/GrTracing.h"
 #include "src/gpu/GrXferProcessor.h"
 #include <atomic>
@@ -120,19 +119,24 @@ public:
         SkASSERT(fBoundsFlags != kUninitialized_BoundsFlag);
         return SkToBool(fBoundsFlags & kZeroArea_BoundsFlag);
     }
+    #if defined(GR_OP_ALLOCATE_USE_NEW)
+        // GrOps are allocated using ::operator new in the GrMemoryPool. Doing this style of memory
+        // allocation defeats the delete with size optimization.
+        void* operator new(size_t) { SK_ABORT("All GrOps are created by placement new."); }
+        void* operator new(size_t, void* p) { return p; }
+        void operator delete(void* p) { ::operator delete(p); }
+    #elif defined(SK_DEBUG)
+        // All GrOp-derived classes should be allocated in and deleted from a GrMemoryPool
+        void* operator new(size_t size);
+        void operator delete(void* target);
 
-#ifdef SK_DEBUG
-    // All GrOp-derived classes should be allocated in and deleted from a GrMemoryPool
-    void* operator new(size_t size);
-    void operator delete(void* target);
-
-    void* operator new(size_t size, void* placement) {
-        return ::operator new(size, placement);
-    }
-    void operator delete(void* target, void* placement) {
-        ::operator delete(target, placement);
-    }
-#endif
+        void* operator new(size_t size, void* placement) {
+            return ::operator new(size, placement);
+        }
+        void operator delete(void* target, void* placement) {
+            ::operator delete(target, placement);
+        }
+    #endif
 
     /**
      * Helper for safely down-casting to a GrOp subclass
@@ -163,8 +167,9 @@ public:
      * ahead of time and when it has not been called).
      */
     void prePrepare(GrRecordingContext* context, GrSurfaceProxyView* dstView, GrAppliedClip* clip,
-                    const GrXferProcessor::DstProxyView& dstProxyView) {
-        this->onPrePrepare(context, dstView, clip, dstProxyView);
+                    const GrXferProcessor::DstProxyView& dstProxyView,
+                    GrXferBarrierFlags renderPassXferBarriers) {
+        this->onPrePrepare(context, dstView, clip, dstProxyView, renderPassXferBarriers);
     }
 
     /**
@@ -296,7 +301,8 @@ private:
     virtual void onPrePrepare(GrRecordingContext*,
                               const GrSurfaceProxyView* writeView,
                               GrAppliedClip*,
-                              const GrXferProcessor::DstProxyView&) = 0;
+                              const GrXferProcessor::DstProxyView&,
+                              GrXferBarrierFlags renderPassXferBarriers) = 0;
     virtual void onPrepare(GrOpFlushState*) = 0;
     // If this op is chained then chainBounds is the union of the bounds of all ops in the chain.
     // Otherwise, this op's bounds.

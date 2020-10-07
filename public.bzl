@@ -232,9 +232,6 @@ BASE_SRCS_ALL = struct(
         "src/svg/**/*",  # Depends on xml, SkJpegCodec, and SkPngCodec.
         "src/xml/**/*",  # Avoid dragging in expat when not needed.
 
-        # Conflicting dependencies among Lua versions. See cl/107087297.
-        "src/utils/SkLua*",
-
         # Exclude all GL specific files
         "src/gpu/gl/*",
         "src/gpu/gl/builders/*",
@@ -399,7 +396,7 @@ PORTS_SRCS_WASM = struct(
         # commented lines below left in because they indicate specifically what is
         # included here and not in other PORTS_SRCS lists.
         "src/ports/*FontConfig*",
-        "src/ports/*FreeType*",
+        #"src/ports/*FreeType*",
         "src/ports/*WIC*",
         "src/ports/*CG*",
         "src/ports/*android*",
@@ -411,11 +408,11 @@ PORTS_SRCS_WASM = struct(
         "src/ports/*win*",
         "src/ports/*NDK*",
         #"src/ports/SkDebug_stdio.cpp",
-        "src/ports/SkFontMgr_custom.cpp",
+        #"src/ports/SkFontMgr_custom.cpp",
         "src/ports/SkFontMgr_custom_directory.cpp",
         "src/ports/SkFontMgr_custom_directory_factory.cpp",
-        "src/ports/SkFontMgr_custom_embedded.cpp",
-        "src/ports/SkFontMgr_custom_embedded_factory.cpp",
+        #"src/ports/SkFontMgr_custom_embedded.cpp",
+        #"src/ports/SkFontMgr_custom_embedded_factory.cpp",
         "src/ports/SkFontMgr_custom_empty.cpp",
         "src/ports/SkFontMgr_custom_empty_factory.cpp",
         # "src/ports/SkFontMgr_empty_factory.cpp",

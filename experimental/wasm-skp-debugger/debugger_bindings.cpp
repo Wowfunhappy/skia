@@ -27,12 +27,13 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <map>
 #include <emscripten.h>
 #include <emscripten/bind.h>
 
 #ifdef SK_GL
 #include "include/gpu/GrBackendSurface.h"
-#include "include/gpu/GrContext.h"
+#include "include/gpu/GrDirectContext.h"
 #include "include/gpu/gl/GrGLInterface.h"
 #include "include/gpu/gl/GrGLTypes.h"
 
@@ -275,6 +276,29 @@ class SkpDebugPlayer {
       return toSimpleImageInfo(fImages[index]->imageInfo());
     }
 
+    // returns a JSON string representing commands where each image is referenced.
+    std::string imageUseInfoForFrame(int framenumber) {
+      std::map<int, std::vector<int>> m = frames[framenumber]->getImageIdToCommandMap(udm);
+
+      SkDynamicMemoryWStream stream;
+      SkJSONWriter writer(&stream, SkJSONWriter::Mode::kFast);
+      writer.beginObject(); // root
+
+      for (auto it = m.begin(); it != m.end(); ++it) {
+        writer.beginArray(std::to_string(it->first).c_str());
+        for (const int commandId : it->second) {
+          writer.appendU64((uint64_t)commandId);
+        }
+        writer.endArray();
+      }
+
+      writer.endObject(); // root
+      writer.flush();
+      auto skdata = stream.detachAsData();
+      std::string_view data_view(reinterpret_cast<const char*>(skdata->data()), skdata->size());
+      return std::string(data_view);
+    }
+
     // return a list of layer draw events that happened at the beginning of this frame.
     std::vector<DebugLayerManager::LayerSummary> getLayerSummaries() {
       return fLayerManager->summarizeLayers(fp);
@@ -412,7 +436,7 @@ sk_sp<GrContext> MakeGrContext(EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context)
         return nullptr;
     }
     // setup contexts
-    sk_sp<GrContext> grContext(GrContext::MakeGL(interface));
+    sk_sp<GrContext> grContext(GrDirectContext::MakeGL(interface));
     return grContext;
 }
 
@@ -480,6 +504,7 @@ EMSCRIPTEN_BINDINGS(my_module) {
     .function("getImageInfo",         &SkpDebugPlayer::getImageInfo)
     .function("getLayerSummaries",    &SkpDebugPlayer::getLayerSummaries)
     .function("getSize",              &SkpDebugPlayer::getSize)
+    .function("imageUseInfoForFrame", &SkpDebugPlayer::imageUseInfoForFrame)
     .function("jsonCommandList",      &SkpDebugPlayer::jsonCommandList, allow_raw_pointers())
     .function("lastCommandInfo",      &SkpDebugPlayer::lastCommandInfo)
     .function("loadSkp",              &SkpDebugPlayer::loadSkp, allow_raw_pointers())
@@ -532,7 +557,9 @@ EMSCRIPTEN_BINDINGS(my_module) {
     .smart_ptr<sk_sp<SkSurface>>("sk_sp<SkSurface>")
     .function("width", &SkSurface::width)
     .function("height", &SkSurface::height)
-    .function("_flush", select_overload<void()>(&SkSurface::flushAndSubmit))
+    .function("_flush", optional_override([](SkSurface& self) {
+            self.flushAndSubmit(false);
+        }))
     .function("getCanvas", &SkSurface::getCanvas, allow_raw_pointers());
   class_<SkCanvas>("SkCanvas")
     .function("clear", optional_override([](SkCanvas& self, JSColor color)->void {

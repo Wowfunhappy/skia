@@ -119,6 +119,7 @@ SkRuntimeEffect::EffectResult SkRuntimeEffect::Make(SkString sksl) {
     SkSL::SharedCompiler compiler;
     SkSL::Program::Settings settings;
     settings.fInlineThreshold = compiler.getInlineThreshold();
+    settings.fAllowNarrowingConversions = true;
     auto program = compiler->convertProgram(SkSL::Program::kPipelineStage_Kind,
                                             SkSL::String(sksl.c_str(), sksl.size()),
                                             settings);
@@ -127,9 +128,6 @@ SkRuntimeEffect::EffectResult SkRuntimeEffect::Make(SkString sksl) {
     #define RETURN_FAILURE(...) return std::make_tuple(nullptr, SkStringPrintf(__VA_ARGS__))
 
     if (!program) {
-        RETURN_FAILURE("%s", compiler->errorText().c_str());
-    }
-    if (!compiler->optimize(*program)) {
         RETURN_FAILURE("%s", compiler->errorText().c_str());
     }
 
@@ -155,32 +153,34 @@ SkRuntimeEffect::EffectResult SkRuntimeEffect::Make(SkString sksl) {
     // Go through program elements, pulling out information that we need
     for (const auto& elem : *program) {
         // Variables (uniform, varying, etc.)
-        if (elem.fKind == SkSL::ProgramElement::kVar_Kind) {
+        if (elem.kind() == SkSL::ProgramElement::Kind::kVar) {
             const auto& varDecls = static_cast<const SkSL::VarDeclarations&>(elem);
             for (const auto& varDecl : varDecls.fVars) {
                 const SkSL::Variable& var =
                         *(static_cast<const SkSL::VarDeclaration&>(*varDecl).fVar);
+                const SkSL::Type& varType = var.type();
 
                 // Varyings (only used in conjunction with drawVertices)
                 if (var.fModifiers.fFlags & SkSL::Modifiers::kVarying_Flag) {
-                    varyings.push_back({var.fName, var.fType.kind() == SkSL::Type::kVector_Kind
-                                                           ? var.fType.columns()
-                                                           : 1});
+                    varyings.push_back({var.name(),
+                                        varType.typeKind() == SkSL::Type::TypeKind::kVector
+                                               ? varType.columns()
+                                               : 1});
                 }
                 // Fragment Processors (aka 'shader'): These are child effects
-                else if (&var.fType == ctx.fFragmentProcessor_Type.get()) {
-                    children.push_back(var.fName);
+                else if (&varType == ctx.fFragmentProcessor_Type.get()) {
+                    children.push_back(var.name());
                     sampleUsages.push_back(SkSL::Analysis::GetSampleUsage(*program, var));
                 }
                 // 'uniform' variables
                 else if (var.fModifiers.fFlags & SkSL::Modifiers::kUniform_Flag) {
                     Uniform uni;
-                    uni.fName = var.fName;
+                    uni.fName = var.name();
                     uni.fFlags = 0;
                     uni.fCount = 1;
 
-                    const SkSL::Type* type = &var.fType;
-                    if (type->kind() == SkSL::Type::kArray_Kind) {
+                    const SkSL::Type* type = &var.type();
+                    if (type->typeKind() == SkSL::Type::TypeKind::kArray) {
                         uni.fFlags |= Uniform::kArray_Flag;
                         uni.fCount = type->columns();
                         type = &type->componentType();
@@ -213,10 +213,10 @@ SkRuntimeEffect::EffectResult SkRuntimeEffect::Make(SkString sksl) {
             }
         }
         // Functions
-        else if (elem.fKind == SkSL::ProgramElement::kFunction_Kind) {
+        else if (elem.kind() == SkSL::ProgramElement::Kind::kFunction) {
             const auto& func = static_cast<const SkSL::FunctionDefinition&>(elem);
             const SkSL::FunctionDeclaration& decl = func.fDeclaration;
-            if (decl.fName == "main") {
+            if (decl.name() == "main") {
                 hasMain = true;
             }
         }
@@ -307,6 +307,7 @@ bool SkRuntimeEffect::toPipelineStage(const GrShaderCaps* shaderCaps,
     SkSL::Program::Settings settings;
     settings.fCaps = shaderCaps;
     settings.fInlineThreshold = compiler.getInlineThreshold();
+    settings.fAllowNarrowingConversions = true;
 
     auto program = compiler->convertProgram(SkSL::Program::kPipelineStage_Kind,
                                             SkSL::String(fSkSL.c_str(), fSkSL.size()),

@@ -59,8 +59,8 @@ var CanvasKit = {
   MakeSkVertices: function() {},
   MakeSurface: function() {},
   MakeWebGLCanvasSurface: function() {},
-  /** @return {TypedArray} */
   Malloc: function() {},
+  MallocGlyphIDs: function() {},
   Free: function() {},
   computeTonalColors: function() {},
   currentContext: function() {},
@@ -144,6 +144,7 @@ var CanvasKit = {
     // private API
     /** @return {Float32Array} */
     _getRectsForRange: function() {},
+    _getRectsForPlaceholders: function() {},
   },
 
   ParagraphBuilder: {
@@ -156,6 +157,7 @@ var CanvasKit = {
     prototype: {
       pushStyle: function() {},
       pushPaintStyle: function() {},
+      addPlaceholder: function() {},
     },
 
     // private API
@@ -163,6 +165,7 @@ var CanvasKit = {
     _MakeFromFontProvider: function() {},
     _pushStyle: function() {},
     _pushPaintStyle: function() {},
+    _addPlaceholder: function() {},
   },
 
   SkRuntimeEffect: {
@@ -200,10 +203,10 @@ var CanvasKit = {
   SkCanvas: {
     // public API (from C++ bindings)
     clipPath: function() {},
-    drawAnimatedImage: function() {},
     drawCircle: function() {},
     drawColorInt: function() {},
     drawImage: function() {},
+    drawImageAtCurrentFrame: function() {},
     drawLine: function() {},
     drawPaint: function() {},
     drawParagraph: function() {},
@@ -336,7 +339,17 @@ var CanvasKit = {
     setSkewX: function() {},
     setSubpixel: function() {},
     setTypeface: function() {},
+
+    prototype: {
+      getGlyphBounds: function() {},
+      getGlyphIDs: function() {},
+      getGlyphWidths: function() {},
+      getWidths: function() {},
+    },
+
     // private API (from C++ bindings)
+    _getGlyphIDs: function() {},
+    _getGlyphWidthBounds: function() {},
     _getWidths: function() {},
   },
 
@@ -484,7 +497,6 @@ var CanvasKit = {
     // public API (from C++ and JS bindings)
     MakeFromCmds: function() {},
     MakeFromVerbsPointsWeights: function() {},
-    computeTightBounds: function() {},
     contains: function() {},
     /** @return {CanvasKit.SkPath} */
     copy: function() {},
@@ -516,6 +528,7 @@ var CanvasKit = {
       arcToTangent: function() {},
       close: function() {},
       conicTo: function() {},
+      computeTightBounds: function() {},
       cubicTo: function() {},
       dash: function() {},
       lineTo: function() {},
@@ -551,6 +564,7 @@ var CanvasKit = {
     _arcToTangent: function() {},
     _close: function() {},
     _conicTo: function() {},
+    _computeTightBounds: function() {},
     _cubicTo: function() {},
     _dash: function() {},
     _lineTo: function() {},
@@ -633,11 +647,15 @@ var CanvasKit = {
 
   SkTextBlob: {
     // public API (both C++ and JS bindings)
+    MakeFromGlyphs: function() {},
     MakeFromRSXform: function() {},
+    MakeFromRSXformGlyphs: function() {},
     MakeFromText: function() {},
     MakeOnPath: function() {},
     // private API (from C++ bindings)
+    _MakeFromGlyphs: function() {},
     _MakeFromRSXform: function() {},
+    _MakeFromRSXformGlyphs: function() {},
     _MakeFromText: function() {},
   },
 
@@ -888,6 +906,28 @@ var CanvasKit = {
     RTL: {},
   },
 
+  DecorationStyle: {
+    Solid: {},
+    Double: {},
+    Dotted: {},
+    Dashed: {},
+    Wavy: {},
+  },
+
+  PlaceholderAlignment: {
+    Baseline: {},
+    AboveBaseline: {},
+    BelowBaseline: {},
+    Top: {},
+    Bottom: {},
+    Middle: {},
+  },
+
+  TextBaseline: {
+    Alphabetic: {},
+    Ideographic: {},
+  },
+
   TileMode: {
     Clamp: {},
     Repeat: {},
@@ -945,6 +985,7 @@ var CanvasKit = {
 // It's not enough to declare them above, because closure can still erase them
 // unless they go on the prototype.
 CanvasKit.Paragraph.prototype.getRectsForRange = function() {};
+CanvasKit.Paragraph.prototype.getRectsForPlaceholders = function() {};
 
 CanvasKit.SkPicture.prototype.saveAsFile = function() {};
 
@@ -958,8 +999,6 @@ CanvasKit.SkImage.prototype.encodeToData = function() {};
 CanvasKit.SkImage.prototype.makeShader = function() {};
 
 CanvasKit.SkFontMgr.prototype.MakeTypefaceFromData = function() {};
-
-CanvasKit.SkFont.prototype.getWidths = function() {};
 
 CanvasKit.RSXFormBuilder.prototype.build = function() {};
 CanvasKit.RSXFormBuilder.prototype.delete = function() {};

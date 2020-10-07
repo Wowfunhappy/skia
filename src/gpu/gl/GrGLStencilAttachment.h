@@ -15,7 +15,6 @@
 class GrGLStencilAttachment : public GrStencilAttachment {
 public:
     static const GrGLenum kUnknownInternalFormat = ~0U;
-    static const GrGLuint kUnknownBitCount = ~0U;
     struct Format {
         GrGLenum  fInternalFormat;
         GrGLuint  fStencilBits;
@@ -30,14 +29,16 @@ public:
 
     GrGLStencilAttachment(GrGpu* gpu,
                           const IDDesc& idDesc,
-                          int width, int height,
+                          SkISize dimensions,
                           int sampleCnt,
                           const Format& format)
-        : GrStencilAttachment(gpu, width, height, format.fStencilBits, sampleCnt)
+        : GrStencilAttachment(gpu, dimensions, format.fStencilBits, sampleCnt, GrProtected::kNo)
         , fFormat(format)
         , fRenderbufferID(idDesc.fRenderbufferID) {
         this->registerWithCache(SkBudgeted::kYes);
     }
+
+    GrBackendFormat backendFormat() const override;
 
     GrGLuint renderbufferID() const {
         return fRenderbufferID;

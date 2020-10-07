@@ -28,6 +28,7 @@
 #include "src/core/SkUtils.h"
 #include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrGpu.h"
+#include "src/gpu/GrImageContextPriv.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrResourceCache.h"
 #include "src/gpu/GrTexture.h"
@@ -409,9 +410,9 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkImage_makeTextureImage, reporter, contextIn
             for (auto budgeted : {SkBudgeted::kNo, SkBudgeted::kYes}) {
                 auto texImage = image->makeTextureImage(dContext, mipMapped, budgeted);
                 if (!texImage) {
-                    GrContext* imageContext = as_IB(image)->context();
+                    auto imageContext = as_IB(image)->context();
                     // We expect to fail if image comes from a different context
-                    if (!image->isTextureBacked() || imageContext == dContext) {
+                    if (!image->isTextureBacked() || imageContext->priv().matches(dContext)) {
                         ERRORF(reporter, "makeTextureImage failed.");
                     }
                     continue;
@@ -593,17 +594,17 @@ DEF_GPUTEST(AbandonedContextImage, reporter, options) {
         auto rsurf = SkSurface::MakeRaster(SkImageInfo::MakeN32Premul(100, 100));
 
         REPORTER_ASSERT(reporter, img->isValid(factory->get(type)));
-        REPORTER_ASSERT(reporter, img->isValid(rsurf->getCanvas()->getGrContext()));
+        REPORTER_ASSERT(reporter, img->isValid(rsurf->getCanvas()->recordingContext()));
 
         factory->get(type)->abandonContext();
         REPORTER_ASSERT(reporter, !img->isValid(factory->get(type)));
-        REPORTER_ASSERT(reporter, !img->isValid(rsurf->getCanvas()->getGrContext()));
+        REPORTER_ASSERT(reporter, !img->isValid(rsurf->getCanvas()->recordingContext()));
         // This shouldn't crash.
         rsurf->getCanvas()->drawImage(img, 0, 0);
 
         // Give up all other refs on the context.
         factory.reset(nullptr);
-        REPORTER_ASSERT(reporter, !img->isValid(rsurf->getCanvas()->getGrContext()));
+        REPORTER_ASSERT(reporter, !img->isValid(rsurf->getCanvas()->recordingContext()));
         // This shouldn't crash.
         rsurf->getCanvas()->drawImage(img, 0, 0);
     }
@@ -1366,14 +1367,11 @@ DEF_TEST(Image_nonfinite_dst, reporter) {
 static sk_sp<SkImage> make_yuva_image(GrDirectContext* dContext) {
     SkAutoPixmapStorage pm;
     pm.alloc(SkImageInfo::Make(1, 1, kAlpha_8_SkColorType, kPremul_SkAlphaType));
-    const SkPixmap pmaps[] = {pm, pm, pm, pm};
-    SkYUVAIndex indices[] = {{0, SkColorChannel::kA},
-                             {1, SkColorChannel::kA},
-                             {2, SkColorChannel::kA},
-                             {3, SkColorChannel::kA}};
+    SkYUVAInfo yuvaInfo({1, 1}, SkYUVAInfo::PlanarConfig::kY_U_V_444, kJPEG_Full_SkYUVColorSpace);
+    const SkPixmap pmaps[] = {pm, pm, pm};
+    auto yuvaPixmaps = SkYUVAPixmaps::FromExternalPixmaps(yuvaInfo, pmaps);
 
-    return SkImage::MakeFromYUVAPixmaps(dContext, kJPEG_SkYUVColorSpace, pmaps, indices,
-                                        SkISize::Make(1, 1), kTopLeft_GrSurfaceOrigin, false);
+    return SkImage::MakeFromYUVAPixmaps(dContext, yuvaPixmaps);
 }
 
 DEF_GPUTEST_FOR_ALL_CONTEXTS(ImageFlush, reporter, ctxInfo) {

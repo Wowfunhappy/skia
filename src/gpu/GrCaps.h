@@ -235,10 +235,6 @@ public:
     // For historical reasons requestedCount==0 is handled identically to requestedCount==1.
     virtual int getRenderTargetSampleCount(int requestedCount, const GrBackendFormat&) const = 0;
 
-    // Returns the number of bytes per pixel for the given GrBackendFormat. This is only supported
-    // for "normal" formats. For compressed formats this will return 0.
-    virtual size_t bytesPerPixel(const GrBackendFormat&) const = 0;
-
     /**
      * Backends may have restrictions on what types of surfaces support GrGpu::writePixels().
      * If this returns false then the caller should implement a fallback where a temporary texture
@@ -382,6 +378,9 @@ public:
     // Should we disable the CCPR code due to a faulty driver?
     bool driverDisableCCPR() const { return fDriverDisableCCPR; }
     bool driverDisableMSAACCPR() const { return fDriverDisableMSAACCPR; }
+
+    // Returns how to sample the dst values for the passed in GrRenderTargetProxy.
+    GrDstSampleType getDstSampleTypeForProxy(const GrRenderTargetProxy*) const;
 
     /**
      * This is used to try to ensure a successful copy a dst in order to perform shader-based
@@ -570,6 +569,9 @@ private:
 
     virtual GrSwizzle onGetReadSwizzle(const GrBackendFormat&, GrColorType) const = 0;
 
+    virtual GrDstSampleType onGetDstSampleTypeForProxy(const GrRenderTargetProxy*) const {
+        return GrDstSampleType::kAsTextureCopy;
+    }
 
     bool fSuppressPrints : 1;
     bool fWireframeMode  : 1;

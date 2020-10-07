@@ -105,6 +105,18 @@ sk_sp<GrGpu> GrMtlGpu::Make(GrDirectContext* direct, const GrContextOptions& opt
     if (!device || !queue) {
         return nullptr;
     }
+    if (@available(macOS 10.14, iOS 9.0, *)) {
+        // no warning needed
+    } else {
+        SkDebugf("*** Warning ***: this OS version is deprecated and will no longer be supported " \
+                 "in future releases.\n");
+#ifdef SK_BUILD_FOR_IOS
+        SkDebugf("Minimum recommended version is iOS 9.0.\n");
+#else
+        SkDebugf("Minimum recommended version is MacOS 10.14.\n");
+#endif
+    }
+
     MTLFeatureSet featureSet;
     if (!get_feature_set(device, &featureSet)) {
         return nullptr;
@@ -176,7 +188,7 @@ GrOpsRenderPass* GrMtlGpu::getOpsRenderPass(
             const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
             const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
             const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
-            bool usesXferBarriers) {
+            GrXferBarrierFlags renderPassXferBarriers) {
     return new GrMtlOpsRenderPass(this, renderTarget, origin, colorInfo, stencilInfo);
 }
 
@@ -486,18 +498,17 @@ bool GrMtlGpu::clearTexture(GrMtlTexture* tex, size_t bpp, uint32_t levelMask) {
 }
 
 GrStencilAttachment* GrMtlGpu::createStencilAttachmentForRenderTarget(
-        const GrRenderTarget* rt, int width, int height, int numStencilSamples) {
+        const GrRenderTarget* rt, SkISize dimensions, int numStencilSamples) {
     SkASSERT(numStencilSamples == rt->numSamples());
-    SkASSERT(width >= rt->width());
-    SkASSERT(height >= rt->height());
+    SkASSERT(dimensions.width() >= rt->width());
+    SkASSERT(dimensions.height() >= rt->height());
 
     int samples = rt->numSamples();
 
     const GrMtlCaps::StencilFormat& sFmt = this->mtlCaps().preferredStencilFormat();
 
     GrMtlStencilAttachment* stencil(GrMtlStencilAttachment::Create(this,
-                                                                   width,
-                                                                   height,
+                                                                   dimensions,
                                                                    samples,
                                                                    sFmt));
     fStats.incStencilAttachmentCreates();
@@ -557,8 +568,7 @@ sk_sp<GrTexture> GrMtlGpu::onCreateTexture(SkISize dimensions,
     }
 
     if (levelClearMask) {
-        this->clearTexture(tex.get(), this->mtlCaps().bytesPerPixel(mtlPixelFormat),
-                           levelClearMask);
+        this->clearTexture(tex.get(), GrMtlFormatBytesPerBlock(mtlPixelFormat), levelClearMask);
     }
 
     return std::move(tex);
@@ -702,6 +712,10 @@ sk_sp<GrTexture> GrMtlGpu::onWrapBackendTexture(const GrBackendTexture& backendT
     if (!mtlTexture) {
         return nullptr;
     }
+    // We don't currently support sampling from a MSAA texture in shaders.
+    if (mtlTexture.sampleCount != 1) {
+        return nullptr;
+    }
 
     return GrMtlTexture::MakeWrappedTexture(this, backendTex.dimensions(), mtlTexture, cacheable,
                                             ioType);
@@ -712,6 +726,10 @@ sk_sp<GrTexture> GrMtlGpu::onWrapCompressedBackendTexture(const GrBackendTexture
                                                           GrWrapCacheable cacheable) {
     id<MTLTexture> mtlTexture = get_texture_from_backend(backendTex);
     if (!mtlTexture) {
+        return nullptr;
+    }
+    // We don't currently support sampling from a MSAA texture in shaders.
+    if (mtlTexture.sampleCount != 1) {
         return nullptr;
     }
 
@@ -725,6 +743,10 @@ sk_sp<GrTexture> GrMtlGpu::onWrapRenderableBackendTexture(const GrBackendTexture
                                                           GrWrapCacheable cacheable) {
     id<MTLTexture> mtlTexture = get_texture_from_backend(backendTex);
     if (!mtlTexture) {
+        return nullptr;
+    }
+    // We don't currently support sampling from a MSAA texture in shaders.
+    if (mtlTexture.sampleCount != 1) {
         return nullptr;
     }
 
@@ -747,10 +769,10 @@ sk_sp<GrTexture> GrMtlGpu::onWrapRenderableBackendTexture(const GrBackendTexture
 }
 
 sk_sp<GrRenderTarget> GrMtlGpu::onWrapBackendRenderTarget(const GrBackendRenderTarget& backendRT) {
-    // TODO: Revisit this when the Metal backend is completed. It may support MSAA render targets.
-    if (backendRT.sampleCnt() > 1) {
+    if (!this->caps()->isFormatRenderable(backendRT.getBackendFormat(), backendRT.sampleCnt())) {
         return nullptr;
     }
+
     id<MTLTexture> mtlTexture = get_texture_from_backend(backendRT);
     if (!mtlTexture) {
         return nullptr;
@@ -853,6 +875,7 @@ void copy_src_data(char* dst, size_t bytesPerPixel, const SkTArray<size_t>& indi
 
 bool GrMtlGpu::createMtlTextureForBackendSurface(MTLPixelFormat mtlFormat,
                                                  SkISize dimensions,
+                                                 int sampleCnt,
                                                  GrTexturable texturable,
                                                  GrRenderable renderable,
                                                  GrMipmapped mipMapped,
@@ -880,6 +903,10 @@ bool GrMtlGpu::createMtlTextureForBackendSurface(MTLPixelFormat mtlFormat,
         desc.usage = texturable == GrTexturable::kYes ? MTLTextureUsageShaderRead : 0;
         desc.usage |= renderable == GrRenderable::kYes ? MTLTextureUsageRenderTarget : 0;
     }
+    if (sampleCnt != 1) {
+        desc.sampleCount = sampleCnt;
+        desc.textureType = MTLTextureType2DMultisample;
+    }
     id<MTLTexture> testTexture = [fDevice newTextureWithDescriptor: desc];
     info->fTexture.reset(GrRetainPtrFromId(testTexture));
     return true;
@@ -893,7 +920,7 @@ GrBackendTexture GrMtlGpu::onCreateBackendTexture(SkISize dimensions,
     const MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
 
     GrMtlTextureInfo info;
-    if (!this->createMtlTextureForBackendSurface(mtlFormat, dimensions, GrTexturable::kYes,
+    if (!this->createMtlTextureForBackendSurface(mtlFormat, dimensions, 1, GrTexturable::kYes,
                                                  renderable, mipMapped, &info)) {
         return {};
     }
@@ -919,7 +946,7 @@ bool GrMtlGpu::onUpdateBackendTexture(const GrBackendTexture& backendTexture,
             backendTexture.getBackendFormat());
 
     // Create a transfer buffer and fill with data.
-    size_t bytesPerPixel = fMtlCaps->bytesPerPixel(mtlFormat);
+    size_t bytesPerPixel = GrMtlFormatBytesPerBlock(mtlFormat);
     SkSTArray<16, size_t> individualMipOffsets;
     size_t combinedBufferSize;
 
@@ -1034,7 +1061,7 @@ GrBackendTexture GrMtlGpu::onCreateCompressedBackendTexture(
     const MTLPixelFormat mtlFormat = GrBackendFormatAsMTLPixelFormat(format);
 
     GrMtlTextureInfo info;
-    if (!this->createMtlTextureForBackendSurface(mtlFormat, dimensions, GrTexturable::kYes,
+    if (!this->createMtlTextureForBackendSurface(mtlFormat, dimensions, 1, GrTexturable::kYes,
                                                  GrRenderable::kNo, mipMapped, &info)) {
         return {};
     }
@@ -1076,25 +1103,27 @@ bool GrMtlGpu::isTestingOnlyBackendTexture(const GrBackendTexture& tex) const {
     }
 }
 
-GrBackendRenderTarget GrMtlGpu::createTestingOnlyBackendRenderTarget(int w, int h, GrColorType ct) {
-    if (w > this->caps()->maxRenderTargetSize() || h > this->caps()->maxRenderTargetSize()) {
-        return GrBackendRenderTarget();
-    }
-
-    MTLPixelFormat format = this->mtlCaps().getFormatFromColorType(ct);
-    if (format == MTLPixelFormatInvalid) {
-        return GrBackendRenderTarget();
-    }
-
-    GrMtlTextureInfo info;
-    if (!this->createMtlTextureForBackendSurface(format, {w, h}, GrTexturable::kNo,
-                                                 GrRenderable::kYes,
-                                                 GrMipmapped::kNo, &info)) {
+GrBackendRenderTarget GrMtlGpu::createTestingOnlyBackendRenderTarget(SkISize dimensions,
+                                                                     GrColorType ct,
+                                                                     int sampleCnt) {
+    if (dimensions.width()  > this->caps()->maxRenderTargetSize() ||
+        dimensions.height() > this->caps()->maxRenderTargetSize()) {
         return {};
     }
 
-    GrBackendRenderTarget backendRT(w, h, 1, info);
-    return backendRT;
+    MTLPixelFormat format = this->mtlCaps().getFormatFromColorType(ct);
+    sampleCnt = this->mtlCaps().getRenderTargetSampleCount(sampleCnt, format);
+    if (sampleCnt == 0) {
+        return {};
+    }
+
+    GrMtlTextureInfo info;
+    if (!this->createMtlTextureForBackendSurface(format, dimensions, sampleCnt, GrTexturable::kNo,
+                                                 GrRenderable::kYes, GrMipmapped::kNo, &info)) {
+        return {};
+    }
+
+    return GrBackendRenderTarget(dimensions.width(), dimensions.height(), info);
 }
 
 void GrMtlGpu::deleteTestingOnlyBackendRenderTarget(const GrBackendRenderTarget& rt) {
@@ -1112,13 +1141,6 @@ void GrMtlGpu::testingOnly_flushGpuAndSync() {
     this->submitCommandBuffer(kForce_SyncQueue);
 }
 #endif // GR_TEST_UTILS
-
-static int get_surface_sample_cnt(GrSurface* surf) {
-    if (const GrRenderTarget* rt = surf->asRenderTarget()) {
-        return rt->numSamples();
-    }
-    return 0;
-}
 
 void GrMtlGpu::copySurfaceAsResolve(GrSurface* dst, GrSurface* src) {
     // TODO: Add support for subrectangles
@@ -1139,10 +1161,7 @@ void GrMtlGpu::copySurfaceAsResolve(GrSurface* dst, GrSurface* src) {
 void GrMtlGpu::copySurfaceAsBlit(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
                                  const SkIPoint& dstPoint) {
 #ifdef SK_DEBUG
-    int dstSampleCnt = get_surface_sample_cnt(dst);
-    int srcSampleCnt = get_surface_sample_cnt(src);
-    SkASSERT(this->mtlCaps().canCopyAsBlit(dst, dstSampleCnt, src, srcSampleCnt,
-                                           srcRect, dstPoint, dst == src));
+    SkASSERT(this->mtlCaps().canCopyAsBlit(dst, src, srcRect, dstPoint));
 #endif
     id<MTLTexture> dstTex = GrGetMTLTextureFromSurface(dst);
     id<MTLTexture> srcTex = GrGetMTLTextureFromSurface(src);
@@ -1163,16 +1182,12 @@ bool GrMtlGpu::onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcR
                              const SkIPoint& dstPoint) {
     SkASSERT(!src->isProtected() && !dst->isProtected());
 
-    int dstSampleCnt = get_surface_sample_cnt(dst);
-    int srcSampleCnt = get_surface_sample_cnt(src);
-
     bool success = false;
-    if (this->mtlCaps().canCopyAsResolve(dst, dstSampleCnt, src, srcSampleCnt, srcRect, dstPoint)) {
+    if (this->mtlCaps().canCopyAsBlit(dst, src, srcRect, dstPoint)) {
+       this->copySurfaceAsBlit(dst, src, srcRect, dstPoint);
+       success = true;
+    } else if (this->mtlCaps().canCopyAsResolve(dst, src, srcRect, dstPoint)) {
         this->copySurfaceAsResolve(dst, src);
-        success = true;
-    } else if (this->mtlCaps().canCopyAsBlit(dst, dstSampleCnt, src, srcSampleCnt, srcRect,
-                                             dstPoint, dst == src)) {
-        this->copySurfaceAsBlit(dst, src, srcRect, dstPoint);
         success = true;
     }
     if (success) {
@@ -1266,7 +1281,7 @@ bool GrMtlGpu::onTransferPixelsTo(GrTexture* texture, int left, int top, int wid
     if (offset % bpp) {
         return false;
     }
-    if (this->mtlCaps().bytesPerPixel(texture->backendFormat()) != bpp) {
+    if (GrBackendFormatBytesPerPixel(texture->backendFormat()) != bpp) {
         return false;
     }
 
@@ -1301,7 +1316,7 @@ bool GrMtlGpu::onTransferPixelsFrom(GrSurface* surface, int left, int top, int w
     if (offset % bpp) {
         return false;
     }
-    if (this->mtlCaps().bytesPerPixel(surface->backendFormat()) != bpp) {
+    if (GrBackendFormatBytesPerPixel(surface->backendFormat()) != bpp) {
         return false;
     }
 

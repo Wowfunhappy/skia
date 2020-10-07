@@ -307,7 +307,7 @@ public:
                                instantiated; may not be nullptr
         @return                created SkSurface, or nullptr
      */
-    static sk_sp<SkSurface> MakeFromCAMetalLayer(GrContext* context,
+    static sk_sp<SkSurface> MakeFromCAMetalLayer(GrRecordingContext* context,
                                                  GrMTLHandle layer,
                                                  GrSurfaceOrigin origin,
                                                  int sampleCnt,
@@ -334,7 +334,7 @@ public:
                                fonts; may be nullptr
         @return                created SkSurface, or nullptr
      */
-    static sk_sp<SkSurface> MakeFromMTKView(GrContext* context,
+    static sk_sp<SkSurface> MakeFromMTKView(GrRecordingContext* context,
                                             GrMTLHandle mtkView,
                                             GrSurfaceOrigin origin,
                                             int sampleCnt,
@@ -520,15 +520,6 @@ public:
         example: https://fiddle.skia.org/c/@Surface_notifyContentWillChange
     */
     void notifyContentWillChange(ContentChangeMode mode);
-
-    /** Deprecated.
-        This functionality is now achieved via:
-           GrRecordingContext* recordingContext = surface->recordingContext();
-           GrDirectContext* directContext = recordingContext->asDirectContext();
-        Where 'recordingContext' could be null if 'surface' is not GPU backed and
-        'directContext' could be null if the calling code is in the midst of DDL recording.
-    */
-    GrContext* getContext();
 
     /** Returns the recording context being used by the SkSurface.
 
@@ -909,9 +900,9 @@ public:
         correct ordering when the surface backing store is accessed outside Skia (e.g. direct use of
         the 3D API or a windowing system). GrContext has additional flush and submit methods that
         apply to all surfaces and images created from a GrContext. This is equivalent to calling
-        SkSurface::flush with a default GrFlushInfo followed by GrContext::submit.
+        SkSurface::flush with a default GrFlushInfo followed by GrContext::submit(syncCpu).
     */
-    void flushAndSubmit();
+    void flushAndSubmit(bool syncCpu = false);
 
     enum class BackendSurfaceAccess {
         kNoAccess,  //!< back-end object will not be used by client
@@ -984,6 +975,10 @@ public:
         used if the surface will be used for presenting or external use and the client wants backend
         object to be prepped for that use. A finishedProc or semaphore on the GrFlushInfo will also
         include the work for any requested state change.
+
+        If the backend API is Vulkan, the caller can set the GrBackendSurfaceMutableState's
+        VkImageLayout to VK_IMAGE_LAYOUT_UNDEFINED or queueFamilyIndex to VK_QUEUE_FAMILY_IGNORED to
+        tell Skia to not change those respective states.
 
         If the return is GrSemaphoresSubmitted::kYes, only initialized GrBackendSemaphores will be
         submitted to the gpu during the next submit call (it is possible Skia failed to create a

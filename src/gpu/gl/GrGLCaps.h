@@ -136,9 +136,6 @@ public:
     }
     int maxRenderTargetSampleCount(GrGLFormat) const;
 
-    size_t bytesPerPixel(GrGLFormat) const;
-    size_t bytesPerPixel(const GrBackendFormat&) const override;
-
     bool isFormatCopyable(const GrBackendFormat&) const override;
 
     bool canFormatBeFBOColorAttachment(GrGLFormat) const;
@@ -341,7 +338,11 @@ public:
     /// Are textures with GL_TEXTURE_RECTANGLE type supported.
     bool rectangleTextureSupport() const { return fRectangleTextureSupport; }
 
-    bool mipmapLevelAndLodControlSupport() const { return fMipmapLevelAndLodControlSupport; }
+    /// Can set the BASE and MAX mip map level.
+    bool mipmapLevelControlSupport() const { return fMipmapLevelControlSupport; }
+
+    /// Can set the MIN/MAX LOD value.
+    bool mipmapLodControlSupport() const { return fMipmapLodControlSupport; }
 
     bool doManualMipmapping() const { return fDoManualMipmapping; }
 
@@ -514,6 +515,8 @@ private:
 
     GrSwizzle onGetReadSwizzle(const GrBackendFormat&, GrColorType) const override;
 
+    GrDstSampleType onGetDstSampleTypeForProxy(const GrRenderTargetProxy*) const override;
+
     GrGLStandard fStandard = kNone_GrGLStandard;
 
     SkTArray<StencilFormat, true> fStencilFormats;
@@ -543,7 +546,8 @@ private:
     bool fPartialFBOReadIsSlow : 1;
     bool fBindUniformLocationSupport : 1;
     bool fRectangleTextureSupport : 1;
-    bool fMipmapLevelAndLodControlSupport : 1;
+    bool fMipmapLevelControlSupport : 1;
+    bool fMipmapLodControlSupport : 1;
     bool fRGBAToBGRAReadbackConversionsAreSlow : 1;
     bool fUseBufferDataNullHint                : 1;
     bool fClearTextureSupport : 1;
@@ -712,8 +716,6 @@ private:
         // When the above two values are used to initialize a texture by uploading cleared data to
         // it the data should be of this color type.
         GrColorType fDefaultColorType = GrColorType::kUnknown;
-        // This value is only valid for regular formats. Compressed formats will be 0.
-        GrGLenum fBytesPerPixel = 0;
 
         bool fHaveQueriedImplementationReadSupport = false;
 

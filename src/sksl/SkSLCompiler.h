@@ -9,7 +9,6 @@
 #define SKSL_COMPILER
 
 #include <set>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include "src/sksl/SkSLASTFile.h"
@@ -38,17 +37,17 @@
 #define SK_SAMPLEMASK_BUILTIN             20
 #define SK_VERTEXID_BUILTIN               42
 #define SK_INSTANCEID_BUILTIN             43
-#define SK_CLIPDISTANCE_BUILTIN            3
 #define SK_INVOCATIONID_BUILTIN            8
 #define SK_POSITION_BUILTIN                0
+
+class SkBitSet;
 
 namespace SkSL {
 
 class ByteCode;
 class ExternalValue;
 class IRGenerator;
-struct IRIntrinsic;
-using IRIntrinsicMap = std::unordered_map<String, IRIntrinsic>;
+class IRIntrinsicMap;
 struct PipelineStageArgs;
 
 /**
@@ -119,14 +118,14 @@ public:
     Compiler& operator=(const Compiler&) = delete;
 
     /**
-     * Registers an ExternalValue as a top-level symbol which is visible in the global namespace.
+     * If externalValues is supplied, those values are registered in the symbol table of the
+     * Program, but ownership is *not* transferred. It is up to the caller to keep them alive.
      */
-    void registerExternalValue(ExternalValue* value);
-
-    std::unique_ptr<Program> convertProgram(Program::Kind kind, String text,
-                                            const Program::Settings& settings);
-
-    bool optimize(Program& program);
+    std::unique_ptr<Program> convertProgram(
+            Program::Kind kind,
+            String text,
+            const Program::Settings& settings,
+            const std::vector<std::unique_ptr<ExternalValue>>* externalValues = nullptr);
 
     bool toSPIRV(Program& program, OutputStream& out);
 
@@ -142,7 +141,7 @@ public:
 
     bool toMetal(Program& program, String* out);
 
-#if defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
+#if defined(SKSL_STANDALONE) || GR_TEST_UTILS
     bool toCPP(Program& program, String name, OutputStream& out);
 
     bool toH(Program& program, String name, OutputStream& out);
@@ -153,11 +152,6 @@ public:
 #if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
     bool toPipelineStage(Program& program, PipelineStageArgs* outArgs);
 #endif
-
-    /**
-     * Takes ownership of the given symbol. It will be destroyed when the compiler is destroyed.
-     */
-    const Symbol* takeOwnership(std::unique_ptr<const Symbol> symbol);
 
     void error(int offset, String msg) override;
 
@@ -173,9 +167,14 @@ public:
         return *fContext;
     }
 
-    static const char* OperatorName(Token::Kind token);
+    static const char* OperatorName(Token::Kind op);
 
-    static bool IsAssignment(Token::Kind token);
+    // Returns true if op is '=' or any compound assignment operator ('+=', '-=', etc.)
+    static bool IsAssignment(Token::Kind op);
+
+    // Given a compound assignment operator, returns the non-assignment version of the operator
+    // (e.g. '+=' becomes '+')
+    static Token::Kind RemoveAssignment(Token::Kind op);
 
     void processIncludeFile(Program::Kind kind, const char* path,
                             std::shared_ptr<SymbolTable> base,
@@ -183,11 +182,9 @@ public:
                             std::shared_ptr<SymbolTable>* outSymbolTable);
 
 private:
-
+    void loadFPIntrinsics();
     void loadGeometryIntrinsics();
-
     void loadInterpreterIntrinsics();
-
     void loadPipelineIntrinsics();
 
     void addDefinition(const Expression* lvalue, std::unique_ptr<Expression>* expr,
@@ -195,7 +192,7 @@ private:
 
     void addDefinitions(const BasicBlock::Node& node, DefinitionMap* definitions);
 
-    void scanCFG(CFG* cfg, BlockId block, std::set<BlockId>* workList);
+    void scanCFG(CFG* cfg, BlockId block, SkBitSet* processedSet);
 
     void computeDataFlow(CFG* cfg);
 
@@ -221,26 +218,39 @@ private:
                            bool* outUpdated,
                            bool* outNeedsRescan);
 
-    void scanCFG(FunctionDefinition& f);
+    /**
+     * Optimizes a function based on control flow analysis. Returns true if changes were made.
+     */
+    bool scanCFG(FunctionDefinition& f);
+
+    /**
+     * Optimize every function in the program.
+     */
+    bool optimize(Program& program);
 
     Position position(int offset);
 
+    std::shared_ptr<SymbolTable> fRootSymbolTable;
+
     std::shared_ptr<SymbolTable> fGpuSymbolTable;
     std::unique_ptr<IRIntrinsicMap> fGPUIntrinsics;
+    std::shared_ptr<SymbolTable> fInterpreterSymbolTable;
     std::unique_ptr<IRIntrinsicMap> fInterpreterIntrinsics;
-    std::unique_ptr<ASTFile> fGpuIncludeSource;
+
     std::vector<std::unique_ptr<ProgramElement>> fVertexInclude;
     std::shared_ptr<SymbolTable> fVertexSymbolTable;
-    std::vector<std::unique_ptr<ProgramElement>> fFragmentInclude;
+
     std::shared_ptr<SymbolTable> fFragmentSymbolTable;
+    std::unique_ptr<IRIntrinsicMap> fFragmentIntrinsics;
+
     std::vector<std::unique_ptr<ProgramElement>> fGeometryInclude;
     std::shared_ptr<SymbolTable> fGeometrySymbolTable;
-    std::vector<std::unique_ptr<ProgramElement>> fPipelineInclude;
+
     std::shared_ptr<SymbolTable> fPipelineSymbolTable;
-    std::shared_ptr<SymbolTable> fInterpreterSymbolTable;
-    std::vector<std::unique_ptr<ProgramElement>> fInterpreterInclude;
-    std::vector<std::unique_ptr<ProgramElement>> fFPInclude;
+    std::unique_ptr<IRIntrinsicMap> fPipelineIntrinsics;
+
     std::shared_ptr<SymbolTable> fFPSymbolTable;
+    std::unique_ptr<IRIntrinsicMap> fFPIntrinsics;
 
     Inliner fInliner;
     std::unique_ptr<IRGenerator> fIRGenerator;

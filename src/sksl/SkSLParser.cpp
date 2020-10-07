@@ -255,7 +255,7 @@ void Parser::error(int offset, String msg) {
 
 bool Parser::isType(StringFragment name) {
     const Symbol* s = fSymbols[name];
-    return s && s->fKind == Symbol::kType_Kind;
+    return s && s->kind() == Symbol::Kind::kType;
 }
 
 /* DIRECTIVE(#version) INT_LITERAL ("es" | "compatibility")? |
@@ -357,7 +357,7 @@ ASTNode::ID Parser::enumDeclaration() {
     if (!this->expect(Token::Kind::TK_LBRACE, "'{'")) {
         return ASTNode::ID::Invalid();
     }
-    fSymbols.add(this->text(name), std::make_unique<Type>(this->text(name), Type::kEnum_Kind));
+    fSymbols.add(this->text(name), std::make_unique<Type>(this->text(name), Type::TypeKind::kEnum));
     CREATE_NODE(result, name.fOffset, ASTNode::Kind::kEnum, this->text(name));
     if (!this->checkNext(Token::Kind::TK_RBRACE)) {
         Token id;
@@ -504,7 +504,7 @@ ASTNode::ID Parser::structDeclaration() {
         }
         ASTNode& declsNode = getNode(decls);
         const Symbol* symbol = fSymbols[(declsNode.begin() + 1)->getTypeData().fName];
-        SkASSERT(symbol && symbol->fKind == Symbol::kType_Kind);
+        SkASSERT(symbol && symbol->kind() == Symbol::Kind::kType);
         const Type* type = (const Type*) symbol;
         for (auto iter = declsNode.begin() + 2; iter != declsNode.end(); ++iter) {
             ASTNode& var = *iter;
@@ -518,7 +518,8 @@ ASTNode::ID Parser::structDeclaration() {
                 uint64_t columns = size.getInt();
                 String typeName = type->name() + "[" + to_string(columns) + "]";
                 type = fSymbols.takeOwnershipOfSymbol(
-                        std::make_unique<Type>(typeName, Type::kArray_Kind, *type, (int)columns));
+                        std::make_unique<Type>(typeName, Type::TypeKind::kArray, *type,
+                                               (int)columns));
             }
             fields.push_back(Type::Field(declsNode.begin()->getModifiers(), vd.fName, type));
             if (vd.fSizeCount ? (var.begin() + (vd.fSizeCount - 1))->fNext : var.fFirstChild) {
@@ -2019,8 +2020,17 @@ ASTNode::ID Parser::suffix(ASTNode::ID base) {
             getNode(result).addChild(e);
             return result;
         }
-        case Token::Kind::TK_DOT: // fall through
         case Token::Kind::TK_COLONCOLON: {
+            int offset = this->peek().fOffset;
+            StringFragment text;
+            if (this->identifier(&text)) {
+                CREATE_NODE(result, offset, ASTNode::Kind::kScope, std::move(text));
+                getNode(result).addChild(base);
+                return result;
+            }
+            return ASTNode::ID::Invalid();
+        }
+        case Token::Kind::TK_DOT: {
             int offset = this->peek().fOffset;
             StringFragment text;
             if (this->identifier(&text)) {
@@ -2028,7 +2038,7 @@ ASTNode::ID Parser::suffix(ASTNode::ID base) {
                 getNode(result).addChild(base);
                 return result;
             }
-            [[fallthrough]]; // FIXME(ethannicholas)
+            [[fallthrough]];
         }
         case Token::Kind::TK_FLOAT_LITERAL: {
             // Swizzles that start with a constant number, e.g. '.000r', will be tokenized as

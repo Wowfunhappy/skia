@@ -178,6 +178,8 @@ void SkCanvas::predrawNotify(const SkRect* rect, const SkPaint* paint,
 
 ///////////////////////////////////////////////////////////////////////////////
 
+namespace {
+
 /*  This is the record we keep for each SkBaseDevice that the user installs.
     The clip/matrix/proc are fields that reflect the top of the save/restore
     stack. Whenever the canvas changes, it marks a dirty flag, and then before
@@ -188,7 +190,6 @@ void SkCanvas::predrawNotify(const SkRect* rect, const SkPaint* paint,
 struct DeviceCM {
     DeviceCM*                      fNext;
     sk_sp<SkBaseDevice>            fDevice;
-    SkRasterClip                   fClip;
     std::unique_ptr<const SkPaint> fPaint; // may be null (in the future)
     SkMatrix                       fStashedMatrix; // original CTM; used by imagefilter in saveLayer
 
@@ -199,15 +200,13 @@ struct DeviceCM {
         , fStashedMatrix(stashed)
     {}
 
-    void reset(const SkIRect& bounds) {
+    void validate() {
         SkASSERT(!fPaint);
         SkASSERT(!fNext);
         SkASSERT(fDevice);
-        fClip.setRect(bounds);
     }
 };
 
-namespace {
 // Encapsulate state needed to restore from saveBehind()
 struct BackImage {
     sk_sp<SkSpecialImage> fImage;
@@ -262,10 +261,10 @@ public:
     void reset(const SkIRect& bounds) {
         SkASSERT(fLayer);
         SkASSERT(fDeferredSaveCount == 0);
+        fLayer->validate();
 
         fMatrix.setIdentity();
         fRasterClip.setRect(bounds);
-        fLayer->reset(bounds);
     }
 };
 
@@ -524,7 +523,11 @@ void SkCanvas::init(sk_sp<SkBaseDevice> device) {
 
 SkCanvas::SkCanvas()
     : fMCStack(sizeof(MCRec), fMCRecStorage, sizeof(fMCRecStorage))
+#ifdef SK_LEGACY_SURFACE_PROPS
     , fProps(SkSurfaceProps::kLegacyFontHost_InitType)
+#else
+    , fProps()
+#endif
 {
     inc_canvas();
 
@@ -542,7 +545,11 @@ SkCanvas::SkCanvas(int width, int height, const SkSurfaceProps* props)
 
 SkCanvas::SkCanvas(const SkIRect& bounds)
     : fMCStack(sizeof(MCRec), fMCRecStorage, sizeof(fMCRecStorage))
+#ifdef SK_LEGACY_SURFACE_PROPS
     , fProps(SkSurfaceProps::kLegacyFontHost_InitType)
+#else
+    , fProps()
+#endif
 {
     inc_canvas();
 
@@ -572,7 +579,11 @@ SkCanvas::SkCanvas(const SkBitmap& bitmap, const SkSurfaceProps& props)
 SkCanvas::SkCanvas(const SkBitmap& bitmap, std::unique_ptr<SkRasterHandleAllocator> alloc,
                    SkRasterHandleAllocator::Handle hndl)
     : fMCStack(sizeof(MCRec), fMCRecStorage, sizeof(fMCRecStorage))
+#ifdef SK_LEGACY_SURFACE_PROPS
     , fProps(SkSurfaceProps::kLegacyFontHost_InitType)
+#else
+    , fProps()
+#endif
     , fAllocator(std::move(alloc))
 {
     inc_canvas();
@@ -585,9 +596,7 @@ SkCanvas::SkCanvas(const SkBitmap& bitmap) : SkCanvas(bitmap, nullptr, nullptr) 
 
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
 SkCanvas::SkCanvas(const SkBitmap& bitmap, ColorBehavior)
-    : fMCStack(sizeof(MCRec), fMCRecStorage, sizeof(fMCRecStorage))
-    , fProps(SkSurfaceProps::kLegacyFontHost_InitType)
-    , fAllocator(nullptr)
+    : fMCStack(sizeof(MCRec), fMCRecStorage, sizeof(fMCRecStorage)), fProps(), fAllocator(nullptr)
 {
     inc_canvas();
 
@@ -1578,10 +1587,11 @@ void SkCanvas::clipRect(const SkRect& rect, SkClipOp op, bool doAA) {
     }
     this->checkForDeferredSave();
     ClipEdgeStyle edgeStyle = doAA ? kSoft_ClipEdgeStyle : kHard_ClipEdgeStyle;
-    this->onClipRect(rect, op, edgeStyle);
+    this->onClipRect(rect.makeSorted(), op, edgeStyle);
 }
 
 void SkCanvas::onClipRect(const SkRect& rect, SkClipOp op, ClipEdgeStyle edgeStyle) {
+    SkASSERT(rect.isSorted());
     const bool isAA = kSoft_ClipEdgeStyle == edgeStyle;
 
     FOR_EACH_TOP_DEVICE(device->clipRect(rect, op, isAA));
@@ -1885,11 +1895,6 @@ SkM44 SkCanvas::getLocalToDevice() const {
 GrRenderTargetContext* SkCanvas::internal_private_accessTopLayerRenderTargetContext() {
     SkBaseDevice* dev = this->getTopDevice();
     return dev ? dev->accessRenderTargetContext() : nullptr;
-}
-
-GrContext* SkCanvas::getGrContext() {
-    SkBaseDevice* device = this->getTopDevice();
-    return device ? device->context() : nullptr;
 }
 
 GrRecordingContext* SkCanvas::recordingContext() {

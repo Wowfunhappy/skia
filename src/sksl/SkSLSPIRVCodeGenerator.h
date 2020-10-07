@@ -45,17 +45,21 @@
 
 union ConstantValue {
     ConstantValue(int64_t i)
-        : fInt(i) {}
+        : fInt(i) {
+        SkASSERT(sizeof(*this) == sizeof(int64_t));
+    }
 
-    ConstantValue(double d)
-        : fDouble(d) {}
+    ConstantValue(SKSL_FLOAT f) {
+        memset(this, 0, sizeof(*this));
+        fFloat = f;
+    }
 
     bool operator==(const ConstantValue& other) const {
         return fInt == other.fInt;
     }
 
     int64_t fInt;
-    double fDouble;
+    SKSL_FLOAT fFloat;
 };
 
 enum class ConstantType {
@@ -148,7 +152,7 @@ private:
 
     SpvId nextId();
 
-    Type getActualType(const Type& type);
+    const Type& getActualType(const Type& type);
 
     SpvId getType(const Type& type);
 
@@ -387,8 +391,6 @@ private:
     SpvId fBoolTrue;
     SpvId fBoolFalse;
     std::unordered_map<std::pair<ConstantValue, ConstantType>, SpvId> fNumberConstants;
-    // The constant float2(0, 1), used in swizzling
-    SpvId fConstantZeroOneVector = 0;
     bool fSetupFragPosition;
     // label of the current block, or 0 if we are not in a block
     SpvId fCurrentBlock;

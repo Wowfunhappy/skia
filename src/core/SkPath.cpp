@@ -3053,13 +3053,14 @@ int SkPath::ConvertConicToQuads(const SkPoint& p0, const SkPoint& p1, const SkPo
     return conic.chopIntoQuadsPOW2(pts, pow2);
 }
 
-bool SkPathPriv::IsSimpleClosedRect(const SkPath& path, SkRect* rect, SkPathDirection* direction,
-                                    unsigned* start) {
+bool SkPathPriv::IsSimpleRect(const SkPath& path, bool isSimpleFill, SkRect* rect,
+                              SkPathDirection* direction, unsigned* start) {
     if (path.getSegmentMasks() != SkPath::kLine_SegmentMask) {
         return false;
     }
     SkPoint rectPts[5];
     int rectPtCnt = 0;
+    bool needsClose = !isSimpleFill;
     for (auto [v, verbPts, w] : SkPathPriv::Iterate(path)) {
         switch (v) {
             case SkPathVerb::kMove:
@@ -3081,12 +3082,16 @@ bool SkPathPriv::IsSimpleClosedRect(const SkPath& path, SkRect* rect, SkPathDire
                     rectPts[4] = rectPts[0];
                     rectPtCnt = 5;
                 }
+                needsClose = false;
                 break;
             case SkPathVerb::kQuad:
             case SkPathVerb::kConic:
             case SkPathVerb::kCubic:
                 return false;
         }
+    }
+    if (needsClose) {
+        return false;
     }
     if (rectPtCnt < 5) {
         return false;
@@ -3162,7 +3167,11 @@ void SkPathPriv::CreateDrawArcPath(SkPath* path, const SkRect& oval, SkScalar st
                                    SkScalar sweepAngle, bool useCenter, bool isFillNoPathEffect) {
     SkASSERT(!oval.isEmpty());
     SkASSERT(sweepAngle);
-
+#if defined(SK_BUILD_FOR_FUZZER)
+    if (sweepAngle > 3600.0f || sweepAngle < -3600.0f) {
+        return;
+    }
+#endif
     path->reset();
     path->setIsVolatile(true);
     path->setFillType(SkPathFillType::kWinding);

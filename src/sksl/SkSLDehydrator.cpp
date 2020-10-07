@@ -26,6 +26,7 @@
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
+#include "src/sksl/ir/SkSLInlineMarker.h"
 #include "src/sksl/ir/SkSLIntLiteral.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
 #include "src/sksl/ir/SkSLNullLiteral.h"
@@ -39,6 +40,7 @@
 #include "src/sksl/ir/SkSLSwitchStatement.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLSymbol.h"
+#include "src/sksl/ir/SkSLSymbolAlias.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 #include "src/sksl/ir/SkSLTernaryExpression.h"
 #include "src/sksl/ir/SkSLUnresolvedFunction.h"
@@ -142,13 +144,13 @@ void Dehydrator::write(const Symbol& s) {
         this->writeU16(id);
         return;
     }
-    switch (s.fKind) {
-        case Symbol::kFunctionDeclaration_Kind: {
+    switch (s.kind()) {
+        case Symbol::Kind::kFunctionDeclaration: {
             const FunctionDeclaration& f = s.as<FunctionDeclaration>();
             this->writeU8(Rehydrator::kFunctionDeclaration_Command);
             this->writeId(&f);
             this->write(f.fModifiers);
-            this->write(f.fName);
+            this->write(f.name());
             this->writeU8(f.fParameters.size());
             for (const Variable* p : f.fParameters) {
                 this->writeU16(this->symbolId(p));
@@ -156,7 +158,15 @@ void Dehydrator::write(const Symbol& s) {
             this->write(f.fReturnType);
             break;
         }
-        case Symbol::kUnresolvedFunction_Kind: {
+        case Symbol::Kind::kSymbolAlias: {
+            const SymbolAlias& alias = s.as<SymbolAlias>();
+            this->writeU8(Rehydrator::kSymbolAlias_Command);
+            this->writeId(&alias);
+            this->write(alias.name());
+            this->write(*alias.origSymbol());
+            break;
+        }
+        case Symbol::Kind::kUnresolvedFunction: {
             const UnresolvedFunction& f = s.as<UnresolvedFunction>();
             this->writeU8(Rehydrator::kUnresolvedFunction_Command);
             this->writeId(&f);
@@ -166,29 +176,29 @@ void Dehydrator::write(const Symbol& s) {
             }
             break;
         }
-        case Symbol::kType_Kind: {
+        case Symbol::Kind::kType: {
             const Type& t = s.as<Type>();
-            switch (t.kind()) {
-                case Type::kArray_Kind:
+            switch (t.typeKind()) {
+                case Type::TypeKind::kArray:
                     this->writeU8(Rehydrator::kArrayType_Command);
                     this->writeId(&t);
                     this->write(t.componentType());
-                    this->writeU8(t.columns());
+                    this->writeS8(t.columns());
                     break;
-                case Type::kEnum_Kind:
+                case Type::TypeKind::kEnum:
                     this->writeU8(Rehydrator::kEnumType_Command);
                     this->writeId(&t);
-                    this->write(t.fName);
+                    this->write(t.name());
                     break;
-                case Type::kNullable_Kind:
+                case Type::TypeKind::kNullable:
                     this->writeU8(Rehydrator::kNullableType_Command);
                     this->writeId(&t);
                     this->write(t.componentType());
                     break;
-                case Type::kStruct_Kind:
+                case Type::TypeKind::kStruct:
                     this->writeU8(Rehydrator::kStructType_Command);
                     this->writeId(&t);
-                    this->write(t.fName);
+                    this->write(t.name());
                     this->writeU8(t.fields().size());
                     for (const Type::Field& f : t.fields()) {
                         this->write(f.fModifiers);
@@ -199,28 +209,28 @@ void Dehydrator::write(const Symbol& s) {
                 default:
                     this->writeU8(Rehydrator::kSystemType_Command);
                     this->writeId(&t);
-                    this->write(t.fName);
+                    this->write(t.name());
             }
             break;
         }
-        case Symbol::kVariable_Kind: {
+        case Symbol::Kind::kVariable: {
             const Variable& v = s.as<Variable>();
             this->writeU8(Rehydrator::kVariable_Command);
             this->writeId(&v);
             this->write(v.fModifiers);
-            this->write(v.fName);
-            this->write(v.fType);
+            this->write(v.name());
+            this->write(v.type());
             this->writeU8(v.fStorage);
             break;
         }
-        case Symbol::kField_Kind: {
+        case Symbol::Kind::kField: {
             const Field& f = s.as<Field>();
             this->writeU8(Rehydrator::kField_Command);
-            this->writeU16(this->symbolId(&f.fOwner));
-            this->writeU8(f.fFieldIndex);
+            this->writeU16(this->symbolId(&f.owner()));
+            this->writeU8(f.fieldIndex());
             break;
         }
-        case Symbol::kExternal_Kind:
+        case Symbol::Kind::kExternal:
             SkASSERT(false);
             break;
     }
@@ -253,39 +263,39 @@ void Dehydrator::write(const SymbolTable& symbols) {
 
 void Dehydrator::write(const Expression* e) {
     if (e) {
-        switch (e->fKind) {
-            case Expression::kBinary_Kind: {
+        switch (e->kind()) {
+            case Expression::Kind::kBinary: {
                 const BinaryExpression& b = e->as<BinaryExpression>();
                 this->writeU8(Rehydrator::kBinary_Command);
-                this->write(b.fLeft.get());
-                this->writeU8((int) b.fOperator);
-                this->write(b.fRight.get());
-                this->write(b.fType);
+                this->write(&b.left());
+                this->writeU8((int) b.getOperator());
+                this->write(&b.right());
+                this->write(b.type());
                 break;
             }
-            case Expression::kBoolLiteral_Kind: {
+            case Expression::Kind::kBoolLiteral: {
                 const BoolLiteral& b = e->as<BoolLiteral>();
                 this->writeU8(Rehydrator::kBoolLiteral_Command);
-                this->writeU8(b.fValue);
+                this->writeU8(b.value());
                 break;
             }
-            case Expression::kConstructor_Kind: {
+            case Expression::Kind::kConstructor: {
                 const Constructor& c = e->as<Constructor>();
                 this->writeU8(Rehydrator::kConstructor_Command);
-                this->write(c.fType);
-                this->writeU8(c.fArguments.size());
-                for (const auto& a : c.fArguments) {
+                this->write(c.type());
+                this->writeU8(c.arguments().size());
+                for (const auto& a : c.arguments()) {
                     this->write(a.get());
                 }
                 break;
             }
-            case Expression::kExternalFunctionCall_Kind:
-            case Expression::kExternalValue_Kind:
+            case Expression::Kind::kExternalFunctionCall:
+            case Expression::Kind::kExternalValue:
                 // not implemented; doesn't seem like we'll ever need them from within an include
                 // file
                 SkASSERT(false);
                 break;
-            case Expression::kFieldAccess_Kind: {
+            case Expression::Kind::kFieldAccess: {
                 const FieldAccess& f = e->as<FieldAccess>();
                 this->writeU8(Rehydrator::kFieldAccess_Command);
                 this->write(f.fBase.get());
@@ -293,63 +303,63 @@ void Dehydrator::write(const Expression* e) {
                 this->writeU8(f.fOwnerKind);
                 break;
             }
-            case Expression::kFloatLiteral_Kind: {
+            case Expression::Kind::kFloatLiteral: {
                 const FloatLiteral& f = e->as<FloatLiteral>();
                 this->writeU8(Rehydrator::kFloatLiteral_Command);
                 FloatIntUnion u;
-                u.fFloat = f.fValue;
+                u.fFloat = f.value();
                 this->writeS32(u.fInt);
                 break;
             }
-            case Expression::kFunctionCall_Kind: {
+            case Expression::Kind::kFunctionCall: {
                 const FunctionCall& f = e->as<FunctionCall>();
                 this->writeU8(Rehydrator::kFunctionCall_Command);
-                this->write(f.fType);
-                this->writeId(&f.fFunction);
-                this->writeU8(f.fArguments.size());
-                for (const auto& a : f.fArguments) {
+                this->write(f.type());
+                this->writeId(&f.function());
+                this->writeU8(f.arguments().size());
+                for (const auto& a : f.arguments()) {
                     this->write(a.get());
                 }
                 break;
             }
-            case Expression::kIndex_Kind: {
+            case Expression::Kind::kIndex: {
                 const IndexExpression& i = e->as<IndexExpression>();
                 this->writeU8(Rehydrator::kIndex_Command);
                 this->write(i.fBase.get());
                 this->write(i.fIndex.get());
                 break;
             }
-            case Expression::kIntLiteral_Kind: {
+            case Expression::Kind::kIntLiteral: {
                 const IntLiteral& i = e->as<IntLiteral>();
                 this->writeU8(Rehydrator::kIntLiteral_Command);
-                this->writeS32(i.fValue);
+                this->writeS32(i.value());
                 break;
             }
-            case Expression::kNullLiteral_Kind:
+            case Expression::Kind::kNullLiteral:
                 this->writeU8(Rehydrator::kNullLiteral_Command);
                 break;
-            case Expression::kPostfix_Kind: {
+            case Expression::Kind::kPostfix: {
                 const PostfixExpression& p = e->as<PostfixExpression>();
                 this->writeU8(Rehydrator::kPostfix_Command);
                 this->writeU8((int) p.fOperator);
                 this->write(p.fOperand.get());
                 break;
             }
-            case Expression::kPrefix_Kind: {
+            case Expression::Kind::kPrefix: {
                 const PrefixExpression& p = e->as<PrefixExpression>();
                 this->writeU8(Rehydrator::kPrefix_Command);
                 this->writeU8((int) p.fOperator);
                 this->write(p.fOperand.get());
                 break;
             }
-            case Expression::kSetting_Kind: {
+            case Expression::Kind::kSetting: {
                 const Setting& s = e->as<Setting>();
                 this->writeU8(Rehydrator::kSetting_Command);
                 this->write(s.fName);
                 this->write(s.fValue.get());
                 break;
             }
-            case Expression::kSwizzle_Kind: {
+            case Expression::Kind::kSwizzle: {
                 const Swizzle& s = e->as<Swizzle>();
                 this->writeU8(Rehydrator::kSwizzle_Command);
                 this->write(s.fBase.get());
@@ -359,7 +369,7 @@ void Dehydrator::write(const Expression* e) {
                 }
                 break;
             }
-            case Expression::kTernary_Kind: {
+            case Expression::Kind::kTernary: {
                 const TernaryExpression& t = e->as<TernaryExpression>();
                 this->writeU8(Rehydrator::kTernary_Command);
                 this->write(t.fTest.get());
@@ -367,16 +377,16 @@ void Dehydrator::write(const Expression* e) {
                 this->write(t.fIfFalse.get());
                 break;
             }
-            case Expression::kVariableReference_Kind: {
+            case Expression::Kind::kVariableReference: {
                 const VariableReference& v = e->as<VariableReference>();
                 this->writeU8(Rehydrator::kVariableReference_Command);
-                this->writeId(&v.fVariable);
+                this->writeId(v.fVariable);
                 this->writeU8(v.fRefKind);
                 break;
             }
-            case Expression::kFunctionReference_Kind:
-            case Expression::kTypeReference_Kind:
-            case Expression::kDefined_Kind:
+            case Expression::Kind::kFunctionReference:
+            case Expression::Kind::kTypeReference:
+            case Expression::Kind::kDefined:
                 // shouldn't appear in finished code
                 SkASSERT(false);
                 break;
@@ -388,51 +398,51 @@ void Dehydrator::write(const Expression* e) {
 
 void Dehydrator::write(const Statement* s) {
     if (s) {
-        switch (s->fKind) {
-            case Statement::kBlock_Kind: {
+        switch (s->kind()) {
+            case Statement::Kind::kBlock: {
                 const Block& b = s->as<Block>();
                 this->writeU8(Rehydrator::kBlock_Command);
-                AutoDehydratorSymbolTable symbols(this, b.fSymbols);
-                this->writeU8(b.fStatements.size());
-                for (const std::unique_ptr<Statement>& blockStmt : b.fStatements) {
+                AutoDehydratorSymbolTable symbols(this, b.symbolTable());
+                this->writeU8(b.children().size());
+                for (const std::unique_ptr<Statement>& blockStmt : b.children()) {
                     this->write(blockStmt.get());
                 }
-                this->writeU8(b.fIsScope);
+                this->writeU8(b.isScope());
                 break;
             }
-            case Statement::kBreak_Kind:
+            case Statement::Kind::kBreak:
                 this->writeU8(Rehydrator::kBreak_Command);
                 break;
-            case Statement::kContinue_Kind:
+            case Statement::Kind::kContinue:
                 this->writeU8(Rehydrator::kContinue_Command);
                 break;
-            case Statement::kDiscard_Kind:
+            case Statement::Kind::kDiscard:
                 this->writeU8(Rehydrator::kDiscard_Command);
                 break;
-            case Statement::kDo_Kind: {
+            case Statement::Kind::kDo: {
                 const DoStatement& d = s->as<DoStatement>();
                 this->writeU8(Rehydrator::kDo_Command);
-                this->write(d.fStatement.get());
-                this->write(d.fTest.get());
+                this->write(d.statement().get());
+                this->write(d.test().get());
                 break;
             }
-            case Statement::kExpression_Kind: {
+            case Statement::Kind::kExpression: {
                 const ExpressionStatement& e = s->as<ExpressionStatement>();
                 this->writeU8(Rehydrator::kExpressionStatement_Command);
-                this->write(e.fExpression.get());
+                this->write(e.expression().get());
                 break;
             }
-            case Statement::kFor_Kind: {
+            case Statement::Kind::kFor: {
                 const ForStatement& f = s->as<ForStatement>();
                 this->writeU8(Rehydrator::kFor_Command);
-                this->write(f.fInitializer.get());
-                this->write(f.fTest.get());
-                this->write(f.fNext.get());
-                this->write(f.fStatement.get());
-                this->write(f.fSymbols);
+                this->write(f.initializer().get());
+                this->write(f.test().get());
+                this->write(f.next().get());
+                this->write(f.statement().get());
+                this->write(f.symbols());
                 break;
             }
-            case Statement::kIf_Kind: {
+            case Statement::Kind::kIf: {
                 const IfStatement& i = s->as<IfStatement>();
                 this->writeU8(Rehydrator::kIf_Command);
                 this->writeU8(i.fIsStatic);
@@ -441,16 +451,22 @@ void Dehydrator::write(const Statement* s) {
                 this->write(i.fIfFalse.get());
                 break;
             }
-            case Statement::kNop_Kind:
+            case Statement::Kind::kInlineMarker: {
+                const InlineMarker& i = s->as<InlineMarker>();
+                this->writeU8(Rehydrator::kInlineMarker_Command);
+                this->writeId(i.fFuncDecl);
+                break;
+            }
+            case Statement::Kind::kNop:
                 SkASSERT(false);
                 break;
-            case Statement::kReturn_Kind: {
+            case Statement::Kind::kReturn: {
                 const ReturnStatement& r = s->as<ReturnStatement>();
                 this->writeU8(Rehydrator::kReturn_Command);
                 this->write(r.fExpression.get());
                 break;
             }
-            case Statement::kSwitch_Kind: {
+            case Statement::Kind::kSwitch: {
                 const SwitchStatement& ss = s->as<SwitchStatement>();
                 this->writeU8(Rehydrator::kSwitch_Command);
                 this->writeU8(ss.fIsStatic);
@@ -466,7 +482,10 @@ void Dehydrator::write(const Statement* s) {
                 }
                 break;
             }
-            case Statement::kVarDeclaration_Kind: {
+            case Statement::Kind::kSwitchCase:
+                SkASSERT(false);
+                break;
+            case Statement::Kind::kVarDeclaration: {
                 const VarDeclaration& v = s->as<VarDeclaration>();
                 this->writeU8(Rehydrator::kVarDeclaration_Command);
                 this->writeU16(this->symbolId(v.fVar));
@@ -477,12 +496,12 @@ void Dehydrator::write(const Statement* s) {
                 this->write(v.fValue.get());
                 break;
             }
-            case Statement::kVarDeclarations_Kind: {
+            case Statement::Kind::kVarDeclarations: {
                 const VarDeclarationsStatement& v = s->as<VarDeclarationsStatement>();
                 this->write(*v.fDeclaration);
                 break;
             }
-            case Statement::kWhile_Kind: {
+            case Statement::Kind::kWhile: {
                 const WhileStatement& w = s->as<WhileStatement>();
                 this->writeU8(Rehydrator::kWhile_Command);
                 this->write(w.fTest.get());
@@ -496,25 +515,25 @@ void Dehydrator::write(const Statement* s) {
 }
 
 void Dehydrator::write(const ProgramElement& e) {
-    switch (e.fKind) {
-        case ProgramElement::kEnum_Kind: {
+    switch (e.kind()) {
+        case ProgramElement::Kind::kEnum: {
             const Enum& en = e.as<Enum>();
             this->writeU8(Rehydrator::kEnum_Command);
-            this->write(en.fTypeName);
-            AutoDehydratorSymbolTable symbols(this, en.fSymbols);
-            for (const std::unique_ptr<const Symbol>& s : en.fSymbols->fOwnedSymbols) {
-                SkASSERT(s->fKind == Symbol::kVariable_Kind);
+            this->write(en.typeName());
+            AutoDehydratorSymbolTable symbols(this, en.symbols());
+            for (const std::unique_ptr<const Symbol>& s : en.symbols()->fOwnedSymbols) {
+                SkASSERT(s->kind() == Symbol::Kind::kVariable);
                 Variable& v = (Variable&) *s;
                 SkASSERT(v.fInitialValue);
                 const IntLiteral& i = v.fInitialValue->as<IntLiteral>();
-                this->writeS32(i.fValue);
+                this->writeS32(i.value());
             }
             break;
         }
-        case ProgramElement::kExtension_Kind:
+        case ProgramElement::Kind::kExtension:
             SkASSERT(false);
             break;
-        case ProgramElement::kFunction_Kind: {
+        case ProgramElement::Kind::kFunction: {
             const FunctionDefinition& f = e.as<FunctionDefinition>();
             this->writeU8(Rehydrator::kFunctionDefinition_Command);
             this->writeU16(this->symbolId(&f.fDeclaration));
@@ -529,7 +548,7 @@ void Dehydrator::write(const ProgramElement& e) {
             }
             break;
         }
-        case ProgramElement::kInterfaceBlock_Kind: {
+        case ProgramElement::Kind::kInterfaceBlock: {
             const InterfaceBlock& i = e.as<InterfaceBlock>();
             this->writeU8(Rehydrator::kInterfaceBlock_Command);
             this->write(i.fVariable);
@@ -541,13 +560,13 @@ void Dehydrator::write(const ProgramElement& e) {
             }
             break;
         }
-        case ProgramElement::kModifiers_Kind:
+        case ProgramElement::Kind::kModifiers:
             SkASSERT(false);
             break;
-        case ProgramElement::kSection_Kind:
+        case ProgramElement::Kind::kSection:
             SkASSERT(false);
             break;
-        case ProgramElement::kVar_Kind: {
+        case ProgramElement::Kind::kVar: {
             const VarDeclarations& v = e.as<VarDeclarations>();
             this->writeU8(Rehydrator::kVarDeclarations_Command);
             this->write(v.fBaseType);

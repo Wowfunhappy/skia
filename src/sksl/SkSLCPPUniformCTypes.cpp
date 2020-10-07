@@ -13,7 +13,7 @@
 #include <mutex>
 #include <vector>
 
-#if defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
+#if defined(SKSL_STANDALONE) || GR_TEST_UTILS
 
 namespace SkSL {
 
@@ -253,7 +253,7 @@ static const std::vector<UniformCTypeMapper>& get_mappers() {
 // ctype and supports the sksl type of the variable.
 const UniformCTypeMapper* UniformCTypeMapper::Get(const Context& context, const Type& type,
                                                   const Layout& layout) {
-    if (type.kind() == Type::kArray_Kind) {
+    if (type.typeKind() == Type::TypeKind::kArray) {
         const UniformCTypeMapper* base = Get(context, type.componentType(), layout);
         return base ? base->arrayMapper(type.columns()) : nullptr;
     }
@@ -288,4 +288,4 @@ const UniformCTypeMapper* UniformCTypeMapper::Get(const Context& context, const 
 
 }  // namespace SkSL
 
-#endif // defined(SKSL_STANDALONE) || defined(GR_TEST_UTILS)
+#endif // defined(SKSL_STANDALONE) || GR_TEST_UTILS

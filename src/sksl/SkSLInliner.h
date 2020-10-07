@@ -12,12 +12,17 @@
 #include <unordered_map>
 
 #include "src/sksl/ir/SkSLProgram.h"
+#include "src/sksl/ir/SkSLVariableReference.h"
 
 namespace SkSL {
 
+class Block;
 class Context;
 struct Expression;
 struct FunctionCall;
+struct FunctionDefinition;
+struct InlineCandidate;
+struct InlineCandidateList;
 struct Statement;
 class SymbolTable;
 struct Variable;
@@ -40,16 +45,29 @@ public:
      * above the statement containing the inlined expression.
      */
     struct InlinedCall {
-        std::unique_ptr<Statement> fInlinedBody;
+        std::unique_ptr<Block> fInlinedBody;
         std::unique_ptr<Expression> fReplacementExpr;
     };
-    InlinedCall inlineCall(std::unique_ptr<FunctionCall>, SymbolTable*);
+    InlinedCall inlineCall(FunctionCall*, SymbolTable*, const FunctionDeclaration* caller);
 
-    /** Checks whether inlining is viable for a FunctionCall. */
-    bool isSafeToInline(const FunctionCall&, int inlineThreshold);
+    /** Adds a scope to inlined bodies returned by `inlineCall`, if one is required. */
+    void ensureScopedBlocks(Statement* inlinedBody, Statement* parentStmt);
+
+    /** Checks whether inlining is viable for a FunctionCall, modulo recursion and function size. */
+    bool isSafeToInline(const FunctionDefinition* functionDef);
+
+    /** Checks whether a function's size exceeds the inline threshold from Settings. */
+    bool isLargeFunction(const FunctionDefinition* functionDef);
+
+    /** Inlines any eligible functions that are found. Returns true if any changes are made. */
+    bool analyze(Program& program);
 
 private:
-    using VariableRewriteMap = std::unordered_map<const Variable*, const Variable*>;
+    using VariableRewriteMap = std::unordered_map<const Variable*, std::unique_ptr<Expression>>;
+
+    String uniqueNameForInlineVar(const String& baseName, SymbolTable* symbolTable);
+
+    void buildCandidateList(Program& program, InlineCandidateList* candidateList);
 
     std::unique_ptr<Expression> inlineExpression(int offset,
                                                  VariableRewriteMap* varMap,
@@ -57,9 +75,16 @@ private:
     std::unique_ptr<Statement> inlineStatement(int offset,
                                                VariableRewriteMap* varMap,
                                                SymbolTable* symbolTableForStatement,
-                                               const Variable* returnVar,
+                                               const Expression* resultExpr,
                                                bool haveEarlyReturns,
-                                               const Statement& statement);
+                                               const Statement& statement,
+                                               bool isBuiltinCode);
+
+    using InlinabilityCache = std::unordered_map<const FunctionDeclaration*, bool>;
+    bool candidateCanBeInlined(const InlineCandidate& candidate, InlinabilityCache* cache);
+
+    using LargeFunctionCache = std::unordered_map<const FunctionDeclaration*, bool>;
+    bool isLargeFunction(const InlineCandidate& candidate, LargeFunctionCache* cache);
 
     const Context* fContext = nullptr;
     const Program::Settings* fSettings = nullptr;

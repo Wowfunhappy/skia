@@ -17,18 +17,20 @@ namespace SkSL {
  * A literal floating point number.
  */
 struct FloatLiteral : public Expression {
-    static constexpr Kind kExpressionKind = kFloatLiteral_Kind;
+    static constexpr Kind kExpressionKind = Kind::kFloatLiteral;
 
-    FloatLiteral(const Context& context, int offset, double value)
-    : INHERITED(offset, kExpressionKind, *context.fFloatLiteral_Type)
-    , fValue(value) {}
+    FloatLiteral(const Context& context, int offset, float value)
+    : INHERITED(offset, FloatLiteralData{context.fFloatLiteral_Type.get(), value}) {}
 
-    FloatLiteral(int offset, double value, const Type* type)
-    : INHERITED(offset, kExpressionKind, *type)
-    , fValue(value) {}
+    FloatLiteral(int offset, float value, const Type* type)
+    : INHERITED(offset, FloatLiteralData{type, value}) {}
+
+    float value() const {
+        return this->floatLiteralData().fValue;
+    }
 
     String description() const override {
-        return to_string(fValue);
+        return to_string(this->value());
     }
 
     bool hasProperty(Property property) const override {
@@ -39,27 +41,26 @@ struct FloatLiteral : public Expression {
         return true;
     }
 
-    int coercionCost(const Type& target) const override {
+    CoercionCost coercionCost(const Type& target) const override {
         if (target.isFloat()) {
-            return 0;
+            return CoercionCost::Free();
         }
         return INHERITED::coercionCost(target);
     }
 
     bool compareConstant(const Context& context, const Expression& other) const override {
-        return fValue == other.as<FloatLiteral>().fValue;
+        return this->value() == other.as<FloatLiteral>().value();
     }
 
-    double getConstantFloat() const override {
-        return fValue;
+    SKSL_FLOAT getConstantFloat() const override {
+        return this->value();
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new FloatLiteral(fOffset, fValue, &fType));
+        return std::unique_ptr<Expression>(new FloatLiteral(fOffset, this->value(), &this->type()));
     }
 
-    const double fValue;
-
+private:
     using INHERITED = Expression;
 };
 

@@ -5,6 +5,9 @@
  * found in the LICENSE file.
  */
 
+#ifndef TestUtils_DEFINED
+#define TestUtils_DEFINED
+
 #include "include/core/SkBitmap.h"
 #include "src/gpu/GrDataUtils.h"
 #include "tests/Test.h"
@@ -48,6 +51,10 @@ bool CreateBackendTexture(GrDirectContext*,
                           GrMipmapped,
                           GrRenderable,
                           GrProtected = GrProtected::kNo);
+
+bool CreateBackendTexture(GrDirectContext*,
+                          GrBackendTexture* backendTex,
+                          const SkBitmap& bm);
 
 void DeleteBackendTexture(GrDirectContext*, const GrBackendTexture& backendTex);
 
@@ -106,3 +113,5 @@ void CheckSingleThreadedProxyRefs(skiatest::Reporter* reporter,
                                   GrSurfaceProxy* proxy,
                                   int32_t expectedProxyRefs,
                                   int32_t expectedBackingRefs);
+
+#endif

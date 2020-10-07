@@ -9,36 +9,59 @@
 #define SKSL_SYMBOL
 
 #include "src/sksl/ir/SkSLIRNode.h"
+#include "src/sksl/ir/SkSLProgramElement.h"
 
 namespace SkSL {
 
 /**
  * Represents a symboltable entry.
  */
-struct Symbol : public IRNode {
-    enum Kind {
-        kFunctionDeclaration_Kind,
-        kUnresolvedFunction_Kind,
-        kType_Kind,
-        kVariable_Kind,
-        kField_Kind,
-        kExternal_Kind
+class Symbol : public IRNode {
+public:
+    enum class Kind {
+        kExternal = (int) ProgramElement::Kind::kLast + 1,
+        kField,
+        kFunctionDeclaration,
+        kSymbolAlias,
+        kType,
+        kUnresolvedFunction,
+        kVariable,
+
+        kFirst = kExternal,
+        kLast = kVariable
     };
 
-    Symbol(int offset, Kind kind, StringFragment name)
-    : INHERITED(offset)
-    , fKind(kind)
-    , fName(name) {}
+    Symbol(int offset, Kind kind, StringFragment name, const Type* type = nullptr)
+    : INHERITED(offset, (int) kind, SymbolData{name, type}) {
+        SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
+    }
+
+    Symbol(int offset, const FieldData& data)
+    : INHERITED(offset, (int) Kind::kField, data) {}
+
+    Symbol(int offset, const SymbolAliasData& data)
+    : INHERITED(offset, (int) Kind::kSymbolAlias, data) {}
+
+    Symbol(const Symbol&) = default;
+    Symbol& operator=(const Symbol&) = default;
 
     ~Symbol() override {}
 
+    Kind kind() const {
+        return (Kind) fKind;
+    }
+
+    virtual StringFragment name() const {
+        return this->symbolData().fName;
+    }
+
     /**
      *  Use is<T> to check the type of a symbol.
-     *  e.g. replace `sym.fKind == Symbol::kVariable_Kind` with `sym.is<Variable>()`.
+     *  e.g. replace `sym.kind() == Symbol::Kind::kVariable` with `sym.is<Variable>()`.
      */
     template <typename T>
     bool is() const {
-        return this->fKind == T::kSymbolKind;
+        return this->kind() == T::kSymbolKind;
     }
 
     /**
@@ -56,9 +79,7 @@ struct Symbol : public IRNode {
         return static_cast<T&>(*this);
     }
 
-    Kind fKind;
-    StringFragment fName;
-
+private:
     using INHERITED = IRNode;
 };
 

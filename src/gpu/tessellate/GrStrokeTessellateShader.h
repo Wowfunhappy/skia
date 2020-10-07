@@ -10,7 +10,9 @@
 
 #include "src/gpu/tessellate/GrPathShader.h"
 
+#include "include/core/SkStrokeRec.h"
 #include "src/gpu/tessellate/GrTessellationPathRenderer.h"
+#include <array>
 
 class GrGLSLUniformHandler;
 
@@ -30,41 +32,29 @@ class GrGLSLUniformHandler;
 //     * Perspective is not supported.
 //
 // Tessellated stroking works by creating stroke-width, orthogonal edges at set locations along the
-// curve and then connecting them with a triangle strip. These orthogonal edges come from two
-// different sets: "parametric edges" and "radial edges". Parametric edges are spaced evenly in the
-// parametric sense, and radial edges divide the curve's _rotation_ into even steps. The
-// tessellation shader evaluates both sets of edges and sorts them into a single triangle strip.
-// With this combined set of edges we can stroke any curve, regardless of curvature.
-//
-// A patch is either a "cubic" (single stroked bezier curve with butt caps) or a "join". A patch is
-// defined by 5 points as follows:
-//
-//   P0..P3           : Represent the cubic control points.
-//   (P4.x == 0)      : The patch is a normal cubic.
-//   (abs(P4.x) == 1) : The patch is a bevel join.
-//   (abs(P4.x) == 2) : The patch is a miter join.
-//                      (NOTE: If miterLimitOrZero == 0, then miter join patches are illegal.)
-//   (abs(P4.x) >= 3) : The patch is a round join.
-//   (P4.x < 0)       : The patch join is double sided. (Positive value joins only draw on the
-//                      outer side of their junction.)
-//   P4.y             : Represents the stroke radius.
-//
-// If a patch is a join, P0 must equal the control point coming into the junction, P1 and P2 must
-// equal the junction point, and P3 must equal the control point going out. It's imperative that a
-// junction's control points match the control points of their neighbor cubics exactly, or the
-// seaming might not be water tight. (Also note that if P1==P0 or P2==P3, the junction needs to be
-// given its neighbor's opposite cubic control point.)
-//
-// To use this shader, construct a GrProgramInfo with a primitiveType of "kPatches" and a
-// tessellationPatchVertexCount of 5.
+// curve and then connecting them with a quad strip. These orthogonal edges come from two different
+// sets: "parametric edges" and "radial edges". Parametric edges are spaced evenly in the parametric
+// sense, and radial edges divide the curve's _rotation_ into even steps. The tessellation shader
+// evaluates both sets of edges and sorts them into a single quad strip. With this combined set of
+// edges we can stroke any curve, regardless of curvature.
 class GrStrokeTessellateShader : public GrPathShader {
 public:
-    constexpr static float kStandardCubicType = 0;
-    constexpr static float kBevelJoinType = 1;
-    constexpr static float kMiterJoinType = 2;
-    constexpr static float kRoundJoinType = 3;
-
-    constexpr static int kNumVerticesPerPatch = 5;
+    // The vertex array bound for this shader should contain a vector of Patch structs. A Patch is
+    // a join followed by a cubic stroke.
+    struct Patch {
+        // A join calculates its starting angle using fPrevControlPoint.
+        SkPoint fPrevControlPoint;
+        // fPts define the cubic stroke as well as the ending angle of the previous join.
+        //
+        // If fPts[0] == fPrevControlPoint, then no join is emitted.
+        //
+        // fPts=[p0, p3, p3, p3] is a reserved pattern that means this patch is a join only, whose
+        // start and end tangents are (fPts[0] - fPrevControlPoint) and (fPts[3] - fPts[0]).
+        //
+        // fPts=[p0, p0, p0, p3] is a reserved pattern that means this patch is a cusp point
+        // anchored on p0 and rotating from (fPts[0] - fPrevControlPoint) to (fPts[3] - fPts[0]).
+        std::array<SkPoint, 4> fPts;
+    };
 
     // 'matrixScale' is used to set up an appropriate number of tessellation triangles. It should be
     // equal to viewMatrix.getMaxScale(). (This works because perspective isn't supported.)
@@ -73,16 +63,20 @@ public:
     // be miter joins.
     //
     // 'viewMatrix' is applied to the geometry post tessellation. It cannot have perspective.
-    GrStrokeTessellateShader(float matrixScale, float miterLimit, const SkMatrix& viewMatrix,
-                             SkPMColor4f color)
+    GrStrokeTessellateShader(const SkStrokeRec& stroke, float matrixScale,
+                             const SkMatrix& viewMatrix, SkPMColor4f color)
             : GrPathShader(kTessellate_GrStrokeTessellateShader_ClassID, viewMatrix,
-                           GrPrimitiveType::kPatches, kNumVerticesPerPatch)
+                           GrPrimitiveType::kPatches, 1)
+            , fStroke(stroke)
             , fMatrixScale(matrixScale)
-            , fMiterLimit(miterLimit)
             , fColor(color) {
-        constexpr static Attribute kInputPointAttrib{"inputPoint", kFloat2_GrVertexAttribType,
-                                                     kFloat2_GrSLType};
-        this->setVertexAttributes(&kInputPointAttrib, 1);
+        SkASSERT(!fStroke.isHairlineStyle());  // No hairline support yet.
+        constexpr static Attribute kInputPointAttribs[] = {
+                {"inputPrevCtrlPt", kFloat2_GrVertexAttribType, kFloat2_GrSLType},
+                {"inputPts01", kFloat4_GrVertexAttribType, kFloat4_GrSLType},
+                {"inputPts23", kFloat4_GrVertexAttribType, kFloat4_GrSLType}};
+        this->setVertexAttributes(kInputPointAttribs, SK_ARRAY_COUNT(kInputPointAttribs));
+        SkASSERT(this->vertexStride() == sizeof(Patch));
     }
 
 private:
@@ -101,8 +95,8 @@ private:
                                          const GrGLSLUniformHandler&,
                                          const GrShaderCaps&) const override;
 
+    const SkStrokeRec fStroke;
     const float fMatrixScale;
-    const float fMiterLimit;
     const SkPMColor4f fColor;
 
     class Impl;

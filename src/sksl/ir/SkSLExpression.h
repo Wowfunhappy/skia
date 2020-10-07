@@ -8,6 +8,8 @@
 #ifndef SKSL_EXPRESSION
 #define SKSL_EXPRESSION
 
+#include "src/sksl/SkSLTinyUnorderedMap.h"
+#include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLType.h"
 
 #include <unordered_map>
@@ -18,33 +20,36 @@ struct Expression;
 class IRGenerator;
 struct Variable;
 
-typedef std::unordered_map<const Variable*, std::unique_ptr<Expression>*> DefinitionMap;
+using DefinitionMap = TinyUnorderedMap<const Variable*, std::unique_ptr<Expression>*>;
 
 /**
  * Abstract supertype of all expressions.
  */
 struct Expression : public IRNode {
-    enum Kind {
-        kBinary_Kind,
-        kBoolLiteral_Kind,
-        kConstructor_Kind,
-        kExternalFunctionCall_Kind,
-        kExternalValue_Kind,
-        kIntLiteral_Kind,
-        kFieldAccess_Kind,
-        kFloatLiteral_Kind,
-        kFunctionReference_Kind,
-        kFunctionCall_Kind,
-        kIndex_Kind,
-        kNullLiteral_Kind,
-        kPrefix_Kind,
-        kPostfix_Kind,
-        kSetting_Kind,
-        kSwizzle_Kind,
-        kTernary_Kind,
-        kTypeReference_Kind,
-        kVariableReference_Kind,
-        kDefined_Kind
+    enum class Kind {
+        kBinary = (int) Statement::Kind::kLast + 1,
+        kBoolLiteral,
+        kConstructor,
+        kDefined,
+        kExternalFunctionCall,
+        kExternalValue,
+        kIntLiteral,
+        kFieldAccess,
+        kFloatLiteral,
+        kFunctionReference,
+        kFunctionCall,
+        kIndex,
+        kNullLiteral,
+        kPrefix,
+        kPostfix,
+        kSetting,
+        kSwizzle,
+        kTernary,
+        kTypeReference,
+        kVariableReference,
+
+        kFirst = kBinary,
+        kLast = kVariableReference
     };
 
     enum class Property {
@@ -52,18 +57,46 @@ struct Expression : public IRNode {
         kContainsRTAdjust
     };
 
-    Expression(int offset, Kind kind, const Type& type)
-    : INHERITED(offset)
-    , fKind(kind)
-    , fType(std::move(type)) {}
+    Expression(int offset, const BoolLiteralData& data)
+        : INHERITED(offset, (int) Kind::kBoolLiteral, data) {
+    }
+
+    Expression(int offset, Kind kind, const ExternalValueData& data)
+        : INHERITED(offset, (int) kind, data) {
+        SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
+    }
+
+    Expression(int offset, const FloatLiteralData& data)
+        : INHERITED(offset, (int) Kind::kFloatLiteral, data) {}
+
+    Expression(int offset, const FunctionCallData& data)
+        : INHERITED(offset, (int) Kind::kFunctionCall, data) {}
+
+    Expression(int offset, const IntLiteralData& data)
+        : INHERITED(offset, (int) Kind::kIntLiteral, data) {
+    }
+
+    Expression(int offset, Kind kind, const Type* type)
+        : INHERITED(offset, (int) kind, type) {
+        SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
+    }
+
+    Expression(int offset, Kind kind, const TypeTokenData& data)
+        : INHERITED(offset, (int) kind, data) {
+        SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
+    }
+
+    Kind kind() const {
+        return (Kind) fKind;
+    }
 
     /**
      *  Use is<T> to check the type of an expression.
-     *  e.g. replace `e.fKind == Expression::kIntLiteral_Kind` with `e.is<IntLiteral>()`.
+     *  e.g. replace `e.kind() == Expression::Kind::kIntLiteral` with `e.is<IntLiteral>()`.
      */
     template <typename T>
     bool is() const {
-        return this->fKind == T::kExpressionKind;
+        return this->kind() == T::kExpressionKind;
     }
 
     /**
@@ -110,7 +143,7 @@ struct Expression : public IRNode {
      * For an expression which evaluates to a constant float, returns the value. Otherwise calls
      * ABORT.
      */
-    virtual double getConstantFloat() const {
+    virtual SKSL_FLOAT getConstantFloat() const {
         ABORT("not a constant float");
     }
 
@@ -145,8 +178,8 @@ struct Expression : public IRNode {
         return nullptr;
     }
 
-    virtual int coercionCost(const Type& target) const {
-        return fType.coercionCost(target);
+    virtual CoercionCost coercionCost(const Type& target) const {
+        return this->type().coercionCost(target);
     }
 
     /**
@@ -178,9 +211,6 @@ struct Expression : public IRNode {
     }
 
     virtual std::unique_ptr<Expression> clone() const = 0;
-
-    const Kind fKind;
-    const Type& fType;
 
     using INHERITED = IRNode;
 };

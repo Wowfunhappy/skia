@@ -14,7 +14,6 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "src/core/SkImagePriv.h"
-#include "src/core/SkScopeExit.h"
 #include "src/gpu/GrAHardwareBufferUtils.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrContextPriv.h"
@@ -37,10 +36,6 @@ SkSurface_Gpu::SkSurface_Gpu(sk_sp<SkGpuDevice> device)
 }
 
 SkSurface_Gpu::~SkSurface_Gpu() {
-}
-
-GrContext* SkSurface_Gpu::onGetContext_deprecated() {
-    return fDevice->context();
 }
 
 GrRecordingContext* SkSurface_Gpu::onGetRecordingContext() {
@@ -103,9 +98,7 @@ sk_sp<SkImage> SkSurface_Gpu::onNewImageSnapshot(const SkIRect* subset) {
         return nullptr;
     }
 
-    // CONTEXT TODO: remove this use of 'backdoor' to create an SkImage. The issue is that
-    // SkImages still require a GrContext but the SkGpuDevice only holds a GrRecordingContext.
-    GrContext* context = fDevice->recordingContext()->priv().backdoor();
+    auto rContext = fDevice->recordingContext();
 
     if (!rtc->asSurfaceProxy()) {
         return nullptr;
@@ -119,7 +112,7 @@ sk_sp<SkImage> SkSurface_Gpu::onNewImageSnapshot(const SkIRect* subset) {
         // want to ever retarget the SkSurface at another buffer we create. Force a copy now to
         // avoid copy-on-write.
         auto rect = subset ? *subset : SkIRect::MakeSize(rtc->dimensions());
-        srcView = GrSurfaceProxyView::Copy(context, std::move(srcView), rtc->mipmapped(), rect,
+        srcView = GrSurfaceProxyView::Copy(rContext, std::move(srcView), rtc->mipmapped(), rect,
                                            SkBackingFit::kExact, budgeted);
     }
 
@@ -129,7 +122,7 @@ sk_sp<SkImage> SkSurface_Gpu::onNewImageSnapshot(const SkIRect* subset) {
         // The renderTargetContext coming out of SkGpuDevice should always be exact and the
         // above copy creates a kExact surfaceContext.
         SkASSERT(srcView.proxy()->priv().isExact());
-        image = sk_make_sp<SkImage_Gpu>(sk_ref_sp(context), kNeedNewImageUniqueID,
+        image = sk_make_sp<SkImage_Gpu>(sk_ref_sp(rContext), kNeedNewImageUniqueID,
                                         std::move(srcView), info.colorType(), info.alphaType(),
                                         info.refColorSpace());
     }
@@ -613,6 +606,13 @@ bool validate_backend_render_target(const GrCaps* caps, const GrBackendRenderTar
     if (!caps->isFormatAsColorTypeRenderable(grCT, rt.getBackendFormat(), rt.sampleCnt())) {
         return false;
     }
+
+    // We require the stencil bits to be either 0, 8, or 16.
+    int stencilBits = rt.stencilBits();
+    if (stencilBits != 0 && stencilBits != 8 && stencilBits != 16) {
+        return false;
+    }
+
     return true;
 }
 
@@ -624,11 +624,10 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendRenderTarget(GrContext* context,
                                                         const SkSurfaceProps* props,
                                                         SkSurface::RenderTargetReleaseProc relProc,
                                                         SkSurface::ReleaseContext releaseContext) {
-    SkScopeExit callProc([&] {
-        if (relProc) {
-            relProc(releaseContext);
-        }
-    });
+    sk_sp<GrRefCntedCallback> releaseHelper;
+    if (relProc) {
+        releaseHelper.reset(new GrRefCntedCallback(relProc, releaseContext));
+    }
 
     if (!context) {
         return nullptr;
@@ -644,13 +643,15 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendRenderTarget(GrContext* context,
         return nullptr;
     }
 
-    auto rtc = GrRenderTargetContext::MakeFromBackendRenderTarget(
-            context, grColorType, std::move(colorSpace), rt, origin, props, relProc,
-            releaseContext);
+    auto rtc = GrRenderTargetContext::MakeFromBackendRenderTarget(context,
+                                                                  grColorType,
+                                                                  std::move(colorSpace),
+                                                                  rt,
+                                                                  origin,
+                                                                  props, std::move(releaseHelper));
     if (!rtc) {
         return nullptr;
     }
-    callProc.clear();
 
     auto device = SkGpuDevice::Make(context, std::move(rtc), SkGpuDevice::kUninit_InitContents);
     if (!device) {
@@ -766,12 +767,12 @@ sk_sp<SkSurface> SkSurface::MakeFromAHardwareBuffer(GrContext* context,
 }
 #endif
 
-void SkSurface::flushAndSubmit() {
+void SkSurface::flushAndSubmit(bool syncCpu) {
     this->flush(BackendSurfaceAccess::kNoAccess, GrFlushInfo());
 
     auto direct = GrAsDirectContext(this->recordingContext());
     if (direct) {
-        direct->submit();
+        direct->submit(syncCpu);
     }
 }
 

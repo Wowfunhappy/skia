@@ -282,13 +282,7 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeFromBackendRen
         const GrBackendRenderTarget& rt,
         GrSurfaceOrigin origin,
         const SkSurfaceProps* surfaceProps,
-        ReleaseProc releaseProc,
-        ReleaseContext releaseCtx) {
-    sk_sp<GrRefCntedCallback> releaseHelper;
-    if (releaseProc) {
-        releaseHelper.reset(new GrRefCntedCallback(releaseProc, releaseCtx));
-    }
-
+        sk_sp<GrRefCntedCallback> releaseHelper) {
     sk_sp<GrSurfaceProxy> proxy(
             context->priv().proxyProvider()->wrapBackendRenderTarget(rt, std::move(releaseHelper)));
     if (!proxy) {
@@ -489,8 +483,9 @@ void GrRenderTargetContext::drawGlyphRunList(const GrClip* clip,
         blob = textBlobCache->find(key);
     }
 
-    const SkMatrix& drawMatrix(viewMatrix.localToDevice());
-    if (blob == nullptr || !blob->canReuse(blobPaint, drawMatrix, drawOrigin)) {
+    SkMatrix drawMatrix(viewMatrix.localToDevice());
+    drawMatrix.preTranslate(drawOrigin.x(), drawOrigin.y());
+    if (blob == nullptr || !blob->canReuse(blobPaint, drawMatrix)) {
         if (blob != nullptr) {
             // We have to remake the blob because changes may invalidate our masks.
             // TODO we could probably get away with reuse most of the time if the pointer is unique,
@@ -504,9 +499,14 @@ void GrRenderTargetContext::drawGlyphRunList(const GrClip* clip,
             textBlobCache->add(glyphRunList, blob);
         }
 
+        // TODO(herb): redo processGlyphRunList to handle shifted draw matrix.
         bool supportsSDFT = fContext->priv().caps()->shaderCaps()->supportsDistanceFieldText();
-        fGlyphPainter.processGlyphRunList(
-                glyphRunList, drawMatrix, fSurfaceProps, supportsSDFT, options, blob.get());
+        fGlyphPainter.processGlyphRunList(glyphRunList,
+                                          viewMatrix.localToDevice(), // Use unshifted matrix.
+                                          fSurfaceProps,
+                                          supportsSDFT,
+                                          options,
+                                          blob.get());
     }
 
     for (GrSubRun* subRun : blob->subRunList()) {
@@ -1992,7 +1992,9 @@ void GrRenderTargetContext::addDrawOp(const GrClip* clip, std::unique_ptr<GrDraw
                                       const std::function<WillAddOpFn>& willAddFn) {
     ASSERT_SINGLE_OWNER
     if (fContext->abandoned()) {
-        fContext->priv().opMemoryPool()->release(std::move(op));
+        #if !defined(GR_OP_ALLOCATE_USE_NEW)
+            fContext->priv().opMemoryPool()->release(std::move(op));
+        #endif
         return;
     }
     SkDEBUGCODE(this->validate();)
@@ -2025,7 +2027,9 @@ void GrRenderTargetContext::addDrawOp(const GrClip* clip, std::unique_ptr<GrDraw
     }
 
     if (skipDraw) {
-        fContext->priv().opMemoryPool()->release(std::move(op));
+        #if !defined(GR_OP_ALLOCATE_USE_NEW)
+            fContext->priv().opMemoryPool()->release(std::move(op));
+        #endif
         return;
     }
 
@@ -2050,7 +2054,9 @@ void GrRenderTargetContext::addDrawOp(const GrClip* clip, std::unique_ptr<GrDraw
     GrXferProcessor::DstProxyView dstProxyView;
     if (analysis.requiresDstTexture()) {
         if (!this->setupDstProxyView(*op, &dstProxyView)) {
-            fContext->priv().opMemoryPool()->release(std::move(op));
+            #if !defined(GR_OP_ALLOCATE_USE_NEW)
+                fContext->priv().opMemoryPool()->release(std::move(op));
+            #endif
             return;
         }
     }
@@ -2060,7 +2066,8 @@ void GrRenderTargetContext::addDrawOp(const GrClip* clip, std::unique_ptr<GrDraw
         willAddFn(op.get(), opsTask->uniqueID());
     }
     opsTask->addDrawOp(this->drawingManager(), std::move(op), analysis, std::move(appliedClip),
-                       dstProxyView,GrTextureResolveManager(this->drawingManager()), *this->caps());
+                       dstProxyView, GrTextureResolveManager(this->drawingManager()),
+                       *this->caps());
 }
 
 bool GrRenderTargetContext::setupDstProxyView(const GrOp& op,
@@ -2072,16 +2079,21 @@ bool GrRenderTargetContext::setupDstProxyView(const GrOp& op,
         return false;
     }
 
-    if (this->caps()->textureBarrierSupport() &&
-        !this->asSurfaceProxy()->requiresManualMSAAResolve()) {
-        if (this->asTextureProxy()) {
-            // The render target is a texture, so we can read from it directly in the shader. The XP
-            // will be responsible to detect this situation and request a texture barrier.
-            dstProxyView->setProxyView(this->readSurfaceView());
-            dstProxyView->setOffset(0, 0);
-            return true;
-        }
+    if (fDstSampleType == GrDstSampleType::kNone) {
+        fDstSampleType = this->caps()->getDstSampleTypeForProxy(this->asRenderTargetProxy());
     }
+    SkASSERT(fDstSampleType != GrDstSampleType::kNone);
+
+    if (GrDstSampleTypeDirectlySamplesDst(fDstSampleType)) {
+        // The render target is a texture or input attachment, so we can read from it directly in
+        // the shader. The XP will be responsible to detect this situation and request a texture
+        // barrier.
+        dstProxyView->setProxyView(this->readSurfaceView());
+        dstProxyView->setOffset(0, 0);
+        dstProxyView->setDstSampleType(fDstSampleType);
+        return true;
+    }
+    SkASSERT(fDstSampleType == GrDstSampleType::kAsTextureCopy);
 
     GrColorType colorType = this->colorInfo().colorType();
     // MSAA consideration: When there is support for reading MSAA samples in the shader we could
@@ -2115,6 +2127,7 @@ bool GrRenderTargetContext::setupDstProxyView(const GrOp& op,
 
     dstProxyView->setProxyView({std::move(copy), this->origin(), this->readSwizzle()});
     dstProxyView->setOffset(dstOffset);
+    dstProxyView->setDstSampleType(fDstSampleType);
     return true;
 }
 

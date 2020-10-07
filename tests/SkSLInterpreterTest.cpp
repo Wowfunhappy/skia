@@ -26,9 +26,8 @@ void test(skiatest::Reporter* r, const char* src, float* in, float* expected,
           bool exactCompare = true) {
     SkSL::Compiler compiler;
     SkSL::Program::Settings settings;
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-                                                             SkSL::Program::kGeneric_Kind,
-                                                             SkSL::String(src), settings);
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
+                                                                     SkSL::String(src), settings);
     REPORTER_ASSERT(r, program);
     if (program) {
         std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);
@@ -70,8 +69,9 @@ void test(skiatest::Reporter* r, const char* src, float* in, float* expected,
 
 void vec_test(skiatest::Reporter* r, const char* src) {
     SkSL::Compiler compiler;
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-            SkSL::Program::kGeneric_Kind, SkSL::String(src), SkSL::Program::Settings());
+    SkSL::Program::Settings settings;
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
+                                                                     SkSL::String(src), settings);
     if (!program) {
         REPORT_FAILURE(r, "!program", SkString(compiler.errorText().c_str()));
         return;
@@ -134,9 +134,8 @@ void test(skiatest::Reporter* r, const char* src, float inR, float inG, float in
           float expectedR, float expectedG, float expectedB, float expectedA) {
     SkSL::Compiler compiler;
     SkSL::Program::Settings settings;
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-                                                             SkSL::Program::kGeneric_Kind,
-                                                             SkSL::String(src), settings);
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
+                                                                     SkSL::String(src), settings);
     REPORTER_ASSERT(r, program);
     if (program) {
         std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);
@@ -623,9 +622,8 @@ DEF_TEST(SkSLInterpreterCompound, r) {
     SkSL::Compiler compiler;
     SkSL::Program::Settings settings;
     settings.fRemoveDeadFunctions = false;
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-                                                             SkSL::Program::kGeneric_Kind,
-                                                             SkSL::String(src), settings);
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
+                                                                     SkSL::String(src), settings);
     REPORTER_ASSERT(r, program);
 
     std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);
@@ -700,8 +698,9 @@ DEF_TEST(SkSLInterpreterCompound, r) {
 
 static void expect_failure(skiatest::Reporter* r, const char* src) {
     SkSL::Compiler compiler;
-    auto program = compiler.convertProgram(SkSL::Program::kGeneric_Kind, SkSL::String(src),
-                                           SkSL::Program::Settings());
+    SkSL::Program::Settings settings;
+    auto program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
+                                           SkSL::String(src), settings);
     REPORTER_ASSERT(r, program);
 
     auto byteCode = compiler.toByteCode(*program);
@@ -711,8 +710,9 @@ static void expect_failure(skiatest::Reporter* r, const char* src) {
 
 static void expect_run_failure(skiatest::Reporter* r, const char* src, float* in) {
     SkSL::Compiler compiler;
-    auto program = compiler.convertProgram(SkSL::Program::kGeneric_Kind, SkSL::String(src),
-                                           SkSL::Program::Settings());
+    SkSL::Program::Settings settings;
+    auto program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
+                                           SkSL::String(src), settings);
     REPORTER_ASSERT(r, program);
 
     auto byteCode = compiler.toByteCode(*program);
@@ -765,9 +765,8 @@ DEF_TEST(SkSLInterpreterFunctions, r) {
     SkSL::Compiler compiler;
     SkSL::Program::Settings settings;
     settings.fRemoveDeadFunctions = false;
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-                                                             SkSL::Program::kGeneric_Kind,
-                                                             SkSL::String(src), settings);
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
+                                                                     SkSL::String(src), settings);
     REPORTER_ASSERT(r, program);
 
     std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);
@@ -814,6 +813,20 @@ DEF_TEST(SkSLInterpreterOutParams, r) {
          "    color.ga = t;"
          "}",
          1, 2, 3, 4, 3, 3, 1, 5);
+}
+
+DEF_TEST(SkSLInterpreterSwizzleSingleLvalue, r) {
+    // Add in your SkSL here.
+    test(r,
+         "void main(inout half4 color) { color.xywz = half4(1,2,3,4); }",
+         0, 0, 0, 0, 1, 2, 4, 3);
+}
+
+DEF_TEST(SkSLInterpreterSwizzleDoubleLvalue, r) {
+    // Add in your SkSL here.
+    test(r,
+         "void main(inout half4 color) { color.xywz.yxzw = half4(1,2,3,4); }",
+         0, 0, 0, 0, 2, 1, 4, 3);
 }
 
 DEF_TEST(SkSLInterpreterMathFunctions, r) {
@@ -957,8 +970,8 @@ public:
     SkSL::ExternalValue* getChild(const char* name) const override {
         if (fValue.getType() == skjson::Value::Type::kObject) {
             const skjson::Value& v = fValue.as<skjson::ObjectValue>()[name];
-            return (SkSL::ExternalValue*) fCompiler.takeOwnership(std::unique_ptr<Symbol>(
-                                                      new JSONExternalValue(name, &v, &fCompiler)));
+            fOwned.push_back(std::make_unique<JSONExternalValue>(name, &v, &fCompiler));
+            return fOwned.back().get();
         }
         return nullptr;
     }
@@ -966,6 +979,7 @@ public:
 private:
     const skjson::Value& fValue;
     SkSL::Compiler& fCompiler;
+    mutable std::vector<std::unique_ptr<SkSL::ExternalValue>> fOwned;
 
     using INHERITED = SkSL::ExternalValue;
 };
@@ -974,7 +988,7 @@ class PointerExternalValue : public SkSL::ExternalValue {
 public:
     PointerExternalValue(const char* name, const SkSL::Type& type, void* data, size_t size)
         : INHERITED(name, type)
-        , fData(data)
+        , fBytes(data)
         , fSize(size) {}
 
     bool canRead() const override {
@@ -986,16 +1000,16 @@ public:
     }
 
     void read(int /*unusedIndex*/, float* target) const override {
-        memcpy(target, fData, fSize);
+        memcpy(target, fBytes, fSize);
     }
 
     void write(int /*unusedIndex*/, float* src) const override {
-        memcpy(fData, src, fSize);
+        memcpy(fBytes, src, fSize);
     }
 
 
 private:
-    void* fData;
+    void* fBytes;
     size_t fSize;
 
     using INHERITED = SkSL::ExternalValue;
@@ -1010,17 +1024,13 @@ DEF_TEST(SkSLInterpreterExternalValues, r) {
                       "    outValue = 152;"
                       "    return root.child.value2 ? root.value1 * root.child.value3 : -1;"
                       "}";
-    compiler.registerExternalValue((SkSL::ExternalValue*) compiler.takeOwnership(
-             std::unique_ptr<SkSL::Symbol>(new JSONExternalValue("root", &dom.root(), &compiler))));
     int32_t outValue = -1;
-    compiler.registerExternalValue((SkSL::ExternalValue*) compiler.takeOwnership(
-               std::unique_ptr<SkSL::Symbol>(new PointerExternalValue("outValue",
-                                                                      *compiler.context().fInt_Type,
-                                                                      &outValue,
-                                                                      sizeof(outValue)))));
+    std::vector<std::unique_ptr<SkSL::ExternalValue>> externalValues;
+    externalValues.push_back(std::make_unique<JSONExternalValue>("root", &dom.root(), &compiler));
+    externalValues.push_back(std::make_unique<PointerExternalValue>(
+            "outValue", *compiler.context().fInt_Type, &outValue, sizeof(outValue)));
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-                                                             SkSL::Program::kGeneric_Kind,
-                                                             SkSL::String(src), settings);
+            SkSL::Program::kGeneric_Kind, SkSL::String(src), settings, &externalValues);
     REPORTER_ASSERT(r, program);
     if (program) {
         std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);
@@ -1046,14 +1056,11 @@ DEF_TEST(SkSLInterpreterExternalValuesVector, r) {
                       "    value *= 2;"
                       "}";
     int32_t value[4] = { 1, 2, 3, 4 };
-    compiler.registerExternalValue((SkSL::ExternalValue*) compiler.takeOwnership(
-              std::unique_ptr<SkSL::Symbol>(new PointerExternalValue("value",
-                                                                     *compiler.context().fInt4_Type,
-                                                                     value,
-                                                                     sizeof(value)))));
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
-                                                                     SkSL::String(src),
-                                                                     settings);
+    std::vector<std::unique_ptr<SkSL::ExternalValue>> externalValues;
+    externalValues.push_back(std::make_unique<PointerExternalValue>(
+            "value", *compiler.context().fInt4_Type, value, sizeof(value)));
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
+            SkSL::Program::kGeneric_Kind, SkSL::String(src), settings, &externalValues);
     REPORTER_ASSERT(r, program);
     if (program) {
         std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);
@@ -1110,15 +1117,11 @@ DEF_TEST(SkSLInterpreterExternalValuesCall, r) {
     const char* src = "float main() {"
                       "    return external(25);"
                       "}";
-    compiler.registerExternalValue((SkSL::ExternalValue*) compiler.takeOwnership(
-            std::unique_ptr<SkSL::Symbol>(new FunctionExternalValue("external",
-                                                                    [] (float x) {
-                                                                        return (float) sqrt(x);
-                                                                    },
-                                                                    compiler))));
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
-                                                                     SkSL::String(src),
-                                                                     settings);
+    std::vector<std::unique_ptr<SkSL::ExternalValue>> externalValues;
+    externalValues.push_back(std::make_unique<FunctionExternalValue>(
+            "external", [](float x) { return (float)sqrt(x); }, compiler));
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
+            SkSL::Program::kGeneric_Kind, SkSL::String(src), settings, &externalValues);
     REPORTER_ASSERT(r, program);
     if (program) {
         std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);
@@ -1172,21 +1175,22 @@ private:
 DEF_TEST(SkSLInterpreterExternalValuesVectorCall, r) {
     SkSL::Compiler compiler;
     SkSL::Program::Settings settings;
-    const char* src = "float4 main() {"
-                      "    return external(float4(1, 4, 9, 16));"
-                      "}";
-    compiler.registerExternalValue((SkSL::ExternalValue*) compiler.takeOwnership(
-            std::unique_ptr<SkSL::Symbol>(new VectorFunctionExternalValue("external",
-                                                                    [] (float in[4], float out[4]) {
-                                                                        out[0] = sqrt(in[0]);
-                                                                        out[1] = sqrt(in[1]);
-                                                                        out[2] = sqrt(in[2]);
-                                                                        out[3] = sqrt(in[3]);
-                                                                    },
-                                                                    compiler))));
-    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
-                                                                     SkSL::String(src),
-                                                                     settings);
+    const char* src =
+            "float4 main() {"
+            "    return external(float4(1, 4, 9, 16));"
+            "}";
+    std::vector<std::unique_ptr<SkSL::ExternalValue>> externalValues;
+    externalValues.push_back(std::make_unique<VectorFunctionExternalValue>(
+            "external",
+            [](float in[4], float out[4]) {
+                out[0] = sqrt(in[0]);
+                out[1] = sqrt(in[1]);
+                out[2] = sqrt(in[2]);
+                out[3] = sqrt(in[3]);
+            },
+            compiler));
+    std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
+            SkSL::Program::kGeneric_Kind, SkSL::String(src), settings, &externalValues);
     REPORTER_ASSERT(r, program);
     if (program) {
         std::unique_ptr<SkSL::ByteCode> byteCode = compiler.toByteCode(*program);

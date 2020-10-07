@@ -21,7 +21,7 @@ namespace SkSL {
  * instances.
  */
 struct VarDeclaration : public Statement {
-    static constexpr Kind kStatementKind = kVarDeclaration_Kind;
+    static constexpr Kind kStatementKind = Kind::kVarDeclaration;
 
     VarDeclaration(const Variable* var,
                    std::vector<std::unique_ptr<Expression>> sizes,
@@ -45,7 +45,7 @@ struct VarDeclaration : public Statement {
     }
 
     String description() const override {
-        String result = fVar->fModifiers.description() + fVar->fType.name() + " " + fVar->fName;
+        String result = fVar->fModifiers.description() + fVar->type().name() + " " + fVar->name();
         for (const auto& size : fSizes) {
             if (size) {
                 result += "[" + size->description() + "]";
@@ -70,25 +70,27 @@ struct VarDeclaration : public Statement {
  * A variable declaration statement, which may consist of one or more individual variables.
  */
 struct VarDeclarations : public ProgramElement {
-    static constexpr Kind kProgramElementKind = kVar_Kind;
+    static constexpr Kind kProgramElementKind = Kind::kVar;
 
-    VarDeclarations(int offset, const Type* baseType,
-                    std::vector<std::unique_ptr<VarDeclaration>> vars)
-    : INHERITED(offset, kProgramElementKind)
-    , fBaseType(*baseType) {
-        for (auto& var : vars) {
-            fVars.push_back(std::unique_ptr<Statement>(var.release()));
+    // vars must be a vector of unique_ptr<VarDeclaration>, but to simplify the CFG, we store
+    // (and thus are constructed with) Statements.
+    VarDeclarations(int offset, const Type* baseType, std::vector<std::unique_ptr<Statement>> vars)
+            : INHERITED(offset, kProgramElementKind), fBaseType(*baseType)
+            , fVars(std::move(vars)) {
+#if defined(SK_DEBUG)
+        for (auto& var : fVars) {
+            SkASSERT(var->is<VarDeclaration>());
         }
+#endif
     }
 
     std::unique_ptr<ProgramElement> clone() const override {
-        std::vector<std::unique_ptr<VarDeclaration>> cloned;
+        std::vector<std::unique_ptr<Statement>> cloned;
+        cloned.reserve(fVars.size());
         for (const auto& v : fVars) {
-            cloned.push_back(std::unique_ptr<VarDeclaration>(
-                                                           (VarDeclaration*) v->clone().release()));
+            cloned.push_back(v->clone());
         }
-        return std::unique_ptr<ProgramElement>(new VarDeclarations(fOffset, &fBaseType,
-                                                                     std::move(cloned)));
+        return std::make_unique<VarDeclarations>(fOffset, &fBaseType, std::move(cloned));
     }
 
     String description() const override {
@@ -97,8 +99,8 @@ struct VarDeclarations : public ProgramElement {
         }
         String result;
         for (const auto& var : fVars) {
-            if (var->fKind != Statement::kNop_Kind) {
-                SkASSERT(var->fKind == Statement::kVarDeclaration_Kind);
+            if (var->kind() != Statement::Kind::kNop) {
+                SkASSERT(var->kind() == Statement::Kind::kVarDeclaration);
                 result = ((const VarDeclaration&) *var).fVar->fModifiers.description();
                 break;
             }
@@ -106,14 +108,14 @@ struct VarDeclarations : public ProgramElement {
         result += fBaseType.description() + " ";
         String separator;
         for (const auto& rawVar : fVars) {
-            if (rawVar->fKind == Statement::kNop_Kind) {
+            if (rawVar->kind() == Statement::Kind::kNop) {
                 continue;
             }
-            SkASSERT(rawVar->fKind == Statement::kVarDeclaration_Kind);
+            SkASSERT(rawVar->kind() == Statement::Kind::kVarDeclaration);
             VarDeclaration& var = (VarDeclaration&) *rawVar;
             result += separator;
             separator = ", ";
-            result += var.fVar->fName;
+            result += var.fVar->name();
             if (var.fValue) {
                 result += " = " + var.fValue->description();
             }

@@ -31,6 +31,7 @@
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrDirectContext.h"
 #include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrImageContextPriv.h"
 #include "src/image/SkImage_Gpu.h"
 #endif
 #include "include/gpu/GrBackendSurface.h"
@@ -568,42 +569,13 @@ sk_sp<SkImage> SkImage::MakeFromAdoptedTexture(GrRecordingContext*,
     return nullptr;
 }
 
-sk_sp<SkImage> SkImage::MakeFromYUVATexturesCopy(GrRecordingContext*,
-                                                 SkYUVColorSpace,
-                                                 const GrBackendTexture[],
-                                                 const SkYUVAIndex[4],
-                                                 SkISize,
-                                                 GrSurfaceOrigin,
-                                                 sk_sp<SkColorSpace>) {
+sk_sp<SkImage> SkImage::MakeFromYUVAPixmaps(GrRecordingContext* context,
+                                            const SkYUVAPixmaps& pixmaps,
+                                            GrMipMapped buildMips,
+                                            bool limitToMaxTextureSize,
+                                            sk_sp<SkColorSpace> imageColorSpace) {
     return nullptr;
 }
-
-sk_sp<SkImage> SkImage::MakeFromYUVATexturesCopyWithExternalBackend(
-        GrRecordingContext*,
-        SkYUVColorSpace,
-        const GrBackendTexture[],
-        const SkYUVAIndex[4],
-        SkISize,
-        GrSurfaceOrigin,
-        const GrBackendTexture&,
-        sk_sp<SkColorSpace>,
-        TextureReleaseProc,
-        ReleaseContext) {
-    return nullptr;
-}
-
-sk_sp<SkImage> SkImage::MakeFromYUVTexturesCopyWithExternalBackend(
-        GrContext*, SkYUVColorSpace, const GrBackendTexture[3], GrSurfaceOrigin,
-        const GrBackendTexture&, sk_sp<SkColorSpace>) {
-    return nullptr;
-}
-
-sk_sp<SkImage> SkImage::MakeFromNV12TexturesCopy(GrContext*, SkYUVColorSpace,
-                                                 const GrBackendTexture[2],
-                                                 GrSurfaceOrigin, sk_sp<SkColorSpace>) {
-    return nullptr;
-}
-
 
 sk_sp<SkImage> SkImage::makeTextureImage(GrDirectContext*, GrMipmapped, SkBudgeted) const {
     return nullptr;
@@ -653,10 +625,6 @@ SkPixmap SkMipmapBuilder::level(int index) const {
     return pm;
 }
 
-sk_sp<SkMipmap> SkMipmapBuilder::detach() {
-    return std::move(fMM);
-}
-
 bool SkImage::hasMipmaps() const {
     return as_IB(this)->onPeekMips() != nullptr;
 }
@@ -668,4 +636,12 @@ sk_sp<SkImage> SkImage::withMipmaps(sk_sp<SkMipmap> mips) const {
         }
     }
     return sk_ref_sp((const_cast<SkImage*>(this)));
+}
+
+sk_sp<SkImage> SkImage::withDefaultMipmaps() const {
+    return this->withMipmaps(nullptr);
+}
+
+sk_sp<SkImage> SkMipmapBuilder::attachTo(const SkImage* src) {
+    return src->withMipmaps(fMM);
 }

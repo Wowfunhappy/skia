@@ -551,7 +551,7 @@ CanvasKit.onRuntimeInitialized = function() {
     return m;
   }
 
-  // concat returns a new SkColorMatrix that is the result of multiplying outer*inner;
+  // concat returns a new SkColorMatrix that is the result of multiplying outer*inner
   CanvasKit.SkColorMatrix.concat = function(outer, inner) {
     var m = new Float32Array(20);
     var index = 0;
@@ -613,6 +613,7 @@ CanvasKit.onRuntimeInitialized = function() {
     return this;
   };
 
+  // TODO(kjlubick) clean up this API - split it apart if necessary
   CanvasKit.SkPath.prototype.addPath = function() {
     // Takes 1, 2, 7, or 10 required args, where the first arg is always the path.
     // The last arg is optional and chooses between add or extend mode.
@@ -667,6 +668,7 @@ CanvasKit.onRuntimeInitialized = function() {
       ptr = points.byteOffset;
       n = points.length/2;
     } else {
+      // TODO(kjlubick) deprecate and remove the 2d array input
       ptr = copy2dArray(points, 'HEAPF32');
       n = points.length;
     }
@@ -769,6 +771,19 @@ CanvasKit.onRuntimeInitialized = function() {
     return this;
   };
 
+  // Clients can pass in a Float32Array with length 4 to this and the results
+  // will be copied into that array. Otherwise, a new TypedArray will be allocated
+  // and returned.
+  CanvasKit.SkPath.prototype.computeTightBounds = function(optionalOutputArray) {
+    this._computeTightBounds(_scratchRectPtr);
+    var ta = _scratchRect['toTypedArray']();
+    if (optionalOutputArray) {
+      optionalOutputArray.set(ta);
+      return optionalOutputArray;
+    }
+    return ta.slice();
+  };
+
   CanvasKit.SkPath.prototype.cubicTo = function(cp1x, cp1y, cp2x, cp2y, x, y) {
     this._cubicTo(cp1x, cp1y, cp2x, cp2y, x, y);
     return this;
@@ -862,6 +877,7 @@ CanvasKit.onRuntimeInitialized = function() {
     return null;
   };
 
+  // TODO(kjlubick) Change this to take a 3x3 or 4x4 matrix (optionally malloc'd)
   CanvasKit.SkPath.prototype.transform = function() {
     // Takes 1 or 9 args
     if (arguments.length === 1) {
@@ -985,6 +1001,7 @@ CanvasKit.onRuntimeInitialized = function() {
   // colors are optional and used to tint the drawn images using the optional blend mode
   // Colors may be an SkColorBuilder, a Uint32Array of int colors,
   // a Flat Float32Array of float colors or a 2d Array of Float32Array(4) (deprecated)
+  // TODO(kjlubick) remove Builders - no longer needed now that Malloc is a thing.
   CanvasKit.SkCanvas.prototype.drawAtlas = function(atlas, srcRects, dstXforms, paint,
                                        /*optional*/ blendMode, colors) {
     if (!atlas || !paint || !srcRects || !dstXforms) {
@@ -1269,6 +1286,8 @@ CanvasKit.onRuntimeInitialized = function() {
     return this._beginRecording(bPtr);
   }
 
+  // TODO(kjlubick) This probably does not need to be on SkSurface, given it only uses the
+  //   width/height.
   CanvasKit.SkSurface.prototype.captureFrameAsSkPicture = function(drawFrame) {
     // Set up SkPictureRecorder
     var spr = new CanvasKit.SkPictureRecorder();
@@ -1277,7 +1296,7 @@ CanvasKit.onRuntimeInitialized = function() {
     drawFrame(canvas);
     var pic = spr.finishRecordingAsPicture();
     spr.delete();
-    // TODO: do we need to clean up the memory for canvas?
+    // TODO(kjlubick): do we need to clean up the memory for canvas?
     // If we delete it here, saveAsFile doesn't work correctly.
     return pic;
   }
@@ -1437,8 +1456,8 @@ CanvasKit.onRuntimeInitialized = function() {
 
 // Accepts an object holding two canvaskit colors.
 // {
-//    ambient: {r, g, b, a},
-//    spot: {r, g, b, a},
+//    ambient: [r, g, b, a],
+//    spot: [r, g, b, a],
 // }
 // Returns the same format. Note, if malloced colors are passed in, the memory
 // housing the passed in colors passed in will be overwritten with the computed

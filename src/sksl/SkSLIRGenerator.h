@@ -39,11 +39,46 @@ struct FunctionCall;
 /**
  * Intrinsics are passed between the Compiler and the IRGenerator using IRIntrinsicMaps.
  */
-struct IRIntrinsic {
-    std::unique_ptr<ProgramElement> fIntrinsic;
-    bool fAlreadyIncluded = false;
+class IRIntrinsicMap {
+public:
+    IRIntrinsicMap(IRIntrinsicMap* parent) : fParent(parent) {}
+
+    void insertOrDie(String key, std::unique_ptr<ProgramElement> element) {
+        SkASSERT(fIntrinsics.find(key) == fIntrinsics.end());
+        fIntrinsics[key] = Intrinsic{std::move(element), false};
+    }
+
+    // Only returns an intrinsic that isn't already marked as included, and then marks it.
+    const ProgramElement* findAndInclude(const String& key) {
+        auto iter = fIntrinsics.find(key);
+        if (iter == fIntrinsics.end()) {
+            return fParent ? fParent->findAndInclude(key) : nullptr;
+        }
+        if (iter->second.fAlreadyIncluded) {
+            return nullptr;
+        }
+        iter->second.fAlreadyIncluded = true;
+        return iter->second.fIntrinsic.get();
+    }
+
+    void resetAlreadyIncluded() {
+        for (auto& pair : fIntrinsics) {
+            pair.second.fAlreadyIncluded = false;
+        }
+        if (fParent) {
+            fParent->resetAlreadyIncluded();
+        }
+    }
+
+private:
+    struct Intrinsic {
+        std::unique_ptr<ProgramElement> fIntrinsic;
+        bool fAlreadyIncluded = false;
+    };
+
+    std::unordered_map<String, Intrinsic> fIntrinsics;
+    IRIntrinsicMap* fParent = nullptr;
 };
-using IRIntrinsicMap = std::unordered_map<String, IRIntrinsic>;
 
 /**
  * Performs semantic analysis on an abstract syntax tree (AST) and produces the corresponding
@@ -79,6 +114,7 @@ private:
      * settings.
      */
     void start(const Program::Settings* settings,
+               std::shared_ptr<SymbolTable> baseSymbolTable,
                std::vector<std::unique_ptr<ProgramElement>>* inherited,
                bool isBuiltinCode = false);
 
@@ -99,15 +135,15 @@ private:
     std::unique_ptr<Expression> convertExpression(const ASTNode& expression);
     std::unique_ptr<ModifiersDeclaration> convertModifiersDeclaration(const ASTNode& m);
 
-    const Type* convertType(const ASTNode& type);
+    const Type* convertType(const ASTNode& type, bool allowVoid = false);
     std::unique_ptr<Expression> call(int offset,
                                      const FunctionDeclaration& function,
                                      std::vector<std::unique_ptr<Expression>> arguments);
-    int callCost(const FunctionDeclaration& function,
-                 const std::vector<std::unique_ptr<Expression>>& arguments);
+    CoercionCost callCost(const FunctionDeclaration& function,
+                          const std::vector<std::unique_ptr<Expression>>& arguments);
     std::unique_ptr<Expression> call(int offset, std::unique_ptr<Expression> function,
                                      std::vector<std::unique_ptr<Expression>> arguments);
-    int coercionCost(const Expression& expr, const Type& type);
+    CoercionCost coercionCost(const Expression& expr, const Type& type);
     std::unique_ptr<Expression> coerce(std::unique_ptr<Expression> expr, const Type& type);
     std::unique_ptr<Block> convertBlock(const ASTNode& block);
     std::unique_ptr<Statement> convertBreak(const ASTNode& b);
@@ -144,10 +180,7 @@ private:
     std::unique_ptr<Expression> convertFieldExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertIndexExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertPostfixExpression(const ASTNode& expression);
-    std::unique_ptr<Expression> findEnumRef(int offset,
-                                            const Type& type,
-                                            StringFragment field,
-                                            std::vector<std::unique_ptr<ProgramElement>>& elements);
+    std::unique_ptr<Expression> convertScopeExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertTypeField(int offset, const Type& type,
                                                  StringFragment field);
     std::unique_ptr<Expression> convertField(std::unique_ptr<Expression> base,
@@ -165,14 +198,13 @@ private:
     void checkValid(const Expression& expr);
     bool setRefKind(Expression& expr, VariableReference::RefKind kind);
     bool getConstantInt(const Expression& value, int64_t* out);
-    bool checkSwizzleWrite(const Swizzle& swizzle);
     void copyIntrinsicIfNeeded(const FunctionDeclaration& function);
+    void cloneBuiltinVariables();
 
     Inliner* fInliner = nullptr;
     std::unique_ptr<ASTFile> fFile;
     const FunctionDeclaration* fCurrentFunction;
     std::unordered_map<String, Program::Settings::Value> fCapsMap;
-    std::shared_ptr<SymbolTable> fRootSymbolTable;
     std::shared_ptr<SymbolTable> fSymbolTable;
     // additional statements that need to be inserted before the one that convertStatement is
     // currently working on
@@ -184,13 +216,11 @@ private:
     int fSwitchLevel;
     ErrorReporter& fErrors;
     int fInvocations;
-    std::vector<std::unique_ptr<ProgramElement>>* fInherited;
     std::vector<std::unique_ptr<ProgramElement>>* fProgramElements;
     const Variable* fSkPerVertex = nullptr;
     const Variable* fRTAdjust;
     const Variable* fRTAdjustInterfaceBlock;
     int fRTAdjustFieldIndex;
-    int fTmpSwizzleCounter;
     bool fCanInline = true;
     // true if we are currently processing one of the built-in SkSL include files
     bool fIsBuiltinCode;

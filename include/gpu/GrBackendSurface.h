@@ -412,7 +412,8 @@ public:
     // Creates an invalid backend texture.
     GrBackendRenderTarget();
 
-    // The GrGLTextureInfo must have a valid fFormat.
+    // The GrGLTextureInfo must have a valid fFormat. If wrapping in an SkSurface we require the
+    // stencil bits to be either 0, 8 or 16.
     GrBackendRenderTarget(int width,
                           int height,
                           int sampleCnt,
@@ -420,6 +421,7 @@ public:
                           const GrGLFramebufferInfo& glInfo);
 
 #ifdef SK_DAWN
+    // If wrapping in an SkSurface we require the stencil bits to be either 0, 8 or 16.
     GrBackendRenderTarget(int width,
                           int height,
                           int sampleCnt,
@@ -428,16 +430,17 @@ public:
 #endif
 
 #ifdef SK_VULKAN
-    /** Deprecated, use version that does not take stencil bits. */
-    GrBackendRenderTarget(int width,
-                          int height,
-                          int sampleCnt,
-                          int stencilBits,
-                          const GrVkImageInfo& vkInfo);
+    /** Deprecated. Sample count is now part of GrVkImageInfo. */
     GrBackendRenderTarget(int width, int height, int sampleCnt, const GrVkImageInfo& vkInfo);
+
+    GrBackendRenderTarget(int width, int height, const GrVkImageInfo& vkInfo);
 #endif
 
 #ifdef SK_METAL
+    GrBackendRenderTarget(int width,
+                          int height,
+                          const GrMtlTextureInfo& mtlInfo);
+    /** Deprecated. Sample count is ignored and is instead retrieved from the MtlTexture. */
     GrBackendRenderTarget(int width,
                           int height,
                           int sampleCnt,
@@ -447,7 +450,6 @@ public:
 #ifdef SK_DIRECT3D
     GrBackendRenderTarget(int width,
                           int height,
-                          int sampleCnt,
                           const GrD3DTextureResourceInfo& d3dInfo);
 #endif
 
@@ -536,15 +538,19 @@ private:
 
 #ifdef SK_VULKAN
     friend class GrVkRenderTarget;
-    GrBackendRenderTarget(int width, int height, int sampleCnt, const GrVkImageInfo& vkInfo,
+    GrBackendRenderTarget(int width,
+                          int height,
+                          const GrVkImageInfo& vkInfo,
                           sk_sp<GrBackendSurfaceMutableStateImpl> mutableState);
 #endif
 
 #ifdef SK_DIRECT3D
     friend class GrD3DGpu;
     friend class GrD3DRenderTarget;
-    GrBackendRenderTarget(int width, int height, int sampleCnt,
-                          const GrD3DTextureResourceInfo& d3dInfo, sk_sp<GrD3DResourceState> state);
+    GrBackendRenderTarget(int width,
+                          int height,
+                          const GrD3DTextureResourceInfo& d3dInfo,
+                          sk_sp<GrD3DResourceState> state);
     sk_sp<GrD3DResourceState> getGrD3DResourceState() const;
 #endif
 

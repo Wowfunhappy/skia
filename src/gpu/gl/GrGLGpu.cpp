@@ -1507,7 +1507,7 @@ bool GrGLGpu::onUpdateCompressedBackendTexture(const GrBackendTexture& backendTe
 
     // If we have mips make sure the base level is set to 0 and the max level set to numMipLevels-1
     // so that the uploads go to the right levels.
-    if (backendTexture.hasMipMaps() && this->glCaps().mipmapLevelAndLodControlSupport()) {
+    if (backendTexture.hasMipMaps() && this->glCaps().mipmapLevelControlSupport()) {
         auto params = backendTexture.getGLTextureParams();
         GrGLTextureParameters::NonsamplerState nonsamplerState = params->nonsamplerState();
         if (params->nonsamplerState().fBaseMipMapLevel != 0) {
@@ -1532,32 +1532,6 @@ bool GrGLGpu::onUpdateCompressedBackendTexture(const GrBackendTexture& backendTe
 
     return result;
 }
-
-namespace {
-
-const GrGLuint kUnknownBitCount = GrGLStencilAttachment::kUnknownBitCount;
-
-void inline get_stencil_rb_sizes(const GrGLInterface* gl,
-                                 GrGLStencilAttachment::Format* format) {
-
-    // we shouldn't ever know one size and not the other
-    SkASSERT((kUnknownBitCount == format->fStencilBits) ==
-             (kUnknownBitCount == format->fTotalBits));
-    if (kUnknownBitCount == format->fStencilBits) {
-        GR_GL_GetRenderbufferParameteriv(gl, GR_GL_RENDERBUFFER,
-                                         GR_GL_RENDERBUFFER_STENCIL_SIZE,
-                                         (GrGLint*)&format->fStencilBits);
-        if (format->fPacked) {
-            GR_GL_GetRenderbufferParameteriv(gl, GR_GL_RENDERBUFFER,
-                                             GR_GL_RENDERBUFFER_DEPTH_SIZE,
-                                             (GrGLint*)&format->fTotalBits);
-            format->fTotalBits += format->fStencilBits;
-        } else {
-            format->fTotalBits = format->fStencilBits;
-        }
-    }
-}
-}  // namespace
 
 int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
     static const int kSize = 16;
@@ -1720,9 +1694,9 @@ GrGLuint GrGLGpu::createTexture(SkISize dimensions,
 }
 
 GrStencilAttachment* GrGLGpu::createStencilAttachmentForRenderTarget(
-        const GrRenderTarget* rt, int width, int height, int numStencilSamples) {
-    SkASSERT(width >= rt->width());
-    SkASSERT(height >= rt->height());
+        const GrRenderTarget* rt, SkISize dimensions, int numStencilSamples) {
+    SkASSERT(dimensions.width() >= rt->width());
+    SkASSERT(dimensions.height() >= rt->height());
 
     GrGLStencilAttachment::IDDesc sbDesc;
 
@@ -1743,29 +1717,26 @@ GrStencilAttachment* GrGLGpu::createStencilAttachmentForRenderTarget(
     // version on a GL that doesn't have an MSAA extension.
     if (numStencilSamples > 1) {
         if (!this->renderbufferStorageMSAA(*fGLContext, numStencilSamples, sFmt.fInternalFormat,
-                                           width, height)) {
+                                           dimensions.width(), dimensions.height())) {
             GL_CALL(DeleteRenderbuffers(1, &sbDesc.fRenderbufferID));
             return nullptr;
         }
     } else {
-        GrGLenum error = GL_ALLOC_CALL(
-                RenderbufferStorage(GR_GL_RENDERBUFFER, sFmt.fInternalFormat, width, height));
+        GrGLenum error = GL_ALLOC_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, sFmt.fInternalFormat,
+                                                           dimensions.width(),
+                                                           dimensions.height()));
         if (error != GR_GL_NO_ERROR) {
             GL_CALL(DeleteRenderbuffers(1, &sbDesc.fRenderbufferID));
             return nullptr;
         }
     }
     fStats.incStencilAttachmentCreates();
-    // After sized formats we attempt an unsized format and take
-    // whatever sizes GL gives us. In that case we query for the size.
-    GrGLStencilAttachment::Format format = sFmt;
-    get_stencil_rb_sizes(this->glInterface(), &format);
+
     GrGLStencilAttachment* stencil = new GrGLStencilAttachment(this,
                                                                sbDesc,
-                                                               width,
-                                                               height,
+                                                               dimensions,
                                                                numStencilSamples,
-                                                               format);
+                                                               sFmt);
     return stencil;
 }
 
@@ -1864,9 +1835,9 @@ bool GrGLGpu::flushGLState(GrRenderTarget* renderTarget, const GrProgramInfo& pr
 
     GrGLRenderTarget* glRT = static_cast<GrGLRenderTarget*>(renderTarget);
     GrStencilSettings stencil;
-    if (programInfo.pipeline().isStencilEnabled()) {
+    if (programInfo.isStencilEnabled()) {
         SkASSERT(glRT->getStencilAttachment());
-        stencil.reset(*programInfo.pipeline().getUserStencil(),
+        stencil.reset(*programInfo.userStencilSettings(),
                       programInfo.pipeline().hasStencilClip(),
                       glRT->numStencilBits());
     }
@@ -2211,7 +2182,7 @@ GrOpsRenderPass* GrGLGpu::getOpsRenderPass(
         const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
         const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
         const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
-        bool usesXferBarriers) {
+        GrXferBarrierFlags renderPassXferBarriers) {
     if (!fCachedOpsRenderPass) {
         fCachedOpsRenderPass = std::make_unique<GrGLOpsRenderPass>(this);
     }
@@ -2652,7 +2623,7 @@ void GrGLGpu::bindTexture(int unitIdx, GrSamplerState samplerState, const GrSwiz
             this->setTextureUnit(unitIdx);
             GL_CALL(TexParameteri(target, GR_GL_TEXTURE_MIN_FILTER, newSamplerState.fMinFilter));
         }
-        if (this->glCaps().mipmapLevelAndLodControlSupport()) {
+        if (this->glCaps().mipmapLodControlSupport()) {
             if (setAll || newSamplerState.fMinLOD != oldSamplerState.fMinLOD) {
                 this->setTextureUnit(unitIdx);
                 GL_CALL(TexParameterf(target, GR_GL_TEXTURE_MIN_LOD, newSamplerState.fMinLOD));
@@ -2709,7 +2680,7 @@ void GrGLGpu::bindTexture(int unitIdx, GrSamplerState samplerState, const GrSwiz
         }
     }
     // These are not supported in ES2 contexts
-    if (this->glCaps().mipmapLevelAndLodControlSupport() &&
+    if (this->glCaps().mipmapLevelControlSupport() &&
         (texture->textureType() != GrTextureType::kExternal ||
          !this->glCaps().dontSetBaseOrMaxLevelForExternalTextures())) {
         if (newNonsamplerState.fBaseMipMapLevel != oldNonsamplerState.fBaseMipMapLevel) {
@@ -3503,6 +3474,7 @@ bool GrGLGpu::onRegenerateMipMapLevels(GrTexture* texture) {
         GL_CALL(Uniform1i(fMipmapPrograms[progIdx].fTextureUniform, 0));
 
         // Only sample from previous mip
+        SkASSERT(this->glCaps().mipmapLevelControlSupport());
         GL_CALL(TexParameteri(GR_GL_TEXTURE_2D, GR_GL_TEXTURE_BASE_LEVEL, level - 1));
 
         GL_CALL(FramebufferTexture2D(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0, GR_GL_TEXTURE_2D,
@@ -3654,7 +3626,7 @@ bool GrGLGpu::onUpdateBackendTexture(const GrBackendTexture& backendTexture,
 
     // If we have mips make sure the base level is set to 0 and the max level set to numMipLevels-1
     // so that the uploads go to the right levels.
-    if (numMipLevels && this->glCaps().mipmapLevelAndLodControlSupport()) {
+    if (numMipLevels && this->glCaps().mipmapLevelControlSupport()) {
         auto params = backendTexture.getGLTextureParams();
         GrGLTextureParameters::NonsamplerState nonsamplerState = params->nonsamplerState();
         if (params->nonsamplerState().fBaseMipMapLevel != 0) {
@@ -3730,24 +3702,46 @@ bool GrGLGpu::isTestingOnlyBackendTexture(const GrBackendTexture& tex) const {
     return (GR_GL_TRUE == result);
 }
 
-GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(int w, int h,
-                                                                    GrColorType colorType) {
-    if (w > this->caps()->maxRenderTargetSize() || h > this->caps()->maxRenderTargetSize()) {
-        return GrBackendRenderTarget();  // invalid
+GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(SkISize dimensions,
+                                                                    GrColorType colorType,
+                                                                    int sampleCnt) {
+    if (dimensions.width()  > this->caps()->maxRenderTargetSize() ||
+        dimensions.height() > this->caps()->maxRenderTargetSize()) {
+        return {};
     }
     this->handleDirtyContext();
     auto format = this->glCaps().getFormatFromColorType(colorType);
-    if (!this->glCaps().isFormatRenderable(format, 1)) {
+    sampleCnt = this->glCaps().getRenderTargetSampleCount(sampleCnt, format);
+    if (!sampleCnt) {
         return {};
     }
-    bool useTexture = format == GrGLFormat::kBGRA8;
+    // We make a texture instead of a render target if we're using a
+    // "multisampled_render_to_texture" style extension or have a BGRA format that
+    // is allowed for textures but not render buffer internal formats.
+    bool useTexture = false;
+    if (sampleCnt > 1 && !this->glCaps().usesMSAARenderBuffers()) {
+        useTexture = true;
+    } else if (format == GrGLFormat::kBGRA8 &&
+        this->glCaps().getRenderbufferInternalFormat(GrGLFormat::kBGRA8) != GR_GL_BGRA8) {
+        // We have a BGRA extension that doesn't support BGRA render buffers. We can use a texture
+        // unless we've been asked for MSAA. Note we already checked above for render-to-
+        // multisampled-texture style extensions.
+        if (sampleCnt > 1) {
+            return {};
+        }
+        useTexture = true;
+    }
     int sFormatIdx = this->getCompatibleStencilIndex(format);
     if (sFormatIdx < 0) {
         return {};
     }
     GrGLuint colorID = 0;
     GrGLuint stencilID = 0;
-    auto deleteIDs = [&] {
+    GrGLFramebufferInfo info;
+    info.fFBOID = 0;
+    info.fFormat = GrGLFormatToEnum(format);
+
+    auto deleteIDs = [&](bool saveFBO = false) {
         if (colorID) {
             if (useTexture) {
                 GL_CALL(DeleteTextures(1, &colorID));
@@ -3757,6 +3751,9 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(int w, int h
         }
         if (stencilID) {
             GL_CALL(DeleteRenderbuffers(1, &stencilID));
+        }
+        if (!saveFBO && info.fFBOID) {
+            this->deleteFramebuffer(info.fFBOID);
         }
     };
 
@@ -3771,9 +3768,6 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(int w, int h
         return {};
     }
 
-    GrGLFramebufferInfo info;
-    info.fFBOID = 0;
-    info.fFormat = GrGLFormatToEnum(format);
     GL_CALL(GenFramebuffers(1, &info.fFBOID));
     if (!info.fFBOID) {
         deleteIDs();
@@ -3785,24 +3779,47 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(int w, int h
     this->bindFramebuffer(GR_GL_FRAMEBUFFER, info.fFBOID);
     if (useTexture) {
         GrGLTextureParameters::SamplerOverriddenState initialState;
-        colorID = this->createTexture({w, h}, format, GR_GL_TEXTURE_2D, GrRenderable::kYes,
+        colorID = this->createTexture(dimensions, format, GR_GL_TEXTURE_2D, GrRenderable::kYes,
                                       &initialState, 1);
         if (!colorID) {
             deleteIDs();
             return {};
         }
-        GL_CALL(FramebufferTexture2D(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0, GR_GL_TEXTURE_2D,
-                                     colorID, 0));
+        if (sampleCnt == 1) {
+            GL_CALL(FramebufferTexture2D(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0,
+                                         GR_GL_TEXTURE_2D, colorID, 0));
+        } else {
+            GL_CALL(FramebufferTexture2DMultisample(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0,
+                                                    GR_GL_TEXTURE_2D, colorID, 0, sampleCnt));
+        }
     } else {
         GrGLenum renderBufferFormat = this->glCaps().getRenderbufferInternalFormat(format);
         GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, colorID));
-        GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, renderBufferFormat, w, h));
+        if (sampleCnt == 1) {
+            GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, renderBufferFormat, dimensions.width(),
+                                        dimensions.height()));
+        } else {
+            if (!this->renderbufferStorageMSAA(this->glContext(), sampleCnt, renderBufferFormat,
+                                               dimensions.width(), dimensions.height())) {
+                deleteIDs();
+                return {};
+            }
+        }
         GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0,
                                         GR_GL_RENDERBUFFER, colorID));
     }
     GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, stencilID));
     auto stencilBufferFormat = this->glCaps().stencilFormats()[sFormatIdx].fInternalFormat;
-    GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, stencilBufferFormat, w, h));
+    if (sampleCnt == 1) {
+        GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, stencilBufferFormat, dimensions.width(),
+                                    dimensions.height()));
+    } else {
+        if (!this->renderbufferStorageMSAA(this->glContext(), sampleCnt, stencilBufferFormat,
+                                           dimensions.width(), dimensions.height())) {
+            deleteIDs();
+            return {};
+        }
+    }
     GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER, GR_GL_STENCIL_ATTACHMENT, GR_GL_RENDERBUFFER,
                                     stencilID));
     if (this->glCaps().stencilFormats()[sFormatIdx].fPacked) {
@@ -3815,7 +3832,7 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(int w, int h
     // has the RB attached then deletion is delayed. So we unbind the FBO here and delete the
     // renderbuffers/texture.
     this->bindFramebuffer(GR_GL_FRAMEBUFFER, 0);
-    deleteIDs();
+    deleteIDs(/* saveFBO = */ true);
 
     this->bindFramebuffer(GR_GL_FRAMEBUFFER, info.fFBOID);
     GrGLenum status;
@@ -3824,9 +3841,11 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(int w, int h
         this->deleteFramebuffer(info.fFBOID);
         return {};
     }
+
     auto stencilBits = SkToInt(this->glCaps().stencilFormats()[sFormatIdx].fStencilBits);
 
-    GrBackendRenderTarget beRT = GrBackendRenderTarget(w, h, 1, stencilBits, info);
+    GrBackendRenderTarget beRT = GrBackendRenderTarget(dimensions.width(), dimensions.height(),
+                                                       sampleCnt, stencilBits, info);
     SkASSERT(this->caps()->areColorTypeAndFormatCompatible(colorType, beRT.getBackendFormat()));
     return beRT;
 }

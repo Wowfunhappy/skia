@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1] - 2020-10-06
+
+### Added
+ - Typescript types (and documentation) are now in the types subfolder. We will keep these updated
+   as we make changes to the CanvasKit library.
+
+## [0.18.0] - 2020-10-05
+
 ### Breaking
  - SkRect are no longer returned from `CanvasKit.LTRBRect`, `CanvasKit.XYWHRect` nor
    are accepted as JS objects. Instead, the format is 4 floats in either an array, a
@@ -39,12 +47,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    take an optional argument. If a Float32Array with length 4 or greater is
    provided, the bounds will be copied into this array instead of allocating
    a new one.
+ - `SkCanvas.drawAnimatedImage` has been removed in favor of calling
+   `SkCanvas.drawImageAtCurrentFrame` or `SkAnimatedImage.makeImageAtCurrentFrame` and then
+   `SkCanvas.drawImage`.
+ - `SkTextBlob.MakeFromRSXform` also accepts a (possibly Malloc'd) Float32Array of RSXforms (
+   see SkRSXform for more.)
 
 ### Removed
  - `SkCanvas.drawRoundRect` has been removed in favor of `SkCanvas.drawRRect`
    The same functionality can be had with the `CanvasKit.RRectXY` helper.
  - `SkPath.arcTo` which had been deprecated in favor of `SkPath.arcToOval`,
    `SkPath.arcToRotated`, `SkPath.arcToTangent`.
+ - Extraneous ColorTypes from `ColorType` enum.
 
 ### Added
  - `CanvasKit.LTRBiRect` and `CanvasKit.XYWHiRect` as helpers to create SkIRects.
@@ -52,6 +66,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    already have their own representation of Rect. This is experimental because we don't know
    if it's faster/better under real-world use and because we don't want to commit to having these
    for all Rect APIs (and for similar types) until it has baked in a bit.
+ - Added the following to `TextStyle`:
+   - `decorationStyle`
+   - `textBaseline`
+   - `letterSpacing`
+   - `wordSpacing`
+   - `heightMultiplier`
+   - `locale`
+   - `shadows`
+   - `fontFeatures`
+ - Added `strutStyle` to `ParagraphStyle`.
+ - Added `addPlaceholder` to `ParagraphBuilder`.
+ - Added `getRectsForPlaceholders` to `Paragraph`.
+ - `SkFont.getGlyphIDs`, `SkFont.getGlyphBounds`, `SkFont.getGlyphWidths` for turning code points
+   into GlyphIDs and getting the associated metrics with those glyphs. Note: glyph ids are only
+   valid for the font of which they were requested.
+ - `SkTextBlob.MakeFromRSXformGlyphs` and `SkTextBlob.MakeFromGlyphs` as a way to build TextBlobs
+   using GlyphIDs instead of code points.
+ - `CanvasKit.MallocGlyphIDs` as a helper for pre-allocating space on the WASM heap for Glyph IDs.
+
+### Deprecated
+ - `SkAnimatedImage.getCurrentFrame`; prefer `SkAnimatedImage.makeImageAtCurrentFrame` (which
+   follows the establishing naming convention).
+ - `SkSurface.captureFrameAsSkPicture` will be removed in a future release. Callers can simply
+   use `SkPictureRecorder` directly.
+ - `CanvasKit.FourFloatArrayHelper` and related helpers (mostly helping with drawAtlas).
+   `CanvasKit.Malloc` is the better tool and will replace these soon.
+ - `SkPathMeasure`; SkContourMeasureIter has all the same functionality and a cleaner pattern.
+
+### Fixed
+ - Addressed Memory leak in `SkCanvas.drawText`.
+ - Made SkTextBlob hang on to less memory during its lifetime.
+ - `SkPath.computeTightBounds()` works again. Like getBounds() it takes an optional argument
+   to put the bounds into.
 
 ## [0.17.3] - 2020-08-05
 

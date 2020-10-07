@@ -150,21 +150,21 @@ struct ColorSettings {
     GrGLenum pixFormat;
 };
 
-sk_sp<GrContext> MakeGrContext(EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context)
+sk_sp<GrDirectContext> MakeGrContext(EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context)
 {
     EMSCRIPTEN_RESULT r = emscripten_webgl_make_context_current(context);
     if (r < 0) {
         printf("failed to make webgl context current %d\n", r);
         return nullptr;
     }
-    // setup GrContext
+    // setup GrDirectContext
     auto interface = GrGLMakeNativeInterface();
     // setup contexts
-    sk_sp<GrContext> grContext(GrContext::MakeGL(interface));
-    return grContext;
+    sk_sp<GrDirectContext> dContext(GrDirectContext::MakeGL(interface));
+    return dContext;
 }
 
-sk_sp<SkSurface> MakeOnScreenGLSurface(sk_sp<GrContext> grContext, int width, int height,
+sk_sp<SkSurface> MakeOnScreenGLSurface(sk_sp<GrDirectContext> dContext, int width, int height,
                                        sk_sp<SkColorSpace> colorSpace) {
     // WebGL should already be clearing the color and stencil buffers, but do it again here to
     // ensure Skia receives them in the expected state.
@@ -172,7 +172,7 @@ sk_sp<SkSurface> MakeOnScreenGLSurface(sk_sp<GrContext> grContext, int width, in
     glClearColor(0, 0, 0, 0);
     glClearStencil(0);
     glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    grContext->resetContext(kRenderTarget_GrGLBackendState | kMisc_GrGLBackendState);
+    dContext->resetContext(kRenderTarget_GrGLBackendState | kMisc_GrGLBackendState);
 
     // The on-screen canvas is FBO 0. Wrap it in a Skia render target so Skia can render to it.
     GrGLFramebufferInfo info;
@@ -187,15 +187,15 @@ sk_sp<SkSurface> MakeOnScreenGLSurface(sk_sp<GrContext> grContext, int width, in
     const auto colorSettings = ColorSettings(colorSpace);
     info.fFormat = colorSettings.pixFormat;
     GrBackendRenderTarget target(width, height, sampleCnt, stencil, info);
-    sk_sp<SkSurface> surface(SkSurface::MakeFromBackendRenderTarget(grContext.get(), target,
+    sk_sp<SkSurface> surface(SkSurface::MakeFromBackendRenderTarget(dContext.get(), target,
         kBottomLeft_GrSurfaceOrigin, colorSettings.colorType, colorSpace, nullptr));
     return surface;
 }
 
-sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrContext> grContext, int width, int height) {
+sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrDirectContext> dContext, int width, int height) {
     SkImageInfo info = SkImageInfo::MakeN32(width, height, SkAlphaType::kPremul_SkAlphaType);
 
-    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(grContext.get(),
+    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(dContext.get(),
                              SkBudgeted::kYes,
                              info, 0,
                              kBottomLeft_GrSurfaceOrigin,
@@ -203,8 +203,8 @@ sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrContext> grContext, int width, int hei
     return surface;
 }
 
-sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrContext> grContext, SimpleImageInfo sii) {
-    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(grContext.get(),
+sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrDirectContext> dContext, SimpleImageInfo sii) {
+    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(dContext.get(),
                              SkBudgeted::kYes,
                              toSkImageInfo(sii), 0,
                              kBottomLeft_GrSurfaceOrigin,
@@ -629,6 +629,7 @@ static sk_sp<SkTextBlob> do_shaping(const ShapedTextOpts& opts, SkPoint* pt) {
     return builder.makeBlob();
 }
 
+// TODO(kjlubick) ShapedText is a very thin veneer around SkTextBlob - can probably remove it.
 class ShapedText {
  public:
     ShapedText(ShapedTextOpts opts) : fOpts(opts) {}
@@ -655,7 +656,7 @@ class ShapedText {
 };
 
 void drawShapedText(SkCanvas& canvas, ShapedText st, SkScalar x,
-                    SkScalar y, SkPaint paint) {
+                    SkScalar y, const SkPaint& paint) {
     canvas.drawTextBlob(st.blob(), x, y, paint);
 }
 #endif //SK_NO_FONTS
@@ -736,8 +737,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
     function("setCurrentContext", &emscripten_webgl_make_context_current);
     function("MakeGrContext", &MakeGrContext);
     function("MakeOnScreenGLSurface", &MakeOnScreenGLSurface);
-    function("MakeRenderTarget", select_overload<sk_sp<SkSurface>(sk_sp<GrContext>, int, int)>(&MakeRenderTarget));
-    function("MakeRenderTarget", select_overload<sk_sp<SkSurface>(sk_sp<GrContext>, SimpleImageInfo)>(&MakeRenderTarget));
+    function("MakeRenderTarget", select_overload<sk_sp<SkSurface>(sk_sp<GrDirectContext>, int, int)>(&MakeRenderTarget));
+    function("MakeRenderTarget", select_overload<sk_sp<SkSurface>(sk_sp<GrDirectContext>, SimpleImageInfo)>(&MakeRenderTarget));
 
     constant("gpu", true);
 #endif
@@ -783,6 +784,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         // Adds a little helper because emscripten doesn't expose default params.
         return SkMaskFilter::MakeBlur(style, sigma, respectCTM);
     }), allow_raw_pointers());
+    // TODO(kjlubick) deprecate these path constructors and move them to class functions.
 #ifdef SK_INCLUDE_PATHOPS
     function("MakePathFromOp", &MakePathFromOp);
 #endif
@@ -908,22 +910,26 @@ EMSCRIPTEN_BINDINGS(Skia) {
     }), allow_raw_pointers());
 
 #ifdef SK_GL
-    class_<GrContext>("GrContext")
-        .smart_ptr<sk_sp<GrContext>>("sk_sp<GrContext>")
-        .function("getResourceCacheLimitBytes", optional_override([](GrContext& self)->size_t {
+    class_<GrDirectContext>("GrDirectContext")
+        .smart_ptr<sk_sp<GrDirectContext>>("sk_sp<GrDirectContext>")
+        .function("getResourceCacheLimitBytes",
+                optional_override([](GrDirectContext& self)->size_t {
             int maxResources = 0;// ignored
             size_t currMax = 0;
             self.getResourceCacheLimits(&maxResources, &currMax);
             return currMax;
         }))
-        .function("getResourceCacheUsageBytes", optional_override([](GrContext& self)->size_t {
+        .function("getResourceCacheUsageBytes",
+                optional_override([](GrDirectContext& self)->size_t {
             int usedResources = 0;// ignored
             size_t currUsage = 0;
             self.getResourceCacheUsage(&usedResources, &currUsage);
             return currUsage;
         }))
-        .function("releaseResourcesAndAbandonContext", &GrContext::releaseResourcesAndAbandonContext)
-        .function("setResourceCacheLimitBytes", optional_override([](GrContext& self, size_t maxResourceBytes)->void {
+        .function("releaseResourcesAndAbandonContext",
+                &GrDirectContext::releaseResourcesAndAbandonContext)
+        .function("setResourceCacheLimitBytes",
+                optional_override([](GrDirectContext& self, size_t maxResourceBytes)->void {
             int maxResources = 0;
             size_t currMax = 0; // ignored
             self.getResourceCacheLimits(&maxResources, &currMax);
@@ -934,12 +940,14 @@ EMSCRIPTEN_BINDINGS(Skia) {
     class_<SkAnimatedImage>("SkAnimatedImage")
         .smart_ptr<sk_sp<SkAnimatedImage>>("sk_sp<SkAnimatedImage>")
         .function("decodeNextFrame", &SkAnimatedImage::decodeNextFrame)
+        // Deprecated; prefer makeImageAtCurrentFrame
         .function("getCurrentFrame", &SkAnimatedImage::getCurrentFrame)
         .function("getFrameCount", &SkAnimatedImage::getFrameCount)
         .function("getRepetitionCount", &SkAnimatedImage::getRepetitionCount)
         .function("height",  optional_override([](SkAnimatedImage& self)->int32_t {
             return self.dimensions().height();
         }))
+        .function("makeImageAtCurrentFrame", &SkAnimatedImage::getCurrentFrame)
         .function("reset", &SkAnimatedImage::reset)
         .function("width",  optional_override([](SkAnimatedImage& self)->int32_t {
             return self.dimensions().width();
@@ -1000,11 +1008,12 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                      uintptr_t /* float* */ innerPtr, const SkPaint& paint) {
             self.drawDRRect(ptrToSkRRect(outerPtr), ptrToSkRRect(innerPtr), paint);
         }))
-        .function("drawAnimatedImage",  optional_override([](SkCanvas& self, sk_sp<SkAnimatedImage>& aImg,
-                                                             SkScalar x, SkScalar y)->void {
-            self.drawDrawable(aImg.get(), x, y);
-        }), allow_raw_pointers())
         .function("drawImage", select_overload<void (const sk_sp<SkImage>&, SkScalar, SkScalar, const SkPaint*)>(&SkCanvas::drawImage), allow_raw_pointers())
+        .function("drawImageAtCurrentFrame", optional_override([](SkCanvas& self, sk_sp<SkAnimatedImage> aImg,
+                                                         SkScalar left, SkScalar top, const SkPaint* paint)->void {
+            auto img = aImg->getCurrentFrame();
+            self.drawImage(img, left, top, paint);
+        }), allow_raw_pointers())
         .function("_drawImageNine", optional_override([](SkCanvas& self, const sk_sp<SkImage>& image,
                                                          uintptr_t /* int* */ centerPtr, uintptr_t /* float* */ dstPtr,
                                                          const SkPaint* paint)->void {
@@ -1024,7 +1033,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }), allow_raw_pointers())
         .function("drawLine", select_overload<void (SkScalar, SkScalar, SkScalar, SkScalar, const SkPaint&)>(&SkCanvas::drawLine))
         .function("_drawOval", optional_override([](SkCanvas& self, uintptr_t /* float* */ fPtr,
-                                                    const SkPaint paint)->void {
+                                                    const SkPaint& paint)->void {
             const SkRect* oval = reinterpret_cast<const SkRect*>(fPtr);
             self.drawOval(*oval, paint);
         }))
@@ -1041,7 +1050,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("drawPicture", select_overload<void (const sk_sp<SkPicture>&)>(&SkCanvas::drawPicture))
         .function("_drawPoints", optional_override([](SkCanvas& self, SkCanvas::PointMode mode,
                                                      uintptr_t /* SkPoint* */ pptr,
-                                                     int count, SkPaint paint)->void {
+                                                     int count, SkPaint& paint)->void {
             const SkPoint* pts = reinterpret_cast<const SkPoint*>(pptr);
             self.drawPoints(mode, count, pts, paint);
         }))
@@ -1049,13 +1058,13 @@ EMSCRIPTEN_BINDINGS(Skia) {
             self.drawRRect(ptrToSkRRect(fPtr), paint);
         }))
         .function("_drawRect", optional_override([](SkCanvas& self, uintptr_t /* float* */ fPtr,
-                                                    const SkPaint paint)->void {
+                                                    const SkPaint& paint)->void {
             const SkRect* rect = reinterpret_cast<const SkRect*>(fPtr);
             self.drawRect(*rect, paint);
         }))
         .function("drawRect4f", optional_override([](SkCanvas& self, SkScalar left, SkScalar top,
                                                      SkScalar right, SkScalar bottom,
-                                                     const SkPaint paint)->void {
+                                                     const SkPaint& paint)->void {
             const SkRect rect = SkRect::MakeLTRB(left, top, right, bottom);
             self.drawRect(rect, paint);
         }))
@@ -1082,7 +1091,30 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("drawTextBlob", select_overload<void (const sk_sp<SkTextBlob>&, SkScalar, SkScalar, const SkPaint&)>(&SkCanvas::drawTextBlob))
 #endif
         .function("drawVertices", select_overload<void (const sk_sp<SkVertices>&, SkBlendMode, const SkPaint&)>(&SkCanvas::drawVertices))
-        .function("flush", &SkCanvas::flush)
+        .function("_findMarkedCTM", optional_override([](SkCanvas& self, std::string marker, uintptr_t /* SkScalar* */ mPtr) -> bool {
+            SkScalar* sixteenMatrixValues = reinterpret_cast<SkScalar*>(mPtr);
+            if (!sixteenMatrixValues) {
+                return false; // matrix cannot be null
+            }
+            SkM44 m;
+            if (self.findMarkedCTM(marker.c_str(), &m)) {
+                m.getRowMajor(sixteenMatrixValues);
+                return true;
+            }
+            return false;
+        }))
+        .function("flush", &SkCanvas::flush) // Deprecated - will be removed
+        // 4x4 matrix functions
+        // Just like with getTotalMatrix, we allocate the buffer for the 16 floats to go in from
+        // interface.js, so it can also free them when its done.
+        .function("_getLocalToDevice", optional_override([](const SkCanvas& self, uintptr_t /* SkScalar*  */ mPtr) {
+            SkScalar* sixteenMatrixValues = reinterpret_cast<SkScalar*>(mPtr);
+            if (!sixteenMatrixValues) {
+                return; // matrix cannot be null
+            }
+            SkM44 m = self.getLocalToDevice();
+            m.getRowMajor(sixteenMatrixValues);
+        }))
         .function("getSaveCount", &SkCanvas::getSaveCount)
         // We allocate room for the matrix from the JS side and free it there so as to not have
         // an awkward moment where we malloc something here and "just know" to free it on the
@@ -1101,18 +1133,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("markCTM", optional_override([](SkCanvas& self, std::string marker) {
             self.markCTM(marker.c_str());
         }))
-        .function("_findMarkedCTM", optional_override([](SkCanvas& self, std::string marker, uintptr_t /* SkScalar* */ mPtr) -> bool {
-            SkScalar* sixteenMatrixValues = reinterpret_cast<SkScalar*>(mPtr);
-            if (!sixteenMatrixValues) {
-                return false; // matrix cannot be null
-            }
-            SkM44 m;
-            if (self.findMarkedCTM(marker.c_str(), &m)) {
-                m.getRowMajor(sixteenMatrixValues);
-                return true;
-            }
-            return false;
-        }))
+
         .function("_readPixels", optional_override([](SkCanvas& self, SimpleImageInfo di,
                                                       uintptr_t /* uint8_t* */ pPtr,
                                                       size_t dstRowBytes, int srcX, int srcY) {
@@ -1140,17 +1161,6 @@ EMSCRIPTEN_BINDINGS(Skia) {
             SkImageInfo dstInfo = toSkImageInfo(di);
 
             return self.writePixels(dstInfo, pixels, srcRowBytes, dstX, dstY);
-        }))
-        // 4x4 matrix functions
-        // Just like with getTotalMatrix, we allocate the buffer for the 16 floats to go in from
-        // interface.js, so it can also free them when its done.
-        .function("_getLocalToDevice", optional_override([](const SkCanvas& self, uintptr_t /* SkScalar*  */ mPtr) {
-            SkScalar* sixteenMatrixValues = reinterpret_cast<SkScalar*>(mPtr);
-            if (!sixteenMatrixValues) {
-                return; // matrix cannot be null
-            }
-            SkM44 m = self.getLocalToDevice();
-            m.getRowMajor(sixteenMatrixValues);
         }));
 
     class_<SkColorFilter>("SkColorFilter")
@@ -1194,10 +1204,12 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("isClosed", &SkContourMeasure::isClosed)
         .function("length", &SkContourMeasure::length);
 
+    // TODO(kjlubick) Don't expose SkData - just expose ways to get the bytes.
     class_<SkData>("SkData")
         .smart_ptr<sk_sp<SkData>>("sk_sp<SkData>>")
         .function("size", &SkData::size);
 
+    // TODO(kjlubick) I think this can be deleted since AnimatedImage is no longer around.
     class_<SkDrawable>("SkDrawable")
         .smart_ptr<sk_sp<SkDrawable>>("sk_sp<SkDrawable>>");
 
@@ -1207,6 +1219,26 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .constructor<sk_sp<SkTypeface>>()
         .constructor<sk_sp<SkTypeface>, SkScalar>()
         .constructor<sk_sp<SkTypeface>, SkScalar, SkScalar, SkScalar>()
+        .function("_getGlyphWidthBounds", optional_override([](SkFont& self, uintptr_t /* SkGlyphID* */ gPtr,
+                                                          int numGlyphs, uintptr_t /* float* */ wPtr,
+                                                          uintptr_t /* float* */ rPtr,
+                                                          SkPaint* paint) {
+            const SkGlyphID* glyphs = reinterpret_cast<const SkGlyphID*>(gPtr);
+            // On the JS side only one of these is set at a time for easier ergonomics.
+            SkRect* outputRects = reinterpret_cast<SkRect*>(rPtr);
+            SkScalar* outputWidths = reinterpret_cast<SkScalar*>(wPtr);
+            self.getWidthsBounds(glyphs, numGlyphs, outputWidths, outputRects, paint);
+        }), allow_raw_pointers())
+        .function("_getGlyphIDs", optional_override([](SkFont& self, uintptr_t /* char* */ sptr,
+                                                       size_t strLen, size_t expectedCodePoints,
+                                                       uintptr_t /* SkGlyphID* */ iPtr) -> int {
+            char* str = reinterpret_cast<char*>(sptr);
+            SkGlyphID* glyphIDs = reinterpret_cast<SkGlyphID*>(iPtr);
+
+            int actualCodePoints = self.textToGlyphs(str, strLen, SkTextEncoding::kUTF8,
+                                                     glyphIDs, expectedCodePoints);
+            return actualCodePoints;
+        }))
         .function("getScaleX", &SkFont::getScaleX)
         .function("getSize", &SkFont::getSize)
         .function("getSkewX", &SkFont::getSkewX)
@@ -1413,8 +1445,10 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }), allow_raw_pointers())
         .class_function("MakeDiscrete", &SkDiscretePathEffect::Make);
 
+    // TODO(kjlubick, reed) Make SkPath immutable and only creatable via a factory/builder.
     class_<SkPath>("SkPath")
         .constructor<>()
+        // TODO(kjlubick) remove this constructor in favor of the .copy() method.
         .constructor<const SkPath&>()
         .class_function("_MakeFromCmds", &MakePathFromCmds)
         .class_function("_MakeFromVerbsPointsWeights", &MakePathFromVerbsPointsWeights)
@@ -1501,7 +1535,11 @@ EMSCRIPTEN_BINDINGS(Skia) {
             SkRect* output = reinterpret_cast<SkRect*>(fPtr);
             output[0] = self.getBounds();
         }))
-        .function("computeTightBounds", &SkPath::computeTightBounds)
+        .function("_computeTightBounds", optional_override([](SkPath& self,
+                                                              uintptr_t /* float* */ fPtr)->void {
+            SkRect* output = reinterpret_cast<SkRect*>(fPtr);
+            output[0] = self.computeTightBounds();
+        }))
         .function("equals", &Equals)
         .function("copy", &CopyPath)
 #ifdef SK_DEBUG
@@ -1510,6 +1548,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
 #endif
         ;
 
+    // TODO(kjlubick) remove this now that we have SkContourMeasureIter
     class_<SkPathMeasure>("SkPathMeasure")
         .constructor<const SkPath&, bool, SkScalar>()
         .function("getLength", &SkPathMeasure::getLength)
@@ -1612,7 +1651,9 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
     class_<SkSurface>("SkSurface")
         .smart_ptr<sk_sp<SkSurface>>("sk_sp<SkSurface>")
-        .function("_flush", select_overload<void()>(&SkSurface::flushAndSubmit))
+        .function("_flush", optional_override([](SkSurface& self) {
+            self.flushAndSubmit(false);
+        }))
         .function("getCanvas", &SkSurface::getCanvas, allow_raw_pointers())
         .function("imageInfo", optional_override([](SkSurface& self)->SimpleImageInfo {
             const auto& ii = self.imageInfo();
@@ -1631,7 +1672,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         }), allow_raw_pointers())
 #ifdef SK_GL
         .function("reportBackendTypeIsGPU", optional_override([](SkSurface& self) -> bool {
-            return self.getCanvas()->getGrContext() != nullptr;
+            return self.getCanvas()->recordingContext() != nullptr;
         }))
         .function("sampleCnt", optional_override([](SkSurface& self)->int {
             auto backendRT = self.getBackendRenderTarget(SkSurface::kFlushRead_BackendHandleAccess);
@@ -1656,10 +1697,24 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
             return SkTextBlob::MakeFromRSXform(str, strBtyes, xforms, font, SkTextEncoding::kUTF8);
         }), allow_raw_pointers())
+        .class_function("_MakeFromRSXformGlyphs", optional_override([](uintptr_t /* SkGlyphID* */ gPtr,
+                                                              size_t byteLen,
+                                                              uintptr_t /* SkRSXform* */ xptr,
+                                                              const SkFont& font)->sk_sp<SkTextBlob> {
+            const SkGlyphID* glyphs = reinterpret_cast<const SkGlyphID*>(gPtr);
+            const SkRSXform* xforms = reinterpret_cast<const SkRSXform*>(xptr);
+
+            return SkTextBlob::MakeFromRSXform(glyphs, byteLen, xforms, font, SkTextEncoding::kGlyphID);
+        }), allow_raw_pointers())
         .class_function("_MakeFromText", optional_override([](uintptr_t /* char* */ sptr,
                                                               size_t len, const SkFont& font)->sk_sp<SkTextBlob> {
             const char* str = reinterpret_cast<const char*>(sptr);
             return SkTextBlob::MakeFromText(str, len, font, SkTextEncoding::kUTF8);
+        }), allow_raw_pointers())
+        .class_function("_MakeFromGlyphs", optional_override([](uintptr_t /* SkGlyphID* */ gPtr,
+                                                                size_t byteLen, const SkFont& font)->sk_sp<SkTextBlob> {
+            const SkGlyphID* glyphs = reinterpret_cast<const SkGlyphID*>(gPtr);
+            return SkTextBlob::MakeFromText(glyphs, byteLen, font, SkTextEncoding::kGlyphID);
         }), allow_raw_pointers());
 
     class_<SkTypeface>("SkTypeface")
@@ -1745,21 +1800,13 @@ EMSCRIPTEN_BINDINGS(Skia) {
     enum_<SkColorType>("ColorType")
         .value("Alpha_8", SkColorType::kAlpha_8_SkColorType)
         .value("RGB_565", SkColorType::kRGB_565_SkColorType)
-        .value("ARGB_4444", SkColorType::kARGB_4444_SkColorType)
         .value("RGBA_8888", SkColorType::kRGBA_8888_SkColorType)
-        .value("RGB_888x", SkColorType::kRGB_888x_SkColorType)
         .value("BGRA_8888", SkColorType::kBGRA_8888_SkColorType)
         .value("RGBA_1010102", SkColorType::kRGBA_1010102_SkColorType)
         .value("RGB_101010x", SkColorType::kRGB_101010x_SkColorType)
         .value("Gray_8", SkColorType::kGray_8_SkColorType)
         .value("RGBA_F16", SkColorType::kRGBA_F16_SkColorType)
-        .value("RGBA_F32", SkColorType::kRGBA_F32_SkColorType)
-        .value("R8G8_unorm", SkColorType::kR8G8_unorm_SkColorType)
-        .value("A16_unorm", SkColorType::kA16_unorm_SkColorType)
-        .value("R16G16_unorm", SkColorType::kR16G16_unorm_SkColorType)
-        .value("A16_float", SkColorType::kA16_float_SkColorType)
-        .value("R16G16_float", SkColorType::kR16G16_float_SkColorType)
-        .value("R16G16B16A16_unorm", SkColorType::kR16G16B16A16_unorm_SkColorType);
+        .value("RGBA_F32", SkColorType::kRGBA_F32_SkColorType);
 
     enum_<SkPathFillType>("FillType")
         .value("Winding",           SkPathFillType::kWinding)

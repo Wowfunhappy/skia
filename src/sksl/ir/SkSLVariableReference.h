@@ -23,7 +23,7 @@ class IRGenerator;
  * there is only one Variable 'x', but two VariableReferences to it.
  */
 struct VariableReference : public Expression {
-    static constexpr Kind kExpressionKind = kVariableReference_Kind;
+    static constexpr Kind kExpressionKind = Kind::kVariableReference;
 
     enum RefKind {
         kRead_RefKind,
@@ -34,7 +34,7 @@ struct VariableReference : public Expression {
         kPointer_RefKind
     };
 
-    VariableReference(int offset, const Variable& variable, RefKind refKind = kRead_RefKind);
+    VariableReference(int offset, const Variable* variable, RefKind refKind = kRead_RefKind);
 
     ~VariableReference() override;
 
@@ -46,11 +46,12 @@ struct VariableReference : public Expression {
     }
 
     void setRefKind(RefKind refKind);
+    void setVariable(const Variable* variable);
 
     bool hasProperty(Property property) const override {
         switch (property) {
             case Property::kSideEffects:      return false;
-            case Property::kContainsRTAdjust: return fVariable.fName == "sk_RTAdjust";
+            case Property::kContainsRTAdjust: return fVariable->name() == "sk_RTAdjust";
             default:
                 SkASSERT(false);
                 return false;
@@ -58,7 +59,7 @@ struct VariableReference : public Expression {
     }
 
     bool isConstantOrUniform() const override {
-        return (fVariable.fModifiers.fFlags & Modifiers::kUniform_Flag) != 0;
+        return (fVariable->fModifiers.fFlags & Modifiers::kUniform_Flag) != 0;
     }
 
     std::unique_ptr<Expression> clone() const override {
@@ -66,19 +67,19 @@ struct VariableReference : public Expression {
     }
 
     String description() const override {
-        return fVariable.fName;
+        return fVariable->name();
     }
-
-    static std::unique_ptr<Expression> copy_constant(const IRGenerator& irGenerator,
-                                                     const Expression* expr);
 
     std::unique_ptr<Expression> constantPropagate(const IRGenerator& irGenerator,
                                                   const DefinitionMap& definitions) override;
 
-    const Variable& fVariable;
+    const Variable* fVariable;
     RefKind fRefKind;
 
 private:
+    void incrementRefs() const;
+    void decrementRefs() const;
+
     using INHERITED = Expression;
 };
 
