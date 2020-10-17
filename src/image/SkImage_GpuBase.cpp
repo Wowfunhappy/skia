@@ -13,7 +13,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "src/core/SkBitmapCache.h"
 #include "src/core/SkTLList.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrImageContextPriv.h"
 #include "src/gpu/GrImageInfo.h"
 #include "src/gpu/GrProxyProvider.h"
@@ -477,9 +477,9 @@ sk_sp<GrTextureProxy> SkImage_GpuBase::MakePromiseImageLazyProxy(
             // we can't unref in our destructor because we may be on another thread then. So we
             // let the cache know it is waiting on an unref message. We will send that message from
             // our destructor.
-            GrContext* context = fTexture->getContext();
-            context->priv().getResourceCache()->insertDelayedTextureUnref(fTexture);
-            fTextureContextID = context->priv().contextID();
+            auto dContext = fTexture->getContext();
+            dContext->priv().getResourceCache()->insertDelayedTextureUnref(fTexture);
+            fTextureContextID = dContext->priv().contextID();
             return {std::move(tex), kReleaseCallbackOnInstantiation, kKeySyncMode};
         }
 

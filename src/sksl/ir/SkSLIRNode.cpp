@@ -11,8 +11,7 @@
 
 namespace SkSL {
 
-IRNode::IRNode(int offset, int kind, const BlockData& data,
-               std::vector<std::unique_ptr<Statement>> stmts)
+IRNode::IRNode(int offset, int kind, const BlockData& data, StatementArray stmts)
 : fOffset(offset)
 , fKind(kind)
 , fData(data)
@@ -38,17 +37,12 @@ IRNode::IRNode(int offset, int kind, const FieldData& data)
 , fKind(kind)
 , fData(data) {}
 
+IRNode::IRNode(int offset, int kind, const FieldAccessData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
 IRNode::IRNode(int offset, int kind, const FloatLiteralData& data)
-: fOffset(offset)
-, fKind(kind)
-, fData(data) {}
-
-IRNode::IRNode(int offset, int kind, const FunctionCallData& data)
-: fOffset(offset)
-, fKind(kind)
-, fData(data) {}
-
-IRNode::IRNode(int offset, int kind, const IntLiteralData& data)
 : fOffset(offset)
 , fKind(kind)
 , fData(data) {}
@@ -58,7 +52,67 @@ IRNode::IRNode(int offset, int kind, const ForStatementData& data)
 , fKind(kind)
 , fData(data) {}
 
+IRNode::IRNode(int offset, int kind, const FunctionCallData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const FunctionDeclarationData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const FunctionDefinitionData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const FunctionReferenceData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const IfStatementData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const InlineMarkerData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const InterfaceBlockData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const IntLiteralData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const ModifiersDeclarationData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const SectionData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const SettingData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
 IRNode::IRNode(int offset, int kind, const String& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const SwizzleData& data)
 : fOffset(offset)
 , fKind(kind)
 , fData(data) {}
@@ -78,20 +132,35 @@ IRNode::IRNode(int offset, int kind, const Type* data)
 , fKind(kind)
 , fData(data) {}
 
+IRNode::IRNode(int offset, int kind, const TypeReferenceData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
 IRNode::IRNode(int offset, int kind, const TypeTokenData& data)
 : fOffset(offset)
 , fKind(kind)
 , fData(data) {}
 
-IRNode::IRNode(const IRNode& other)
-    : fOffset(other.fOffset)
-    , fKind(other.fKind)
-    , fData(other.fData) {
-    // For now, we can't use a default copy constructor because of the std::unique_ptr children.
-    // Since we never copy nodes containing children, it's easiest just to assert we don't have any
-    // than bother with cloning them.
-    SkASSERT(other.fExpressionChildren.empty());
-}
+IRNode::IRNode(int offset, int kind, const UnresolvedFunctionData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const VarDeclarationData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const VariableData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
+
+IRNode::IRNode(int offset, int kind, const VariableReferenceData& data)
+: fOffset(offset)
+, fKind(kind)
+, fData(data) {}
 
 IRNode::~IRNode() {}
 

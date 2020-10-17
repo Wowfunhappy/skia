@@ -26,7 +26,7 @@
 #include "src/gpu/GrBitmapTextureMaker.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrColorSpaceXform.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrDrawingManager.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrImageContextPriv.h"
@@ -626,7 +626,7 @@ sk_sp<SkImage> SkImage::MakeFromAHardwareBuffer(AHardwareBuffer* graphicBuffer, 
     return SkImage::MakeFromGenerator(std::move(gen));
 }
 
-sk_sp<SkImage> SkImage::MakeFromAHardwareBufferWithData(GrContext* context,
+sk_sp<SkImage> SkImage::MakeFromAHardwareBufferWithData(GrDirectContext* dContext,
                                                         const SkPixmap& pixmap,
                                                         AHardwareBuffer* hardwareBuffer,
                                                         GrSurfaceOrigin surfaceOrigin) {
@@ -634,12 +634,6 @@ sk_sp<SkImage> SkImage::MakeFromAHardwareBufferWithData(GrContext* context,
     AHardwareBuffer_describe(hardwareBuffer, &bufferDesc);
 
     if (!SkToBool(bufferDesc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE)) {
-        return nullptr;
-    }
-
-    auto dContext = GrAsDirectContext(context);
-    if (!dContext) {
-        SkDebugf("Direct context required\n");
         return nullptr;
     }
 

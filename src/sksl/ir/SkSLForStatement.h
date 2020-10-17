@@ -24,11 +24,11 @@ public:
     ForStatement(int offset, std::unique_ptr<Statement> initializer,
                  std::unique_ptr<Expression> test, std::unique_ptr<Expression> next,
                  std::unique_ptr<Statement> statement, std::shared_ptr<SymbolTable> symbols)
-    : INHERITED(offset, kStatementKind, ForStatementData{std::move(symbols)}) {
-        fStatementChildren.reserve(2);
+    : INHERITED(offset, ForStatementData{std::move(symbols)}) {
+        fStatementChildren.reserve_back(2);
         fStatementChildren.push_back(std::move(initializer));
         fStatementChildren.push_back(std::move(statement));
-        fExpressionChildren.reserve(2);
+        fExpressionChildren.reserve_back(2);
         fExpressionChildren.push_back(std::move(test));
         fExpressionChildren.push_back(std::move(next));
     }

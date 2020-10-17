@@ -24,19 +24,19 @@ static inline bool check_ref(const Expression& expr) {
         case Expression::Kind::kExternalValue:
             return true;
         case Expression::Kind::kFieldAccess:
-            return check_ref(*expr.as<FieldAccess>().fBase);
+            return check_ref(*expr.as<FieldAccess>().base());
         case Expression::Kind::kIndex:
-            return check_ref(*expr.as<IndexExpression>().fBase);
+            return check_ref(*expr.as<IndexExpression>().base());
         case Expression::Kind::kSwizzle:
-            return check_ref(*expr.as<Swizzle>().fBase);
+            return check_ref(*expr.as<Swizzle>().base());
         case Expression::Kind::kTernary: {
             const TernaryExpression& t = expr.as<TernaryExpression>();
-            return check_ref(*t.fIfTrue) && check_ref(*t.fIfFalse);
+            return check_ref(*t.ifTrue()) && check_ref(*t.ifFalse());
         }
         case Expression::Kind::kVariableReference: {
             const VariableReference& ref = expr.as<VariableReference>();
-            return ref.fRefKind == VariableReference::kWrite_RefKind ||
-                   ref.fRefKind == VariableReference::kReadWrite_RefKind;
+            return ref.refKind() == VariableReference::RefKind::kWrite ||
+                   ref.refKind() == VariableReference::RefKind::kReadWrite;
         }
         default:
             return false;
@@ -46,17 +46,22 @@ static inline bool check_ref(const Expression& expr) {
 /**
  * A binary operation.
  */
-struct BinaryExpression : public Expression {
+class BinaryExpression : public Expression {
+public:
     static constexpr Kind kExpressionKind = Kind::kBinary;
 
     BinaryExpression(int offset, std::unique_ptr<Expression> left, Token::Kind op,
                      std::unique_ptr<Expression> right, const Type* type)
-    : INHERITED(offset, kExpressionKind, { type, op }) {
-        fExpressionChildren.reserve(2);
+    : INHERITED(offset, kExpressionKind, TypeTokenData{type, op}) {
+        fExpressionChildren.reserve_back(2);
         fExpressionChildren.push_back(std::move(left));
         fExpressionChildren.push_back(std::move(right));
         // If we are assigning to a VariableReference, ensure that it is set to Write or ReadWrite
         SkASSERT(!Compiler::IsAssignment(op) || check_ref(this->left()));
+    }
+
+    const Type& type() const override {
+        return *this->typeTokenData().fType;
     }
 
     Expression& left() const {

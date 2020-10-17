@@ -49,13 +49,14 @@ public:
         String result = "enum class " + this->typeName() + " {\n";
         String separator;
         std::vector<const Symbol*> sortedSymbols;
-        for (const auto& pair : *this->symbols()) {
-            sortedSymbols.push_back(pair.second);
-        }
+        sortedSymbols.reserve(symbols()->count());
+        this->symbols()->foreach([&](StringFragment, const Symbol* symbol) {
+            sortedSymbols.push_back(symbol);
+        });
         std::sort(sortedSymbols.begin(), sortedSymbols.end(),
                   [](const Symbol* a, const Symbol* b) { return a->name() < b->name(); });
         for (const auto& s : sortedSymbols) {
-            const Expression& initialValue = *s->as<Variable>().fInitialValue;
+            const Expression& initialValue = *s->as<Variable>().initialValue();
             result += separator + "    " + s->name() + " = " +
                       to_string(initialValue.as<IntLiteral>().value());
             separator = ",\n";

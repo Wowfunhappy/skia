@@ -183,7 +183,7 @@ void GrMtlGpu::destroyResources() {
 }
 
 GrOpsRenderPass* GrMtlGpu::getOpsRenderPass(
-            GrRenderTarget* renderTarget, GrStencilAttachment*,
+            GrRenderTarget* renderTarget, GrAttachment*,
             GrSurfaceOrigin origin, const SkIRect& bounds,
             const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
             const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
@@ -497,7 +497,7 @@ bool GrMtlGpu::clearTexture(GrMtlTexture* tex, size_t bpp, uint32_t levelMask) {
     return true;
 }
 
-GrStencilAttachment* GrMtlGpu::createStencilAttachmentForRenderTarget(
+sk_sp<GrAttachment> GrMtlGpu::makeStencilAttachmentForRenderTarget(
         const GrRenderTarget* rt, SkISize dimensions, int numStencilSamples) {
     SkASSERT(numStencilSamples == rt->numSamples());
     SkASSERT(dimensions.width() >= rt->width());
@@ -505,14 +505,10 @@ GrStencilAttachment* GrMtlGpu::createStencilAttachmentForRenderTarget(
 
     int samples = rt->numSamples();
 
-    const GrMtlCaps::StencilFormat& sFmt = this->mtlCaps().preferredStencilFormat();
+    MTLPixelFormat sFmt = this->mtlCaps().preferredStencilFormat();
 
-    GrMtlStencilAttachment* stencil(GrMtlStencilAttachment::Create(this,
-                                                                   dimensions,
-                                                                   samples,
-                                                                   sFmt));
     fStats.incStencilAttachmentCreates();
-    return stencil;
+    return GrMtlAttachment::GrMtlAttachment::MakeStencil(this, dimensions, samples, sFmt);
 }
 
 sk_sp<GrTexture> GrMtlGpu::onCreateTexture(SkISize dimensions,
@@ -784,31 +780,6 @@ sk_sp<GrRenderTarget> GrMtlGpu::onWrapBackendRenderTarget(const GrBackendRenderT
 
     return GrMtlRenderTarget::MakeWrappedRenderTarget(this, backendRT.dimensions(),
                                                       backendRT.sampleCnt(), mtlTexture);
-}
-
-sk_sp<GrRenderTarget> GrMtlGpu::onWrapBackendTextureAsRenderTarget(
-        const GrBackendTexture& backendTex, int sampleCnt) {
-    id<MTLTexture> mtlTexture = get_texture_from_backend(backendTex);
-    if (!mtlTexture) {
-        return nullptr;
-    }
-
-    MTLPixelFormat format = mtlTexture.pixelFormat;
-    if (!this->mtlCaps().isFormatRenderable(format, sampleCnt)) {
-        return nullptr;
-    }
-
-    if (@available(macOS 10.11, iOS 9.0, *)) {
-        SkASSERT(MTLTextureUsageRenderTarget & mtlTexture.usage);
-    }
-
-    sampleCnt = this->mtlCaps().getRenderTargetSampleCount(sampleCnt, format);
-    if (!sampleCnt) {
-        return nullptr;
-    }
-
-    return GrMtlRenderTarget::MakeWrappedRenderTarget(this, backendTex.dimensions(), sampleCnt,
-                                                      mtlTexture);
 }
 
 bool GrMtlGpu::onRegenerateMipMapLevels(GrTexture* texture) {
@@ -1105,9 +1076,13 @@ bool GrMtlGpu::isTestingOnlyBackendTexture(const GrBackendTexture& tex) const {
 
 GrBackendRenderTarget GrMtlGpu::createTestingOnlyBackendRenderTarget(SkISize dimensions,
                                                                      GrColorType ct,
-                                                                     int sampleCnt) {
+                                                                     int sampleCnt,
+                                                                     GrProtected isProtected) {
     if (dimensions.width()  > this->caps()->maxRenderTargetSize() ||
         dimensions.height() > this->caps()->maxRenderTargetSize()) {
+        return {};
+    }
+    if (isProtected == GrProtected::kYes) {
         return {};
     }
 

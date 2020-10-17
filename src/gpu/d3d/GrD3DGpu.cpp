@@ -15,11 +15,11 @@
 #include "src/gpu/GrDataUtils.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/d3d/GrD3DAMDMemoryAllocator.h"
+#include "src/gpu/d3d/GrD3DAttachment.h"
 #include "src/gpu/d3d/GrD3DBuffer.h"
 #include "src/gpu/d3d/GrD3DCaps.h"
 #include "src/gpu/d3d/GrD3DOpsRenderPass.h"
 #include "src/gpu/d3d/GrD3DSemaphore.h"
-#include "src/gpu/d3d/GrD3DStencilAttachment.h"
 #include "src/gpu/d3d/GrD3DTexture.h"
 #include "src/gpu/d3d/GrD3DTextureRenderTarget.h"
 #include "src/gpu/d3d/GrD3DUtil.h"
@@ -116,8 +116,10 @@ void GrD3DGpu::destroyResources() {
 }
 
 GrOpsRenderPass* GrD3DGpu::getOpsRenderPass(
-        GrRenderTarget* rt, GrStencilAttachment*,
-        GrSurfaceOrigin origin, const SkIRect& bounds,
+        GrRenderTarget* rt,
+        GrAttachment*,
+        GrSurfaceOrigin origin,
+        const SkIRect& bounds,
         const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
         const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
         const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
@@ -916,44 +918,6 @@ sk_sp<GrRenderTarget> GrD3DGpu::onWrapBackendRenderTarget(const GrBackendRenderT
     return std::move(tgt);
 }
 
-sk_sp<GrRenderTarget> GrD3DGpu::onWrapBackendTextureAsRenderTarget(const GrBackendTexture& tex,
-                                                                   int sampleCnt) {
-
-    GrD3DTextureResourceInfo textureInfo;
-    if (!tex.getD3DTextureResourceInfo(&textureInfo)) {
-        return nullptr;
-    }
-    if (!check_resource_info(textureInfo)) {
-        return nullptr;
-    }
-
-    // If sampleCnt is > 1 we will create an intermediate MSAA VkImage and then resolve into
-    // the wrapped VkImage. We don't yet support rendering directly to client-provided MSAA texture.
-    if (textureInfo.fSampleCount != 1) {
-        return nullptr;
-    }
-
-    if (!check_rt_resource_info(this->d3dCaps(), textureInfo, sampleCnt)) {
-        return nullptr;
-    }
-
-    // TODO: support protected context
-    if (tex.isProtected()) {
-        return nullptr;
-    }
-
-    sampleCnt = this->d3dCaps().getRenderTargetSampleCount(sampleCnt, textureInfo.fFormat);
-    if (!sampleCnt) {
-        return nullptr;
-    }
-
-    sk_sp<GrD3DResourceState> state = tex.getGrD3DResourceState();
-    SkASSERT(state);
-
-    return GrD3DRenderTarget::MakeWrappedRenderTarget(this, tex.dimensions(), sampleCnt,
-                                                      textureInfo, std::move(state));
-}
-
 sk_sp<GrGpuBuffer> GrD3DGpu::onCreateBuffer(size_t sizeInBytes, GrGpuBufferType type,
                                              GrAccessPattern accessPattern, const void* data) {
     sk_sp<GrD3DBuffer> buffer = GrD3DBuffer::Make(this, sizeInBytes, type, accessPattern);
@@ -964,20 +928,17 @@ sk_sp<GrGpuBuffer> GrD3DGpu::onCreateBuffer(size_t sizeInBytes, GrGpuBufferType 
     return std::move(buffer);
 }
 
-GrStencilAttachment* GrD3DGpu::createStencilAttachmentForRenderTarget(
-        const GrRenderTarget* rt, SkISize dimensions, int numStencilSamples) {
+sk_sp<GrAttachment> GrD3DGpu::makeStencilAttachmentForRenderTarget(const GrRenderTarget* rt,
+                                                                   SkISize dimensions,
+                                                                   int numStencilSamples) {
     SkASSERT(numStencilSamples == rt->numSamples() || this->caps()->mixedSamplesSupport());
     SkASSERT(dimensions.width() >= rt->width());
     SkASSERT(dimensions.height() >= rt->height());
 
-    const GrD3DCaps::StencilFormat& sFmt = this->d3dCaps().preferredStencilFormat();
+    DXGI_FORMAT sFmt = this->d3dCaps().preferredStencilFormat();
 
-    GrD3DStencilAttachment* stencil(GrD3DStencilAttachment::Make(this,
-                                                                 dimensions,
-                                                                 numStencilSamples,
-                                                                 sFmt));
     fStats.incStencilAttachmentCreates();
-    return stencil;
+    return GrD3DAttachment::MakeStencil(this, dimensions, numStencilSamples, sFmt);
 }
 
 bool GrD3DGpu::createTextureResourceForBackendSurface(DXGI_FORMAT dxgiFormat,
@@ -1260,7 +1221,8 @@ bool GrD3DGpu::isTestingOnlyBackendTexture(const GrBackendTexture& tex) const {
 
 GrBackendRenderTarget GrD3DGpu::createTestingOnlyBackendRenderTarget(SkISize dimensions,
                                                                      GrColorType colorType,
-                                                                     int sampleCnt) {
+                                                                     int sampleCnt,
+                                                                     GrProtected isProtected) {
     this->handleDirtyContext();
 
     if (dimensions.width()  > this->caps()->maxRenderTargetSize() ||
@@ -1273,7 +1235,7 @@ GrBackendRenderTarget GrD3DGpu::createTestingOnlyBackendRenderTarget(SkISize dim
     GrD3DTextureResourceInfo info;
     if (!this->createTextureResourceForBackendSurface(dxgiFormat, dimensions, GrTexturable::kNo,
                                                       GrRenderable::kYes, GrMipmapped::kNo,
-                                                      sampleCnt, &info, GrProtected::kNo)) {
+                                                      sampleCnt, &info, isProtected)) {
         return {};
     }
 

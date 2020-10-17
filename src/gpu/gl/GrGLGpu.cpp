@@ -21,9 +21,9 @@
 #include "src/core/SkMipmap.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/gpu/GrBackendUtils.h"
-#include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrCpuBuffer.h"
 #include "src/gpu/GrDataUtils.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrGpuResourcePriv.h"
 #include "src/gpu/GrPipeline.h"
 #include "src/gpu/GrProgramInfo.h"
@@ -31,10 +31,10 @@
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrSurfaceProxyPriv.h"
 #include "src/gpu/GrTexture.h"
+#include "src/gpu/gl/GrGLAttachment.h"
 #include "src/gpu/gl/GrGLBuffer.h"
 #include "src/gpu/gl/GrGLOpsRenderPass.h"
 #include "src/gpu/gl/GrGLSemaphore.h"
-#include "src/gpu/gl/GrGLStencilAttachment.h"
 #include "src/gpu/gl/GrGLTextureRenderTarget.h"
 #include "src/gpu/gl/builders/GrGLShaderStringBuilder.h"
 #include "src/sksl/SkSLCompiler.h"
@@ -479,7 +479,7 @@ void GrGLGpu::disconnect(DisconnectType type) {
     if (this->glCaps().shaderCaps()->pathRenderingSupport()) {
         this->glPathRendering()->disconnect(type);
     }
-    fFinishCallbacks.callAll(DisconnectType::kCleanup == type);
+    fFinishCallbacks.callAll(/* doDelete */ DisconnectType::kCleanup == type);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -799,27 +799,6 @@ sk_sp<GrRenderTarget> GrGLGpu::onWrapBackendRenderTarget(const GrBackendRenderTa
 
     return GrGLRenderTarget::MakeWrapped(this, backendRT.dimensions(), format, sampleCount, rtIDs,
                                          backendRT.stencilBits());
-}
-
-sk_sp<GrRenderTarget> GrGLGpu::onWrapBackendTextureAsRenderTarget(const GrBackendTexture& tex,
-                                                                  int sampleCnt) {
-    GrGLTexture::Desc desc;
-    // We do not check whether texture rectangle is supported by Skia - if the caller provided us
-    // with a texture rectangle,we assume the necessary support exists.
-    if (!check_backend_texture(tex, this->glCaps(), &desc, true)) {
-        return nullptr;
-    }
-
-    if (!this->glCaps().isFormatRenderable(desc.fFormat, sampleCnt)) {
-        return nullptr;
-    }
-
-    const int sampleCount = this->glCaps().getRenderTargetSampleCount(sampleCnt, desc.fFormat);
-    GrGLRenderTarget::IDs rtIDs;
-    if (!this->createRenderTargetObjects(desc, sampleCount, &rtIDs)) {
-        return nullptr;
-    }
-    return GrGLRenderTarget::MakeWrapped(this, desc.fSize, desc.fFormat, sampleCount, rtIDs, 0);
 }
 
 static bool check_write_and_transfer_input(GrGLTexture* glTex) {
@@ -1567,14 +1546,14 @@ int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
         if (sbRBID) {
             GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, sbRBID));
             for (int i = 0; i < stencilFmtCnt && sbRBID; ++i) {
-                const GrGLCaps::StencilFormat& sFmt = this->glCaps().stencilFormats()[i];
+                GrGLFormat sFmt = this->glCaps().stencilFormats()[i];
                 GrGLenum error = GL_ALLOC_CALL(RenderbufferStorage(
-                        GR_GL_RENDERBUFFER, sFmt.fInternalFormat, kSize, kSize));
+                        GR_GL_RENDERBUFFER, GrGLFormatToEnum(sFmt), kSize, kSize));
                 if (error == GR_GL_NO_ERROR) {
                     GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER,
                                                     GR_GL_STENCIL_ATTACHMENT,
                                                     GR_GL_RENDERBUFFER, sbRBID));
-                    if (sFmt.fPacked) {
+                    if (GrGLFormatIsPackedDepthStencil(sFmt)) {
                         GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER,
                                                         GR_GL_DEPTH_ATTACHMENT,
                                                         GR_GL_RENDERBUFFER, sbRBID));
@@ -1592,7 +1571,7 @@ int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
                     GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER,
                                                     GR_GL_STENCIL_ATTACHMENT,
                                                     GR_GL_RENDERBUFFER, 0));
-                    if (sFmt.fPacked) {
+                    if (GrGLFormatIsPackedDepthStencil(sFmt)) {
                         GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER,
                                                         GR_GL_DEPTH_ATTACHMENT,
                                                         GR_GL_RENDERBUFFER, 0));
@@ -1693,12 +1672,13 @@ GrGLuint GrGLGpu::createTexture(SkISize dimensions,
     return 0;
 }
 
-GrStencilAttachment* GrGLGpu::createStencilAttachmentForRenderTarget(
-        const GrRenderTarget* rt, SkISize dimensions, int numStencilSamples) {
+sk_sp<GrAttachment> GrGLGpu::makeStencilAttachmentForRenderTarget(const GrRenderTarget* rt,
+                                                                  SkISize dimensions,
+                                                                  int numStencilSamples) {
     SkASSERT(dimensions.width() >= rt->width());
     SkASSERT(dimensions.height() >= rt->height());
 
-    GrGLStencilAttachment::IDDesc sbDesc;
+    GrGLAttachment::IDDesc sbDesc;
 
     int sIdx = this->getCompatibleStencilIndex(rt->backendFormat().asGLFormat());
     if (sIdx < 0) {
@@ -1712,17 +1692,18 @@ GrStencilAttachment* GrGLGpu::createStencilAttachmentForRenderTarget(
         return nullptr;
     }
     GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, sbDesc.fRenderbufferID));
-    const GrGLCaps::StencilFormat& sFmt = this->glCaps().stencilFormats()[sIdx];
+    GrGLFormat sFmt = this->glCaps().stencilFormats()[sIdx];
+    GrGLenum glFmt = GrGLFormatToEnum(sFmt);
     // we do this "if" so that we don't call the multisample
     // version on a GL that doesn't have an MSAA extension.
     if (numStencilSamples > 1) {
-        if (!this->renderbufferStorageMSAA(*fGLContext, numStencilSamples, sFmt.fInternalFormat,
+        if (!this->renderbufferStorageMSAA(*fGLContext, numStencilSamples, glFmt,
                                            dimensions.width(), dimensions.height())) {
             GL_CALL(DeleteRenderbuffers(1, &sbDesc.fRenderbufferID));
             return nullptr;
         }
     } else {
-        GrGLenum error = GL_ALLOC_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, sFmt.fInternalFormat,
+        GrGLenum error = GL_ALLOC_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, glFmt,
                                                            dimensions.width(),
                                                            dimensions.height()));
         if (error != GR_GL_NO_ERROR) {
@@ -1732,12 +1713,8 @@ GrStencilAttachment* GrGLGpu::createStencilAttachmentForRenderTarget(
     }
     fStats.incStencilAttachmentCreates();
 
-    GrGLStencilAttachment* stencil = new GrGLStencilAttachment(this,
-                                                               sbDesc,
-                                                               dimensions,
-                                                               numStencilSamples,
-                                                               sFmt);
-    return stencil;
+    return sk_sp<GrAttachment>(new GrGLAttachment(
+            this, sbDesc, dimensions, GrAttachment::UsageFlags::kStencil, numStencilSamples, sFmt));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2037,14 +2014,14 @@ void GrGLGpu::clearStencilClip(const GrScissorState& scissor, bool insideStencil
     SkASSERT(!scissor.enabled() || !this->caps()->performPartialClearsAsDraws());
     this->handleDirtyContext();
 
-    GrStencilAttachment* sb = target->getStencilAttachment();
+    GrAttachment* sb = target->getStencilAttachment();
     if (!sb) {
         // We should only get here if we marked a proxy as requiring a SB. However,
         // the SB creation could later fail. Likely clipping is going to go awry now.
         return;
     }
 
-    GrGLint stencilBitCount =  sb->bits();
+    GrGLint stencilBitCount =  GrBackendFormatStencilBits(sb->backendFormat());
 #if 0
     SkASSERT(stencilBitCount > 0);
     GrGLint clipStencilMask  = (1 << (stencilBitCount - 1));
@@ -2140,7 +2117,7 @@ bool GrGLGpu::readOrTransferPixelsFrom(GrSurface* surface, int left, int top, in
 
     if (reattachStencil) {
         auto* stencilAttachment =
-                static_cast<GrGLStencilAttachment*>(renderTarget->getStencilAttachment());
+                static_cast<GrGLAttachment*>(renderTarget->getStencilAttachment());
         GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER, GR_GL_STENCIL_ATTACHMENT,
                                         GR_GL_RENDERBUFFER, stencilAttachment->renderbufferID()));
     }
@@ -2177,8 +2154,10 @@ bool GrGLGpu::onReadPixels(GrSurface* surface, int left, int top, int width, int
 }
 
 GrOpsRenderPass* GrGLGpu::getOpsRenderPass(
-        GrRenderTarget* rt, GrStencilAttachment*,
-        GrSurfaceOrigin origin, const SkIRect& bounds,
+        GrRenderTarget* rt,
+        GrAttachment*,
+        GrSurfaceOrigin origin,
+        const SkIRect& bounds,
         const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
         const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
         const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
@@ -3704,11 +3683,16 @@ bool GrGLGpu::isTestingOnlyBackendTexture(const GrBackendTexture& tex) const {
 
 GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(SkISize dimensions,
                                                                     GrColorType colorType,
-                                                                    int sampleCnt) {
+                                                                    int sampleCnt,
+                                                                    GrProtected isProtected) {
     if (dimensions.width()  > this->caps()->maxRenderTargetSize() ||
         dimensions.height() > this->caps()->maxRenderTargetSize()) {
         return {};
     }
+    if (isProtected == GrProtected::kYes) {
+        return {};
+    }
+
     this->handleDirtyContext();
     auto format = this->glCaps().getFormatFromColorType(colorType);
     sampleCnt = this->glCaps().getRenderTargetSampleCount(sampleCnt, format);
@@ -3809,12 +3793,13 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(SkISize dime
                                         GR_GL_RENDERBUFFER, colorID));
     }
     GL_CALL(BindRenderbuffer(GR_GL_RENDERBUFFER, stencilID));
-    auto stencilBufferFormat = this->glCaps().stencilFormats()[sFormatIdx].fInternalFormat;
+    auto stencilBufferFormat = this->glCaps().stencilFormats()[sFormatIdx];
     if (sampleCnt == 1) {
-        GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, stencilBufferFormat, dimensions.width(),
-                                    dimensions.height()));
+        GL_CALL(RenderbufferStorage(GR_GL_RENDERBUFFER, GrGLFormatToEnum(stencilBufferFormat),
+                                    dimensions.width(), dimensions.height()));
     } else {
-        if (!this->renderbufferStorageMSAA(this->glContext(), sampleCnt, stencilBufferFormat,
+        if (!this->renderbufferStorageMSAA(this->glContext(), sampleCnt,
+                                           GrGLFormatToEnum(stencilBufferFormat),
                                            dimensions.width(), dimensions.height())) {
             deleteIDs();
             return {};
@@ -3822,7 +3807,7 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(SkISize dime
     }
     GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER, GR_GL_STENCIL_ATTACHMENT, GR_GL_RENDERBUFFER,
                                     stencilID));
-    if (this->glCaps().stencilFormats()[sFormatIdx].fPacked) {
+    if (GrGLFormatIsPackedDepthStencil(this->glCaps().stencilFormats()[sFormatIdx])) {
         GL_CALL(FramebufferRenderbuffer(GR_GL_FRAMEBUFFER, GR_GL_DEPTH_ATTACHMENT,
                                         GR_GL_RENDERBUFFER, stencilID));
     }
@@ -3842,7 +3827,7 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(SkISize dime
         return {};
     }
 
-    auto stencilBits = SkToInt(this->glCaps().stencilFormats()[sFormatIdx].fStencilBits);
+    auto stencilBits = SkToInt(GrGLFormatStencilBits(this->glCaps().stencilFormats()[sFormatIdx]));
 
     GrBackendRenderTarget beRT = GrBackendRenderTarget(dimensions.width(), dimensions.height(),
                                                        sampleCnt, stencilBits, info);

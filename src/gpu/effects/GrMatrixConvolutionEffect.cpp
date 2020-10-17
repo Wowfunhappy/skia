@@ -8,12 +8,12 @@
 
 #include "include/private/SkHalf.h"
 #include "src/gpu/GrBitmapTextureMaker.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTextureProxy.h"
-#include "src/gpu/GrThreadSafeUniquelyKeyedProxyViewCache.h"
+#include "src/gpu/GrThreadSafeCache.h"
 #include "src/gpu/effects/GrTextureEffect.h"
 #include "src/gpu/glsl/GrGLSLFragmentProcessor.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
@@ -102,12 +102,12 @@ GrMatrixConvolutionEffect::KernelWrapper::Make(GrRecordingContext* rContext,
     }
 
     // Find or create a texture.
-    auto threadSafeViewCache = rContext->priv().threadSafeViewCache();
+    auto threadSafeCache = rContext->priv().threadSafeCache();
 
     SkColorType colorType = useA16 ? kA16_float_SkColorType : kAlpha_8_SkColorType;
 
     GrSurfaceProxyView view;
-    if (kCacheKernelTexture && (view = threadSafeViewCache->find(key))) {
+    if (kCacheKernelTexture && (view = threadSafeCache->find(key))) {
         SkASSERT(view.origin() == kTopLeft_GrSurfaceOrigin);
         auto kernelFP = GrTextureEffect::Make(std::move(view), kUnknown_SkAlphaType);
         return {result, std::move(kernelFP)};
@@ -135,7 +135,7 @@ GrMatrixConvolutionEffect::KernelWrapper::Make(GrRecordingContext* rContext,
     }
 
     if (kCacheKernelTexture) {
-        view = threadSafeViewCache->add(key, view);
+        view = threadSafeCache->add(key, view);
     }
 
     SkASSERT(view.origin() == kTopLeft_GrSurfaceOrigin);

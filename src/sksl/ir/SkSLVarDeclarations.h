@@ -16,118 +16,120 @@
 namespace SkSL {
 
 /**
- * A single variable declaration within a var declaration statement. For instance, the statement
- * 'int x = 2, y[3];' is a VarDeclarations statement containing two individual VarDeclaration
- * instances.
+ * A single variable declaration statement. Multiple variables declared together are expanded to
+ * separate (sequential) statements. For instance, the SkSL 'int x = 2, y[3];' produces two
+ * VarDeclaration instances (wrapped in an unscoped Block).
  */
-struct VarDeclaration : public Statement {
+class VarDeclaration : public Statement {
+public:
     static constexpr Kind kStatementKind = Kind::kVarDeclaration;
 
     VarDeclaration(const Variable* var,
-                   std::vector<std::unique_ptr<Expression>> sizes,
+                   const Type* baseType,
+                   ExpressionArray sizes,
                    std::unique_ptr<Expression> value)
-    : INHERITED(var->fOffset, kStatementKind)
-    , fVar(var)
-    , fSizes(std::move(sizes))
-    , fValue(std::move(value)) {}
+            : INHERITED(var->fOffset, VarDeclarationData{baseType, var}) {
+        fExpressionChildren.reserve_back(sizes.size() + 1);
+        fExpressionChildren.move_back_n(sizes.size(), sizes.data());
+        fExpressionChildren.push_back(std::move(value));
+    }
+
+    const Type& baseType() const {
+        return *this->varDeclarationData().fBaseType;
+    }
+
+    const Variable& var() const {
+        return *this->varDeclarationData().fVar;
+    }
+
+    void setVar(const Variable* var) {
+        this->varDeclarationData().fVar = var;
+    }
+
+    int sizeCount() const {
+        return fExpressionChildren.size() - 1;
+    }
+
+    const std::unique_ptr<Expression>& size(int index) const {
+        SkASSERT(index >= 0 && index < this->sizeCount());
+        return fExpressionChildren[index];
+    }
+
+    std::unique_ptr<Expression>& value() {
+        return fExpressionChildren.back();
+    }
+
+    const std::unique_ptr<Expression>& value() const {
+        return fExpressionChildren.back();
+    }
 
     std::unique_ptr<Statement> clone() const override {
-        std::vector<std::unique_ptr<Expression>> sizesClone;
-        for (const auto& s : fSizes) {
-            if (s) {
-                sizesClone.push_back(s->clone());
+        ExpressionArray sizesClone;
+        sizesClone.reserve_back(this->sizeCount());
+        for (int i = 0; i < this->sizeCount(); ++i) {
+            if (this->size(i)) {
+                sizesClone.push_back(this->size(i)->clone());
             } else {
                 sizesClone.push_back(nullptr);
             }
         }
-        return std::unique_ptr<Statement>(new VarDeclaration(fVar, std::move(sizesClone),
-                                                             fValue ? fValue->clone() : nullptr));
+        return std::make_unique<VarDeclaration>(&this->var(),
+                                                &this->baseType(),
+                                                std::move(sizesClone),
+                                                this->value() ? this->value()->clone() : nullptr);
     }
 
     String description() const override {
-        String result = fVar->fModifiers.description() + fVar->type().name() + " " + fVar->name();
-        for (const auto& size : fSizes) {
-            if (size) {
-                result += "[" + size->description() + "]";
+        String result = this->var().modifiers().description() + this->baseType().description() +
+                        " " + this->var().name();
+        for (int i = 0; i < this->sizeCount(); ++i) {
+            if (this->size(i)) {
+                result += "[" + this->size(i)->description() + "]";
             } else {
                 result += "[]";
             }
         }
-        if (fValue) {
-            result += " = " + fValue->description();
+        if (this->value()) {
+            result += " = " + this->value()->description();
         }
+        result += ";";
         return result;
     }
-
-    const Variable* fVar;
-    std::vector<std::unique_ptr<Expression>> fSizes;
-    std::unique_ptr<Expression> fValue;
 
     using INHERITED = Statement;
 };
 
 /**
- * A variable declaration statement, which may consist of one or more individual variables.
+ * A variable declaration appearing at global scope. A global declaration like 'int x, y;' produces
+ * two GlobalVarDeclaration elements, each containing the declaration of one variable.
  */
-struct VarDeclarations : public ProgramElement {
-    static constexpr Kind kProgramElementKind = Kind::kVar;
+class GlobalVarDeclaration : public ProgramElement {
+public:
+    static constexpr Kind kProgramElementKind = Kind::kGlobalVar;
 
-    // vars must be a vector of unique_ptr<VarDeclaration>, but to simplify the CFG, we store
-    // (and thus are constructed with) Statements.
-    VarDeclarations(int offset, const Type* baseType, std::vector<std::unique_ptr<Statement>> vars)
-            : INHERITED(offset, kProgramElementKind), fBaseType(*baseType)
-            , fVars(std::move(vars)) {
-#if defined(SK_DEBUG)
-        for (auto& var : fVars) {
-            SkASSERT(var->is<VarDeclaration>());
-        }
-#endif
+    GlobalVarDeclaration(int offset, std::unique_ptr<Statement> decl)
+            : INHERITED(offset, kProgramElementKind) {
+        SkASSERT(decl->is<VarDeclaration>());
+        fStatementChildren.push_back(std::move(decl));
+    }
+
+    std::unique_ptr<Statement>& declaration() {
+        return fStatementChildren[0];
+    }
+
+    const std::unique_ptr<Statement>& declaration() const {
+        return fStatementChildren[0];
     }
 
     std::unique_ptr<ProgramElement> clone() const override {
-        std::vector<std::unique_ptr<Statement>> cloned;
-        cloned.reserve(fVars.size());
-        for (const auto& v : fVars) {
-            cloned.push_back(v->clone());
-        }
-        return std::make_unique<VarDeclarations>(fOffset, &fBaseType, std::move(cloned));
+        return std::make_unique<GlobalVarDeclaration>(fOffset, this->declaration()->clone());
     }
 
     String description() const override {
-        if (!fVars.size()) {
-            return String();
-        }
-        String result;
-        for (const auto& var : fVars) {
-            if (var->kind() != Statement::Kind::kNop) {
-                SkASSERT(var->kind() == Statement::Kind::kVarDeclaration);
-                result = ((const VarDeclaration&) *var).fVar->fModifiers.description();
-                break;
-            }
-        }
-        result += fBaseType.description() + " ";
-        String separator;
-        for (const auto& rawVar : fVars) {
-            if (rawVar->kind() == Statement::Kind::kNop) {
-                continue;
-            }
-            SkASSERT(rawVar->kind() == Statement::Kind::kVarDeclaration);
-            VarDeclaration& var = (VarDeclaration&) *rawVar;
-            result += separator;
-            separator = ", ";
-            result += var.fVar->name();
-            if (var.fValue) {
-                result += " = " + var.fValue->description();
-            }
-        }
-        return result;
+        return this->declaration()->description();
     }
 
-    const Type& fBaseType;
-    // this *should* be a vector of unique_ptr<VarDeclaration>, but it significantly simplifies the
-    // CFG to only have to worry about unique_ptr<Statement>
-    std::vector<std::unique_ptr<Statement>> fVars;
-
+private:
     using INHERITED = ProgramElement;
 };
 

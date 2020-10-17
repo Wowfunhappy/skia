@@ -206,7 +206,7 @@ public:
         @param releaseContext      state passed to textureReleaseProc
         @return                    SkSurface if all parameters are valid; otherwise, nullptr
     */
-    static sk_sp<SkSurface> MakeFromBackendTexture(GrContext* context,
+    static sk_sp<SkSurface> MakeFromBackendTexture(GrRecordingContext* context,
                                                    const GrBackendTexture& backendTexture,
                                                    GrSurfaceOrigin origin, int sampleCnt,
                                                    SkColorType colorType,
@@ -240,7 +240,7 @@ public:
         @param releaseContext           state passed to releaseProc
         @return                         SkSurface if all parameters are valid; otherwise, nullptr
     */
-    static sk_sp<SkSurface> MakeFromBackendRenderTarget(GrContext* context,
+    static sk_sp<SkSurface> MakeFromBackendRenderTarget(GrRecordingContext* context,
                                                 const GrBackendRenderTarget& backendRenderTarget,
                                                 GrSurfaceOrigin origin,
                                                 SkColorType colorType,
@@ -248,17 +248,6 @@ public:
                                                 const SkSurfaceProps* surfaceProps,
                                                 RenderTargetReleaseProc releaseProc = nullptr,
                                                 ReleaseContext releaseContext = nullptr);
-
-#if GR_TEST_UTILS
-    // TODO: Remove this.
-    static sk_sp<SkSurface> MakeFromBackendTextureAsRenderTarget(GrContext* context,
-                                                            const GrBackendTexture& backendTexture,
-                                                            GrSurfaceOrigin origin,
-                                                            int sampleCnt,
-                                                            SkColorType colorType,
-                                                            sk_sp<SkColorSpace> colorSpace,
-                                                            const SkSurfaceProps* surfaceProps);
-#endif
 
 #if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
     /** Private.
@@ -280,7 +269,7 @@ public:
                                fonts; may be nullptr
         @return                created SkSurface, or nullptr
     */
-    static sk_sp<SkSurface> MakeFromAHardwareBuffer(GrContext* context,
+    static sk_sp<SkSurface> MakeFromAHardwareBuffer(GrDirectContext* context,
                                                     AHardwareBuffer* hardwareBuffer,
                                                     GrSurfaceOrigin origin,
                                                     sk_sp<SkColorSpace> colorSpace,
@@ -376,14 +365,6 @@ public:
                                              const SkSurfaceProps* surfaceProps,
                                              bool shouldCreateWithMips = false);
 
-    /** Deprecated.
-    */
-    static sk_sp<SkSurface> MakeRenderTarget(GrContext* context, SkBudgeted budgeted,
-                                             const SkImageInfo& imageInfo,
-                                             int sampleCount, GrSurfaceOrigin surfaceOrigin,
-                                             const SkSurfaceProps* surfaceProps,
-                                             bool shouldCreateWithMips = false);
-
     /** Returns SkSurface on GPU indicated by context. Allocates memory for
         pixels, based on the width, height, and SkColorType in SkImageInfo.  budgeted
         selects whether allocation for pixels is tracked by context. imageInfo
@@ -412,12 +393,6 @@ public:
                                 kBottomLeft_GrSurfaceOrigin, surfaceProps);
     }
 
-    /** Deprecated.
-    */
-    static sk_sp<SkSurface> MakeRenderTarget(GrContext* context, SkBudgeted budgeted,
-                                             const SkImageInfo& imageInfo, int sampleCount,
-                                             const SkSurfaceProps* surfaceProps);
-
     /** Returns SkSurface on GPU indicated by context. Allocates memory for
         pixels, based on the width, height, and SkColorType in SkImageInfo.  budgeted
         selects whether allocation for pixels is tracked by context. imageInfo
@@ -439,11 +414,6 @@ public:
         return MakeRenderTarget(context, budgeted, imageInfo, 0, kBottomLeft_GrSurfaceOrigin,
                                 nullptr);
     }
-
-    /** Deprecated.
-    */
-    static sk_sp<SkSurface> MakeRenderTarget(GrContext* context, SkBudgeted budgeted,
-                                             const SkImageInfo& imageInfo);
 
     /** Returns SkSurface on GPU indicated by context that is compatible with the provided
         characterization. budgeted selects whether allocation for pixels is tracked by context.

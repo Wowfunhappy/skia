@@ -8,7 +8,7 @@
 #ifndef SKSL_EXPRESSION
 #define SKSL_EXPRESSION
 
-#include "src/sksl/SkSLTinyUnorderedMap.h"
+#include "include/private/SkTHash.h"
 #include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLType.h"
 
@@ -16,16 +16,17 @@
 
 namespace SkSL {
 
-struct Expression;
+class Expression;
 class IRGenerator;
-struct Variable;
+class Variable;
 
-using DefinitionMap = TinyUnorderedMap<const Variable*, std::unique_ptr<Expression>*>;
+using DefinitionMap = SkTHashMap<const Variable*, std::unique_ptr<Expression>*>;
 
 /**
  * Abstract supertype of all expressions.
  */
-struct Expression : public IRNode {
+class Expression : public IRNode {
+public:
     enum class Kind {
         kBinary = (int) Statement::Kind::kLast + 1,
         kBoolLiteral,
@@ -66,14 +67,28 @@ struct Expression : public IRNode {
         SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
     }
 
+    Expression(int offset, const FieldAccessData& data)
+        : INHERITED(offset, (int) Kind::kFieldAccess, data) {}
+
     Expression(int offset, const FloatLiteralData& data)
         : INHERITED(offset, (int) Kind::kFloatLiteral, data) {}
 
     Expression(int offset, const FunctionCallData& data)
         : INHERITED(offset, (int) Kind::kFunctionCall, data) {}
 
+    Expression(int offset, const FunctionReferenceData& data)
+        : INHERITED(offset, (int) Kind::kFunctionReference, data) {}
+
     Expression(int offset, const IntLiteralData& data)
         : INHERITED(offset, (int) Kind::kIntLiteral, data) {
+    }
+
+    Expression(int offset, const SettingData& data)
+        : INHERITED(offset, (int) Kind::kSetting, data) {
+    }
+
+    Expression(int offset, const SwizzleData& data)
+        : INHERITED(offset, (int) Kind::kSwizzle, data) {
     }
 
     Expression(int offset, Kind kind, const Type* type)
@@ -81,13 +96,25 @@ struct Expression : public IRNode {
         SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
     }
 
+    Expression(int offset, const TypeReferenceData& data)
+        : INHERITED(offset, (int) Kind::kTypeReference, data) {
+    }
+
     Expression(int offset, Kind kind, const TypeTokenData& data)
         : INHERITED(offset, (int) kind, data) {
         SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
     }
 
+    Expression(int offset, const VariableReferenceData& data)
+        : INHERITED(offset, (int) Kind::kVariableReference, data) {
+    }
+
     Kind kind() const {
         return (Kind) fKind;
+    }
+
+    virtual const Type& type() const {
+        return *this->typeData();
     }
 
     /**
@@ -212,6 +239,7 @@ struct Expression : public IRNode {
 
     virtual std::unique_ptr<Expression> clone() const = 0;
 
+private:
     using INHERITED = IRNode;
 };
 

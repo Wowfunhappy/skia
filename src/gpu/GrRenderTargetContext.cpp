@@ -25,13 +25,14 @@
 #include "src/core/SkRRectPriv.h"
 #include "src/core/SkSurfacePriv.h"
 #include "src/gpu/GrAppliedClip.h"
+#include "src/gpu/GrAttachment.h"
 #include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrBlurUtils.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrColor.h"
-#include "src/gpu/GrContextPriv.h"
 #include "src/gpu/GrDataUtils.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrDrawingManager.h"
 #include "src/gpu/GrGpuResourcePriv.h"
 #include "src/gpu/GrImageContextPriv.h"
@@ -42,7 +43,6 @@
 #include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/GrResourceProvider.h"
-#include "src/gpu/GrStencilAttachment.h"
 #include "src/gpu/GrStyle.h"
 #include "src/gpu/GrTracing.h"
 #include "src/gpu/SkGr.h"
@@ -248,25 +248,6 @@ std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeFromBackendTex
     sk_sp<GrTextureProxy> proxy(context->priv().proxyProvider()->wrapRenderableBackendTexture(
             tex, sampleCnt, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo,
             std::move(releaseHelper)));
-    if (!proxy) {
-        return nullptr;
-    }
-
-    return GrRenderTargetContext::Make(context, colorType, std::move(colorSpace), std::move(proxy),
-                                       origin, surfaceProps);
-}
-
-std::unique_ptr<GrRenderTargetContext> GrRenderTargetContext::MakeFromBackendTextureAsRenderTarget(
-        GrRecordingContext* context,
-        GrColorType colorType,
-        sk_sp<SkColorSpace> colorSpace,
-        const GrBackendTexture& tex,
-        int sampleCnt,
-        GrSurfaceOrigin origin,
-        const SkSurfaceProps* surfaceProps) {
-    SkASSERT(sampleCnt > 0);
-    sk_sp<GrSurfaceProxy> proxy(
-            context->priv().proxyProvider()->wrapBackendTextureAsRenderTarget(tex, sampleCnt));
     if (!proxy) {
         return nullptr;
     }

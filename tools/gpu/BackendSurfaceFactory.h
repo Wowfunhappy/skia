@@ -17,13 +17,42 @@ class GrDirectContext;
 class SkSurface;
 class SkSurfaceProps;
 
+namespace sk_gpu_test {
+
+sk_sp<SkSurface> MakeBackendTextureSurface(GrDirectContext*,
+                                           const SkImageInfo&,
+                                           GrSurfaceOrigin,
+                                           int sampleCnt,
+                                           GrMipmapped = GrMipmapped::kNo,
+                                           GrProtected = GrProtected::kNo,
+                                           const SkSurfaceProps* = nullptr);
+
+sk_sp<SkSurface> MakeBackendTextureSurface(GrDirectContext*,
+                                           SkISize,
+                                           GrSurfaceOrigin,
+                                           int sampleCnt,
+                                           SkColorType,
+                                           sk_sp<SkColorSpace> = nullptr,
+                                           GrMipmapped = GrMipmapped::kNo,
+                                           GrProtected = GrProtected::kNo,
+                                           const SkSurfaceProps* = nullptr);
+
 /** Creates an SkSurface backed by a non-textureable render target. */
 sk_sp<SkSurface> MakeBackendRenderTargetSurface(GrDirectContext*,
-                                                SkISize,
-                                                int sampleCnt,
+                                                const SkImageInfo&,
                                                 GrSurfaceOrigin,
+                                                int sampleCnt,
+                                                GrProtected = GrProtected::kNo,
+                                                const SkSurfaceProps* = nullptr);
+
+sk_sp<SkSurface> MakeBackendRenderTargetSurface(GrDirectContext*,
+                                                SkISize,
+                                                GrSurfaceOrigin,
+                                                int sampleCnt,
                                                 SkColorType,
                                                 sk_sp<SkColorSpace> = nullptr,
+                                                GrProtected = GrProtected::kNo,
                                                 const SkSurfaceProps* = nullptr);
+}  // namespace sk_gpu_test
 
 #endif

@@ -18,23 +18,30 @@ namespace SkSL {
  *
  * layout(blend_support_all_equations) out;
  */
-struct ModifiersDeclaration : public ProgramElement {
+class ModifiersDeclaration : public ProgramElement {
+public:
     static constexpr Kind kProgramElementKind = Kind::kModifiers;
 
-    ModifiersDeclaration(Modifiers modifiers)
-    : INHERITED(-1, kProgramElementKind)
-    , fModifiers(modifiers) {}
+    ModifiersDeclaration(ModifiersPool::Handle modifiers)
+    : INHERITED(-1, ModifiersDeclarationData{modifiers}) {}
+
+    const Modifiers& modifiers() const {
+        return *this->modifiersDeclarationData().fModifiersHandle;
+    }
+
+    const ModifiersPool::Handle& modifiersHandle() const {
+        return this->modifiersDeclarationData().fModifiersHandle;
+    }
 
     std::unique_ptr<ProgramElement> clone() const override {
-        return std::unique_ptr<ProgramElement>(new ModifiersDeclaration(fModifiers));
+        return std::unique_ptr<ProgramElement>(new ModifiersDeclaration(this->modifiersHandle()));
     }
 
     String description() const override {
-        return fModifiers.description() + ";";
+        return this->modifiers().description() + ";";
     }
 
-    Modifiers fModifiers;
-
+private:
     using INHERITED = ProgramElement;
 };
 

@@ -9,26 +9,75 @@
 
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrGpu.h"
+#include "tools/gpu/ManagedBackendTexture.h"
 
-sk_sp<SkSurface> MakeBackendRenderTargetSurface(GrDirectContext* context,
-                                                SkISize dimensions,
-                                                int sampleCnt,
+namespace sk_gpu_test {
+
+sk_sp<SkSurface> MakeBackendTextureSurface(GrDirectContext* dContext,
+                                           const SkImageInfo& ii,
+                                           GrSurfaceOrigin origin,
+                                           int sampleCnt,
+                                           GrMipmapped mipMapped,
+                                           GrProtected isProtected,
+                                           const SkSurfaceProps* props) {
+    if (ii.alphaType() == kUnpremul_SkAlphaType) {
+        return nullptr;
+    }
+    auto mbet = ManagedBackendTexture::MakeWithoutData(dContext,
+                                                       ii.width(),
+                                                       ii.height(),
+                                                       ii.colorType(),
+                                                       mipMapped,
+                                                       GrRenderable::kYes,
+                                                       isProtected);
+    if (!mbet) {
+        return nullptr;
+    }
+    return SkSurface::MakeFromBackendTexture(dContext,
+                                             mbet->texture(),
+                                             origin,
+                                             sampleCnt,
+                                             ii.colorType(),
+                                             ii.refColorSpace(),
+                                             props,
+                                             ManagedBackendTexture::ReleaseProc,
+                                             mbet->releaseContext());
+}
+
+sk_sp<SkSurface> MakeBackendTextureSurface(GrDirectContext* dContext,
+                                           SkISize dimensions,
+                                           GrSurfaceOrigin origin,
+                                           int sampleCnt,
+                                           SkColorType colorType,
+                                           sk_sp<SkColorSpace> colorSpace,
+                                           GrMipmapped mipMapped,
+                                           GrProtected isProtected,
+                                           const SkSurfaceProps* props) {
+    auto ii = SkImageInfo::Make(dimensions, colorType, kPremul_SkAlphaType, std::move(colorSpace));
+    return MakeBackendTextureSurface(
+            dContext, ii, origin, sampleCnt, mipMapped, isProtected, props);
+}
+sk_sp<SkSurface> MakeBackendRenderTargetSurface(GrDirectContext* dContext,
+                                                const SkImageInfo& ii,
                                                 GrSurfaceOrigin origin,
-                                                SkColorType colorType,
-                                                sk_sp<SkColorSpace> colorSpace,
+                                                int sampleCnt,
+                                                GrProtected isProtected,
                                                 const SkSurfaceProps* props) {
-    auto ct = SkColorTypeToGrColorType(colorType);
+    if (ii.alphaType() == kUnpremul_SkAlphaType) {
+        return nullptr;
+    }
+    auto ct = SkColorTypeToGrColorType(ii.colorType());
 
     struct ReleaseContext {
-        GrContext* fContext;
+        sk_sp<GrDirectContext> fContext;
         GrBackendRenderTarget fRenderTarget;
     };
 
-    auto bert = context->priv().getGpu()->createTestingOnlyBackendRenderTarget(
-            dimensions, ct, sampleCnt);
-    auto rc = new ReleaseContext{context, bert};
+    auto bert = dContext->priv().getGpu()->createTestingOnlyBackendRenderTarget(
+            ii.dimensions(), ct, sampleCnt, isProtected);
+    auto rc = new ReleaseContext{sk_ref_sp(dContext), bert};
     SkASSERT(!bert.isValid() || bert.sampleCnt() >= sampleCnt);
 
     auto proc = [](void* c) {
@@ -40,5 +89,19 @@ sk_sp<SkSurface> MakeBackendRenderTargetSurface(GrDirectContext* context,
     };
 
     return SkSurface::MakeFromBackendRenderTarget(
-            context, bert, origin, colorType, std::move(colorSpace), props, proc, rc);
+            dContext, bert, origin, ii.colorType(), ii.refColorSpace(), props, proc, rc);
 }
+
+sk_sp<SkSurface> MakeBackendRenderTargetSurface(GrDirectContext* dContext,
+                                                SkISize dimensions,
+                                                GrSurfaceOrigin origin,
+                                                int sampleCnt,
+                                                SkColorType colorType,
+                                                sk_sp<SkColorSpace> colorSpace,
+                                                GrProtected isProtected,
+                                                const SkSurfaceProps* props) {
+    auto ii = SkImageInfo::Make(dimensions, colorType, kPremul_SkAlphaType, std::move(colorSpace));
+    return MakeBackendRenderTargetSurface(dContext, ii, origin, sampleCnt, isProtected, props);
+}
+
+}  // namespace sk_gpu_test

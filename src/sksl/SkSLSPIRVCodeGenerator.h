@@ -38,7 +38,6 @@
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLTernaryExpression.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
-#include "src/sksl/ir/SkSLVarDeclarationsStatement.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 #include "src/sksl/ir/SkSLWhileStatement.h"
 #include "src/sksl/spirv.h"
@@ -105,18 +104,20 @@ public:
         virtual void store(SpvId value, OutputStream& out) = 0;
     };
 
-    SPIRVCodeGenerator(const Context* context, const Program* program, ErrorReporter* errors,
+    SPIRVCodeGenerator(const Context* context,
+                       const Program* program,
+                       ErrorReporter* errors,
                        OutputStream* out)
-    : INHERITED(program, errors, out)
-    , fContext(*context)
-    , fDefaultLayout(MemoryLayout::k140_Standard)
-    , fCapabilities(0)
-    , fIdCount(1)
-    , fBoolTrue(0)
-    , fBoolFalse(0)
-    , fSetupFragPosition(false)
-    , fCurrentBlock(0)
-    , fSynthetics(errors) {
+            : INHERITED(program, errors, out)
+            , fContext(*context)
+            , fDefaultLayout(MemoryLayout::k140_Standard)
+            , fCapabilities(0)
+            , fIdCount(1)
+            , fBoolTrue(0)
+            , fBoolFalse(0)
+            , fSetupFragPosition(false)
+            , fCurrentBlock(0)
+            , fSynthetics(errors) {
         this->setupIntrinsics();
     }
 
@@ -189,9 +190,9 @@ private:
 
     SpvId writeFunction(const FunctionDefinition& f, OutputStream& out);
 
-    void writeGlobalVars(Program::Kind kind, const VarDeclarations& v, OutputStream& out);
+    void writeGlobalVar(Program::Kind kind, const VarDeclaration& v, OutputStream& out);
 
-    void writeVarDeclarations(const VarDeclarations& decl, OutputStream& out);
+    void writeVarDeclaration(const VarDeclaration& var, OutputStream& out);
 
     SpvId writeVariableReference(const VariableReference& ref, OutputStream& out);
 
@@ -214,8 +215,7 @@ private:
      * returns (vec2(float), vec2). It is an error to use mismatched vector sizes, e.g. (float,
      * vec2, vec3).
      */
-    std::vector<SpvId> vectorize(const std::vector<std::unique_ptr<Expression>>& args,
-                                 OutputStream& out);
+    std::vector<SpvId> vectorize(const ExpressionArray& args, OutputStream& out);
 
     SpvId writeSpecialIntrinsic(const FunctionCall& c, SpecialIntrinsic kind, OutputStream& out);
 

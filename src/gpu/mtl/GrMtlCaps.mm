@@ -287,6 +287,8 @@ void GrMtlCaps::initGrCaps(const id<MTLDevice> device) {
     fMaxPreferredRenderTargetSize = fMaxRenderTargetSize;
     fMaxTextureSize = fMaxRenderTargetSize;
 
+    fMaxPushConstantsSize = 4*1024;
+
     // Init sample counts. All devices support 1 (i.e. 0 in skia).
     fSampleCounts.push_back(1);
     if (@available(iOS 9.0, *)) {
@@ -892,7 +894,7 @@ void GrMtlCaps::initFormatTable() {
 }
 
 void GrMtlCaps::initStencilFormat(id<MTLDevice> physDev) {
-    fPreferredStencilFormat = StencilFormat{ MTLPixelFormatStencil8, 8, 8, true };
+    fPreferredStencilFormat = MTLPixelFormatStencil8;
 }
 
 bool GrMtlCaps::onSurfaceSupportsWritePixels(const GrSurface* surface) const {
@@ -1089,7 +1091,7 @@ GrProgramDesc GrMtlCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progr
     }
 #endif
 
-    b.add32(rt && rt->getStencilAttachment() ? this->preferredStencilFormat().fInternalFormat
+    b.add32(rt && rt->getStencilAttachment() ? this->preferredStencilFormat()
                                              : MTLPixelFormatInvalid);
     b.add32((uint32_t)programInfo.isStencilEnabled());
     // Stencil samples don't seem to be tracked in the MTLRenderPipeline
@@ -1147,8 +1149,8 @@ void GrMtlCaps::onDumpJSON(SkJSONWriter* writer) const {
     writer->beginObject("Metal caps");
 
     writer->beginObject("Preferred Stencil Format");
-    writer->appendS32("stencil bits", fPreferredStencilFormat.fStencilBits);
-    writer->appendS32("total bits", fPreferredStencilFormat.fTotalBits);
+    writer->appendS32("stencil bits", GrMtlFormatStencilBits(fPreferredStencilFormat));
+    writer->appendS32("total bytes", GrMtlFormatBytesPerBlock(fPreferredStencilFormat));
     writer->endObject();
 
     switch (fPlatform) {

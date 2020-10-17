@@ -35,7 +35,6 @@
 #include "src/sksl/ir/SkSLNop.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
 #include "src/sksl/ir/SkSLSwitchStatement.h"
-#include "src/sksl/ir/SkSLVarDeclarationsStatement.h"
 #include "src/sksl/ir/SkSLWhileStatement.h"
 
 // Expressions
@@ -66,9 +65,9 @@ namespace {
 
 static bool is_sample_call_to_fp(const FunctionCall& fc, const Variable& fp) {
     const FunctionDeclaration& f = fc.function();
-    return f.fBuiltin && f.name() == "sample" && fc.arguments().size() >= 1 &&
+    return f.isBuiltin() && f.name() == "sample" && fc.arguments().size() >= 1 &&
            fc.arguments()[0]->is<VariableReference>() &&
-           fc.arguments()[0]->as<VariableReference>().fVariable == &fp;
+           fc.arguments()[0]->as<VariableReference>().variable() == &fp;
 }
 
 // Visitor that determines the merged SampleUsage for a given child 'fp' in the program.
@@ -140,7 +139,7 @@ public:
     bool visitExpression(const Expression& e) override {
         if (e.is<VariableReference>()) {
             const VariableReference& var = e.as<VariableReference>();
-            return var.fVariable->fModifiers.fLayout.fBuiltin == fBuiltin;
+            return var.variable()->modifiers().fLayout.fBuiltin == fBuiltin;
         }
         return INHERITED::visitExpression(e);
     }
@@ -194,9 +193,10 @@ public:
     bool visitExpression(const Expression& e) override {
         if (e.is<VariableReference>()) {
             const VariableReference& ref = e.as<VariableReference>();
-            if (ref.fVariable == fVar && (ref.fRefKind == VariableReference::kWrite_RefKind ||
-                                          ref.fRefKind == VariableReference::kReadWrite_RefKind ||
-                                          ref.fRefKind == VariableReference::kPointer_RefKind)) {
+            if (ref.variable() == fVar &&
+                (ref.refKind() == VariableReference::RefKind::kWrite ||
+                 ref.refKind() == VariableReference::RefKind::kReadWrite ||
+                 ref.refKind() == VariableReference::RefKind::kPointer)) {
                 return true;
             }
         }
@@ -240,9 +240,9 @@ public:
         switch (expr.kind()) {
             case Expression::Kind::kVariableReference: {
                 VariableReference& varRef = expr.as<VariableReference>();
-                const Variable* var = varRef.fVariable;
-                if (var->fModifiers.fFlags & (Modifiers::kConst_Flag | Modifiers::kUniform_Flag |
-                                              Modifiers::kVarying_Flag)) {
+                const Variable* var = varRef.variable();
+                if (var->modifiers().fFlags & (Modifiers::kConst_Flag | Modifiers::kUniform_Flag |
+                                               Modifiers::kVarying_Flag)) {
                     fErrors->error(expr.fOffset,
                                    "cannot modify immutable variable '" + var->name() + "'");
                 } else if (fAssignableVar) {
@@ -252,24 +252,24 @@ public:
                 break;
             }
             case Expression::Kind::kFieldAccess:
-                this->visitExpression(*expr.as<FieldAccess>().fBase);
+                this->visitExpression(*expr.as<FieldAccess>().base());
                 break;
 
             case Expression::Kind::kSwizzle: {
                 const Swizzle& swizzle = expr.as<Swizzle>();
                 this->checkSwizzleWrite(swizzle);
-                this->visitExpression(*swizzle.fBase);
+                this->visitExpression(*swizzle.base());
                 break;
             }
             case Expression::Kind::kIndex:
-                this->visitExpression(*expr.as<IndexExpression>().fBase);
+                this->visitExpression(*expr.as<IndexExpression>().base());
                 break;
 
             case Expression::Kind::kExternalValue: {
-                const ExternalValue* var = expr.as<ExternalValueReference>().fValue;
-                if (!var->canWrite()) {
+                const ExternalValue& var = expr.as<ExternalValueReference>().value();
+                if (!var.canWrite()) {
                     fErrors->error(expr.fOffset,
-                                   "cannot modify immutable external value '" + var->name() + "'");
+                                   "cannot modify immutable external value '" + var.name() + "'");
                 }
                 break;
             }
@@ -282,7 +282,7 @@ public:
 private:
     void checkSwizzleWrite(const Swizzle& swizzle) {
         int bits = 0;
-        for (int idx : swizzle.fComponents) {
+        for (int idx : swizzle.components()) {
             SkASSERT(idx <= 3);
             int bit = 1 << idx;
             if (bits & bit) {
@@ -324,7 +324,7 @@ bool Analysis::ReferencesFragCoords(const Program& program) {
 }
 
 bool Analysis::NodeCountExceeds(const FunctionDefinition& function, int limit) {
-    return NodeCountVisitor{limit}.visit(*function.fBody) > limit;
+    return NodeCountVisitor{limit}.visit(*function.body()) > limit;
 }
 
 bool Analysis::StatementWritesToVariable(const Statement& stmt, const Variable& var) {
@@ -342,8 +342,8 @@ bool Analysis::IsAssignable(Expression& expr, VariableReference** assignableVar,
 
 template <typename PROG, typename EXPR, typename STMT, typename ELEM>
 bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visit(PROG program) {
-    for (ELEM pe : program) {
-        if (this->visitProgramElement(pe)) {
+    for (const auto& pe : program.elements()) {
+        if (this->visitProgramElement(*pe)) {
             return true;
         }
     }
@@ -385,7 +385,7 @@ bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visitExpression(EXPR e) {
             return false;
         }
         case Expression::Kind::kFieldAccess:
-            return this->visitExpression(*e.template as<FieldAccess>().fBase);
+            return this->visitExpression(*e.template as<FieldAccess>().base());
 
         case Expression::Kind::kFunctionCall: {
             auto& c = e.template as<FunctionCall>();
@@ -396,21 +396,21 @@ bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visitExpression(EXPR e) {
         }
         case Expression::Kind::kIndex: {
             auto& i = e.template as<IndexExpression>();
-            return this->visitExpression(*i.fBase) || this->visitExpression(*i.fIndex);
+            return this->visitExpression(*i.base()) || this->visitExpression(*i.index());
         }
         case Expression::Kind::kPostfix:
-            return this->visitExpression(*e.template as<PostfixExpression>().fOperand);
+            return this->visitExpression(*e.template as<PostfixExpression>().operand());
 
         case Expression::Kind::kPrefix:
-            return this->visitExpression(*e.template as<PrefixExpression>().fOperand);
+            return this->visitExpression(*e.template as<PrefixExpression>().operand());
 
         case Expression::Kind::kSwizzle:
-            return this->visitExpression(*e.template as<Swizzle>().fBase);
+            return this->visitExpression(*e.template as<Swizzle>().base());
 
         case Expression::Kind::kTernary: {
             auto& t = e.template as<TernaryExpression>();
-            return this->visitExpression(*t.fTest) || this->visitExpression(*t.fIfTrue) ||
-                   this->visitExpression(*t.fIfFalse);
+            return this->visitExpression(*t.test()) || this->visitExpression(*t.ifTrue()) ||
+                   this->visitExpression(*t.ifFalse());
         }
         default:
             SkUNREACHABLE;
@@ -452,13 +452,13 @@ bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visitStatement(STMT s) {
         }
         case Statement::Kind::kIf: {
             auto& i = s.template as<IfStatement>();
-            return this->visitExpression(*i.fTest) ||
-                   this->visitStatement(*i.fIfTrue) ||
-                   (i.fIfFalse && this->visitStatement(*i.fIfFalse));
+            return this->visitExpression(*i.test()) ||
+                   this->visitStatement(*i.ifTrue()) ||
+                   (i.ifFalse() && this->visitStatement(*i.ifFalse()));
         }
         case Statement::Kind::kReturn: {
             auto& r = s.template as<ReturnStatement>();
-            return r.fExpression && this->visitExpression(*r.fExpression);
+            return r.expression() && this->visitExpression(*r.expression());
         }
         case Statement::Kind::kSwitch: {
             auto& sw = s.template as<SwitchStatement>();
@@ -479,20 +479,16 @@ bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visitStatement(STMT s) {
         }
         case Statement::Kind::kVarDeclaration: {
             auto& v = s.template as<VarDeclaration>();
-            for (auto& sizeExpr : v.fSizes) {
-                if (sizeExpr && this->visitExpression(*sizeExpr)) {
+            for (int i = 0; i < v.sizeCount(); ++i) {
+                if (v.size(i) && this->visitExpression(*v.size(i))) {
                     return true;
                 }
             }
-            return v.fValue && this->visitExpression(*v.fValue);
+            return v.value() && this->visitExpression(*v.value());
         }
-        case Statement::Kind::kVarDeclarations:
-            return this->visitProgramElement(
-                    *s.template as<VarDeclarationsStatement>().fDeclaration);
-
         case Statement::Kind::kWhile: {
             auto& w = s.template as<WhileStatement>();
-            return this->visitExpression(*w.fTest) || this->visitStatement(*w.fStatement);
+            return this->visitExpression(*w.test()) || this->visitStatement(*w.statement());
         }
         default:
             SkUNREACHABLE;
@@ -510,21 +506,19 @@ bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visitProgramElement(ELEM pe) {
             return false;
 
         case ProgramElement::Kind::kFunction:
-            return this->visitStatement(*pe.template as<FunctionDefinition>().fBody);
+            return this->visitStatement(*pe.template as<FunctionDefinition>().body());
 
         case ProgramElement::Kind::kInterfaceBlock:
-            for (auto& e : pe.template as<InterfaceBlock>().fSizes) {
+            for (auto& e : pe.template as<InterfaceBlock>().sizes()) {
                 if (e && this->visitExpression(*e)) {
                     return true;
                 }
             }
             return false;
 
-        case ProgramElement::Kind::kVar:
-            for (auto& v : pe.template as<VarDeclarations>().fVars) {
-                if (this->visitStatement(*v)) {
-                    return true;
-                }
+        case ProgramElement::Kind::kGlobalVar:
+            if (this->visitStatement(*pe.template as<GlobalVarDeclaration>().declaration())) {
+                return true;
             }
             return false;
 

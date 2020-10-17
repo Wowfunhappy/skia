@@ -39,8 +39,6 @@ GrGLCaps::GrGLCaps(const GrContextOptions& contextOptions,
     fDebugSupport = false;
     fES2CompatibilitySupport = false;
     fDrawRangeElementsSupport = false;
-    fANGLEMultiDrawSupport = false;
-    fMultiDrawIndirectSupport = false;
     fBaseVertexBaseInstanceSupport = false;
     fUseNonVBOVertexAndIndexDynamicData = false;
     fIsCoreProfile = false;
@@ -636,27 +634,38 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
         if (fBaseVertexBaseInstanceSupport) {
             fNativeDrawIndirectSupport = version >= GR_GL_VER(4,0) ||
                                          ctxInfo.hasExtension("GL_ARB_draw_indirect");
-            fMultiDrawIndirectSupport = version >= GR_GL_VER(4,3) ||
-                                        ctxInfo.hasExtension("GL_ARB_multi_draw_indirect");
+            if (version >= GR_GL_VER(4,3) || ctxInfo.hasExtension("GL_ARB_multi_draw_indirect")) {
+                fMultiDrawType = MultiDrawType::kMultiDrawIndirect;
+            }
         }
         fDrawRangeElementsSupport = version >= GR_GL_VER(2,0);
     } else if (GR_IS_GR_GL_ES(standard)) {
         if (ctxInfo.hasExtension("GL_ANGLE_base_vertex_base_instance")) {
             fBaseVertexBaseInstanceSupport = true;
             fNativeDrawIndirectSupport = true;
-            fANGLEMultiDrawSupport = true;
+            fMultiDrawType = MultiDrawType::kANGLEOrWebGL;
             // The indirect structs need to reside in CPU memory for the ANGLE version.
             fUseClientSideIndirectBuffers = true;
         } else {
             fBaseVertexBaseInstanceSupport = ctxInfo.hasExtension("GL_EXT_base_instance");
             if (fBaseVertexBaseInstanceSupport) {
                 fNativeDrawIndirectSupport = (version >= GR_GL_VER(3,1));
-                fMultiDrawIndirectSupport = ctxInfo.hasExtension("GL_EXT_multi_draw_indirect");
+                if (ctxInfo.hasExtension("GL_EXT_multi_draw_indirect")) {
+                    fMultiDrawType = MultiDrawType::kMultiDrawIndirect;
+                }
             }
         }
         fDrawRangeElementsSupport = version >= GR_GL_VER(3,0);
     } else if (GR_IS_GR_WEBGL(standard)) {
-        // WebGL lacks indirect support, but drawRange was added in WebGL 2.0
+        fBaseVertexBaseInstanceSupport = ctxInfo.hasExtension(
+                "WEBGL_draw_instanced_base_vertex_base_instance");
+        if (fBaseVertexBaseInstanceSupport && ctxInfo.hasExtension(
+                "GL_WEBGL_multi_draw_instanced_base_vertex_base_instance")) {
+            fNativeDrawIndirectSupport = true;
+            fMultiDrawType = MultiDrawType::kANGLEOrWebGL;
+        }
+        // The indirect structs need to reside in CPU memory for the WebGL version.
+        fUseClientSideIndirectBuffers = true;
         fDrawRangeElementsSupport = version >= GR_GL_VER(2,0);
     }
 
@@ -978,6 +987,8 @@ void GrGLCaps::initGLSL(const GrGLContextInfo& ctxInfo, const GrGLInterface* gli
         shaderCaps->fBuiltinFMASupport = ctxInfo.glslGeneration() >= k320es_GrGLSLGeneration;
     }
 
+    shaderCaps->fBuiltinDeterminantSupport = ctxInfo.glslGeneration() >= k150_GrGLSLGeneration;
+
     if (GR_IS_GR_WEBGL(standard)) {
       // WebGL 1.0 doesn't support do-while loops.
       shaderCaps->fCanUseDoLoops = version >= GR_GL_VER(2, 0);
@@ -1098,14 +1109,8 @@ void GrGLCaps::initStencilSupport(const GrGLContextInfo& ctxInfo) {
     // Build up list of legal stencil formats (though perhaps not supported on
     // the particular gpu/driver) from most preferred to least.
 
-    // these consts are in order of most preferred to least preferred
-    // we don't bother with GL_STENCIL_INDEX1 or GL_DEPTH32F_STENCIL8
-
-    static const StencilFormat
-                  // internal Format      stencil bits      total bits        packed?
-        gS8    = {GR_GL_STENCIL_INDEX8,   8,                8,                false},
-        gS16   = {GR_GL_STENCIL_INDEX16,  16,               16,               false},
-        gD24S8 = {GR_GL_DEPTH24_STENCIL8, 8,                32,               true };
+    // We push back stencil formats onto the fStencilFormats array in order of most preferred to
+    // least preferred.
 
     if (GR_IS_GR_GL(ctxInfo.standard())) {
         bool supportsPackedDS =
@@ -1116,29 +1121,38 @@ void GrGLCaps::initStencilSupport(const GrGLContextInfo& ctxInfo) {
         // S1 thru S16 formats are in GL 3.0+, EXT_FBO, and ARB_FBO since we
         // require FBO support we can expect these are legal formats and don't
         // check.
-        fStencilFormats.push_back() = gS8;
-        fStencilFormats.push_back() = gS16;
+        fStencilFormats.push_back() = GrGLFormat::kSTENCIL_INDEX8;
+        fStencilFormats.push_back() = GrGLFormat::kSTENCIL_INDEX16;
         if (supportsPackedDS) {
-            fStencilFormats.push_back() = gD24S8;
+            fStencilFormats.push_back() = GrGLFormat::kDEPTH24_STENCIL8;
         }
     } else if (GR_IS_GR_GL_ES(ctxInfo.standard())) {
         // ES2 has STENCIL_INDEX8 without extensions but requires extensions
         // for other formats.
 
-        fStencilFormats.push_back() = gS8;
+        fStencilFormats.push_back() = GrGLFormat::kSTENCIL_INDEX8;
         if (ctxInfo.version() >= GR_GL_VER(3,0) ||
             ctxInfo.hasExtension("GL_OES_packed_depth_stencil")) {
-            fStencilFormats.push_back() = gD24S8;
+            fStencilFormats.push_back() = GrGLFormat::kDEPTH24_STENCIL8;
         }
     } else if (GR_IS_GR_WEBGL(ctxInfo.standard())) {
-        fStencilFormats.push_back() = gS8;
+        fStencilFormats.push_back() = GrGLFormat::kSTENCIL_INDEX8;
         if (ctxInfo.version() >= GR_GL_VER(2,0)) {
-            fStencilFormats.push_back() = gD24S8;
+            fStencilFormats.push_back() = GrGLFormat::kDEPTH24_STENCIL8;
         }
     }
 }
 
 #ifdef SK_ENABLE_DUMP_GPU
+static const char* multi_draw_type_name(GrGLCaps::MultiDrawType multiDrawType) {
+    switch (multiDrawType) {
+        case GrGLCaps::MultiDrawType::kNone : return "kNone";
+        case GrGLCaps::MultiDrawType::kMultiDrawIndirect : return "kMultiDrawIndirect";
+        case GrGLCaps::MultiDrawType::kANGLEOrWebGL : return "kMultiDrawIndirect";
+    }
+    SkUNREACHABLE;
+}
+
 void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
 
     // We are called by the base class, which has already called beginObject(). We choose to nest
@@ -1149,8 +1163,8 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
 
     for (int i = 0; i < fStencilFormats.count(); ++i) {
         writer->beginObject(nullptr, false);
-        writer->appendS32("stencil bits", fStencilFormats[i].fStencilBits);
-        writer->appendS32("total bits", fStencilFormats[i].fTotalBits);
+        writer->appendS32("stencil bits", GrGLFormatStencilBits(fStencilFormats[i]));
+        writer->appendS32("total bytes", GrGLFormatBytesPerBlock(fStencilFormats[i]));
         writer->endObject();
     }
 
@@ -1196,6 +1210,7 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
     writer->appendString("MSAA Type", kMSFBOExtStr[fMSFBOType]);
     writer->appendString("Invalidate FB Type", kInvalidateFBTypeStr[fInvalidateFBType]);
     writer->appendString("Map Buffer Type", kMapBufferTypeStr[fMapBufferType]);
+    writer->appendString("Multi Draw Type", multi_draw_type_name(fMultiDrawType));
     writer->appendS32("Max FS Uniform Vectors", fMaxFragmentUniformVectors);
     writer->appendBool("Pack Flip Y support", fPackFlipYSupport);
 
@@ -1203,7 +1218,6 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
     writer->appendBool("GL_ARB_imaging support", fImagingSupport);
     writer->appendBool("Vertex array object support", fVertexArrayObjectSupport);
     writer->appendBool("Debug support", fDebugSupport);
-    writer->appendBool("Multi draw indirect support", fMultiDrawIndirectSupport);
     writer->appendBool("Base (vertex base) instance support", fBaseVertexBaseInstanceSupport);
     writer->appendBool("RGBA 8888 pixel ops are slow", fRGBA8888PixelsOpsAreSlow);
     writer->appendBool("Partial FBO read is slow", fPartialFBOReadIsSlow);
@@ -1231,7 +1245,7 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
 
     writer->beginArray("formats");
 
-    for (int i = 0; i < kGrGLFormatCount; ++i) {
+    for (int i = 0; i < kGrGLColorFormatCount; ++i) {
         writer->beginObject(nullptr, false);
         writer->appendHexU32("flags", fFormatTable[i].fFlags);
         writer->appendHexU32("f_type", (uint32_t)fFormatTable[i].fFormatType);
@@ -3073,7 +3087,7 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
     this->setupSampleCounts(ctxInfo, gli);
 
 #ifdef SK_DEBUG
-    for (int i = 0; i < kGrGLFormatCount; ++i) {
+    for (int i = 0; i < kGrGLColorFormatCount; ++i) {
         if (GrGLFormat::kUnknown == static_cast<GrGLFormat>(i)) {
             continue;
         }
@@ -3107,7 +3121,7 @@ void GrGLCaps::setupSampleCounts(const GrGLContextInfo& ctxInfo, const GrGLInter
     sk_ignore_unused_variable(standard);
     GrGLVersion version = ctxInfo.version();
 
-    for (int i = 0; i < kGrGLFormatCount; ++i) {
+    for (int i = 0; i < kGrGLColorFormatCount; ++i) {
         if (FormatInfo::kFBOColorAttachmentWithMSAA_Flag & fFormatTable[i].fFlags) {
             // We assume that MSAA rendering is supported only if we support non-MSAA rendering.
             SkASSERT(FormatInfo::kFBOColorAttachment_Flag & fFormatTable[i].fFlags);
@@ -3620,14 +3634,14 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         ctxInfo.angleBackend() != GrGLANGLEBackend::kOpenGL) {
         fBaseVertexBaseInstanceSupport = false;
         fNativeDrawIndirectSupport = false;
-        fMultiDrawIndirectSupport = false;
+        fMultiDrawType = MultiDrawType::kNone;
     }
 
     // http://anglebug.com/4538
     if (fBaseVertexBaseInstanceSupport && !fDrawInstancedSupport) {
         fBaseVertexBaseInstanceSupport = false;
         fNativeDrawIndirectSupport = false;
-        fMultiDrawIndirectSupport = false;
+        fMultiDrawType = MultiDrawType::kNone;
     }
 
     // Currently the extension is advertised but fb fetch is broken on 500 series Adrenos like the

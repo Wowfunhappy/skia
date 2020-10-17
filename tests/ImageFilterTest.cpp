@@ -158,19 +158,18 @@ public:
         this->addFilter("merge", SkImageFilters::Merge(input, input, cropRect));
 
         {
-            SkPaint greenColorShaderPaint;
-            greenColorShaderPaint.setShader(SkShaders::Color(SK_ColorGREEN));
+            sk_sp<SkShader> greenColorShader = SkShaders::Color(SK_ColorGREEN);
 
             SkIRect leftSideCropRect = SkIRect::MakeXYWH(0, 0, 32, 64);
-            sk_sp<SkImageFilter> paintFilterLeft(SkImageFilters::Paint(greenColorShaderPaint,
-                                                                       &leftSideCropRect));
+            sk_sp<SkImageFilter> shaderFilterLeft(SkImageFilters::Shader(greenColorShader,
+                                                                         &leftSideCropRect));
             SkIRect rightSideCropRect = SkIRect::MakeXYWH(32, 0, 32, 64);
-            sk_sp<SkImageFilter> paintFilterRight(SkImageFilters::Paint(greenColorShaderPaint,
-                                                                        &rightSideCropRect));
+            sk_sp<SkImageFilter> shaderFilterRight(SkImageFilters::Shader(greenColorShader,
+                                                                          &rightSideCropRect));
 
 
             this->addFilter("merge with disjoint inputs", SkImageFilters::Merge(
-                    std::move(paintFilterLeft), std::move(paintFilterRight), cropRect));
+                    std::move(shaderFilterLeft), std::move(shaderFilterRight), cropRect));
         }
 
         this->addFilter("offset", SkImageFilters::Offset(SK_Scalar1, SK_Scalar1, input, cropRect));
@@ -210,14 +209,13 @@ public:
                     kBlurSigma, kBlurSigma, std::move(pictureFilter), cropRect));
         }
         {
-            SkPaint paint;
-            paint.setShader(SkPerlinNoiseShader::MakeTurbulence(SK_Scalar1, SK_Scalar1, 1, 0));
-            sk_sp<SkImageFilter> paintFilter(SkImageFilters::Paint(paint));
+            sk_sp<SkImageFilter> paintFilter(SkImageFilters::Shader(
+                    SkPerlinNoiseShader::MakeTurbulence(SK_Scalar1, SK_Scalar1, 1, 0)));
 
             this->addFilter("paint and blur", SkImageFilters::Blur(
                     kBlurSigma, kBlurSigma,  std::move(paintFilter), cropRect));
         }
-        this->addFilter("xfermode", SkImageFilters::Xfermode(
+        this->addFilter("blend", SkImageFilters::Blend(
                 SkBlendMode::kSrc, input, input, cropRect));
     }
     int count() const { return fFilters.count(); }
@@ -983,15 +981,15 @@ DEF_TEST(ImageFilterUnionBounds, reporter) {
     // Regardless of which order they appear in, the image filter bounds should
     // be combined correctly.
     {
-        sk_sp<SkImageFilter> composite(SkImageFilters::Xfermode(SkBlendMode::kSrcOver, offset));
+        sk_sp<SkImageFilter> composite(SkImageFilters::Blend(SkBlendMode::kSrcOver, offset));
         SkRect bounds = SkRect::MakeIWH(100, 100);
         // Intentionally aliasing here, as that's what the real callers do.
         bounds = composite->computeFastBounds(bounds);
         REPORTER_ASSERT(reporter, bounds == SkRect::MakeIWH(150, 100));
     }
     {
-        sk_sp<SkImageFilter> composite(SkImageFilters::Xfermode(SkBlendMode::kSrcOver, nullptr,
-                                                                offset, nullptr));
+        sk_sp<SkImageFilter> composite(SkImageFilters::Blend(SkBlendMode::kSrcOver, nullptr,
+                                                             offset, nullptr));
         SkRect bounds = SkRect::MakeIWH(100, 100);
         // Intentionally aliasing here, as that's what the real callers do.
         bounds = composite->computeFastBounds(bounds);
@@ -1374,14 +1372,14 @@ static void test_xfermode_cropped_input(SkSurface* surf, skiatest::Reporter* rep
     SkIRect cropRect = SkIRect::MakeEmpty();
     sk_sp<SkImageFilter> croppedOut(SkImageFilters::ColorFilter(green, nullptr, &cropRect));
 
-    // Check that an xfermode image filter whose input has been cropped out still draws the other
+    // Check that an blend image filter whose input has been cropped out still draws the other
     // input. Also check that drawing with both inputs cropped out doesn't cause a GPU warning.
     SkBlendMode mode = SkBlendMode::kSrcOver;
-    sk_sp<SkImageFilter> xfermodeNoFg(SkImageFilters::Xfermode(
+    sk_sp<SkImageFilter> xfermodeNoFg(SkImageFilters::Blend(
             mode, greenFilter, croppedOut, nullptr));
-    sk_sp<SkImageFilter> xfermodeNoBg(SkImageFilters::Xfermode(
+    sk_sp<SkImageFilter> xfermodeNoBg(SkImageFilters::Blend(
             mode, croppedOut, greenFilter, nullptr));
-    sk_sp<SkImageFilter> xfermodeNoFgNoBg(SkImageFilters::Xfermode(
+    sk_sp<SkImageFilter> xfermodeNoFgNoBg(SkImageFilters::Blend(
             mode, croppedOut,  croppedOut, nullptr));
 
     SkPaint paint;
@@ -1730,7 +1728,7 @@ static void test_make_with_filter(skiatest::Reporter* reporter, GrRecordingConte
         clipBounds.setXYWH(0, 0, 170, 100);
         subset.setXYWH(0, 0, 160, 90);
 
-        filter = SkImageFilters::Xfermode(SkBlendMode::kSrc, nullptr);
+        filter = SkImageFilters::Blend(SkBlendMode::kSrc, nullptr);
         result = sourceImage->makeWithFilter(rContext, filter.get(), subset, clipBounds,
                                              &outSubset, &offset);
         REPORTER_ASSERT(reporter, result);
@@ -1833,8 +1831,8 @@ DEF_TEST(XfermodeImageFilterBounds, reporter) {
     // The value of this variable doesn't matter because we use inputs with fixed bounds.
     SkIRect src = SkIRect::MakeXYWH(11, 22, 33, 44);
     for (int i = 0; i < kModeCount; ++i) {
-        sk_sp<SkImageFilter> xfermode(SkImageFilters::Xfermode(static_cast<SkBlendMode>(i),
-                                                               background, foreground, nullptr));
+        sk_sp<SkImageFilter> xfermode(SkImageFilters::Blend(static_cast<SkBlendMode>(i),
+                                                            background, foreground, nullptr));
         auto bounds = xfermode->filterBounds(src, SkMatrix::I(),
                                              SkImageFilter::kForward_MapDirection, nullptr);
         REPORTER_ASSERT(reporter, bounds == expectedBounds[i]);
@@ -1843,7 +1841,7 @@ DEF_TEST(XfermodeImageFilterBounds, reporter) {
     // Test empty intersection.
     sk_sp<SkImageFilter> background2(new FixedBoundsImageFilter(SkIRect::MakeXYWH(0, 0, 20, 20)));
     sk_sp<SkImageFilter> foreground2(new FixedBoundsImageFilter(SkIRect::MakeXYWH(40, 40, 50, 50)));
-    sk_sp<SkImageFilter> xfermode(SkImageFilters::Xfermode(
+    sk_sp<SkImageFilter> xfermode(SkImageFilters::Blend(
             SkBlendMode::kSrcIn, std::move(background2), std::move(foreground2), nullptr));
     auto bounds = xfermode->filterBounds(src, SkMatrix::I(),
                                          SkImageFilter::kForward_MapDirection, nullptr);
@@ -1936,10 +1934,9 @@ DEF_TEST(ArithmeticImageFilterBounds, reporter) {
 
 // Test SkDisplacementMapEffect::filterBounds.
 DEF_TEST(DisplacementMapBounds, reporter) {
-    SkPaint greenPaint;
-    greenPaint.setColor(SK_ColorGREEN);
     SkIRect floodBounds(SkIRect::MakeXYWH(20, 30, 10, 10));
-    sk_sp<SkImageFilter> flood(SkImageFilters::Paint(greenPaint, &floodBounds));
+    sk_sp<SkImageFilter> flood(SkImageFilters::Shader(SkShaders::Color(SK_ColorGREEN),
+                                                      &floodBounds));
     SkIRect tilingBounds(SkIRect::MakeXYWH(0, 0, 200, 100));
     sk_sp<SkImageFilter> tiling(SkImageFilters::Tile(SkRect::Make(floodBounds),
                                                      SkRect::Make(tilingBounds),

@@ -7,9 +7,11 @@
 
 #include "src/gpu/GrBlurUtils.h"
 
+#include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrBitmapTextureMaker.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrFixedClip.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
@@ -18,7 +20,7 @@
 #include "src/gpu/GrSoftwarePathRenderer.h"
 #include "src/gpu/GrStyle.h"
 #include "src/gpu/GrTextureProxy.h"
-#include "src/gpu/GrThreadSafeUniquelyKeyedProxyViewCache.h"
+#include "src/gpu/GrThreadSafeCache.h"
 #include "src/gpu/effects/GrTextureEffect.h"
 #include "src/gpu/geometry/GrStyledShape.h"
 
@@ -34,11 +36,6 @@ static bool clip_bounds_quick_reject(const SkIRect& clipBounds, const SkIRect& r
 }
 
 static constexpr auto kMaskOrigin = kTopLeft_GrSurfaceOrigin;
-
-static GrSurfaceProxyView find_filtered_mask(GrProxyProvider* provider, const GrUniqueKey& key) {
-    return provider->findCachedProxyWithColorTypeFallback(key, kMaskOrigin, GrColorType::kAlpha_8,
-                                                          1);
-}
 
 // Draw a mask using the supplied paint. Since the coverage/geometry
 // is already burnt into the mask this boils down to a rect draw.
@@ -69,48 +66,83 @@ static void mask_release_proc(void* addr, void* /*context*/) {
     SkMask::FreeImage(addr);
 }
 
+#ifdef SK_DEBUG
+// Brute force computation of the destination bounds of a SW filtered mask
+static SkIRect sw_calc_draw_rect(const SkMatrix& viewMatrix,
+                                 const GrStyledShape& shape,
+                                 const SkMaskFilter* filter,
+                                 const SkIRect& clipBounds) {
+    SkRect devBounds = shape.bounds();
+    viewMatrix.mapRect(&devBounds);
+
+    SkMask srcM, dstM;
+    if (!SkDraw::ComputeMaskBounds(devBounds, &clipBounds, filter, &viewMatrix, &srcM.fBounds)) {
+        return {};
+    }
+
+    srcM.fFormat = SkMask::kA8_Format;
+
+    if (!as_MFB(filter)->filterMask(&dstM, srcM, viewMatrix, nullptr)) {
+        return {};
+    }
+
+    return dstM.fBounds;
+}
+#endif
+
+// This stores the mapping from an unclipped, integerized, device-space, shape bounds to
+// the filtered mask's draw rect.
+struct DrawRectData {
+    SkIVector fOffset;
+    SkISize   fSize;
+};
+
+static sk_sp<SkData> create_data(const SkIRect& drawRect, const SkIRect& origDevBounds) {
+
+    DrawRectData drawRectData { {drawRect.fLeft - origDevBounds.fLeft,
+                                 drawRect.fTop - origDevBounds.fTop},
+                                drawRect.size() };
+
+    return SkData::MakeWithCopy(&drawRectData, sizeof(drawRectData));
+}
+
+static SkIRect extract_draw_rect_from_data(SkData* data, const SkIRect& origDevBounds) {
+    auto drawRectData = static_cast<const DrawRectData*>(data->data());
+
+    return SkIRect::MakeXYWH(origDevBounds.fLeft + drawRectData->fOffset.fX,
+                             origDevBounds.fTop + drawRectData->fOffset.fY,
+                             drawRectData->fSize.fWidth,
+                             drawRectData->fSize.fHeight);
+}
+
 static GrSurfaceProxyView sw_create_filtered_mask(GrRecordingContext* rContext,
                                                   const SkMatrix& viewMatrix,
                                                   const GrStyledShape& shape,
                                                   const SkMaskFilter* filter,
+                                                  const SkIRect& unclippedDevShapeBounds,
                                                   const SkIRect& clipBounds,
                                                   SkIRect* drawRect,
-                                                  const GrUniqueKey& key) {
+                                                  GrUniqueKey* key) {
     SkASSERT(filter);
     SkASSERT(!shape.style().applies());
 
-    auto threadSafeViewCache = rContext->priv().threadSafeViewCache();
+    auto threadSafeCache = rContext->priv().threadSafeCache();
 
     GrSurfaceProxyView filteredMaskView;
+    sk_sp<SkData> data;
 
-    if (key.isValid()) {
-        filteredMaskView = threadSafeViewCache->find(key);
+    if (key->isValid()) {
+        std::tie(filteredMaskView, data) = threadSafeCache->findWithData(*key);
     }
 
     if (filteredMaskView) {
+        SkASSERT(data);
         SkASSERT(kMaskOrigin == filteredMaskView.origin());
 
-        SkRect devBounds = shape.bounds();
-        viewMatrix.mapRect(&devBounds);
+        *drawRect = extract_draw_rect_from_data(data.get(), unclippedDevShapeBounds);
 
-        // Here we need to recompute the destination bounds in order to draw the mask correctly
-        SkMask srcM, dstM;
-        if (!SkDraw::ComputeMaskBounds(devBounds, &clipBounds, filter, &viewMatrix,
-                                       &srcM.fBounds)) {
-            return {};
-        }
-
-        srcM.fFormat = SkMask::kA8_Format;
-
-        if (!as_MFB(filter)->filterMask(&dstM, srcM, viewMatrix, nullptr)) {
-            return {};
-        }
-
-        // Unfortunately, we cannot double check that the computed bounds (i.e., dstM.fBounds)
-        // match the stored bounds of the mask bc the proxy may have been recreated and,
-        // when it is recreated, it just gets the bounds of the underlying GrTexture (which
-        // might be a loose fit).
-        *drawRect = dstM.fBounds;
+        SkDEBUGCODE(auto oldDrawRect = sw_calc_draw_rect(viewMatrix, shape, filter, clipBounds));
+        SkASSERT(*drawRect == oldDrawRect);
     } else {
         SkStrokeRec::InitStyle fillOrHairline = shape.style().isSimpleHairline()
                                                         ? SkStrokeRec::kHairline_InitStyle
@@ -162,8 +194,11 @@ static GrSurfaceProxyView sw_create_filtered_mask(GrRecordingContext* rContext,
 
         *drawRect = dstM.fBounds;
 
-        if (key.isValid()) {
-            filteredMaskView = threadSafeViewCache->add(key, filteredMaskView);
+        if (key->isValid()) {
+            key->setCustomData(create_data(*drawRect, unclippedDevShapeBounds));
+            std::tie(filteredMaskView, data) = threadSafeCache->addWithData(*key, filteredMaskView);
+            // If we got a different view back from 'addWithData' it could have a different drawRect
+            *drawRect = extract_draw_rect_from_data(data.get(), unclippedDevShapeBounds);
         }
     }
 
@@ -256,7 +291,7 @@ static bool get_shape_and_clip_bounds(GrRenderTargetContext* renderTargetContext
 }
 
 // The key and clip-bounds are computed together because the caching decision can impact the
-// clip-bound.
+// clip-bound - since we only cache un-clipped masks the clip can be removed entirely.
 // A 'false' return value indicates that the shape is known to be clipped away.
 static bool compute_key_and_clip_bounds(GrUniqueKey* maskKey,
                                         SkIRect* boundsForClip,
@@ -312,7 +347,8 @@ static bool compute_key_and_clip_bounds(GrUniqueKey* maskKey,
         SkScalar ky = viewMatrix.get(SkMatrix::kMSkewY);
         SkScalar tx = viewMatrix.get(SkMatrix::kMTransX);
         SkScalar ty = viewMatrix.get(SkMatrix::kMTransY);
-        // Allow 8 bits each in x and y of subpixel positioning.
+        // Allow 8 bits each in x and y of subpixel positioning. But, note that we're allowing
+        // reuse for integer translations.
         SkFixed fracX = SkScalarToFixed(SkScalarFraction(tx)) & 0x0000FF00;
         SkFixed fracY = SkScalarToFixed(SkScalarFraction(ty)) & 0x0000FF00;
 
@@ -341,7 +377,7 @@ static bool compute_key_and_clip_bounds(GrUniqueKey* maskKey,
     return true;
 }
 
-static GrSurfaceProxyView hw_create_filtered_mask(GrRecordingContext* rContext,
+static GrSurfaceProxyView hw_create_filtered_mask(GrDirectContext* dContext,
                                                   GrRenderTargetContext* renderTargetContext,
                                                   const SkMatrix& viewMatrix,
                                                   const GrStyledShape& shape,
@@ -349,46 +385,88 @@ static GrSurfaceProxyView hw_create_filtered_mask(GrRecordingContext* rContext,
                                                   const SkIRect& unclippedDevShapeBounds,
                                                   const SkIRect& clipBounds,
                                                   SkIRect* maskRect,
-                                                  const GrUniqueKey& key) {
-    GrSurfaceProxyView filteredMaskView;
+                                                  GrUniqueKey* key) {
+    if (!filter->canFilterMaskGPU(shape,
+                                  unclippedDevShapeBounds,
+                                  clipBounds,
+                                  viewMatrix,
+                                  maskRect)) {
+        return {};
+    }
 
-    if (filter->canFilterMaskGPU(shape,
-                                 unclippedDevShapeBounds,
-                                 clipBounds,
-                                 viewMatrix,
-                                 maskRect)) {
-        if (clip_bounds_quick_reject(clipBounds, *maskRect)) {
-            // clipped out
-            return {};
+    if (clip_bounds_quick_reject(clipBounds, *maskRect)) {
+        // clipped out
+        return {};
+    }
+
+    auto threadSafeCache = dContext->priv().threadSafeCache();
+
+    GrSurfaceProxyView lazyView;
+    sk_sp<GrThreadSafeCache::Trampoline> trampoline;
+
+    if (key->isValid()) {
+        // In this case, we want GPU-filtered masks to have priority over SW-generated ones so
+        // we pre-emptively add a lazy-view to the cache and fill it in later.
+        std::tie(lazyView, trampoline) = GrThreadSafeCache::CreateLazyView(
+                dContext, GrColorType::kAlpha_8, maskRect->size(),
+                kMaskOrigin, SkBackingFit::kApprox);
+        if (!lazyView) {
+            return {}; // fall back to a SW-created mask - 'create_mask_GPU' probably won't succeed
         }
 
-        GrProxyProvider* proxyProvider = rContext->priv().proxyProvider();
+        key->setCustomData(create_data(*maskRect, unclippedDevShapeBounds));
+        auto [cachedView, data] = threadSafeCache->findOrAddWithData(*key, lazyView);
+        if (cachedView != lazyView) {
+            // In this case, the gpu-thread lost out to a recording thread - use its result.
+            SkASSERT(data);
+            SkASSERT(cachedView.asTextureProxy());
+            SkASSERT(cachedView.origin() == kMaskOrigin);
 
-        // TODO: this path should also use the thread-safe proxy-view cache!
-        if (key.isValid()) {
-            filteredMaskView = find_filtered_mask(proxyProvider, key);
+            *maskRect = extract_draw_rect_from_data(data.get(), unclippedDevShapeBounds);
+            return cachedView;
         }
+    }
 
-        if (!filteredMaskView) {
-            std::unique_ptr<GrRenderTargetContext> maskRTC(create_mask_GPU(
-                                                           rContext,
-                                                           *maskRect,
-                                                           viewMatrix,
-                                                           shape,
-                                                           renderTargetContext->numSamples()));
-            if (maskRTC) {
-                filteredMaskView = filter->filterMaskGPU(rContext,
-                                                         maskRTC->readSurfaceView(),
-                                                         maskRTC->colorInfo().colorType(),
-                                                         maskRTC->colorInfo().alphaType(),
-                                                         viewMatrix,
-                                                         *maskRect);
-                if (filteredMaskView && key.isValid()) {
-                    SkASSERT(filteredMaskView.asTextureProxy());
-                    proxyProvider->assignUniqueKeyToProxy(key, filteredMaskView.asTextureProxy());
-                }
-            }
+    std::unique_ptr<GrRenderTargetContext> maskRTC(create_mask_GPU(
+                                                            dContext,
+                                                            *maskRect,
+                                                            viewMatrix,
+                                                            shape,
+                                                            renderTargetContext->numSamples()));
+    if (!maskRTC) {
+        if (key->isValid()) {
+            // It is very unlikely that 'create_mask_GPU' will fail after 'CreateLazyView'
+            // succeeded but, if it does, remove the lazy-view from the cache and fallback to
+            // a SW-created mask. Note that any recording threads that glommed onto the
+            // lazy-view will have to, later, drop those draws.
+            threadSafeCache->remove(*key);
         }
+        return {};
+    }
+
+    auto filteredMaskView = filter->filterMaskGPU(dContext,
+                                                  maskRTC->readSurfaceView(),
+                                                  maskRTC->colorInfo().colorType(),
+                                                  maskRTC->colorInfo().alphaType(),
+                                                  viewMatrix,
+                                                  *maskRect);
+    if (!filteredMaskView) {
+        if (key->isValid()) {
+            // Remove the lazy-view from the cache and fallback to a SW-created mask. Note that
+            // any recording threads that glommed onto the lazy-view will have to, later, drop
+            // those draws.
+            threadSafeCache->remove(*key);
+        }
+        return {};
+    }
+
+    if (key->isValid()) {
+        SkASSERT(filteredMaskView.dimensions() == lazyView.dimensions());
+        SkASSERT(filteredMaskView.swizzle() == lazyView.swizzle());
+        SkASSERT(filteredMaskView.origin() == lazyView.origin());
+
+        trampoline->fProxy = filteredMaskView.asTextureProxyRef();
+        return lazyView;
     }
 
     return filteredMaskView;
@@ -456,11 +534,11 @@ static void draw_shape_with_mask_filter(GrRecordingContext* rContext,
     GrSurfaceProxyView filteredMaskView;
     SkIRect maskRect;
 
-    if (rContext->asDirectContext()) {
-        filteredMaskView = hw_create_filtered_mask(rContext, renderTargetContext,
+    if (auto dContext = rContext->asDirectContext()) {
+        filteredMaskView = hw_create_filtered_mask(dContext, renderTargetContext,
                                                    viewMatrix, *shape, maskFilter,
                                                    unclippedDevShapeBounds, boundsForClip,
-                                                   &maskRect, maskKey);
+                                                   &maskRect, &maskKey);
         if (filteredMaskView) {
             if (draw_mask(renderTargetContext, clip, viewMatrix, maskRect, std::move(paint),
                           std::move(filteredMaskView))) {
@@ -474,8 +552,8 @@ static void draw_shape_with_mask_filter(GrRecordingContext* rContext,
     // Either HW mask rendering failed or we're in a DDL recording thread
     filteredMaskView = sw_create_filtered_mask(rContext,
                                                viewMatrix, *shape, maskFilter,
-                                               boundsForClip,
-                                               &maskRect, maskKey);
+                                               unclippedDevShapeBounds, boundsForClip,
+                                               &maskRect, &maskKey);
     if (filteredMaskView) {
         if (draw_mask(renderTargetContext, clip, viewMatrix, maskRect, std::move(paint),
                       std::move(filteredMaskView))) {

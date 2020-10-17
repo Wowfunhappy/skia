@@ -262,16 +262,11 @@ set -e
 
 echo "Compiling bitcode"
 
-# With emsdk 2.0.0 we get a false positive on tautological-value-range-compare. This appears to be
-# fixed in the emsdk 2.0.4 toolchain. Disable the warning while we maintain support for 2.0.0.
-EXTRA_CFLAGS+="\"-Wno-tautological-value-range-compare\","
-
 # Inspired by https://github.com/Zubnix/skia-wasm-port/blob/master/build_bindings.sh
 ./bin/gn gen ${BUILD_DIR} \
   --args="cc=\"${EMCC}\" \
   cxx=\"${EMCXX}\" \
   ar=\"${EMAR}\" \
-  extra_cflags_cc=[\"-frtti\"] \
   extra_cflags=[\"-s\", \"WARN_UNALIGNED=1\", \"-s\", \"MAIN_MODULE=1\",
     \"-DSKNX_NO_SIMD\", \"-DSK_DISABLE_AAA\",
     \"-DSK_FORCE_8_BYTE_ALIGNMENT\",
@@ -351,6 +346,8 @@ EMCC_DEBUG=1 ${EMCXX} \
     -Ithird_party/externals/icu/source/common/ \
     -DSK_DISABLE_AAA \
     -DSK_FORCE_8_BYTE_ALIGNMENT \
+    -DEMSCRIPTEN_HAS_UNBOUND_TYPE_NAMES=0 \
+    -fno-rtti \
     $WASM_GPU \
     $WASM_PATHOPS \
     $WASM_RT_SHADER \
@@ -388,12 +385,12 @@ EMCC_DEBUG=1 ${EMCXX} \
     -s LLD_REPORT_UNDEFINED \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s EXPORT_NAME="CanvasKitInit" \
+    -s EXPORTED_FUNCTIONS=['_malloc','_free'] \
     -s FORCE_FILESYSTEM=0 \
     -s FILESYSTEM=0 \
     -s MODULARIZE=1 \
     -s NO_EXIT_RUNTIME=1 \
     -s INITIAL_MEMORY=128MB \
-    -s WARN_UNALIGNED=1 \
     -s WASM=1 \
     $STRICTNESS \
     -o $BUILD_DIR/canvaskit.js

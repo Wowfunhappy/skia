@@ -6,6 +6,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Added
+ - `MakeFractalNoise`, `MakeImprovedNoise`, and `MakeTurbulence` have been added to
+   `CanvasKit.Shader`.
+
+### Breaking
+ - `CanvasKit.MakePathFromSVGString` was renamed to `CanvasKit.Path.MakeFromSVGString`
+ - `CanvasKit.MakePathFromOp` was renamed to `CanvasKit.Path.MakeFromOp`
+
+### Changed
+ - We now compile CanvasKit with emsdk 2.0.6 when testing and deploying to npm.
+ - We no longer compile with rtti on, saving about 1% in code size.
+ - `CanvasKit.Shader.Blend`, `...Color`, and `...Lerp` have been renamed to
+   `CanvasKit.Shader.MakeBlend`, `...MakeColor` and `...MakeLerp` to align with naming conventions.
+   The old names will be removed in an upcoming release.
+
+### Removed
+ - `CanvasKit.MakePathFromCmds`; Was deprecated in favor of `CanvasKit.Path.MakeFromCmds`.
+ - `new CanvasKit.Path(path)` in favor of existing `path.copy()`.
+ - Unused internal APIs (_getRasterN32PremulSurface, Drawable)
+
+### Type Changes (index.d.ts)
+ - Return value for MakeFromCmds correctly reflects the possibility of null.
+ - `CanvasKit.GrContext` was renamed to `CanvasKit.GrDirectContext`.
+ - Add docs/types for Shader Gradients (e.g. `CanvasKit.Shader.MakeLinearGradient`).
+
+## [0.19.0] - 2020-10-08
+
+### Breaking
+ - "Sk" has been removed from all names. e.g. `new CanvasKit.SkPaint()` becomes
+   `new CanvasKit.Paint()`. See `./types/index.d.ts` for all the new names.
+
+### Removed
+ - `Surface.captureFrameAsSkPicture`; it was deprecated previously.
+ - `CanvasKit.MakeSkCornerPathEffect`, `CanvasKit.MakeSkDiscretePathEffect`,
+   `CanvasKit.MakeBlurMaskFilter`, `CanvasKit.MakeSkDashPathEffect`,
+   `CanvasKit.MakeLinearGradientShader`, `CanvasKit.MakeRadialGradientShader`,
+   `CanvasKit.MakeTwoPointConicalGradientShader`;  these were deprecated previously and have
+   replacements like `CanvasKit.PathEffect.MakeDash`.
+ - `Canvas.concat44`; it was deprecated previously, just use `Canvas.concat`
+
 ## [0.18.1] - 2020-10-06
 
 ### Added

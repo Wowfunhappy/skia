@@ -134,7 +134,7 @@ void HCodeGenerator::writef(const char* s, ...) {
 bool HCodeGenerator::writeSection(const char* name, const char* prefix) {
     const Section* s = fSectionAndParameterHelper.getSection(name);
     if (s) {
-        this->writef("%s%s", prefix, s->fText.c_str());
+        this->writef("%s%s", prefix, s->text().c_str());
         return true;
     }
     return false;
@@ -146,7 +146,7 @@ void HCodeGenerator::writeExtraConstructorParams(const char* separator) {
     // this with something more robust if the need arises.
     const Section* section = fSectionAndParameterHelper.getSection(kConstructorParamsSection);
     if (section) {
-        const char* s = section->fText.c_str();
+        const char* s = section->text().c_str();
         #define BUFFER_SIZE 64
         char lastIdentifier[BUFFER_SIZE];
         int lastIdentifierLength = 0;
@@ -190,7 +190,7 @@ void HCodeGenerator::writeMake() {
         separator = "";
         for (const auto& param : fSectionAndParameterHelper.getParameters()) {
             this->writef("%s%s %s", separator, ParameterType(fContext, param->type(),
-                                                             param->fModifiers.fLayout).c_str(),
+                                                             param->modifiers().fLayout).c_str(),
                          String(param->name()).c_str());
             separator = ", ";
         }
@@ -234,7 +234,7 @@ void HCodeGenerator::writeConstructor() {
     const char* separator = "";
     for (const auto& param : fSectionAndParameterHelper.getParameters()) {
         this->writef("%s%s %s", separator, ParameterType(fContext, param->type(),
-                                                         param->fModifiers.fLayout).c_str(),
+                                                         param->modifiers().fLayout).c_str(),
                      String(param->name()).c_str());
         separator = ", ";
     }
@@ -254,8 +254,8 @@ void HCodeGenerator::writeConstructor() {
             this->writef("\n    , %s(std::move(%s)", FieldName(name).c_str(), name);
             for (const Section* s : fSectionAndParameterHelper.getSections(
                                                                           kSamplerParamsSection)) {
-                if (s->fArgument == name) {
-                    this->writef(", %s", s->fText.c_str());
+                if (s->argument() == name) {
+                    this->writef(", %s", s->text().c_str());
                 }
             }
             this->writef(")");
@@ -287,7 +287,7 @@ void HCodeGenerator::writeConstructor() {
             std::string perspExpression;
             if (usage.hasUniformMatrix()) {
                 for (const Variable* p : fSectionAndParameterHelper.getParameters()) {
-                    if ((p->fModifiers.fFlags & Modifiers::kIn_Flag) &&
+                    if ((p->modifiers().fFlags & Modifiers::kIn_Flag) &&
                         usage.fExpression == String(p->name())) {
                         perspExpression = usage.fExpression + ".hasPerspective()";
                         break;
@@ -315,7 +315,7 @@ void HCodeGenerator::writeFields() {
             // Don't need to write any fields, FPs are held as children
         } else {
             this->writef("    %s %s;\n", FieldType(fContext, param->type(),
-                                                   param->fModifiers.fLayout).c_str(),
+                                                   param->modifiers().fLayout).c_str(),
                                          name.c_str());
         }
     }
@@ -355,9 +355,9 @@ bool HCodeGenerator::generateCode() {
                  "class %s : public GrFragmentProcessor {\n"
                  "public:\n",
                  fFullName.c_str());
-    for (const auto& p : fProgram) {
-        if (p.kind() == ProgramElement::Kind::kEnum && !((Enum&) p).isBuiltin()) {
-            this->writef("%s\n", ((Enum&) p).code().c_str());
+    for (const auto& p : fProgram.elements()) {
+        if (p->is<Enum>() && !p->as<Enum>().isBuiltin()) {
+            this->writef("%s\n", p->as<Enum>().code().c_str());
         }
     }
     this->writeSection(kClassSection);

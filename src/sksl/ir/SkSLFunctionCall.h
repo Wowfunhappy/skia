@@ -8,6 +8,7 @@
 #ifndef SKSL_FUNCTIONCALL
 #define SKSL_FUNCTIONCALL
 
+#include "include/private/SkTArray.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 
@@ -16,34 +17,39 @@ namespace SkSL {
 /**
  * A function invocation.
  */
-struct FunctionCall : public Expression {
+class FunctionCall : public Expression {
+public:
     static constexpr Kind kExpressionKind = Kind::kFunctionCall;
 
     FunctionCall(int offset, const Type* type, const FunctionDeclaration* function,
-                 std::vector<std::unique_ptr<Expression>> arguments)
+                 ExpressionArray arguments)
     : INHERITED(offset, FunctionCallData{type, function}) {
         fExpressionChildren = std::move(arguments);
-        ++this->function().fCallCount;
+        ++this->function().callCount();
     }
 
     ~FunctionCall() override {
-        --this->function().fCallCount;
+        --this->function().callCount();
+    }
+
+    const Type& type() const override {
+        return *this->functionCallData().fType;
     }
 
     const FunctionDeclaration& function() const {
         return *this->functionCallData().fFunction;
     }
 
-    std::vector<std::unique_ptr<Expression>>& arguments() {
+    ExpressionArray& arguments() {
         return fExpressionChildren;
     }
 
-    const std::vector<std::unique_ptr<Expression>>& arguments() const {
+    const ExpressionArray& arguments() const {
         return fExpressionChildren;
     }
 
     bool hasProperty(Property property) const override {
-        if (property == Property::kSideEffects && (this->function().fModifiers.fFlags &
+        if (property == Property::kSideEffects && (this->function().modifiers().fFlags &
                                                    Modifiers::kHasSideEffects_Flag)) {
             return true;
         }
@@ -56,12 +62,13 @@ struct FunctionCall : public Expression {
     }
 
     std::unique_ptr<Expression> clone() const override {
-        std::vector<std::unique_ptr<Expression>> cloned;
+        ExpressionArray cloned;
+        cloned.reserve_back(this->arguments().size());
         for (const auto& arg : this->arguments()) {
             cloned.push_back(arg->clone());
         }
-        return std::unique_ptr<Expression>(new FunctionCall(fOffset, &this->type(),
-                                                            &this->function(), std::move(cloned)));
+        return std::make_unique<FunctionCall>(fOffset, &this->type(), &this->function(),
+                                              std::move(cloned));
     }
 
     String description() const override {
@@ -76,6 +83,7 @@ struct FunctionCall : public Expression {
         return result;
     }
 
+private:
     using INHERITED = Expression;
 };
 
