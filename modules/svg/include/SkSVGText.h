@@ -8,33 +8,27 @@
 #ifndef SkSVGText_DEFINED
 #define SkSVGText_DEFINED
 
-#include "include/core/SkFont.h"
 #include "include/utils/SkTextUtils.h"
-#include "modules/svg/include/SkSVGShape.h"
+#include "modules/svg/include/SkSVGTransformableNode.h"
 #include "modules/svg/include/SkSVGTypes.h"
 
 class SkRRect;
 
-class SkSVGText final : public SkSVGShape {
+class SkSVGText final : public SkSVGTransformableNode {
  public:
   ~SkSVGText() override = default;
   static sk_sp<SkSVGText> Make() {
     return sk_sp<SkSVGText>(new SkSVGText()); }
 
-  void setX(const SkSVGLength&);
-  void setY(const SkSVGLength&);
-  void setFontFamily(const SkSVGStringType&);
-  void setFontSize(const SkSVGLength&);
-  void setFontStyle(const SkSVGStringType&);
-  void setFontWeight(const SkSVGStringType&);
-  void setText(const SkSVGStringType&);
-  void setTextAnchor(const SkSVGStringType&);
+  SVG_ATTR(X   , SkSVGLength    , SkSVGLength(0))
+  SVG_ATTR(Y   , SkSVGLength    , SkSVGLength(0))
+  SVG_ATTR(Text, SkSVGStringType, SkSVGStringType())
 
  protected:
   void onSetAttribute(SkSVGAttribute, const SkSVGValue&) override;
 
-  void onDraw(SkCanvas*, const SkSVGLengthContext&, const SkPaint&,
-              SkPathFillType) const override;
+  void onRender(const SkSVGRenderContext&) const override;
+  void appendChild(sk_sp<SkSVGNode>) override;
 
   SkPath onAsPath(const SkSVGRenderContext&) const override;
 
@@ -42,16 +36,10 @@ class SkSVGText final : public SkSVGShape {
 
  private:
   SkSVGText();
-  SkSVGLength fX = SkSVGLength(0);
-  SkSVGLength fY = SkSVGLength(0);
-  SkSVGStringType fText;
-  sk_sp<SkTypeface> fTypeface;
-  SkSVGLength fFontSize;
-  SkSVGStringType fFontFamily;
-  SkSVGStringType fFontStyle;
-  SkSVGStringType fFontWeight;
-  SkTextUtils::Align fTextAlign = SkTextUtils::Align::kLeft_Align;
-  using INHERITED = SkSVGShape;
+
+  SkFont resolveFont(const SkSVGRenderContext&) const;
+
+  using INHERITED = SkSVGTransformableNode;
 };
 
 #endif  // SkSVGText_DEFINED

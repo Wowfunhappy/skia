@@ -8,10 +8,12 @@
 #include "modules/svg/include/SkSVGRenderContext.h"
 
 #include "include/core/SkCanvas.h"
+#include "include/core/SkImageFilter.h"
 #include "include/core/SkPath.h"
 #include "include/effects/SkDashPathEffect.h"
 #include "include/private/SkTo.h"
 #include "modules/svg/include/SkSVGAttribute.h"
+#include "modules/svg/include/SkSVGFilter.h"
 #include "modules/svg/include/SkSVGNode.h"
 #include "modules/svg/include/SkSVGTypes.h"
 
@@ -274,6 +276,41 @@ void commitToPaint<SkSVGAttribute::kColor>(const SkSVGPresentationAttributes&,
     // Not part of the SkPaint state; applied via 'currentColor' color value
 }
 
+template <>
+void commitToPaint<SkSVGAttribute::kFontFamily>(const SkSVGPresentationAttributes&,
+                                                const SkSVGRenderContext&,
+                                                SkSVGPresentationContext*) {
+    // Not part of the SkPaint state; applied at render time.
+}
+
+template <>
+void commitToPaint<SkSVGAttribute::kFontSize>(const SkSVGPresentationAttributes&,
+                                              const SkSVGRenderContext&,
+                                              SkSVGPresentationContext*) {
+    // Not part of the SkPaint state; applied at render time.
+}
+
+template <>
+void commitToPaint<SkSVGAttribute::kFontStyle>(const SkSVGPresentationAttributes&,
+                                               const SkSVGRenderContext&,
+                                               SkSVGPresentationContext*) {
+    // Not part of the SkPaint state; applied at render time.
+}
+
+template <>
+void commitToPaint<SkSVGAttribute::kFontWeight>(const SkSVGPresentationAttributes&,
+                                                const SkSVGRenderContext&,
+                                                SkSVGPresentationContext*) {
+    // Not part of the SkPaint state; applied at render time.
+}
+
+template <>
+void commitToPaint<SkSVGAttribute::kTextAnchor>(const SkSVGPresentationAttributes&,
+                                                const SkSVGRenderContext&,
+                                                SkSVGPresentationContext*) {
+    // Not part of the SkPaint state; applied at render time.
+}
+
 }  // namespace
 
 SkSVGPresentationContext::SkSVGPresentationContext()
@@ -289,7 +326,7 @@ SkSVGPresentationContext::SkSVGPresentationContext()
     // Commit initial values to the paint cache.
     SkCanvas fakeCanvas(0, 0);
     SkSVGRenderContext fake(&fakeCanvas, SkSVGIDMapper(), SkSVGLengthContext(SkSize::Make(0, 0)),
-                             *this);
+                             *this, nullptr);
 
     commitToPaint<SkSVGAttribute::kFill>(fInherited, fake, this);
     commitToPaint<SkSVGAttribute::kFillOpacity>(fInherited, fake, this);
@@ -304,24 +341,35 @@ SkSVGPresentationContext::SkSVGPresentationContext()
 SkSVGRenderContext::SkSVGRenderContext(SkCanvas* canvas,
                                        const SkSVGIDMapper& mapper,
                                        const SkSVGLengthContext& lctx,
-                                       const SkSVGPresentationContext& pctx)
+                                       const SkSVGPresentationContext& pctx,
+                                       const SkSVGNode* node)
     : fIDMapper(mapper)
     , fLengthContext(lctx)
     , fPresentationContext(pctx)
     , fCanvas(canvas)
-    , fCanvasSaveCount(canvas->getSaveCount()) {}
+    , fCanvasSaveCount(canvas->getSaveCount())
+    , fNode(node) {}
 
 SkSVGRenderContext::SkSVGRenderContext(const SkSVGRenderContext& other)
     : SkSVGRenderContext(other.fCanvas,
                          other.fIDMapper,
                          *other.fLengthContext,
-                         *other.fPresentationContext) {}
+                         *other.fPresentationContext,
+                         other.fNode) {}
 
 SkSVGRenderContext::SkSVGRenderContext(const SkSVGRenderContext& other, SkCanvas* canvas)
     : SkSVGRenderContext(canvas,
                          other.fIDMapper,
                          *other.fLengthContext,
-                         *other.fPresentationContext) {}
+                         *other.fPresentationContext,
+                         other.fNode) {}
+
+SkSVGRenderContext::SkSVGRenderContext(const SkSVGRenderContext& other, const SkSVGNode* node)
+    : SkSVGRenderContext(other.fCanvas,
+                         other.fIDMapper,
+                         *other.fLengthContext,
+                         *other.fPresentationContext,
+                         node) {}
 
 SkSVGRenderContext::~SkSVGRenderContext() {
     fCanvas->restoreToCount(fCanvasSaveCount);
@@ -351,6 +399,10 @@ void SkSVGRenderContext::applyPresentationAttributes(const SkSVGPresentationAttr
     ApplyLazyInheritedAttribute(Fill);
     ApplyLazyInheritedAttribute(FillOpacity);
     ApplyLazyInheritedAttribute(FillRule);
+    ApplyLazyInheritedAttribute(FontFamily);
+    ApplyLazyInheritedAttribute(FontSize);
+    ApplyLazyInheritedAttribute(FontStyle);
+    ApplyLazyInheritedAttribute(FontWeight);
     ApplyLazyInheritedAttribute(ClipRule);
     ApplyLazyInheritedAttribute(Stroke);
     ApplyLazyInheritedAttribute(StrokeDashOffset);
@@ -360,6 +412,7 @@ void SkSVGRenderContext::applyPresentationAttributes(const SkSVGPresentationAttr
     ApplyLazyInheritedAttribute(StrokeMiterLimit);
     ApplyLazyInheritedAttribute(StrokeOpacity);
     ApplyLazyInheritedAttribute(StrokeWidth);
+    ApplyLazyInheritedAttribute(TextAnchor);
     ApplyLazyInheritedAttribute(Visibility);
     ApplyLazyInheritedAttribute(Color);
 
@@ -378,6 +431,11 @@ void SkSVGRenderContext::applyPresentationAttributes(const SkSVGPresentationAttr
 
     if (auto* clip = attrs.fClipPath.getMaybeNull()) {
         this->applyClip(*clip);
+    }
+
+    // TODO: when both a filter and opacity are present, we can apply both with a single layer
+    if (auto* filter = attrs.fFilter.getMaybeNull()) {
+        this->applyFilter(*filter);
     }
 }
 
@@ -408,6 +466,26 @@ void SkSVGRenderContext::applyOpacity(SkScalar opacity, uint32_t flags) {
         opacityPaint.setAlpha(opacity_to_alpha(opacity));
         // Balanced in the destructor, via restoreToCount().
         fCanvas->saveLayer(nullptr, &opacityPaint);
+    }
+}
+
+void SkSVGRenderContext::applyFilter(const SkSVGFilterType& filter) {
+    if (filter.type() != SkSVGFilterType::Type::kIRI) {
+        return;
+    }
+
+    const auto node = this->findNodeById(filter.iri());
+    if (!node || node->tag() != SkSVGTag::kFilter) {
+        return;
+    }
+
+    const SkSVGFilter* filterNode = reinterpret_cast<const SkSVGFilter*>(node.get());
+    sk_sp<SkImageFilter> imageFilter = filterNode->buildFilterDAG(*this);
+    if (imageFilter) {
+        SkPaint filterPaint;
+        filterPaint.setImageFilter(imageFilter);
+        // Balanced in the destructor, via restoreToCount().
+        fCanvas->saveLayer(nullptr, &filterPaint);
     }
 }
 

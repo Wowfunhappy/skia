@@ -120,15 +120,6 @@ public:
                                            int numSamples,
                                            GrProtected isProtected) override;
 
-    GrOpsRenderPass* getOpsRenderPass(GrRenderTarget*,
-                                      GrAttachment*,
-                                      GrSurfaceOrigin,
-                                      const SkIRect&,
-                                      const GrOpsRenderPass::LoadAndStoreInfo&,
-                                      const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-                                      const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
-                                      GrXferBarrierFlags renderPassXferBarriers) override;
-
     void addBufferMemoryBarrier(const GrManagedResource*,
                                 VkPipelineStageFlags srcStageMask,
                                 VkPipelineStageFlags dstStageMask,
@@ -292,9 +283,17 @@ private:
 
     void addFinishedCallback(sk_sp<GrRefCntedCallback> finishedCallback);
 
+    GrOpsRenderPass* onGetOpsRenderPass(GrRenderTarget*,
+                                        GrAttachment*,
+                                        GrSurfaceOrigin,
+                                        const SkIRect&,
+                                        const GrOpsRenderPass::LoadAndStoreInfo&,
+                                        const GrOpsRenderPass::StencilLoadAndStoreInfo&,
+                                        const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+                                        GrXferBarrierFlags renderPassXferBarriers) override;
+
     void prepareSurfacesForBackendAccessAndStateUpdates(
-            GrSurfaceProxy* proxies[],
-            int numProxies,
+            SkSpan<GrSurfaceProxy*> proxies,
             SkSurface::BackendSurfaceAccess access,
             const GrBackendSurfaceMutableState* newState) override;
 

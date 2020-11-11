@@ -22,7 +22,6 @@
 #include "src/core/SkAutoMalloc.h"
 #include "src/core/SkGeometry.h"
 #include "src/core/SkPathPriv.h"
-#include "src/core/SkPathView.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
 #include "tests/Test.h"
@@ -5658,18 +5657,137 @@ static void test_edger(skiatest::Reporter* r,
     }
 
     SkPathEdgeIter iter(path);
-    SkPathEdgeIter iter2(path.view());
     for (auto v : expected) {
         auto e = iter.next();
         REPORTER_ASSERT(r, e);
         REPORTER_ASSERT(r, SkPathEdgeIter::EdgeToVerb(e.fEdge) == v);
-
-        e = iter2.next();
-        REPORTER_ASSERT(r, e);
-        REPORTER_ASSERT(r, SkPathEdgeIter::EdgeToVerb(e.fEdge) == v);
     }
     REPORTER_ASSERT(r, !iter.next());
-    REPORTER_ASSERT(r, !iter2.next());
+}
+
+static void assert_points(skiatest::Reporter* reporter,
+                          const SkPath& path, const std::initializer_list<SkPoint>& list) {
+    const SkPoint* expected = list.begin();
+    SkPath::RawIter iter(path);
+    for (size_t i = 0;;) {
+        SkPoint pts[4];
+        switch (iter.next(pts)) {
+            case SkPath::kDone_Verb:
+                REPORTER_ASSERT(reporter, i == list.size());
+                return;
+            case SkPath::kMove_Verb:
+                REPORTER_ASSERT(reporter, pts[0] == expected[i]);
+                i++;
+                break;
+            case SkPath::kLine_Verb:
+                REPORTER_ASSERT(reporter, pts[1] == expected[i]);
+                i++;
+                break;
+            case SkPath::kClose_Verb: break;
+            default: SkASSERT(false);
+        }
+    }
+}
+
+static void test_addRect_and_trailing_lineTo(skiatest::Reporter* reporter) {
+    SkPath path;
+    const SkRect r = {1, 2, 3, 4};
+    // build our default p-array clockwise
+    const SkPoint p[] = {
+        {r.fLeft,  r.fTop},    {r.fRight, r.fTop},
+        {r.fRight, r.fBottom}, {r.fLeft,  r.fBottom},
+    };
+
+    for (auto dir : {SkPathDirection::kCW, SkPathDirection::kCCW}) {
+        int increment = dir == SkPathDirection::kCW ? 1 : 3;
+        for (int i = 0; i < 4; ++i) {
+            path.reset();
+            path.addRect(r, dir, i);
+
+            // check that we return the 4 ponts in the expected order
+            SkPoint e[4];
+            for (int j = 0; j < 4; ++j) {
+                int index = (i + j*increment) % 4;
+                e[j] = p[index];
+            }
+            assert_points(reporter, path, {
+                e[0], e[1], e[2], e[3]
+            });
+
+            // check that the new line begins where the rect began
+            path.lineTo(7,8);
+            assert_points(reporter, path, {
+                e[0], e[1], e[2], e[3],
+                e[0], {7,8},
+            });
+        }
+    }
+
+    // now add a moveTo before the rect, just to be sure we don't always look at
+    // the "first" point in the path when we handle the trailing lineTo
+    path.reset();
+    path.moveTo(7, 8);
+    path.addRect(r, SkPathDirection::kCW, 2);
+    path.lineTo(5, 6);
+
+    assert_points(reporter, path, {
+        {7,8},                  // initial moveTo
+        p[2], p[3], p[0], p[1], // rect
+        p[2], {5, 6},           // trailing line
+    });
+}
+
+/*
+ *  SkPath allows the caller to "skip" calling moveTo for contours. If lineTo (or a curve) is
+ *  called on an empty path, a 'moveTo(0,0)' will automatically be injected. If the path is
+ *  not empty, but its last contour has been "closed", then it will inject a moveTo corresponding
+ *  to where the last contour itself started (i.e. its moveTo).
+ *
+ *  This test exercises this in a particular case:
+ *      path.moveTo(...)                <-- needed to show the bug
+ *      path.moveTo....close()
+ *      // at this point, the path's verbs are: M M ... C
+ *
+ *      path.lineTo(...)
+ *      // after lineTo,  the path's verbs are: M M ... C M L
+ */
+static void test_addPath_and_injected_moveTo(skiatest::Reporter* reporter) {
+    /*
+     *  Given a path, and the expected last-point and last-move-to in it,
+     *  assert that, after a lineTo(), that the injected moveTo corresponds
+     *  to the expected value.
+     */
+    auto test_before_after_lineto = [reporter](SkPath& path,
+                                               SkPoint expectedLastPt,
+                                               SkPoint expectedMoveTo) {
+        SkPoint p = path.getPoint(path.countPoints() - 1);
+        REPORTER_ASSERT(reporter, p == expectedLastPt);
+
+        const SkPoint newLineTo = {1234, 5678};
+        path.lineTo(newLineTo);
+
+        p = path.getPoint(path.countPoints() - 2);
+        REPORTER_ASSERT(reporter, p == expectedMoveTo); // this was injected by lineTo()
+
+        p = path.getPoint(path.countPoints() - 1);
+        REPORTER_ASSERT(reporter, p == newLineTo);
+    };
+
+    SkPath path1;
+    SkPath path2;
+
+    path1.moveTo(230, 230); // Needed to show the bug: a moveTo before the addRect
+
+    // add a rect, but the shape doesn't really matter
+    path1.moveTo(20,30).lineTo(40,30).lineTo(40,50).lineTo(20,50).close();
+
+    path2.addPath(path1);   // this must correctly update its "last-move-to" so that when
+                            // lineTo is called, it will inject the correct moveTo.
+
+    // at this point, path1 and path2 should be the same...
+
+    test_before_after_lineto(path1, {20,50}, {20,30});
+    test_before_after_lineto(path2, {20,50}, {20,30});
 }
 
 DEF_TEST(pathedger, r) {
@@ -5687,4 +5805,7 @@ DEF_TEST(pathedger, r) {
     test_edger(r, { M, L, L, C }, { L, L, L });
 
     test_edger(r, { M, L, L, M, L, L }, { L, L, L,   L, L, L });
+
+    test_addRect_and_trailing_lineTo(r);
+    test_addPath_and_injected_moveTo(r);
 }

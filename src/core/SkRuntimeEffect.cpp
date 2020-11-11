@@ -23,6 +23,7 @@
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLByteCode.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLUtil.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 
@@ -40,16 +41,18 @@ namespace SkSL {
 class SharedCompiler {
 public:
     SharedCompiler() : fLock(compiler_mutex()) {
-        if (!gCompiler) {
-            gCompiler = new SkSL::Compiler{};
-            gInlineThreshold = SkSL::Program::Settings().fInlineThreshold;
+        if (!gImpl) {
+            gImpl = new Impl();
         }
     }
 
-    SkSL::Compiler* operator->() const { return gCompiler; }
+    SkSL::Compiler* operator->() const { return gImpl->fCompiler; }
 
-    int  getInlineThreshold() const { return gInlineThreshold; }
-    void setInlineThreshold(int threshold) { gInlineThreshold = threshold; }
+    // The inline threshold is exposed just for fuzzing, so we can test programs with it enabled
+    // and disabled. That lets us stress different code paths in the SkSL compiler. It's stashed
+    // along-side the compiler, but just so it can be guarded by the same mutex.
+    int  getInlineThreshold() const { return gImpl->fInlineThreshold; }
+    void setInlineThreshold(int threshold) { gImpl->fInlineThreshold = threshold; }
 
 private:
     SkAutoMutexExclusive fLock;
@@ -59,11 +62,44 @@ private:
         return mutex;
     }
 
-    static SkSL::Compiler* gCompiler;
-    static int             gInlineThreshold;
+    struct Impl {
+        Impl() {
+            // These caps are configured to apply *no* workarounds. This avoids changes that are
+            // unnecessary (GLSL intrinsic rewrites), or possibly incorrect (adding do-while loops).
+            // We may apply other "neutral" transformations to the user's SkSL, including inlining.
+            // Anything determined by the device caps is deferred to the GPU backend. The processor
+            // set produces the final program (including our re-emitted SkSL), and the backend's
+            // compiler resolves any necessary workarounds.
+            fCaps = ShaderCapsFactory::Standalone();
+            fCaps->fBuiltinFMASupport = true;
+            fCaps->fBuiltinDeterminantSupport = true;
+            // Don't inline if it would require a do loop, some devices don't support them.
+            fCaps->fCanUseDoLoops = false;
+
+            fCompiler = new SkSL::Compiler(fCaps.get());
+
+            // Using an inline threshold of zero would stop all inlining, and cause us to re-emit
+            // SkSL that is nearly identical to what was ingested. That would be in the spirit of
+            // applying no workarounds, but causes problems (today). On the CPU backend, we only
+            // compile the user SkSL once, then emit directly to ByteCode. The CPU backend doesn't
+            // support function calls, so some tests only work because of inlining. This needs to
+            // be addressed robustly - by adding function call support and/or forcing inlining,
+            // but for now, we use defaults that let the majority of our test cases work on all
+            // backends. (Note that there are other control flow constructs that don't work on the
+            // CPU backend, this is a special case of a more general problem.) skbug.com/10680
+            fInlineThreshold = SkSL::Program::Settings().fInlineThreshold;
+        }
+
+        SkSL::ShaderCapsPointer fCaps;
+        SkSL::Compiler*         fCompiler;
+        int                     fInlineThreshold;
+    };
+
+    static Impl* gImpl;
 };
-SkSL::Compiler* SharedCompiler::gCompiler = nullptr;
-int             SharedCompiler::gInlineThreshold = 0;
+
+SharedCompiler::Impl* SharedCompiler::gImpl = nullptr;
+
 }  // namespace SkSL
 
 void SkRuntimeEffect_SetInlineThreshold(int threshold) {
@@ -296,27 +332,11 @@ int SkRuntimeEffect::findChild(const char* name) const {
 }
 
 #if SK_SUPPORT_GPU
-bool SkRuntimeEffect::toPipelineStage(const GrShaderCaps* shaderCaps,
-                                      GrContextOptions::ShaderErrorHandler* errorHandler,
+bool SkRuntimeEffect::toPipelineStage(GrContextOptions::ShaderErrorHandler* errorHandler,
                                       SkSL::PipelineStageArgs* outArgs) {
     SkSL::SharedCompiler compiler;
 
-    // This function is used by the GPU backend, and can't reuse our previously built fBaseProgram.
-    // If the supplied shaderCaps have any non-default values, we have baked in the wrong settings.
-    SkSL::Program::Settings settings;
-    settings.fCaps = shaderCaps;
-    settings.fInlineThreshold = compiler.getInlineThreshold();
-    settings.fAllowNarrowingConversions = true;
-
-    auto program = compiler->convertProgram(SkSL::Program::kPipelineStage_Kind,
-                                            SkSL::String(fSkSL.c_str(), fSkSL.size()),
-                                            settings);
-    if (!program) {
-        errorHandler->compileError(fSkSL.c_str(), compiler->errorText().c_str());
-        return false;
-    }
-
-    if (!compiler->toPipelineStage(*program, outArgs)) {
+    if (!compiler->toPipelineStage(*fBaseProgram, outArgs)) {
         errorHandler->compileError(fSkSL.c_str(), compiler->errorText().c_str());
         return false;
     }
@@ -360,6 +380,14 @@ static skvm::Color program_fn(skvm::Builder* p,
 
     std::vector<skvm::I32> cond_stack = { p->splat(0xffff'ffff) };
     std::vector<skvm::I32> mask_stack = cond_stack;
+
+    skvm::Color result = {
+        p->splat(0.0f),
+        p->splat(0.0f),
+        p->splat(0.0f),
+        p->splat(0.0f),
+    };
+    skvm::I32 result_locked_in = p->splat(0);
 
     for (const uint8_t *ip = fn.code(), *end = ip + fn.size(); ip != end; ) {
         using Inst = SkSL::ByteCodeInstruction;
@@ -543,6 +571,7 @@ static skvm::Color program_fn(skvm::Builder* p,
                 ternary([](skvm::F32 x, skvm::F32 y, skvm::F32 t) { return skvm::lerp(x, y, t); });
                 break;
 
+            case Inst::kAbs:   unary(skvm::abs);         break;
             case Inst::kATan:  unary(skvm::approx_atan); break;
             case Inst::kCeil:  unary(skvm::ceil);        break;
             case Inst::kFloor: unary(skvm::floor);       break;
@@ -614,7 +643,7 @@ static skvm::Color program_fn(skvm::Builder* p,
             case Inst::kBranchIfAllFalse: {
                 int target = u16();
 
-                if (fn.code() + target > ip) {
+                if (fn.code() + target >= ip) {
                     // This is a forward jump, e.g. an if-else block.
                     // Instead of testing if all values are false and branching,
                     // we act _as if_ some value were not false, and don't branch.
@@ -637,21 +666,30 @@ static skvm::Color program_fn(skvm::Builder* p,
             } break;
 
             case Inst::kReturn: {
-                SkAssertResult(u8() == 4);
-                // We'd like to assert that (ip == end) -> there is only one return, but ByteCode
-                // always includes a kReturn/0 at the end of each function, as a precaution.
-                SkASSERT(stack.size() >= 4);
-                skvm::F32 a = pop(),
-                          b = pop(),
-                          g = pop(),
-                          r = pop();
-                return { r, g, b, a };
+                int count = u8();
+                SkAssertResult(count == 4 || count == 0);
+
+                if (count == 4) {
+                    SkASSERT(stack.size() >= 4);
+
+                    // Lane-by-lane, if we've already returned a value, that result is locked in;
+                    // later return instructions don't happen for that lane.
+                    skvm::I32 returns_here = bit_clear(mask_stack.back(),
+                                                       result_locked_in);
+
+                    result.a = select(returns_here, pop(), result.a);
+                    result.b = select(returns_here, pop(), result.b);
+                    result.g = select(returns_here, pop(), result.g);
+                    result.r = select(returns_here, pop(), result.r);
+
+                    result_locked_in |= returns_here;
+                }
             } break;
         }
     }
 
-    SkUNREACHABLE;
-    return {};
+    assert_true(result_locked_in);
+    return result;
 }
 
 static sk_sp<SkData> get_xformed_uniforms(const SkRuntimeEffect* effect,

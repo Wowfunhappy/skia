@@ -57,7 +57,113 @@ static void TestTSet_basic(skiatest::Reporter* reporter) {
     REPORTER_ASSERT(reporter, a[1] == 3);
     REPORTER_ASSERT(reporter, a[2] == 2);
 
-    // {0, 3, 2 }
+    // { 0, 3, 2 }
+}
+
+template <typename T> static void test_construction(skiatest::Reporter* reporter) {
+    // No arguments: Creates an empty array with no initial storage.
+    T arrayNoArgs;
+    REPORTER_ASSERT(reporter, arrayNoArgs.empty());
+
+    // Single integer: Creates an empty array that will preallocate space for reserveCount elements.
+    T arrayReserve(15);
+    REPORTER_ASSERT(reporter, arrayReserve.empty());
+    REPORTER_ASSERT(reporter, arrayReserve.capacity() == 15);
+
+    // Another array, const&: Copies one array to another.
+    T arrayInitial;
+    arrayInitial.push_back(1);
+    arrayInitial.push_back(2);
+    arrayInitial.push_back(3);
+
+    T arrayCopy(arrayInitial);
+    REPORTER_ASSERT(reporter, arrayInitial.size() == 3);
+    REPORTER_ASSERT(reporter, arrayInitial[0] == 1);
+    REPORTER_ASSERT(reporter, arrayInitial[1] == 2);
+    REPORTER_ASSERT(reporter, arrayInitial[2] == 3);
+    REPORTER_ASSERT(reporter, arrayCopy.size() == 3);
+    REPORTER_ASSERT(reporter, arrayCopy[0] == 1);
+    REPORTER_ASSERT(reporter, arrayCopy[1] == 2);
+    REPORTER_ASSERT(reporter, arrayCopy[2] == 3);
+
+    // Another array, &&: Moves one array to another.
+    T arrayMove(std::move(arrayInitial));
+    REPORTER_ASSERT(reporter, arrayInitial.empty()); // NOLINT(bugprone-use-after-move)
+    REPORTER_ASSERT(reporter, arrayMove.size() == 3);
+    REPORTER_ASSERT(reporter, arrayMove[0] == 1);
+    REPORTER_ASSERT(reporter, arrayMove[1] == 2);
+    REPORTER_ASSERT(reporter, arrayMove[2] == 3);
+
+    // Pointer and count: Copies contents of a standard C array.
+    typename T::value_type data[3] = { 7, 8, 9 };
+    T arrayPtrCount(data, 3);
+    REPORTER_ASSERT(reporter, arrayPtrCount.size() == 3);
+    REPORTER_ASSERT(reporter, arrayPtrCount[0] == 7);
+    REPORTER_ASSERT(reporter, arrayPtrCount[1] == 8);
+    REPORTER_ASSERT(reporter, arrayPtrCount[2] == 9);
+
+    // Initializer list.
+    T arrayInitializer{8, 6, 7, 5, 3, 0, 9};
+    REPORTER_ASSERT(reporter, arrayInitializer.size() == 7);
+    REPORTER_ASSERT(reporter, arrayInitializer[0] == 8);
+    REPORTER_ASSERT(reporter, arrayInitializer[1] == 6);
+    REPORTER_ASSERT(reporter, arrayInitializer[2] == 7);
+    REPORTER_ASSERT(reporter, arrayInitializer[3] == 5);
+    REPORTER_ASSERT(reporter, arrayInitializer[4] == 3);
+    REPORTER_ASSERT(reporter, arrayInitializer[5] == 0);
+    REPORTER_ASSERT(reporter, arrayInitializer[6] == 9);
+}
+
+template <typename T, typename U>
+static void test_skstarray_compatibility(skiatest::Reporter* reporter) {
+    // We expect SkTArrays of the same type to be copyable and movable, even when:
+    // - one side is an SkTArray, and the other side is an SkSTArray
+    // - both sides are SkSTArray, but each side has a different internal capacity
+    T tArray;
+    tArray.push_back(1);
+    tArray.push_back(2);
+    tArray.push_back(3);
+    T tArray2 = tArray;
+
+    // Copy construction from other-type array.
+    U arrayCopy(tArray);
+    REPORTER_ASSERT(reporter, tArray.size() == 3);
+    REPORTER_ASSERT(reporter, tArray[0] == 1);
+    REPORTER_ASSERT(reporter, tArray[1] == 2);
+    REPORTER_ASSERT(reporter, tArray[2] == 3);
+    REPORTER_ASSERT(reporter, arrayCopy.size() == 3);
+    REPORTER_ASSERT(reporter, arrayCopy[0] == 1);
+    REPORTER_ASSERT(reporter, arrayCopy[1] == 2);
+    REPORTER_ASSERT(reporter, arrayCopy[2] == 3);
+
+    // Assignment from other-type array.
+    U arrayAssignment;
+    arrayAssignment = tArray;
+    REPORTER_ASSERT(reporter, tArray.size() == 3);
+    REPORTER_ASSERT(reporter, tArray[0] == 1);
+    REPORTER_ASSERT(reporter, tArray[1] == 2);
+    REPORTER_ASSERT(reporter, tArray[2] == 3);
+    REPORTER_ASSERT(reporter, arrayAssignment.size() == 3);
+    REPORTER_ASSERT(reporter, arrayAssignment[0] == 1);
+    REPORTER_ASSERT(reporter, arrayAssignment[1] == 2);
+    REPORTER_ASSERT(reporter, arrayAssignment[2] == 3);
+
+    // Move construction from other-type array.
+    U arrayMove(std::move(tArray));
+    REPORTER_ASSERT(reporter, tArray.empty()); // NOLINT(bugprone-use-after-move)
+    REPORTER_ASSERT(reporter, arrayMove.size() == 3);
+    REPORTER_ASSERT(reporter, arrayMove[0] == 1);
+    REPORTER_ASSERT(reporter, arrayMove[1] == 2);
+    REPORTER_ASSERT(reporter, arrayMove[2] == 3);
+
+    // Move assignment from other-type array.
+    U arrayMoveAssign;
+    arrayMoveAssign = std::move(tArray2);
+    REPORTER_ASSERT(reporter, tArray2.empty()); // NOLINT(bugprone-use-after-move)
+    REPORTER_ASSERT(reporter, arrayMoveAssign.size() == 3);
+    REPORTER_ASSERT(reporter, arrayMoveAssign[0] == 1);
+    REPORTER_ASSERT(reporter, arrayMoveAssign[1] == 2);
+    REPORTER_ASSERT(reporter, arrayMoveAssign[2] == 3);
 }
 
 template <typename T> static void test_swap(skiatest::Reporter* reporter,
@@ -249,4 +355,21 @@ DEF_TEST(TArray, reporter) {
     test_reserve<SkSTArray<1, int>>(reporter);
     test_reserve<SkSTArray<2, int>>(reporter);
     test_reserve<SkSTArray<16, int>>(reporter);
+
+    test_construction<SkTArray<int>>(reporter);
+    test_construction<SkTArray<double>>(reporter);
+    test_construction<SkSTArray<1, int>>(reporter);
+    test_construction<SkSTArray<5, char>>(reporter);
+    test_construction<SkSTArray<10, float>>(reporter);
+
+    test_skstarray_compatibility<SkSTArray<1, int>, SkTArray<int>>(reporter);
+    test_skstarray_compatibility<SkSTArray<5, char>, SkTArray<char>>(reporter);
+    test_skstarray_compatibility<SkSTArray<10, float>, SkTArray<float>>(reporter);
+    test_skstarray_compatibility<SkTArray<int>, SkSTArray<1, int>>(reporter);
+    test_skstarray_compatibility<SkTArray<char>, SkSTArray<5, char>>(reporter);
+    test_skstarray_compatibility<SkTArray<float>, SkSTArray<10, float>>(reporter);
+    test_skstarray_compatibility<SkSTArray<10, uint8_t>, SkSTArray<1, uint8_t>>(reporter);
+    test_skstarray_compatibility<SkSTArray<1, long>, SkSTArray<10, long>>(reporter);
+    test_skstarray_compatibility<SkSTArray<3, double>, SkSTArray<4, double>>(reporter);
+    test_skstarray_compatibility<SkSTArray<2, short>, SkSTArray<1, short>>(reporter);
 }

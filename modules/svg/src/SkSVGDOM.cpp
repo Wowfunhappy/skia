@@ -15,6 +15,10 @@
 #include "modules/svg/include/SkSVGDOM.h"
 #include "modules/svg/include/SkSVGDefs.h"
 #include "modules/svg/include/SkSVGEllipse.h"
+#include "modules/svg/include/SkSVGFeColorMatrix.h"
+#include "modules/svg/include/SkSVGFeComposite.h"
+#include "modules/svg/include/SkSVGFeTurbulence.h"
+#include "modules/svg/include/SkSVGFilter.h"
 #include "modules/svg/include/SkSVGG.h"
 #include "modules/svg/include/SkSVGLine.h"
 #include "modules/svg/include/SkSVGLinearGradient.h"
@@ -36,18 +40,6 @@
 
 namespace {
 
-bool SetPaintAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                       const char* stringValue) {
-    SkSVGPaint paint;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parsePaint(&paint)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGPaintValue(paint));
-    return true;
-}
-
 bool SetColorAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                        const char* stringValue) {
     SkSVGColorType color;
@@ -62,28 +54,14 @@ bool SetColorAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
 
 bool SetIRIAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                       const char* stringValue) {
-    SkSVGStringType iri;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseIRI(&iri)) {
+    auto parseResult = SkSVGAttributeParser::parse<SkSVGIRI>(stringValue);
+    if (!parseResult.isValid()) {
         return false;
     }
 
-    node->setAttribute(attr, SkSVGStringValue(iri));
+    node->setAttribute(attr, SkSVGStringValue(parseResult->fIRI));
     return true;
 }
-
-bool SetClipPathAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                          const char* stringValue) {
-    SkSVGClip clip;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseClipPath(&clip)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGClipValue(clip));
-    return true;
-}
-
 
 bool SetPathDataAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                           const char* stringValue) {
@@ -106,25 +84,23 @@ bool SetStringAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
 
 bool SetTransformAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                            const char* stringValue) {
-    SkSVGTransformType transform;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseTransform(&transform)) {
+    auto parseResult = SkSVGAttributeParser::parse<SkSVGTransformType>(stringValue);
+    if (!parseResult.isValid()) {
         return false;
     }
 
-    node->setAttribute(attr, SkSVGTransformValue(transform));
+    node->setAttribute(attr, SkSVGTransformValue(*parseResult));
     return true;
 }
 
 bool SetLengthAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                         const char* stringValue) {
-    SkSVGLength length;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseLength(&length)) {
+    auto parseResult = SkSVGAttributeParser::parse<SkSVGLength>(stringValue);
+    if (!parseResult.isValid()) {
         return false;
     }
 
-    node->setAttribute(attr, SkSVGLengthValue(length));
+    node->setAttribute(attr, SkSVGLengthValue(*parseResult));
     return true;
 }
 
@@ -152,42 +128,6 @@ bool SetViewBoxAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
     return true;
 }
 
-bool SetLineCapAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                         const char* stringValue) {
-    SkSVGLineCap lineCap;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseLineCap(&lineCap)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGLineCapValue(lineCap));
-    return true;
-}
-
-bool SetLineJoinAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                          const char* stringValue) {
-    SkSVGLineJoin lineJoin;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseLineJoin(&lineJoin)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGLineJoinValue(lineJoin));
-    return true;
-}
-
-bool SetSpreadMethodAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                             const char* stringValue) {
-    SkSVGSpreadMethod spread;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseSpreadMethod(&spread)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGSpreadMethodValue(spread));
-    return true;
-}
-
 bool SetStopColorAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                            const char* stringValue) {
     SkSVGStopColor stopColor;
@@ -197,6 +137,18 @@ bool SetStopColorAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
     }
 
     node->setAttribute(attr, SkSVGStopColorValue(stopColor));
+    return true;
+}
+
+bool SetObjectBoundingBoxUnitsAttribute(const sk_sp<SkSVGNode>& node,
+                                        SkSVGAttribute attr,
+                                        const char* stringValue) {
+    auto parseResult = SkSVGAttributeParser::parse<SkSVGObjectBoundingBoxUnits>(stringValue);
+    if (!parseResult.isValid()) {
+        return false;
+    }
+
+    node->setAttribute(attr, SkSVGObjectBoundingBoxUnitsValue(*parseResult));
     return true;
 }
 
@@ -212,39 +164,27 @@ bool SetPointsAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
     return true;
 }
 
-bool SetFillRuleAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                          const char* stringValue) {
-    SkSVGFillRule fillRule;
+bool SetFilterAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
+                        const char* stringValue) {
+    SkSVGFilterType filter;
     SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseFillRule(&fillRule)) {
+    if (!parser.parseFilter(&filter)) {
         return false;
     }
 
-    node->setAttribute(attr, SkSVGFillRuleValue(fillRule));
+    node->setAttribute(attr, SkSVGFilterValue(filter));
     return true;
 }
 
-bool SetVisibilityAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                            const char* stringValue) {
-    SkSVGVisibility visibility;
+bool SetPreserveAspectRatioAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
+                                     const char* stringValue) {
+    SkSVGPreserveAspectRatio par;
     SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseVisibility(&visibility)) {
+    if (!parser.parsePreserveAspectRatio(&par)) {
         return false;
     }
 
-    node->setAttribute(attr, SkSVGVisibilityValue(visibility));
-    return true;
-}
-
-bool SetDashArrayAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                           const char* stringValue) {
-    SkSVGDashArray dashArray;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseDashArray(&dashArray)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGDashArrayValue(dashArray));
+    node->setAttribute(attr, SkSVGPreserveAspectRatioValue(par));
     return true;
 }
 
@@ -326,56 +266,45 @@ struct AttrParseInfo {
 };
 
 SortedDictionaryEntry<AttrParseInfo> gAttributeParseInfo[] = {
-    { "clip-path"        , { SkSVGAttribute::kClipPath         , SetClipPathAttribute     }},
-    { "clip-rule"        , { SkSVGAttribute::kClipRule         , SetFillRuleAttribute     }},
-    { "color"            , { SkSVGAttribute::kColor            , SetColorAttribute        }},
-    { "cx"               , { SkSVGAttribute::kCx               , SetLengthAttribute       }},
-    { "cy"               , { SkSVGAttribute::kCy               , SetLengthAttribute       }},
-    { "d"                , { SkSVGAttribute::kD                , SetPathDataAttribute     }},
-    { "fill"             , { SkSVGAttribute::kFill             , SetPaintAttribute        }},
-    { "fill-opacity"     , { SkSVGAttribute::kFillOpacity      , SetNumberAttribute       }},
-    { "fill-rule"        , { SkSVGAttribute::kFillRule         , SetFillRuleAttribute     }},
-    { "font-family"      , { SkSVGAttribute::kFontFamily       , SetStringAttribute       }},
-    { "font-size"        , { SkSVGAttribute::kFontSize         , SetLengthAttribute       }},
-    { "font-style"       , { SkSVGAttribute::kFontStyle        , SetStringAttribute       }},
-    { "font-weight"      , { SkSVGAttribute::kFontWeight       , SetStringAttribute       }},
+    { "color"              , { SkSVGAttribute::kColor            , SetColorAttribute        }},
+    { "cx"                 , { SkSVGAttribute::kCx               , SetLengthAttribute       }},
+    { "cy"                 , { SkSVGAttribute::kCy               , SetLengthAttribute       }},
+    { "d"                  , { SkSVGAttribute::kD                , SetPathDataAttribute     }},
+    { "fill-opacity"       , { SkSVGAttribute::kFillOpacity      , SetNumberAttribute       }},
+    { "filter"             , { SkSVGAttribute::kFilter           , SetFilterAttribute       }},
+    { "filterUnits"        , { SkSVGAttribute::kFilterUnits      ,
+                               SetObjectBoundingBoxUnitsAttribute }},
     // focal point x & y
-    { "fx"               , { SkSVGAttribute::kFx               , SetLengthAttribute       }},
-    { "fy"               , { SkSVGAttribute::kFy               , SetLengthAttribute       }},
-    { "gradientTransform", { SkSVGAttribute::kGradientTransform, SetTransformAttribute    }},
-    { "height"           , { SkSVGAttribute::kHeight           , SetLengthAttribute       }},
-    { "offset"           , { SkSVGAttribute::kOffset           , SetLengthAttribute       }},
-    { "opacity"          , { SkSVGAttribute::kOpacity          , SetNumberAttribute       }},
-    { "patternTransform" , { SkSVGAttribute::kPatternTransform , SetTransformAttribute    }},
-    { "points"           , { SkSVGAttribute::kPoints           , SetPointsAttribute       }},
-    { "r"                , { SkSVGAttribute::kR                , SetLengthAttribute       }},
-    { "rx"               , { SkSVGAttribute::kRx               , SetLengthAttribute       }},
-    { "ry"               , { SkSVGAttribute::kRy               , SetLengthAttribute       }},
-    { "spreadMethod"     , { SkSVGAttribute::kSpreadMethod     , SetSpreadMethodAttribute }},
-    { "stop-color"       , { SkSVGAttribute::kStopColor        , SetStopColorAttribute    }},
-    { "stop-opacity"     , { SkSVGAttribute::kStopOpacity      , SetNumberAttribute       }},
-    { "stroke"           , { SkSVGAttribute::kStroke           , SetPaintAttribute        }},
-    { "stroke-dasharray" , { SkSVGAttribute::kStrokeDashArray  , SetDashArrayAttribute    }},
-    { "stroke-dashoffset", { SkSVGAttribute::kStrokeDashOffset , SetLengthAttribute       }},
-    { "stroke-linecap"   , { SkSVGAttribute::kStrokeLineCap    , SetLineCapAttribute      }},
-    { "stroke-linejoin"  , { SkSVGAttribute::kStrokeLineJoin   , SetLineJoinAttribute     }},
-    { "stroke-miterlimit", { SkSVGAttribute::kStrokeMiterLimit , SetNumberAttribute       }},
-    { "stroke-opacity"   , { SkSVGAttribute::kStrokeOpacity    , SetNumberAttribute       }},
-    { "stroke-width"     , { SkSVGAttribute::kStrokeWidth      , SetLengthAttribute       }},
-    { "style"            , { SkSVGAttribute::kUnknown          , SetStyleAttributes       }},
-    { "text"             , { SkSVGAttribute::kText             , SetStringAttribute       }},
-    { "text-anchor"      , { SkSVGAttribute::kTextAnchor       , SetStringAttribute       }},
-    { "transform"        , { SkSVGAttribute::kTransform        , SetTransformAttribute    }},
-    { "viewBox"          , { SkSVGAttribute::kViewBox          , SetViewBoxAttribute      }},
-    { "visibility"       , { SkSVGAttribute::kVisibility       , SetVisibilityAttribute   }},
-    { "width"            , { SkSVGAttribute::kWidth            , SetLengthAttribute       }},
-    { "x"                , { SkSVGAttribute::kX                , SetLengthAttribute       }},
-    { "x1"               , { SkSVGAttribute::kX1               , SetLengthAttribute       }},
-    { "x2"               , { SkSVGAttribute::kX2               , SetLengthAttribute       }},
-    { "xlink:href"       , { SkSVGAttribute::kHref             , SetIRIAttribute          }},
-    { "y"                , { SkSVGAttribute::kY                , SetLengthAttribute       }},
-    { "y1"               , { SkSVGAttribute::kY1               , SetLengthAttribute       }},
-    { "y2"               , { SkSVGAttribute::kY2               , SetLengthAttribute       }},
+    { "fx"                 , { SkSVGAttribute::kFx               , SetLengthAttribute       }},
+    { "fy"                 , { SkSVGAttribute::kFy               , SetLengthAttribute       }},
+    { "height"             , { SkSVGAttribute::kHeight           , SetLengthAttribute       }},
+    { "offset"             , { SkSVGAttribute::kOffset           , SetLengthAttribute       }},
+    { "opacity"            , { SkSVGAttribute::kOpacity          , SetNumberAttribute       }},
+    { "patternTransform"   , { SkSVGAttribute::kPatternTransform , SetTransformAttribute    }},
+    { "points"             , { SkSVGAttribute::kPoints           , SetPointsAttribute       }},
+    { "preserveAspectRatio", { SkSVGAttribute::kPreserveAspectRatio,
+                               SetPreserveAspectRatioAttribute }},
+    { "r"                  , { SkSVGAttribute::kR                , SetLengthAttribute       }},
+    { "rx"                 , { SkSVGAttribute::kRx               , SetLengthAttribute       }},
+    { "ry"                 , { SkSVGAttribute::kRy               , SetLengthAttribute       }},
+    { "stop-color"         , { SkSVGAttribute::kStopColor        , SetStopColorAttribute    }},
+    { "stop-opacity"       , { SkSVGAttribute::kStopOpacity      , SetNumberAttribute       }},
+    { "stroke-dashoffset"  , { SkSVGAttribute::kStrokeDashOffset , SetLengthAttribute       }},
+    { "stroke-miterlimit"  , { SkSVGAttribute::kStrokeMiterLimit , SetNumberAttribute       }},
+    { "stroke-opacity"     , { SkSVGAttribute::kStrokeOpacity    , SetNumberAttribute       }},
+    { "stroke-width"       , { SkSVGAttribute::kStrokeWidth      , SetLengthAttribute       }},
+    { "style"              , { SkSVGAttribute::kUnknown          , SetStyleAttributes       }},
+    { "text"               , { SkSVGAttribute::kText             , SetStringAttribute       }},
+    { "transform"          , { SkSVGAttribute::kTransform        , SetTransformAttribute    }},
+    { "viewBox"            , { SkSVGAttribute::kViewBox          , SetViewBoxAttribute      }},
+    { "width"              , { SkSVGAttribute::kWidth            , SetLengthAttribute       }},
+    { "x"                  , { SkSVGAttribute::kX                , SetLengthAttribute       }},
+    { "x1"                 , { SkSVGAttribute::kX1               , SetLengthAttribute       }},
+    { "x2"                 , { SkSVGAttribute::kX2               , SetLengthAttribute       }},
+    { "xlink:href"         , { SkSVGAttribute::kHref             , SetIRIAttribute          }},
+    { "y"                  , { SkSVGAttribute::kY                , SetLengthAttribute       }},
+    { "y1"                 , { SkSVGAttribute::kY1               , SetLengthAttribute       }},
+    { "y2"                 , { SkSVGAttribute::kY2               , SetLengthAttribute       }},
 };
 
 SortedDictionaryEntry<sk_sp<SkSVGNode>(*)()> gTagFactories[] = {
@@ -384,6 +313,10 @@ SortedDictionaryEntry<sk_sp<SkSVGNode>(*)()> gTagFactories[] = {
     { "clipPath"      , []() -> sk_sp<SkSVGNode> { return SkSVGClipPath::Make();       }},
     { "defs"          , []() -> sk_sp<SkSVGNode> { return SkSVGDefs::Make();           }},
     { "ellipse"       , []() -> sk_sp<SkSVGNode> { return SkSVGEllipse::Make();        }},
+    { "feColorMatrix" , []() -> sk_sp<SkSVGNode> { return SkSVGFeColorMatrix::Make();  }},
+    { "feComposite"   , []() -> sk_sp<SkSVGNode> { return SkSVGFeComposite::Make();    }},
+    { "feTurbulence"  , []() -> sk_sp<SkSVGNode> { return SkSVGFeTurbulence::Make();   }},
+    { "filter"        , []() -> sk_sp<SkSVGNode> { return SkSVGFilter::Make();         }},
     { "g"             , []() -> sk_sp<SkSVGNode> { return SkSVGG::Make();              }},
     { "line"          , []() -> sk_sp<SkSVGNode> { return SkSVGLine::Make();           }},
     { "linearGradient", []() -> sk_sp<SkSVGNode> { return SkSVGLinearGradient::Make(); }},
@@ -404,11 +337,16 @@ struct ConstructionContext {
     ConstructionContext(const ConstructionContext& other, const sk_sp<SkSVGNode>& newParent)
         : fParent(newParent.get()), fIDMapper(other.fIDMapper) {}
 
-    const SkSVGNode* fParent;
-    SkSVGIDMapper*   fIDMapper;
+    SkSVGNode*     fParent;
+    SkSVGIDMapper* fIDMapper;
 };
 
 bool set_string_attribute(const sk_sp<SkSVGNode>& node, const char* name, const char* value) {
+    if (node->parseAndSetAttribute(name, value)) {
+        // Handled by new code path
+        return true;
+    }
+
     const int attrIndex = SkStrSearch(&gAttributeParseInfo[0].fKey,
                                       SkTo<int>(SK_ARRAY_COUNT(gAttributeParseInfo)),
                                       name, sizeof(gAttributeParseInfo[0]));
@@ -452,7 +390,10 @@ sk_sp<SkSVGNode> construct_svg_node(const SkDOM& dom, const ConstructionContext&
 
     if (elemType == SkDOM::kText_Type) {
         SkASSERT(dom.countChildren(xmlNode) == 0);
-        // TODO: text handling
+        // TODO: add type conversion helper to SkSVGNode
+        if (ctx.fParent->tag() == SkSVGTag::kText) {
+            static_cast<SkSVGText*>(ctx.fParent)->setText(SkString(dom.getName(xmlNode)));
+        }
         return nullptr;
     }
 
@@ -515,7 +456,7 @@ void SkSVGDOM::render(SkCanvas* canvas) const {
     if (fRoot) {
         SkSVGLengthContext       lctx(fContainerSize);
         SkSVGPresentationContext pctx;
-        fRoot->render(SkSVGRenderContext(canvas, fIDMapper, lctx, pctx));
+        fRoot->render(SkSVGRenderContext(canvas, fIDMapper, lctx, pctx, nullptr));
     }
 }
 

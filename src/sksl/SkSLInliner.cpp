@@ -304,10 +304,11 @@ void Inliner::ensureScopedBlocks(Statement* inlinedBody, Statement* parentStmt) 
 }
 
 void Inliner::reset(const Context* context, ModifiersPool* modifiers,
-                    const Program::Settings* settings) {
+                    const Program::Settings* settings, const ShaderCapsClass* caps) {
     fContext = context;
     fModifiers = modifiers;
     fSettings = settings;
+    fCaps = caps;
     fInlineVarCounter = 0;
 }
 
@@ -355,9 +356,9 @@ std::unique_ptr<Expression> Inliner::inlineExpression(int offset,
         case Expression::Kind::kBinary: {
             const BinaryExpression& b = expression.as<BinaryExpression>();
             return std::make_unique<BinaryExpression>(offset,
-                                                      expr(b.leftPointer()),
+                                                      expr(b.left()),
                                                       b.getOperator(),
-                                                      expr(b.rightPointer()),
+                                                      expr(b.right()),
                                                       &b.type());
         }
         case Expression::Kind::kBoolLiteral:
@@ -467,7 +468,9 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
     switch (statement.kind()) {
         case Statement::Kind::kBlock: {
             const Block& b = statement.as<Block>();
-            return std::make_unique<Block>(offset, blockStmts(b), b.symbolTable(), b.isScope());
+            return std::make_unique<Block>(offset, blockStmts(b),
+                                           SymbolTable::WrapIfBuiltin(b.symbolTable()),
+                                           b.isScope());
         }
 
         case Statement::Kind::kBreak:
@@ -489,7 +492,8 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
             // declarations by the time we evaluate test & next
             std::unique_ptr<Statement> initializer = stmt(f.initializer());
             return std::make_unique<ForStatement>(offset, std::move(initializer), expr(f.test()),
-                                                  expr(f.next()), stmt(f.statement()), f.symbols());
+                                                  expr(f.next()), stmt(f.statement()),
+                                                  SymbolTable::WrapIfBuiltin(f.symbols()));
         }
         case Statement::Kind::kIf: {
             const IfStatement& i = statement.as<IfStatement>();
@@ -532,20 +536,21 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
         case Statement::Kind::kSwitch: {
             const SwitchStatement& ss = statement.as<SwitchStatement>();
             std::vector<std::unique_ptr<SwitchCase>> cases;
-            cases.reserve(ss.fCases.size());
-            for (const auto& sc : ss.fCases) {
-                cases.push_back(std::make_unique<SwitchCase>(offset, expr(sc->fValue),
-                                                             stmts(sc->fStatements)));
+            cases.reserve(ss.cases().size());
+            for (const std::unique_ptr<SwitchCase>& sc : ss.cases()) {
+                cases.push_back(std::make_unique<SwitchCase>(offset, expr(sc->value()),
+                                                             stmts(sc->statements())));
             }
-            return std::make_unique<SwitchStatement>(offset, ss.fIsStatic, expr(ss.fValue),
-                                                     std::move(cases), ss.fSymbols);
+            return std::make_unique<SwitchStatement>(offset, ss.isStatic(), expr(ss.value()),
+                                                     std::move(cases),
+                                                     SymbolTable::WrapIfBuiltin(ss.symbols()));
         }
         case Statement::Kind::kVarDeclaration: {
             const VarDeclaration& decl = statement.as<VarDeclaration>();
             ExpressionArray sizes;
-            sizes.reserve_back(decl.sizeCount());
-            for (int i = 0; i < decl.sizeCount(); ++i) {
-                sizes.push_back(expr(decl.size(i)));
+            sizes.reserve_back(decl.sizes().count());
+            for (const std::unique_ptr<Expression>& size : decl.sizes()) {
+                sizes.push_back(expr(size));
             }
             std::unique_ptr<Expression> initialValue = expr(decl.value());
             const Variable& old = decl.var();
@@ -595,6 +600,7 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
     SkASSERT(fContext);
     SkASSERT(call);
     SkASSERT(this->isSafeToInline(call->function().definition()));
+    SkASSERT(!symbolTableForCall->isBuiltin());
 
     ExpressionArray& arguments = call->arguments();
     const int offset = call->fOffset;
@@ -607,11 +613,12 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
                                                        /*isScope=*/false);
 
     Block& inlinedBody = *inlinedCall.fInlinedBody;
-    inlinedBody.children().reserve_back(1 +                // Inline marker
-                                   1 +                // Result variable
-                                   arguments.size() + // Function arguments (passing in)
-                                   arguments.size() + // Function arguments (copy out-params back)
-                                   1);                // Inlined code (Block or do-while loop)
+    inlinedBody.children().reserve_back(
+            1 +                 // Inline marker
+            1 +                 // Result variable
+            arguments.size() +  // Function arguments (passing in)
+            arguments.size() +  // Function arguments (copy out-params back)
+            1);                 // Inlined code (Block or do-while loop)
 
     inlinedBody.children().push_back(std::make_unique<InlineMarker>(&call->function()));
 
@@ -758,7 +765,7 @@ bool Inliner::isSafeToInline(const FunctionDefinition* functionDef) {
         return false;
     }
 
-    if (!fSettings->fCaps || !fSettings->fCaps->canUseDoLoops()) {
+    if (!fCaps || !fCaps->canUseDoLoops()) {
         // We don't have do-while loops. We use do-while loops to simulate early returns, so we
         // can't inline functions that have an early return.
         bool hasEarlyReturn = has_early_return(*functionDef);
@@ -822,8 +829,12 @@ public:
         switch (pe->kind()) {
             case ProgramElement::Kind::kFunction: {
                 FunctionDefinition& funcDef = pe->as<FunctionDefinition>();
-                fEnclosingFunction = &funcDef;
-                this->visitStatement(&funcDef.body());
+                // Don't attempt to mutate any builtin functions. (If we stop cloning builtins into
+                // the program, this check can become an assertion.)
+                if (!funcDef.isBuiltin()) {
+                    fEnclosingFunction = &funcDef;
+                    this->visitStatement(&funcDef.body());
+                }
                 break;
             }
             default:
@@ -925,14 +936,14 @@ public:
             }
             case Statement::Kind::kSwitch: {
                 SwitchStatement& switchStmt = (*stmt)->as<SwitchStatement>();
-                if (switchStmt.fSymbols) {
-                    fSymbolTableStack.push_back(switchStmt.fSymbols.get());
+                if (switchStmt.symbols()) {
+                    fSymbolTableStack.push_back(switchStmt.symbols().get());
                 }
 
-                this->visitExpression(&switchStmt.fValue);
-                for (std::unique_ptr<SwitchCase>& switchCase : switchStmt.fCases) {
+                this->visitExpression(&switchStmt.value());
+                for (const std::unique_ptr<SwitchCase>& switchCase : switchStmt.cases()) {
                     // The switch-case's fValue cannot be a FunctionCall; skip it.
-                    for (std::unique_ptr<Statement>& caseBlock : switchCase->fStatements) {
+                    for (std::unique_ptr<Statement>& caseBlock : switchCase->statements()) {
                         this->visitStatement(&caseBlock);
                     }
                 }
@@ -989,7 +1000,7 @@ public:
 
             case Expression::Kind::kBinary: {
                 BinaryExpression& binaryExpr = (*expr)->as<BinaryExpression>();
-                this->visitExpression(&binaryExpr.leftPointer());
+                this->visitExpression(&binaryExpr.left());
 
                 // Logical-and and logical-or binary expressions do not inline the right side,
                 // because that would invalidate short-circuiting. That is, when evaluating
@@ -1003,7 +1014,7 @@ public:
                 bool shortCircuitable = (op == Token::Kind::TK_LOGICALAND ||
                                          op == Token::Kind::TK_LOGICALOR);
                 if (!shortCircuitable) {
-                    this->visitExpression(&binaryExpr.rightPointer());
+                    this->visitExpression(&binaryExpr.right());
                 }
                 break;
             }
@@ -1137,6 +1148,7 @@ bool Inliner::analyze(Program& program) {
         return false;
     }
 
+    ProgramUsage* usage = program.fUsage.get();
     InlineCandidateList candidateList;
     this->buildCandidateList(program, &candidateList);
 
@@ -1145,13 +1157,12 @@ bool Inliner::analyze(Program& program) {
     bool madeChanges = false;
     for (const InlineCandidate& candidate : candidateList.fCandidates) {
         FunctionCall& funcCall = (*candidate.fCandidateExpr)->as<FunctionCall>();
-        const FunctionDeclaration* funcDecl = &funcCall.function();
+        const FunctionDeclaration& funcDecl = funcCall.function();
 
         // If the function is large, not marked `inline`, and is called more than once, it's a bad
         // idea to inline it.
         if (candidate.fIsLargeFunction &&
-            !(funcDecl->modifiers().fFlags & Modifiers::kInline_Flag) &&
-            funcDecl->callCount() > 1) {
+            !(funcDecl.modifiers().fFlags & Modifiers::kInline_Flag) && usage->get(funcDecl) > 1) {
             continue;
         }
 
@@ -1169,6 +1180,9 @@ bool Inliner::analyze(Program& program) {
             // Ensure that the inlined body has a scope if it needs one.
             this->ensureScopedBlocks(inlinedCall.fInlinedBody.get(), candidate.fParentStmt->get());
 
+            // Add references within the inlined body
+            usage->add(inlinedCall.fInlinedBody.get());
+
             // Move the enclosing statement to the end of the unscoped Block containing the inlined
             // function, then replace the enclosing statement with that Block.
             // Before:
@@ -1182,6 +1196,7 @@ bool Inliner::analyze(Program& program) {
         }
 
         // Replace the candidate function call with our replacement expression.
+        usage->replace(candidate.fCandidateExpr->get(), inlinedCall.fReplacementExpr.get());
         *candidate.fCandidateExpr = std::move(inlinedCall.fReplacementExpr);
         madeChanges = true;
 

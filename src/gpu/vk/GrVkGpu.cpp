@@ -230,7 +230,7 @@ GrVkGpu::GrVkGpu(GrDirectContext* direct, const GrVkBackendContext& backendConte
     SkASSERT(!backendContext.fOwnsInstanceAndDevice);
     SkASSERT(fMemoryAllocator);
 
-    fCompiler = new SkSL::Compiler();
+    fCompiler = new SkSL::Compiler(fVkCaps->shaderCaps());
 
     fCaps.reset(SkRef(fVkCaps.get()));
 
@@ -320,7 +320,7 @@ void GrVkGpu::disconnect(DisconnectType type) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-GrOpsRenderPass* GrVkGpu::getOpsRenderPass(
+GrOpsRenderPass* GrVkGpu::onGetOpsRenderPass(
         GrRenderTarget* rt,
         GrAttachment* stencil,
         GrSurfaceOrigin origin,
@@ -2080,22 +2080,19 @@ void GrVkGpu::addImageMemoryBarrier(const GrManagedResource* resource,
 }
 
 void GrVkGpu::prepareSurfacesForBackendAccessAndStateUpdates(
-        GrSurfaceProxy* proxies[],
-        int numProxies,
+        SkSpan<GrSurfaceProxy*> proxies,
         SkSurface::BackendSurfaceAccess access,
         const GrBackendSurfaceMutableState* newState) {
-    SkASSERT(numProxies >= 0);
-    SkASSERT(!numProxies || proxies);
     // Submit the current command buffer to the Queue. Whether we inserted semaphores or not does
     // not effect what we do here.
-    if (numProxies && (access == SkSurface::BackendSurfaceAccess::kPresent || newState)) {
+    if (!proxies.empty() && (access == SkSurface::BackendSurfaceAccess::kPresent || newState)) {
         GrVkImage* image;
-        for (int i = 0; i < numProxies; ++i) {
-            SkASSERT(proxies[i]->isInstantiated());
-            if (GrTexture* tex = proxies[i]->peekTexture()) {
+        for (GrSurfaceProxy* proxy : proxies) {
+            SkASSERT(proxy->isInstantiated());
+            if (GrTexture* tex = proxy->peekTexture()) {
                 image = static_cast<GrVkTexture*>(tex);
             } else {
-                GrRenderTarget* rt = proxies[i]->peekRenderTarget();
+                GrRenderTarget* rt = proxy->peekRenderTarget();
                 SkASSERT(rt);
                 image = static_cast<GrVkRenderTarget*>(rt);
             }
@@ -2111,9 +2108,7 @@ void GrVkGpu::prepareSurfacesForBackendAccessAndStateUpdates(
 void GrVkGpu::addFinishedProc(GrGpuFinishedProc finishedProc,
                               GrGpuFinishedContext finishedContext) {
     SkASSERT(finishedProc);
-    sk_sp<GrRefCntedCallback> finishedCallback(
-            new GrRefCntedCallback(finishedProc, finishedContext));
-    this->addFinishedCallback(std::move(finishedCallback));
+    this->addFinishedCallback(GrRefCntedCallback::Make(finishedProc, finishedContext));
 }
 
 void GrVkGpu::addFinishedCallback(sk_sp<GrRefCntedCallback> finishedCallback) {

@@ -25,7 +25,7 @@ static int32_t next_id() {
     static std::atomic<int32_t> nextID{1};
     int32_t id;
     do {
-        id = nextID++;
+        id = nextID.fetch_add(1, std::memory_order_relaxed);
     } while (id == SK_InvalidGenID);
     return id;
 }
@@ -49,7 +49,8 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
                                      int sampleCnt, GrSurfaceOrigin origin,
                                      const SkSurfaceProps& surfaceProps,
                                      bool isMipMapped, bool willUseGLFBO0, bool isTextureable,
-                                     GrProtected isProtected, bool vkRTSupportsInputAttachment) {
+                                     GrProtected isProtected, bool vkRTSupportsInputAttachment,
+                                     bool forVulkanSecondaryCommandBuffer) {
     SkASSERT(fCaps);
     if (!backendFormat.isValid()) {
         return {};
@@ -62,8 +63,10 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
         return {};
     }
 
-    if (GrBackendApi::kVulkan != backendFormat.backend() && vkRTSupportsInputAttachment) {
-        // The vkRTSupportsInputAttachment flags can only be used for a Vulkan backend.
+    if (GrBackendApi::kVulkan != backendFormat.backend() &&
+        (vkRTSupportsInputAttachment || forVulkanSecondaryCommandBuffer)) {
+        // The vkRTSupportsInputAttachment and forVulkanSecondaryCommandBuffer flags can only be
+        // used for a Vulkan backend.
         return {};
     }
 
@@ -98,6 +101,11 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
         return {};
     }
 
+    if (forVulkanSecondaryCommandBuffer &&
+        (isTextureable || isMipMapped || willUseGLFBO0 || vkRTSupportsInputAttachment)) {
+        return {};
+    }
+
     if (GrBackendApi::kVulkan == backendFormat.backend()) {
         if (GrBackendApi::kVulkan != fBackend) {
             return {};
@@ -121,7 +129,7 @@ SkSurfaceCharacterization GrContextThreadSafeProxy::createCharacterization(
             SkSurfaceCharacterization::MipMapped(isMipMapped),
             SkSurfaceCharacterization::UsesGLFBO0(willUseGLFBO0),
             SkSurfaceCharacterization::VkRTSupportsInputAttachment(vkRTSupportsInputAttachment),
-            SkSurfaceCharacterization::VulkanSecondaryCBCompatible(false),
+            SkSurfaceCharacterization::VulkanSecondaryCBCompatible(forVulkanSecondaryCommandBuffer),
             isProtected,
             surfaceProps);
 }

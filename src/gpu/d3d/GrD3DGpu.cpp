@@ -64,11 +64,11 @@ GrD3DGpu::GrD3DGpu(GrDirectContext* direct, const GrContextOptions& contextOptio
         , fResourceProvider(this)
         , fStagingBufferManager(this)
         , fConstantsRingBuffer(this, 128 * 1024, kConstantAlignment, GrGpuBufferType::kVertex)
-        , fOutstandingCommandLists(sizeof(OutstandingCommandList), kDefaultOutstandingAllocCnt)
-        , fCompiler(new SkSL::Compiler()) {
+        , fOutstandingCommandLists(sizeof(OutstandingCommandList), kDefaultOutstandingAllocCnt) {
     fCaps.reset(new GrD3DCaps(contextOptions,
                               backendContext.fAdapter.get(),
                               backendContext.fDevice.get()));
+    fCompiler.reset(new SkSL::Compiler(fCaps->shaderCaps()));
 
     fCurrentDirectCommandList = fResourceProvider.findOrCreateDirectCommandList();
     SkASSERT(fCurrentDirectCommandList);
@@ -115,7 +115,7 @@ void GrD3DGpu::destroyResources() {
     fResourceProvider.destroyResources();
 }
 
-GrOpsRenderPass* GrD3DGpu::getOpsRenderPass(
+GrOpsRenderPass* GrD3DGpu::onGetOpsRenderPass(
         GrRenderTarget* rt,
         GrAttachment*,
         GrSurfaceOrigin origin,
@@ -213,9 +213,7 @@ void GrD3DGpu::submit(GrOpsRenderPass* renderPass) {
 void GrD3DGpu::addFinishedProc(GrGpuFinishedProc finishedProc,
                                GrGpuFinishedContext finishedContext) {
     SkASSERT(finishedProc);
-    sk_sp<GrRefCntedCallback> finishedCallback(
-            new GrRefCntedCallback(finishedProc, finishedContext));
-    this->addFinishedCallback(std::move(finishedCallback));
+    this->addFinishedCallback(GrRefCntedCallback::Make(finishedProc, finishedContext));
 }
 
 void GrD3DGpu::addFinishedCallback(sk_sp<GrRefCntedCallback> finishedCallback) {
@@ -1293,22 +1291,18 @@ void GrD3DGpu::addBufferResourceBarriers(GrD3DBuffer* buffer,
 
 
 void GrD3DGpu::prepareSurfacesForBackendAccessAndStateUpdates(
-        GrSurfaceProxy* proxies[],
-        int numProxies,
+        SkSpan<GrSurfaceProxy*> proxies,
         SkSurface::BackendSurfaceAccess access,
         const GrBackendSurfaceMutableState* newState) {
-    SkASSERT(numProxies >= 0);
-    SkASSERT(!numProxies || proxies);
-
     // prepare proxies by transitioning to PRESENT renderState
-    if (numProxies && access == SkSurface::BackendSurfaceAccess::kPresent) {
+    if (!proxies.empty() && access == SkSurface::BackendSurfaceAccess::kPresent) {
         GrD3DTextureResource* resource;
-        for (int i = 0; i < numProxies; ++i) {
-            SkASSERT(proxies[i]->isInstantiated());
-            if (GrTexture* tex = proxies[i]->peekTexture()) {
+        for (GrSurfaceProxy* proxy : proxies) {
+            SkASSERT(proxy->isInstantiated());
+            if (GrTexture* tex = proxy->peekTexture()) {
                 resource = static_cast<GrD3DTexture*>(tex);
             } else {
-                GrRenderTarget* rt = proxies[i]->peekRenderTarget();
+                GrRenderTarget* rt = proxy->peekRenderTarget();
                 SkASSERT(rt);
                 resource = static_cast<GrD3DRenderTarget*>(rt);
             }

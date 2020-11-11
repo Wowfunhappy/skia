@@ -141,7 +141,7 @@ sk_sp<SkShader> SkImage::makeShader(SkTileMode tmx, SkTileMode tmy,
 }
 
 sk_sp<SkShader> SkImage::makeShader(SkTileMode tmx, SkTileMode tmy,
-                                    const SkFilterOptions& options,
+                                    const SkSamplingOptions& options,
                                     const SkMatrix* localMatrix) const {
     return SkImageShader::Make(sk_ref_sp(const_cast<SkImage*>(this)), tmx, tmy,
                                options, localMatrix);
@@ -151,12 +151,6 @@ sk_sp<SkShader> SkImage::makeShader(SkTileMode tmx, SkTileMode tmy,
                                     const SkMatrix* localMatrix, SkFilterQuality filtering) const {
     return SkImageShader::Make(sk_ref_sp(const_cast<SkImage*>(this)), tmx, tmy, localMatrix,
                                SkImageShader::FilterEnum(filtering));
-}
-
-sk_sp<SkShader> SkImage::makeShader(SkTileMode tmx, SkTileMode tmy, CubicResampler cubic,
-                                           const SkMatrix* localMatrix) const {
-    return SkImageShader::Make(sk_ref_sp(const_cast<SkImage*>(this)), tmx, tmy, cubic,
-                               localMatrix);
 }
 
 sk_sp<SkData> SkImage::encodeToData(SkEncodedImageFormat type, int quality) const {
@@ -555,7 +549,7 @@ sk_sp<SkImage> SkImage::MakeFromCompressedTexture(GrRecordingContext*,
     return nullptr;
 }
 
-bool SkImage::MakeBackendTextureFromSkImage(GrContext*,
+bool SkImage::MakeBackendTextureFromSkImage(GrDirectContext*,
                                             sk_sp<SkImage>,
                                             GrBackendTexture*,
                                             BackendTextureReleaseProc*) {
@@ -582,7 +576,7 @@ sk_sp<SkImage> SkImage::makeTextureImage(GrDirectContext*, GrMipmapped, SkBudget
 }
 
 sk_sp<SkImage> SkImage::MakeFromNV12TexturesCopyWithExternalBackend(
-       GrContext*, SkYUVColorSpace, const GrBackendTexture[2], GrSurfaceOrigin,
+       GrRecordingContext*, SkYUVColorSpace, const GrBackendTexture[2], GrSurfaceOrigin,
        const GrBackendTexture&, sk_sp<SkColorSpace>, TextureReleaseProc, ReleaseContext) {
     return nullptr;
 }

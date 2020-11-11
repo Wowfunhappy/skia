@@ -19,34 +19,34 @@ namespace SkSL {
 /**
  * An expression modified by a unary operator appearing before it, such as '!flag'.
  */
-class PrefixExpression : public Expression {
+class PrefixExpression final : public Expression {
 public:
     static constexpr Kind kExpressionKind = Kind::kPrefix;
 
     PrefixExpression(Token::Kind op, std::unique_ptr<Expression> operand)
-    : INHERITED(operand->fOffset, kExpressionKind, TypeTokenData{&operand->type(), op}) {
-        fExpressionChildren.push_back(std::move(operand));
-    }
-
-    const Type& type() const override {
-        return *this->typeTokenData().fType;
-    }
+        : INHERITED(operand->fOffset, kExpressionKind, &operand->type())
+        , fOperator(op)
+        , fOperand(std::move(operand)) {}
 
     Token::Kind getOperator() const {
-        return this->typeTokenData().fToken;
+        return fOperator;
     }
 
     std::unique_ptr<Expression>& operand() {
-        return fExpressionChildren[0];
+        return fOperand;
     }
 
     const std::unique_ptr<Expression>& operand() const {
-        return fExpressionChildren[0];
+        return fOperand;
+    }
+
+    bool isNegationOfCompileTimeConstant() const {
+        return this->getOperator() == Token::Kind::TK_MINUS &&
+               this->operand()->isCompileTimeConstant();
     }
 
     bool isCompileTimeConstant() const override {
-        return this->getOperator() == Token::Kind::TK_MINUS &&
-               this->operand()->isCompileTimeConstant();
+        return this->isNegationOfCompileTimeConstant();
     }
 
     bool hasProperty(Property property) const override {
@@ -59,16 +59,7 @@ public:
     }
 
     std::unique_ptr<Expression> constantPropagate(const IRGenerator& irGenerator,
-                                                  const DefinitionMap& definitions) override {
-        if (this->operand()->kind() == Expression::Kind::kFloatLiteral) {
-            return std::unique_ptr<Expression>(new FloatLiteral(
-                                                     irGenerator.fContext,
-                                                     fOffset,
-                                                     -this->operand()->as<FloatLiteral>().value()));
-
-        }
-        return nullptr;
-    }
+                                                  const DefinitionMap& definitions) override;
 
     SKSL_FLOAT getFVecComponent(int index) const override {
         SkASSERT(this->getOperator() == Token::Kind::TK_MINUS);
@@ -95,6 +86,9 @@ public:
     }
 
 private:
+    Token::Kind fOperator;
+    std::unique_ptr<Expression> fOperand;
+
     using INHERITED = Expression;
 };
 

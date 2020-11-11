@@ -58,55 +58,10 @@ public:
         kContainsRTAdjust
     };
 
-    Expression(int offset, const BoolLiteralData& data)
-        : INHERITED(offset, (int) Kind::kBoolLiteral, data) {
-    }
-
-    Expression(int offset, Kind kind, const ExternalValueData& data)
-        : INHERITED(offset, (int) kind, data) {
-        SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
-    }
-
-    Expression(int offset, const FieldAccessData& data)
-        : INHERITED(offset, (int) Kind::kFieldAccess, data) {}
-
-    Expression(int offset, const FloatLiteralData& data)
-        : INHERITED(offset, (int) Kind::kFloatLiteral, data) {}
-
-    Expression(int offset, const FunctionCallData& data)
-        : INHERITED(offset, (int) Kind::kFunctionCall, data) {}
-
-    Expression(int offset, const FunctionReferenceData& data)
-        : INHERITED(offset, (int) Kind::kFunctionReference, data) {}
-
-    Expression(int offset, const IntLiteralData& data)
-        : INHERITED(offset, (int) Kind::kIntLiteral, data) {
-    }
-
-    Expression(int offset, const SettingData& data)
-        : INHERITED(offset, (int) Kind::kSetting, data) {
-    }
-
-    Expression(int offset, const SwizzleData& data)
-        : INHERITED(offset, (int) Kind::kSwizzle, data) {
-    }
-
     Expression(int offset, Kind kind, const Type* type)
-        : INHERITED(offset, (int) kind, type) {
+        : INHERITED(offset, (int) kind)
+        , fType(type) {
         SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
-    }
-
-    Expression(int offset, const TypeReferenceData& data)
-        : INHERITED(offset, (int) Kind::kTypeReference, data) {
-    }
-
-    Expression(int offset, Kind kind, const TypeTokenData& data)
-        : INHERITED(offset, (int) kind, data) {
-        SkASSERT(kind >= Kind::kFirst && kind <= Kind::kLast);
-    }
-
-    Expression(int offset, const VariableReferenceData& data)
-        : INHERITED(offset, (int) Kind::kVariableReference, data) {
     }
 
     Kind kind() const {
@@ -114,7 +69,7 @@ public:
     }
 
     virtual const Type& type() const {
-        return *this->typeData();
+        return *fType;
     }
 
     /**
@@ -210,8 +165,8 @@ public:
     }
 
     /**
-     * For a literal vector expression, return the floating point value of the n'th vector
-     * component. It is an error to call this method on an expression which is not a literal vector.
+     * For a vector of floating point values, return the value of the n'th vector component. It is
+     * an error to call this method on an expression which is not a vector of FloatLiterals.
      */
     virtual SKSL_FLOAT getFVecComponent(int n) const {
         SkASSERT(false);
@@ -219,13 +174,19 @@ public:
     }
 
     /**
-     * For a literal vector expression, return the integer value of the n'th vector component. It is
-     * an error to call this method on an expression which is not a literal vector.
+     * For a vector of integer values, return the value of the n'th vector component. It is an error
+     * to call this method on an expression which is not a vector of IntLiterals.
      */
     virtual SKSL_INT getIVecComponent(int n) const {
         SkASSERT(false);
         return 0;
     }
+
+    /**
+     * For a vector of literals, return the value of the n'th vector component. It is an error to
+     * call this method on an expression which is not a vector of Literal<T>.
+     */
+    template <typename T> T getVecComponent(int index) const;
 
     /**
      * For a literal matrix expression, return the floating point value of the component at
@@ -240,8 +201,18 @@ public:
     virtual std::unique_ptr<Expression> clone() const = 0;
 
 private:
+    const Type* fType;
+
     using INHERITED = IRNode;
 };
+
+template <> inline SKSL_FLOAT Expression::getVecComponent<SKSL_FLOAT>(int index) const {
+    return this->getFVecComponent(index);
+}
+
+template <> inline SKSL_INT Expression::getVecComponent<SKSL_INT>(int index) const {
+    return this->getIVecComponent(index);
+}
 
 }  // namespace SkSL
 

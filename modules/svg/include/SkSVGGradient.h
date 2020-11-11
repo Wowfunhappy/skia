@@ -20,14 +20,17 @@ class SkSVGGradient : public SkSVGHiddenContainer {
 public:
     ~SkSVGGradient() override = default;
 
-    void setHref(const SkSVGStringType&);
-    void setGradientTransform(const SkSVGTransformType&);
-    void setSpreadMethod(const SkSVGSpreadMethod&);
+    SVG_ATTR(Href, SkSVGIRI, SkSVGIRI())
+    SVG_ATTR(GradientTransform, SkSVGTransformType, SkSVGTransformType(SkMatrix::I()))
+    SVG_ATTR(SpreadMethod, SkSVGSpreadMethod, SkSVGSpreadMethod(SkSVGSpreadMethod::Type::kPad))
+    SVG_ATTR(GradientUnits,
+             SkSVGObjectBoundingBoxUnits,
+             SkSVGObjectBoundingBoxUnits(SkSVGObjectBoundingBoxUnits::Type::kObjectBoundingBox))
 
 protected:
     explicit SkSVGGradient(SkSVGTag t) : INHERITED(t) {}
 
-    void onSetAttribute(SkSVGAttribute, const SkSVGValue&) override;
+    bool parseAndSetAttribute(const char*, const char*) override;
 
     bool onAsPaint(const SkSVGRenderContext&, SkPaint*) const final;
 
@@ -40,10 +43,6 @@ private:
     using    StopColorArray = SkSTArray<2,  SkColor, true>;
     void collectColorStops(const SkSVGRenderContext&, StopPositionArray*, StopColorArray*) const;
     SkColor resolveStopColor(const SkSVGRenderContext&, const SkSVGStop&) const;
-
-    SkSVGStringType    fHref;
-    SkSVGTransformType fGradientTransform = SkSVGTransformType(SkMatrix::I());
-    SkSVGSpreadMethod  fSpreadMethod = SkSVGSpreadMethod(SkSVGSpreadMethod::Type::kPad);
 
     using INHERITED = SkSVGHiddenContainer;
 };

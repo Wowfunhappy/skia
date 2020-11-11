@@ -13,6 +13,7 @@
 #include "include/core/SkYUVASizeInfo.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/GrYUVABackendTextures.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkMipmap.h"
 #include "src/core/SkScopeExit.h"
@@ -133,7 +134,7 @@ GrSemaphoresSubmitted SkImage_GpuYUVA::onFlush(GrDirectContext* dContext, const 
 
     GrSurfaceProxy* proxies[4] = {fViews[0].proxy(), fViews[1].proxy(), fViews[2].proxy(),
                                   fViews[3].proxy()};
-    int numProxies = fNumViews;
+    size_t numProxies = fNumViews;
     if (fRGBView.proxy()) {
         // Either we've already flushed the flattening draw or the flattening is unflushed. In the
         // latter case it should still be ok to just pass fRGBView proxy because it in turn depends
@@ -141,7 +142,7 @@ GrSemaphoresSubmitted SkImage_GpuYUVA::onFlush(GrDirectContext* dContext, const 
         proxies[0] = fRGBView.proxy();
         numProxies = 1;
     }
-    return dContext->priv().flushSurfaces(proxies, numProxies, info);
+    return dContext->priv().flushSurfaces({proxies, numProxies}, info);
 }
 
 GrTextureProxy* SkImage_GpuYUVA::peekProxy() const { return fRGBView.asTextureProxy(); }
@@ -234,7 +235,43 @@ sk_sp<SkImage> SkImage_GpuYUVA::onReinterpretColorSpace(sk_sp<SkColorSpace> newC
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
-sk_sp<SkImage> SkImage::MakeFromYUVATextures(GrContext* ctx,
+sk_sp<SkImage> SkImage::MakeFromYUVATextures(GrRecordingContext* context,
+                                             const GrYUVABackendTextures& yuvaTextures,
+                                             sk_sp<SkColorSpace> imageColorSpace,
+                                             TextureReleaseProc textureReleaseProc,
+                                             ReleaseContext releaseContext) {
+    auto releaseHelper = GrRefCntedCallback::Make(textureReleaseProc, releaseContext);
+
+    SkYUVAIndex yuvaIndices[4];
+    int numTextures;
+    if (!yuvaTextures.toYUVAIndices(yuvaIndices) ||
+        !SkYUVAIndex::AreValidIndices(yuvaIndices, &numTextures)) {
+        return nullptr;
+    }
+    SkASSERT(numTextures == yuvaTextures.numPlanes());
+
+    GrSurfaceProxyView tempViews[4];
+    if (!SkImage_GpuBase::MakeTempTextureProxies(context,
+                                                 yuvaTextures.textures().data(),
+                                                 numTextures,
+                                                 yuvaIndices,
+                                                 yuvaTextures.textureOrigin(),
+                                                 tempViews,
+                                                 std::move(releaseHelper))) {
+        return nullptr;
+    }
+
+    return sk_make_sp<SkImage_GpuYUVA>(sk_ref_sp(context),
+                                       yuvaTextures.yuvaInfo().dimensions(),
+                                       kNeedNewImageUniqueID,
+                                       yuvaTextures.yuvaInfo().yuvColorSpace(),
+                                       tempViews,
+                                       numTextures,
+                                       yuvaIndices,
+                                       imageColorSpace);
+}
+
+sk_sp<SkImage> SkImage::MakeFromYUVATextures(GrRecordingContext* ctx,
                                              SkYUVColorSpace colorSpace,
                                              const GrBackendTexture yuvaTextures[],
                                              const SkYUVAIndex yuvaIndices[4],
@@ -243,10 +280,7 @@ sk_sp<SkImage> SkImage::MakeFromYUVATextures(GrContext* ctx,
                                              sk_sp<SkColorSpace> imageColorSpace,
                                              TextureReleaseProc textureReleaseProc,
                                              ReleaseContext releaseContext) {
-    sk_sp<GrRefCntedCallback> releaseHelper;
-    if (textureReleaseProc) {
-        releaseHelper.reset(new GrRefCntedCallback(textureReleaseProc, releaseContext));
-    }
+    auto releaseHelper = GrRefCntedCallback::Make(textureReleaseProc, releaseContext);
 
     int numTextures;
     if (!SkYUVAIndex::AreValidIndices(yuvaIndices, &numTextures)) {
@@ -333,6 +367,7 @@ sk_sp<SkImage> SkImage::MakeFromYUVAPixmaps(GrRecordingContext* context,
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
+
 sk_sp<SkImage> SkImage_GpuYUVA::MakePromiseYUVATexture(
         GrRecordingContext* context,
         SkYUVColorSpace yuvColorSpace,
@@ -345,24 +380,21 @@ sk_sp<SkImage> SkImage_GpuYUVA::MakePromiseYUVATexture(
         sk_sp<SkColorSpace> imageColorSpace,
         PromiseImageTextureFulfillProc textureFulfillProc,
         PromiseImageTextureReleaseProc textureReleaseProc,
-        PromiseImageTextureDoneProc promiseDoneProc,
-        PromiseImageTextureContext textureContexts[],
-        PromiseImageApiVersion version) {
+        PromiseImageTextureContext textureContexts[]) {
     int numTextures;
     bool valid = SkYUVAIndex::AreValidIndices(yuvaIndices, &numTextures);
 
-    // The contract here is that if 'promiseDoneProc' is passed in it should always be called,
-    // even if creation of the SkImage fails. Once we call MakePromiseImageLazyProxy it takes
-    // responsibility for calling the done proc.
-    if (!promiseDoneProc) {
+    // Our contract is that we will always call the release proc even on failure.
+    // We use the helper to convey the context, so we need to ensure make doesn't fail.
+    textureReleaseProc = textureReleaseProc ? textureReleaseProc : [](void*) {};
+    sk_sp<GrRefCntedCallback> releaseHelpers[4];
+    for (int i = 0; i < numTextures; ++i) {
+        releaseHelpers[i] = GrRefCntedCallback::Make(textureReleaseProc, textureContexts[i]);
+    }
+
+    if (!context) {
         return nullptr;
     }
-    int proxiesCreated = 0;
-    SkScopeExit callDone([promiseDoneProc, textureContexts, numTextures, &proxiesCreated]() {
-        for (int i = proxiesCreated; i < numTextures; ++i) {
-            promiseDoneProc(textureContexts[i]);
-        }
-    });
 
     if (!valid) {
         return nullptr;
@@ -399,11 +431,12 @@ sk_sp<SkImage> SkImage_GpuYUVA::MakePromiseYUVATexture(
     // Get lazy proxies
     GrSurfaceProxyView views[4];
     for (int texIdx = 0; texIdx < numTextures; ++texIdx) {
-        auto proxy = MakePromiseImageLazyProxy(
-                context, yuvaSizes[texIdx].width(), yuvaSizes[texIdx].height(),
-                yuvaFormats[texIdx], GrMipmapped::kNo, textureFulfillProc, textureReleaseProc,
-                promiseDoneProc, textureContexts[texIdx], version);
-        ++proxiesCreated;
+        auto proxy = MakePromiseImageLazyProxy(context,
+                                               yuvaSizes[texIdx],
+                                               yuvaFormats[texIdx],
+                                               GrMipmapped::kNo,
+                                               textureFulfillProc,
+                                               std::move(releaseHelpers[texIdx]));
         if (!proxy) {
             return nullptr;
         }

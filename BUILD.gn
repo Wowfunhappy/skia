@@ -69,7 +69,11 @@ config("skia_public") {
 
 # Skia internal APIs, used by Skia itself and a few test tools.
 config("skia_private") {
-  visibility = [ ":*" ]
+  visibility = [
+    ":*",
+    "//modules/*",
+    "//experimental/*",
+  ]
 
   defines = [ "SK_GAMMA_APPLY_TO_A8" ]
   if (skia_enable_gpu) {
@@ -558,6 +562,10 @@ if (skia_compile_processors || skia_compile_sksl_tests) {
     sources = [
       "src/core/SkMalloc.cpp",
       "src/core/SkMath.cpp",
+      "src/core/SkSemaphore.cpp",
+      "src/core/SkThreadID.cpp",
+      "src/gpu/GrBlockAllocator.cpp",
+      "src/gpu/GrMemoryPool.cpp",
       "src/ports/SkMemory_malloc.cpp",
       "src/sksl/SkSLMain.cpp",
     ]
@@ -600,6 +608,7 @@ if (skia_compile_processors || skia_compile_sksl_tests) {
       "src/sksl/sksl_gpu.sksl",
       "src/sksl/sksl_interp.sksl",
       "src/sksl/sksl_pipeline.sksl",
+      "src/sksl/sksl_public.sksl",
       "src/sksl/sksl_vert.sksl",
     ]
     outputs = [ "$root_out_dir/{{source_file_part}}" ]
@@ -1876,7 +1885,6 @@ if (skia_enable_tools) {
       "modules/sksg:tests",
       "modules/skshaper",
       "modules/svg",
-      "//third_party/absl",
       "//third_party/libpng",
       "//third_party/libwebp",
       "//third_party/zlib",
@@ -1939,6 +1947,7 @@ if (skia_enable_tools) {
       "modules/skparagraph:samples",
       "modules/skshaper",
       "modules/svg",
+      "//third_party/imgui",
     ]
   }
   test_lib("hash_and_encode") {

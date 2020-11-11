@@ -13,9 +13,6 @@
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
 #include "src/gpu/tessellate/GrWangsFormula.h"
 
-constexpr static float kLinearizationIntolerance =
-        GrTessellationPathRenderer::kLinearizationIntolerance;
-
 class GrStrokeTessellateShader::Impl : public GrGLSLGeometryProcessor {
 public:
     const char* getTessArgs1UniformName(const GrGLSLUniformHandler& uniformHandler) const {
@@ -38,10 +35,10 @@ private:
 
         args.fVaryingHandler->emitAttributes(shader);
 
-        // uNumSegmentsInJoin, uCubicConstantPow2, uNumRadialSegmentsPerRadian, uMiterLimitInvPow2.
+        // uNumSegmentsInJoin, uWangsTermPow2, uNumRadialSegmentsPerRadian, uMiterLimitInvPow2.
         fTessArgs1Uniform = uniHandler->addUniform(nullptr, kTessControl_GrShaderFlag,
                                                    kFloat4_GrSLType, "tessArgs1", nullptr);
-        // uRadialTolerancePow2, uStrokeRadius.
+        // uJoinTolerancePow2, uStrokeRadius.
         fTessArgs2Uniform = uniHandler->addUniform(nullptr, kTessControl_GrShaderFlag |
                                                             kTessEvaluation_GrShaderFlag,
                                                    kFloat2_GrSLType,
@@ -262,18 +259,16 @@ private:
                 numSegmentsInJoin = 0;  // Use the rotation to calculate the number of segments.
                 break;
         }
-        float intolerance = kLinearizationIntolerance * shader.fMatrixScale;
-        float cubicConstant = GrWangsFormula::cubic_constant(intolerance);
-        float strokeRadius = shader.fStroke.getWidth() * .5;
-        float radialIntolerance = 1 / (strokeRadius * intolerance);
         float miterLimit = shader.fStroke.getMiter();
         pdman.set4f(fTessArgs1Uniform,
             numSegmentsInJoin,  // uNumSegmentsInJoin
-            cubicConstant * cubicConstant,  // uCubicConstantPow2 in path space.
-            .5f / acosf(std::max(1 - radialIntolerance, -1.f)),  // uNumRadialSegmentsPerRadian
+            GrWangsFormula::length_term_pow2<3>(shader.fParametricIntolerance),  // uWangsTermPow2
+            shader.fNumRadialSegmentsPerRadian,  // uNumRadialSegmentsPerRadian
             1 / (miterLimit * miterLimit));  // uMiterLimitInvPow2.
+        float strokeRadius = shader.fStroke.getWidth() * .5;
+        float joinTolerance = 1 / (strokeRadius * shader.fParametricIntolerance);
         pdman.set2f(fTessArgs2Uniform,
-                    radialIntolerance * radialIntolerance,  // uRadialTolerancePow2.
+                    joinTolerance * joinTolerance,  // uJoinTolerancePow2.
                     strokeRadius);  // uStrokeRadius.
         const SkMatrix& m = shader.viewMatrix();
         if (!m.isIdentity()) {
@@ -308,13 +303,13 @@ SkString GrStrokeTessellateShader::getTessControlShaderGLSL(
     const char* tessArgs1Name = impl->getTessArgs1UniformName(uniformHandler);
     code.appendf("uniform vec4 %s;\n", tessArgs1Name);
     code.appendf("#define uNumSegmentsInJoin %s.x\n", tessArgs1Name);
-    code.appendf("#define uCubicConstantPow2 %s.y\n", tessArgs1Name);
+    code.appendf("#define uWangsTermPow2 %s.y\n", tessArgs1Name);
     code.appendf("#define uNumRadialSegmentsPerRadian %s.z\n", tessArgs1Name);
     code.appendf("#define uMiterLimitInvPow2 %s.w\n", tessArgs1Name);
 
     const char* tessArgs2Name = impl->getTessArgs2UniformName(uniformHandler);
     code.appendf("uniform vec2 %s;\n", tessArgs2Name);
-    code.appendf("#define uRadialTolerancePow2 %s.x\n", tessArgs2Name);
+    code.appendf("#define uJoinTolerancePow2 %s.x\n", tessArgs2Name);
 
     code.append(R"(
     in vec4 vsPts01[];
@@ -377,9 +372,9 @@ SkString GrStrokeTessellateShader::getTessControlShaderGLSL(
         // section of the curve into. (See GrWangsFormula::cubic() for more documentation on this
         // formula.) The final tessellated strip will be a composition of these parametric segments
         // as well as radial segments.
-        float w = length_pow2(max(abs(P[2] - P[1]*2.0 + P[0]),
-                                  abs(P[3] - P[2]*2.0 + P[1]))) * uCubicConstantPow2;
-        float numParametricSegments = ceil(inversesqrt(inversesqrt(max(w, 1e-2))));
+        float m = max(length_pow2(-2.0*P[1] + P[2] + P[0]),
+                      length_pow2(-2.0*P[2] + P[3] + P[1])) * uWangsTermPow2;
+        float numParametricSegments = ceil(inversesqrt(inversesqrt(max(m, 1e-2))));
         if (P[0] == P[1] && P[2] == P[3]) {
             // This is how the patch builder articulates lineTos but Wang's formula returns
             // >>1 segment in this scenario. Assign 1 parametric segment.
@@ -424,7 +419,7 @@ SkString GrStrokeTessellateShader::getTessControlShaderGLSL(
                 innerStrokeRadiusMultiplier = (x >= uMiterLimitInvPow2) ? inversesqrt(x) : sqrt(x);
             }
             vec2 strokeOutsetClamp = vec2(-1, 1);
-            if (length_pow2(tan1norm - tan0norm) > uRadialTolerancePow2) {
+            if (length_pow2(tan1norm - tan0norm) > uJoinTolerancePow2) {
                 // Clamp the join to the exterior side of its junction. We only do this if the join
                 // angle is large enough to guarantee there won't be cracks on the interior side of
                 // the junction.
@@ -697,18 +692,17 @@ SkString GrStrokeTessellateShader::getTessEvaluationShaderGLSL(
         }
 
         if (localEdgeID == 0) {
-            // The first local edge of each section uses the provided P[0] and tan0. This ensures
-            // continuous rotation across chops made by the vertex shader as well as crack-free
-            // seaming between patches.
-            position = P[0];
+            // The first local edge of each section uses the provided tan0. This ensures continuous
+            // rotation across chops made by the vertex shader as well as crack-free seaming between
+            // patches. (NOTE: position is always equal to P[0] here when localEdgeID==0.)
             tangent = tan0;
         }
 
         if (gl_TessCoord.x == 1) {
             // The final edge of the quad strip always uses the provided endPt and endTan. This
             // ensures crack-free seaming between patches.
-            position = tcsEndPtEndTan.xy;
             tangent = tcsEndPtEndTan.zw;
+            position = tcsEndPtEndTan.xy;
         }
 
         // Determine how far to outset our vertex orthogonally from the curve.

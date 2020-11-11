@@ -582,8 +582,7 @@ int GrGpu::findOrAssignSamplePatternKey(GrRenderTarget* renderTarget) {
     return fSamplePatternDictionary.findOrAssignSamplePatternKey(sampleLocations);
 }
 
-void GrGpu::executeFlushInfo(GrSurfaceProxy* proxies[],
-                             int numProxies,
+void GrGpu::executeFlushInfo(SkSpan<GrSurfaceProxy*> proxies,
                              SkSurface::BackendSurfaceAccess access,
                              const GrFlushInfo& info,
                              const GrBackendSurfaceMutableState* newState) {
@@ -626,9 +625,25 @@ void GrGpu::executeFlushInfo(GrSurfaceProxy* proxies[],
     // We currently don't support passing in new surface state for multiple proxies here. The only
     // time we have multiple proxies is if we are flushing a yuv SkImage which won't have state
     // updates anyways.
-    SkASSERT(!newState || numProxies == 1);
+    SkASSERT(!newState || proxies.count() == 1);
     SkASSERT(!newState || access == SkSurface::BackendSurfaceAccess::kNoAccess);
-    this->prepareSurfacesForBackendAccessAndStateUpdates(proxies, numProxies, access, newState);
+    this->prepareSurfacesForBackendAccessAndStateUpdates(proxies, access, newState);
+}
+
+GrOpsRenderPass* GrGpu::getOpsRenderPass(
+        GrRenderTarget* renderTarget,
+        GrAttachment* stencil,
+        GrSurfaceOrigin origin,
+        const SkIRect& bounds,
+        const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
+        const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
+        const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+        GrXferBarrierFlags renderPassXferBarriers) {
+#if SK_HISTOGRAMS_ENABLED
+    fCurrentSubmitRenderPassCount++;
+#endif
+    return this->onGetOpsRenderPass(renderTarget, stencil, origin, bounds, colorInfo, stencilInfo,
+                                    sampledProxies, renderPassXferBarriers);
 }
 
 bool GrGpu::submitToGpu(bool syncCpu) {
@@ -645,6 +660,17 @@ bool GrGpu::submitToGpu(bool syncCpu) {
     bool submitted = this->onSubmitToGpu(syncCpu);
 
     this->callSubmittedProcs(submitted);
+
+#if SK_HISTOGRAMS_ENABLED
+    // The max allowed value for SK_HISTOGRAM_EXACT_LINEAR is 100. If we want to support higher
+    // values we can add SK_HISTOGRAM_CUSTOM_COUNTS but this has a number of buckets that is less
+    // than the number of actual values
+    static constexpr int kMaxRenderPassBucketValue = 100;
+    SK_HISTOGRAM_EXACT_LINEAR("SubmitRenderPasses",
+                              std::min(fCurrentSubmitRenderPassCount, kMaxRenderPassBucketValue),
+                              kMaxRenderPassBucketValue);
+    fCurrentSubmitRenderPassCount = 0;
+#endif
 
     return submitted;
 }

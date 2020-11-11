@@ -36,7 +36,7 @@ DECLARE_SKMESSAGEBUS_MESSAGE(GrTextureFreedMessage);
 GrScratchKey::ResourceType GrScratchKey::GenerateResourceType() {
     static std::atomic<int32_t> nextType{INHERITED::kInvalidDomain + 1};
 
-    int32_t type = nextType++;
+    int32_t type = nextType.fetch_add(1, std::memory_order_relaxed);
     if (type > SkTo<int32_t>(UINT16_MAX)) {
         SK_ABORT("Too many Resource Types");
     }
@@ -47,7 +47,7 @@ GrScratchKey::ResourceType GrScratchKey::GenerateResourceType() {
 GrUniqueKey::Domain GrUniqueKey::GenerateDomain() {
     static std::atomic<int32_t> nextDomain{INHERITED::kInvalidDomain + 1};
 
-    int32_t domain = nextDomain++;
+    int32_t domain = nextDomain.fetch_add(1, std::memory_order_relaxed);
     if (domain > SkTo<int32_t>(UINT16_MAX)) {
         SK_ABORT("Too many GrUniqueKey Domains");
     }
@@ -201,8 +201,6 @@ void GrResourceCache::removeResource(GrGpuResource* resource) {
 void GrResourceCache::abandonAll() {
     AutoValidate av(this);
 
-    fThreadSafeCache->dropAllRefs();
-
     // We need to make sure to free any resources that were waiting on a free message but never
     // received one.
     fTexturesAwaitingUnref.reset();
@@ -218,6 +216,8 @@ void GrResourceCache::abandonAll() {
         SkASSERT(!top->wasDestroyed());
         top->cacheAccess().abandon();
     }
+
+    fThreadSafeCache->dropAllRefs();
 
     SkASSERT(!fScratchMap.count());
     SkASSERT(!fUniqueHash.count());
@@ -513,9 +513,15 @@ void GrResourceCache::purgeAsNeeded() {
         SkASSERT(fProxyProvider);
 
         for (int i = 0; i < invalidKeyMsgs.count(); ++i) {
-            fProxyProvider->processInvalidUniqueKey(invalidKeyMsgs[i].key(), nullptr,
+            if (invalidKeyMsgs[i].inThreadSafeCache()) {
+                fThreadSafeCache->remove(invalidKeyMsgs[i].key());
+                SkASSERT(!fThreadSafeCache->has(invalidKeyMsgs[i].key()));
+            } else {
+                fProxyProvider->processInvalidUniqueKey(
+                                                    invalidKeyMsgs[i].key(), nullptr,
                                                     GrProxyProvider::InvalidateGPUResource::kYes);
-            SkASSERT(!this->findAndRefUniqueResource(invalidKeyMsgs[i].key()));
+                SkASSERT(!this->findAndRefUniqueResource(invalidKeyMsgs[i].key()));
+            }
         }
     }
 

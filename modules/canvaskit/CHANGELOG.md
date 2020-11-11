@@ -9,10 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Added
  - `MakeFractalNoise`, `MakeImprovedNoise`, and `MakeTurbulence` have been added to
    `CanvasKit.Shader`.
+ - `MakeRasterDirectSurface` for giving the user direct access to drawn pixels.
+ - `getLineMetrics` to Paragraph.
+ - `Canvas.saveLayerPaint` as an experimental, undocumented "fast path" if one only needs to pass 
+   the paint.
+ - Support for .woff and .woff2 fonts. Disable .woff2 for reduced code size by supplying
+   no_woff2 to compile.sh. (This removes the code to do brotli decompression).
 
 ### Breaking
  - `CanvasKit.MakePathFromSVGString` was renamed to `CanvasKit.Path.MakeFromSVGString`
  - `CanvasKit.MakePathFromOp` was renamed to `CanvasKit.Path.MakeFromOp`
+ - The API for `Canvas.readPixels` and `Image.readPixels` has been reworked to more accurately
+   reflect the C++ backend and each other. bytesPerRow is now a required parameter. They take an
+   ImageInfo object to specify the output format. Additionally they take an optional malloc'd
+   object as the last parameter. If provided, the data will be copied into there instead of
+   allocating a new buffer.
 
 ### Changed
  - We now compile CanvasKit with emsdk 2.0.6 when testing and deploying to npm.

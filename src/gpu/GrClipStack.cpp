@@ -192,7 +192,7 @@ static uint32_t next_gen_id() {
 
     uint32_t id;
     do {
-        id = nextID++;
+        id = nextID.fetch_add(1, std::memory_order_relaxed);
     } while (id < kFirstUnreservedGenID);
     return id;
 }
@@ -1291,7 +1291,9 @@ GrClip::Effect GrClipStack::apply(GrRecordingContext* context, GrRenderTargetCon
         GrFPArgs args(context, *fMatrixProvider, kNone_SkFilterQuality, &kCoverageColorInfo);
         clipFP = as_SB(cs.shader())->asFragmentProcessor(args);
         if (clipFP) {
-            clipFP = GrFragmentProcessor::SwizzleOutput(std::move(clipFP), GrSwizzle::AAAA());
+            // The initial input is the coverage from the geometry processor, so this ensures it
+            // is multiplied properly with the alpha of the clip shader.
+            clipFP = GrFragmentProcessor::MulInputByChildAlpha(std::move(clipFP));
         }
     }
 

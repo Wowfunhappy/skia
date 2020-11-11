@@ -11,38 +11,15 @@
 #include "modules/svg/include/SkSVGStop.h"
 #include "modules/svg/include/SkSVGValue.h"
 
-void SkSVGGradient::setHref(const SkSVGStringType& href) {
-    fHref = std::move(href);
-}
-
-void SkSVGGradient::setGradientTransform(const SkSVGTransformType& t) {
-    fGradientTransform = t;
-}
-
-void SkSVGGradient::setSpreadMethod(const SkSVGSpreadMethod& spread) {
-    fSpreadMethod = spread;
-}
-
-void SkSVGGradient::onSetAttribute(SkSVGAttribute attr, const SkSVGValue& v) {
-    switch (attr) {
-    case SkSVGAttribute::kGradientTransform:
-        if (const auto* t = v.as<SkSVGTransformValue>()) {
-            this->setGradientTransform(*t);
-        }
-        break;
-    case SkSVGAttribute::kHref:
-        if (const auto* href = v.as<SkSVGStringValue>()) {
-            this->setHref(*href);
-        }
-        break;
-    case SkSVGAttribute::kSpreadMethod:
-        if (const auto* spread = v.as<SkSVGSpreadMethodValue>()) {
-            this->setSpreadMethod(*spread);
-        }
-        break;
-    default:
-        this->INHERITED::onSetAttribute(attr, v);
-    }
+bool SkSVGGradient::parseAndSetAttribute(const char* name, const char* value) {
+    return INHERITED::parseAndSetAttribute(name, value) ||
+           this->setGradientTransform(SkSVGAttributeParser::parse<SkSVGTransformType>(
+                   "gradientTransform", name, value)) ||
+           this->setHref(SkSVGAttributeParser::parse<SkSVGIRI>("xlink:href", name, value)) ||
+           this->setSpreadMethod(
+                   SkSVGAttributeParser::parse<SkSVGSpreadMethod>("spreadMethod", name, value)) ||
+           this->setGradientUnits(SkSVGAttributeParser::parse<SkSVGObjectBoundingBoxUnits>(
+                   "gradientUnits", name, value));
 }
 
 // https://www.w3.org/TR/SVG11/pservers.html#LinearGradientElementHrefAttribute
@@ -65,8 +42,8 @@ void SkSVGGradient::collectColorStops(const SkSVGRenderContext& ctx,
 
     SkASSERT(colors->count() == pos->count());
 
-    if (pos->empty() && !fHref.isEmpty()) {
-        const auto ref = ctx.findNodeById(fHref);
+    if (pos->empty() && !fHref.fIRI.isEmpty()) {
+        const auto ref = ctx.findNodeById(fHref.fIRI);
         if (ref && (ref->tag() == SkSVGTag::kLinearGradient ||
                     ref->tag() == SkSVGTag::kRadialGradient)) {
             static_cast<const SkSVGGradient*>(ref.get())->collectColorStops(ctx, pos, colors);
@@ -117,7 +94,40 @@ bool SkSVGGradient::onAsPaint(const SkSVGRenderContext& ctx, SkPaint* paint) con
                   SkTileMode::kMirror, "SkSVGSpreadMethod::Type is out of sync");
     const auto tileMode = static_cast<SkTileMode>(fSpreadMethod.type());
 
+    SkMatrix localMatrix = SkMatrix::I();
+    if (fGradientUnits.type() == SkSVGObjectBoundingBoxUnits::Type::kObjectBoundingBox) {
+        SkASSERT(ctx.node());
+        const SkRect objBounds = ctx.node()->objectBoundingBox(ctx);
+        localMatrix.preTranslate(objBounds.fLeft, objBounds.fTop);
+        localMatrix.preScale(objBounds.width(), objBounds.height());
+    }
+    localMatrix.preConcat(fGradientTransform);
+
     paint->setShader(this->onMakeShader(ctx, colors.begin(), pos.begin(), colors.count(), tileMode,
-                                        fGradientTransform));
+                                        localMatrix));
     return true;
+}
+
+// https://www.w3.org/TR/SVG11/pservers.html#LinearGradientElementSpreadMethodAttribute
+template <>
+bool SkSVGAttributeParser::parse(SkSVGSpreadMethod* spread) {
+    static const struct {
+        SkSVGSpreadMethod::Type fType;
+        const char*             fName;
+    } gSpreadInfo[] = {
+        { SkSVGSpreadMethod::Type::kPad    , "pad"     },
+        { SkSVGSpreadMethod::Type::kReflect, "reflect" },
+        { SkSVGSpreadMethod::Type::kRepeat , "repeat"  },
+    };
+
+    bool parsedValue = false;
+    for (size_t i = 0; i < SK_ARRAY_COUNT(gSpreadInfo); ++i) {
+        if (this->parseExpectedStringToken(gSpreadInfo[i].fName)) {
+            *spread = SkSVGSpreadMethod(gSpreadInfo[i].fType);
+            parsedValue = true;
+            break;
+        }
+    }
+
+    return parsedValue && this->parseEOSToken();
 }

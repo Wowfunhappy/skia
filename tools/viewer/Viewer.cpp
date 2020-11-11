@@ -414,9 +414,16 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
         this->fZoomWindowFixed = !this->fZoomWindowFixed;
         fWindow->inval();
     });
-    fCommands.addCommand('v', "VSync", "Toggle vsync on/off", [this]() {
+    fCommands.addCommand('v', "Swapchain", "Toggle vsync on/off", [this]() {
         DisplayParams params = fWindow->getRequestedDisplayParams();
         params.fDisableVsync = !params.fDisableVsync;
+        fWindow->setRequestedDisplayParams(params);
+        this->updateTitle();
+        fWindow->inval();
+    });
+    fCommands.addCommand('V', "Swapchain", "Toggle delayed acquire on/off (Metal only)", [this]() {
+        DisplayParams params = fWindow->getRequestedDisplayParams();
+        params.fDelayDrawableAcquisition = !params.fDelayDrawableAcquisition;
         fWindow->setRequestedDisplayParams(params);
         this->updateTitle();
         fWindow->inval();
@@ -2444,13 +2451,13 @@ void Viewer::drawImGui() {
                             SkGetPackedB32(pixel), SkGetPackedA32(pixel));
             }
 
-            fImGuiLayer.skiaWidget(avail, [=](SkCanvas* c) {
+            fImGuiLayer.skiaWidget(avail, [=, lastImage = fLastImage](SkCanvas* c) {
                 // Translate so the region of the image that's under the mouse cursor is centered
                 // in the zoom canvas:
                 c->scale(zoomFactor, zoomFactor);
                 c->translate(avail.x * 0.5f / zoomFactor - x - 0.5f,
                              avail.y * 0.5f / zoomFactor - y - 0.5f);
-                c->drawImage(this->fLastImage, 0, 0);
+                c->drawImage(lastImage, 0, 0);
 
                 SkPaint outline;
                 outline.setStyle(SkPaint::kStroke_Style);

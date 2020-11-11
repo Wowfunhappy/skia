@@ -48,12 +48,6 @@
 #   endif
 #endif
 
-#ifdef SK_DISABLE_REDUCE_OPLIST_SPLITTING
-static const bool kDefaultReduceOpsTaskSplitting = false;
-#else
-static const bool kDefaultReduceOpsTaskSplitting = false;
-#endif
-
 #define ASSERT_SINGLE_OWNER GR_ASSERT_SINGLE_OWNER(this->singleOwner())
 
 GrDirectContext::GrDirectContext(GrBackendApi backend, const GrContextOptions& options)
@@ -106,8 +100,7 @@ void GrDirectContext::abandonContext() {
 
     fResourceProvider->abandon();
 
-    // abandon first to so destructors
-    // don't try to free the resources in the API.
+    // abandon first so destructors don't try to free the resources in the API.
     fResourceCache->abandonAll();
 
     fGpu->disconnect(GrGpu::DisconnectType::kAbandon);
@@ -212,15 +205,6 @@ bool GrDirectContext::init() {
     if (!fShaderErrorHandler) {
         fShaderErrorHandler = GrShaderUtils::DefaultShaderErrorHandler();
     }
-
-    bool reduceOpsTaskSplitting = kDefaultReduceOpsTaskSplitting;
-    if (GrContextOptions::Enable::kNo == this->options().fReduceOpsTaskSplitting) {
-        reduceOpsTaskSplitting = false;
-    } else if (GrContextOptions::Enable::kYes == this->options().fReduceOpsTaskSplitting) {
-        reduceOpsTaskSplitting = true;
-    }
-
-    this->setupDrawingManager(true, reduceOpsTaskSplitting);
 
     GrDrawOpAtlas::AllowMultitexturing allowMultitexturing;
     if (GrContextOptions::Enable::kNo == this->options().fAllowMultipleGlyphCacheTextures ||
@@ -382,7 +366,7 @@ GrSemaphoresSubmitted GrDirectContext::flush(const GrFlushInfo& info) {
     }
 
     bool flushed = this->drawingManager()->flush(
-            nullptr, 0, SkSurface::BackendSurfaceAccess::kNoAccess, info, nullptr);
+            {}, SkSurface::BackendSurfaceAccess::kNoAccess, info, nullptr);
 
     if (!flushed || (!this->priv().caps()->semaphoreSupport() && info.fNumSemaphores)) {
         return GrSemaphoresSubmitted::kNo;
@@ -512,10 +496,7 @@ GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
                                                        GrProtected isProtected,
                                                        GrGpuFinishedProc finishedProc,
                                                        GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
     if (this->abandoned()) {
@@ -536,10 +517,7 @@ GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
                                                        GrProtected isProtected,
                                                        GrGpuFinishedProc finishedProc,
                                                        GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return {};
@@ -567,10 +545,7 @@ GrBackendTexture GrDirectContext::createBackendTexture(const SkPixmap srcData[],
                                                        GrGpuFinishedContext finishedContext) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
 
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return {};
@@ -607,10 +582,7 @@ bool GrDirectContext::updateBackendTexture(const GrBackendTexture& backendTextur
                                            const SkColor4f& color,
                                            GrGpuFinishedProc finishedProc,
                                            GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return false;
@@ -625,10 +597,7 @@ bool GrDirectContext::updateBackendTexture(const GrBackendTexture& backendTextur
                                            const SkColor4f& color,
                                            GrGpuFinishedProc finishedProc,
                                            GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return false;
@@ -652,10 +621,7 @@ bool GrDirectContext::updateBackendTexture(const GrBackendTexture& backendTextur
                                            int numLevels,
                                            GrGpuFinishedProc finishedProc,
                                            GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return false;
@@ -712,10 +678,7 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(int width, int 
                                                              GrGpuFinishedProc finishedProc,
                                                              GrGpuFinishedContext finishedContext) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return {};
@@ -750,10 +713,7 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(int width, int 
                                                              GrGpuFinishedProc finishedProc,
                                                              GrGpuFinishedContext finishedContext) {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return {};
@@ -782,10 +742,7 @@ bool GrDirectContext::updateCompressedBackendTexture(const GrBackendTexture& bac
                                                      const SkColor4f& color,
                                                      GrGpuFinishedProc finishedProc,
                                                      GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return false;
@@ -800,10 +757,7 @@ bool GrDirectContext::updateCompressedBackendTexture(const GrBackendTexture& bac
                                                      size_t dataSize,
                                                      GrGpuFinishedProc finishedProc,
                                                      GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> finishedCallback;
-    if (finishedProc) {
-        finishedCallback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto finishedCallback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return false;
@@ -825,10 +779,7 @@ bool GrDirectContext::setBackendTextureState(const GrBackendTexture& backendText
                                              GrBackendSurfaceMutableState* previousState,
                                              GrGpuFinishedProc finishedProc,
                                              GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> callback;
-    if (finishedProc) {
-        callback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto callback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return false;
@@ -843,10 +794,7 @@ bool GrDirectContext::setBackendRenderTargetState(const GrBackendRenderTarget& b
                                                   GrBackendSurfaceMutableState* previousState,
                                                   GrGpuFinishedProc finishedProc,
                                                   GrGpuFinishedContext finishedContext) {
-    sk_sp<GrRefCntedCallback> callback;
-    if (finishedProc) {
-        callback.reset(new GrRefCntedCallback(finishedProc, finishedContext));
-    }
+    auto callback = GrRefCntedCallback::Make(finishedProc, finishedContext);
 
     if (this->abandoned()) {
         return false;

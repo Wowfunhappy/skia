@@ -1326,6 +1326,7 @@ Result SVGSrc::draw(GrDirectContext*, SkCanvas* canvas) const {
 
     SkAutoCanvasRestore acr(canvas, true);
     canvas->scale(fScale, fScale);
+    canvas->drawColor(SK_ColorWHITE);
     fDom->render(canvas);
 
     return Result::Ok();
@@ -1813,7 +1814,8 @@ Result GPUDDLSink::ddlDraw(const Src& src,
     // one. About all it can be consistently used for is GrCaps access and 'defaultBackendFormat'
     // calls.
     constexpr int kNumDivisions = 3;
-    DDLTileHelper tiles(gpuThreadCtx, dstCharacterization, viewport, kNumDivisions);
+    DDLTileHelper tiles(gpuThreadCtx, dstCharacterization, viewport, kNumDivisions,
+                        /* addRandomPaddingToDst */ false);
 
     tiles.createBackendTextures(gpuTaskGroup, gpuThreadCtx);
 
@@ -2267,7 +2269,8 @@ Result ViaDDL::draw(const Src& src, SkBitmap* bitmap, SkWStream* stream, SkStrin
                 canvas->clear(SK_ColorTRANSPARENT);
             }
             // First, create all the tiles (including their individual dest surfaces)
-            DDLTileHelper tiles(direct, dstCharacterization, viewport, fNumDivisions);
+            DDLTileHelper tiles(direct, dstCharacterization, viewport, fNumDivisions,
+                                /* addRandomPaddingToDst */ false);
 
             tiles.createBackendTextures(nullptr, direct);
 

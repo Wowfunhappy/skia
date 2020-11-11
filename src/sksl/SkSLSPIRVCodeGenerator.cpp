@@ -475,7 +475,10 @@ SpvId SPIRVCodeGenerator::getType(const Type& type) {
 
 SpvId SPIRVCodeGenerator::getType(const Type& rawType, const MemoryLayout& layout) {
     const Type& type = this->getActualType(rawType);
-    String key = type.name() + to_string((int) layout.fStd);
+    String key = type.name();
+    if (type.typeKind() == Type::TypeKind::kStruct || type.typeKind() == Type::TypeKind::kArray) {
+        key += to_string((int)layout.fStd);
+    }
     auto entry = fTypeMap.find(key);
     if (entry == fTypeMap.end()) {
         SpvId result = this->nextId();
@@ -1644,7 +1647,7 @@ private:
 
 class SwizzleLValue : public SPIRVCodeGenerator::LValue {
 public:
-    SwizzleLValue(SPIRVCodeGenerator& gen, SpvId vecPointer, const std::vector<int>& components,
+    SwizzleLValue(SPIRVCodeGenerator& gen, SpvId vecPointer, const ComponentArray& components,
                   const Type& baseType, const Type& swizzleType,
                   SPIRVCodeGenerator::Precision precision)
     : fGen(gen)
@@ -1717,7 +1720,7 @@ public:
 private:
     SPIRVCodeGenerator& fGen;
     const SpvId fVecPointer;
-    const std::vector<int>& fComponents;
+    const ComponentArray& fComponents;
     const Type& fBaseType;
     const Type& fSwizzleType;
     const SPIRVCodeGenerator::Precision fPrecision;
@@ -1858,7 +1861,6 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
             // need to remap to a top-left coordinate system
             if (fRTHeightStructId == (SpvId)-1) {
                 // height variable hasn't been written yet
-                std::shared_ptr<SymbolTable> st(new SymbolTable(&fErrors));
                 SkASSERT(fRTHeightFieldIndex == (SpvId)-1);
                 std::vector<Type::Field> fields;
                 SkASSERT(fProgram.fSettings.fRTHeightOffset >= 0);
@@ -1887,10 +1889,13 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                                                    &intfStruct,
                                                    /*builtin=*/false,
                                                    Variable::Storage::kGlobal));
-                InterfaceBlock intf(-1, intfVar, name, String(""), ExpressionArray(), st);
+                InterfaceBlock intf(/*offset=*/-1, intfVar, name, /*instanceName=*/"",
+                                    /*sizes=*/ExpressionArray(),
+                                    std::make_shared<SymbolTable>(&fErrors, /*builtin=*/false));
 
                 fRTHeightStructId = this->writeInterfaceBlock(intf, false);
                 fRTHeightFieldIndex = 0;
+                fRTHeightStorageClass = SpvStorageClassUniform;
             }
             SkASSERT(fRTHeightFieldIndex != (SpvId)-1);
 
@@ -1898,7 +1903,7 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
             SpvId fieldIndexId = this->writeIntLiteral(fieldIndex);
             SpvId heightPtr = this->nextId();
             this->writeOpCode(SpvOpAccessChain, 5, out);
-            this->writeWord(this->getPointerType(*fContext.fFloat_Type, SpvStorageClassUniform),
+            this->writeWord(this->getPointerType(*fContext.fFloat_Type, fRTHeightStorageClass),
                             out);
             this->writeWord(heightPtr, out);
             this->writeWord(fRTHeightStructId, out);
@@ -2111,7 +2116,6 @@ std::unique_ptr<Expression> create_literal_1(const Context& context, const Type&
 SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs, Token::Kind op,
                                                 const Type& rightType, SpvId rhs,
                                                 const Type& resultType, OutputStream& out) {
-    Type tmp("<invalid>");
     // overall type we are operating on: float2, int, uint4...
     const Type* operandType;
     // IR allows mismatched types in expressions (e.g. float2 * float), but they need special
@@ -2189,8 +2193,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
             return -1;
         }
     } else {
-        tmp = this->getActualType(leftType);
-        operandType = &tmp;
+        operandType = &this->getActualType(leftType);
         SkASSERT(*operandType == this->getActualType(rightType));
     }
     switch (op) {
@@ -2312,8 +2315,8 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
 }
 
 SpvId SPIRVCodeGenerator::writeBinaryExpression(const BinaryExpression& b, OutputStream& out) {
-    const Expression& left = b.left();
-    const Expression& right = b.right();
+    const Expression& left = *b.left();
+    const Expression& right = *b.right();
     Token::Kind op = b.getOperator();
     // handle cases where we don't necessarily evaluate both LHS and RHS
     switch (op) {
@@ -2352,14 +2355,14 @@ SpvId SPIRVCodeGenerator::writeLogicalAnd(const BinaryExpression& a, OutputStrea
     SkASSERT(a.getOperator() == Token::Kind::TK_LOGICALAND);
     BoolLiteral falseLiteral(fContext, -1, false);
     SpvId falseConstant = this->writeBoolLiteral(falseLiteral);
-    SpvId lhs = this->writeExpression(a.left(), out);
+    SpvId lhs = this->writeExpression(*a.left(), out);
     SpvId rhsLabel = this->nextId();
     SpvId end = this->nextId();
     SpvId lhsBlock = fCurrentBlock;
     this->writeInstruction(SpvOpSelectionMerge, end, SpvSelectionControlMaskNone, out);
     this->writeInstruction(SpvOpBranchConditional, lhs, rhsLabel, end, out);
     this->writeLabel(rhsLabel, out);
-    SpvId rhs = this->writeExpression(a.right(), out);
+    SpvId rhs = this->writeExpression(*a.right(), out);
     SpvId rhsBlock = fCurrentBlock;
     this->writeInstruction(SpvOpBranch, end, out);
     this->writeLabel(end, out);
@@ -2373,14 +2376,14 @@ SpvId SPIRVCodeGenerator::writeLogicalOr(const BinaryExpression& o, OutputStream
     SkASSERT(o.getOperator() == Token::Kind::TK_LOGICALOR);
     BoolLiteral trueLiteral(fContext, -1, true);
     SpvId trueConstant = this->writeBoolLiteral(trueLiteral);
-    SpvId lhs = this->writeExpression(o.left(), out);
+    SpvId lhs = this->writeExpression(*o.left(), out);
     SpvId rhsLabel = this->nextId();
     SpvId end = this->nextId();
     SpvId lhsBlock = fCurrentBlock;
     this->writeInstruction(SpvOpSelectionMerge, end, SpvSelectionControlMaskNone, out);
     this->writeInstruction(SpvOpBranchConditional, lhs, end, rhsLabel, out);
     this->writeLabel(rhsLabel, out);
-    SpvId rhs = this->writeExpression(o.right(), out);
+    SpvId rhs = this->writeExpression(*o.right(), out);
     SpvId rhsBlock = fCurrentBlock;
     this->writeInstruction(SpvOpBranch, end, out);
     this->writeLabel(end, out);
@@ -2705,17 +2708,19 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
                                 fDefaultLayout;
     SpvId result = this->nextId();
     const Type* type = &intf.variable().type();
+    Modifiers intfModifiers = intf.variable().modifiers();
+    SpvStorageClass_ storageClass = get_storage_class(intfModifiers);
     if (fProgram.fInputs.fRTHeight && appendRTHeight) {
         SkASSERT(fRTHeightStructId == (SpvId) -1);
         SkASSERT(fRTHeightFieldIndex == (SpvId) -1);
         std::vector<Type::Field> fields = type->fields();
         fRTHeightStructId = result;
         fRTHeightFieldIndex = fields.size();
+        fRTHeightStorageClass = storageClass;
         fields.emplace_back(Modifiers(), StringFragment(SKSL_RTHEIGHT_NAME), fContext.fFloat_Type.get());
         type = new Type(type->fOffset, type->name(), fields);
     }
     SpvId typeId;
-    Modifiers intfModifiers = intf.variable().modifiers();
     if (intfModifiers.fLayout.fBuiltin == SK_IN_BUILTIN) {
         for (const auto& e : fProgram.elements()) {
             if (e->is<ModifiersDeclaration>()) {
@@ -2735,7 +2740,6 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
     } else if (intfModifiers.fLayout.fBuiltin == -1) {
         this->writeInstruction(SpvOpDecorate, typeId, SpvDecorationBlock, fDecorationBuffer);
     }
-    SpvStorageClass_ storageClass = get_storage_class(intfModifiers);
     SpvId ptrType = this->nextId();
     this->writeInstruction(SpvOpTypePointer, ptrType, storageClass, typeId, fConstantBuffer);
     this->writeInstruction(SpvOpVariable, ptrType, result, storageClass, fConstantBuffer);
@@ -2761,8 +2765,9 @@ void SPIRVCodeGenerator::writePrecisionModifier(Precision precision, SpvId id) {
     }
 }
 
-bool is_dead(const Variable& var) {
-    if (var.readCount() || var.writeCount()) {
+bool is_dead(const Variable& var, const ProgramUsage* usage) {
+    ProgramUsage::VariableCounts counts = usage->get(var);
+    if (counts.fRead || counts.fWrite) {
         return false;
     }
     // not entirely sure what the rules are for when it's safe to elide interface variables, but it
@@ -2796,7 +2801,7 @@ void SPIRVCodeGenerator::writeGlobalVar(Program::Kind kind, const VarDeclaration
         SkASSERT(!fProgram.fSettings.fFragColorIsInOut);
         return;
     }
-    if (is_dead(var)) {
+    if (is_dead(var, fProgram.fUsage.get())) {
         return;
     }
     const Type& type = var.type();
@@ -3042,16 +3047,17 @@ void SPIRVCodeGenerator::writeDoStatement(const DoStatement& d, OutputStream& ou
 }
 
 void SPIRVCodeGenerator::writeSwitchStatement(const SwitchStatement& s, OutputStream& out) {
-    SpvId value = this->writeExpression(*s.fValue, out);
+    SpvId value = this->writeExpression(*s.value(), out);
     std::vector<SpvId> labels;
     SpvId end = this->nextId();
     SpvId defaultLabel = end;
     fBreakTarget.push(end);
     int size = 3;
-    for (const auto& c : s.fCases) {
+    auto& cases = s.cases();
+    for (const std::unique_ptr<SwitchCase>& c : cases) {
         SpvId label = this->nextId();
         labels.push_back(label);
-        if (c->fValue) {
+        if (c->value()) {
             size += 2;
         } else {
             defaultLabel = label;
@@ -3062,16 +3068,16 @@ void SPIRVCodeGenerator::writeSwitchStatement(const SwitchStatement& s, OutputSt
     this->writeOpCode(SpvOpSwitch, size, out);
     this->writeWord(value, out);
     this->writeWord(defaultLabel, out);
-    for (size_t i = 0; i < s.fCases.size(); ++i) {
-        if (!s.fCases[i]->fValue) {
+    for (size_t i = 0; i < cases.size(); ++i) {
+        if (!cases[i]->value()) {
             continue;
         }
-        this->writeWord(s.fCases[i]->fValue->as<IntLiteral>().value(), out);
+        this->writeWord(cases[i]->value()->as<IntLiteral>().value(), out);
         this->writeWord(labels[i], out);
     }
-    for (size_t i = 0; i < s.fCases.size(); ++i) {
+    for (size_t i = 0; i < cases.size(); ++i) {
         this->writeLabel(labels[i], out);
-        for (const auto& stmt : s.fCases[i]->fStatements) {
+        for (const auto& stmt : cases[i]->statements()) {
             this->writeStatement(*stmt, out);
         }
         if (fCurrentBlock) {
@@ -3161,34 +3167,12 @@ void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream&
     fGLSLExtendedInstructions = this->nextId();
     StringStream body;
     std::set<SpvId> interfaceVars;
-    // assign IDs to functions, determine sk_in size
-    int skInSize = -1;
+    // assign IDs to functions
     for (const auto& e : program.elements()) {
         switch (e->kind()) {
             case ProgramElement::Kind::kFunction: {
                 const FunctionDefinition& f = e->as<FunctionDefinition>();
                 fFunctionMap[&f.declaration()] = this->nextId();
-                break;
-            }
-            case ProgramElement::Kind::kModifiers: {
-                const Modifiers& m = e->as<ModifiersDeclaration>().modifiers();
-                if (m.fFlags & Modifiers::kIn_Flag) {
-                    switch (m.fLayout.fPrimitive) {
-                        case Layout::kPoints_Primitive: // break
-                        case Layout::kLines_Primitive:
-                            skInSize = 1;
-                            break;
-                        case Layout::kLinesAdjacency_Primitive: // break
-                            skInSize = 2;
-                            break;
-                        case Layout::kTriangles_Primitive: // break
-                        case Layout::kTrianglesAdjacency_Primitive:
-                            skInSize = 3;
-                            break;
-                        default:
-                            break;
-                    }
-                }
                 break;
             }
             default:
@@ -3197,17 +3181,14 @@ void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream&
     }
     for (const auto& e : program.elements()) {
         if (e->is<InterfaceBlock>()) {
-            InterfaceBlock& intf = e->as<InterfaceBlock>();
-            const Modifiers& modifiers = intf.variable().modifiers();
-            if (SK_IN_BUILTIN == modifiers.fLayout.fBuiltin) {
-                SkASSERT(skInSize != -1);
-                intf.sizes().emplace_back(new IntLiteral(fContext, -1, skInSize));
-            }
+            const InterfaceBlock& intf = e->as<InterfaceBlock>();
             SpvId id = this->writeInterfaceBlock(intf);
+
+            const Modifiers& modifiers = intf.variable().modifiers();
             if (((modifiers.fFlags & Modifiers::kIn_Flag) ||
                 (modifiers.fFlags & Modifiers::kOut_Flag)) &&
                 modifiers.fLayout.fBuiltin == -1 &&
-                !is_dead(intf.variable())) {
+                !is_dead(intf.variable(), fProgram.fUsage.get())) {
                 interfaceVars.insert(id);
             }
         }
@@ -3238,7 +3219,8 @@ void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream&
         const Variable* var = entry.first;
         if (var->storage() == Variable::Storage::kGlobal &&
             ((var->modifiers().fFlags & Modifiers::kIn_Flag) ||
-             (var->modifiers().fFlags & Modifiers::kOut_Flag)) && !is_dead(*var)) {
+             (var->modifiers().fFlags & Modifiers::kOut_Flag)) &&
+            !is_dead(*var, fProgram.fUsage.get())) {
             interfaceVars.insert(entry.second);
         }
     }

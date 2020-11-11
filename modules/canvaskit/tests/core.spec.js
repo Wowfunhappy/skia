@@ -146,13 +146,22 @@ describe('Core canvas behavior', () => {
                     width: img.width(),
                     height: img.height(),
                 };
+                const rowBytes = 4 * img.width();
 
-                const pixels = img.readPixels(imageInfo, 0, 0);
+                const pixels = img.readPixels(0, 0, imageInfo);
                 // We know the image is 512 by 512 pixels in size, each pixel
                 // requires 4 bytes (R, G, B, A).
                 expect(pixels.length).toEqual(512 * 512 * 4);
 
+                // Make enough space for a 5x5 8888 surface (4 bytes for R, G, B, A)
+                const rdsData = CanvasKit.Malloc(Uint8Array, 512 * 5*512 * 4);
+                const pixels2 = rdsData.toTypedArray();
+                pixels2[0] = 127;  // sentinel value, should be overwritten by readPixels.
+                img.readPixels(0, 0, imageInfo, rdsData, rowBytes);
+                expect(rdsData.toTypedArray()[0]).toEqual(pixels[0]);
+
                 img.delete();
+                CanvasKit.Free(rdsData);
                 done();
             })();
         });
@@ -882,15 +891,28 @@ describe('Core canvas behavior', () => {
             const colorSpace = CanvasKit.ColorSpace.SRGB;
             const surface = CanvasKit.MakeCanvasSurface('test', CanvasKit.ColorSpace.SRGB);
             expect(surface).toBeTruthy('Could not make surface');
-            let info = surface.imageInfo()
+            let info = surface.imageInfo();
             expect(info.alphaType).toEqual(CanvasKit.AlphaType.Unpremul);
             expect(info.colorType).toEqual(CanvasKit.ColorType.RGBA_8888);
             expect(CanvasKit.ColorSpace.Equals(info.colorSpace, colorSpace))
                 .toBeTruthy("Surface not created with correct color space.");
 
-            const pixels = surface.getCanvas().readPixels(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                CanvasKit.AlphaType.Unpremul, CanvasKit.ColorType.RGBA_8888, colorSpace);
+            const mObj = CanvasKit.Malloc(Uint8Array, CANVAS_WIDTH * CANVAS_HEIGHT * 4);
+            mObj.toTypedArray()[0] = 127; // sentinel value. Should be overwritten by readPixels.
+            const canvas = surface.getCanvas();
+            canvas.clear(CanvasKit.TRANSPARENT);
+            const pixels = canvas.readPixels(0, 0, {
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                colorType: CanvasKit.ColorType.RGBA_8888,
+                alphaType: CanvasKit.AlphaType.Unpremul,
+                colorSpace: colorSpace
+            }, mObj, 4 * CANVAS_WIDTH);
             expect(pixels).toBeTruthy('Could not read pixels from surface');
+            expect(pixels[0] !== 127).toBeTruthy();
+            expect(pixels[0]).toEqual(mObj.toTypedArray()[0]);
+            CanvasKit.Free(mObj);
+            surface.delete();
         });
         it('Can create a Display P3 surface', () => {
             const colorSpace = CanvasKit.ColorSpace.DISPLAY_P3;
@@ -900,14 +922,19 @@ describe('Core canvas behavior', () => {
                 console.log('Not expecting color space support in cpu backed suface.');
                 return;
             }
-            let info = surface.imageInfo()
+            let info = surface.imageInfo();
             expect(info.alphaType).toEqual(CanvasKit.AlphaType.Unpremul);
             expect(info.colorType).toEqual(CanvasKit.ColorType.RGBA_F16);
             expect(CanvasKit.ColorSpace.Equals(info.colorSpace, colorSpace))
                 .toBeTruthy("Surface not created with correct color space.");
 
-            const pixels = surface.getCanvas().readPixels(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                CanvasKit.AlphaType.Unpremul, CanvasKit.ColorType.RGBA_F16, colorSpace);
+            const pixels = surface.getCanvas().readPixels(0, 0, {
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                colorType: CanvasKit.ColorType.RGBA_F16,
+                alphaType: CanvasKit.AlphaType.Unpremul,
+                colorSpace: colorSpace
+            });
             expect(pixels).toBeTruthy('Could not read pixels from surface');
         });
         it('Can create an Adobe RGB surface', () => {
@@ -915,17 +942,22 @@ describe('Core canvas behavior', () => {
             const surface = CanvasKit.MakeCanvasSurface('test', CanvasKit.ColorSpace.ADOBE_RGB);
             expect(surface).toBeTruthy('Could not make surface');
             if (!surface.reportBackendTypeIsGPU()) {
-                console.log('Not expecting color space support in cpu backed suface.');
+                console.log('Not expecting color space support in cpu backed surface.');
                 return;
             }
-            let info = surface.imageInfo()
+            let info = surface.imageInfo();
             expect(info.alphaType).toEqual(CanvasKit.AlphaType.Unpremul);
             expect(info.colorType).toEqual(CanvasKit.ColorType.RGBA_F16);
             expect(CanvasKit.ColorSpace.Equals(info.colorSpace, colorSpace))
                 .toBeTruthy("Surface not created with correct color space.");
 
-            const pixels = surface.getCanvas().readPixels(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                CanvasKit.AlphaType.Unpremul, CanvasKit.ColorType.RGBA_F16, colorSpace);
+            const pixels = surface.getCanvas().readPixels(0, 0, {
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                colorType: CanvasKit.ColorType.RGBA_F16,
+                alphaType: CanvasKit.AlphaType.Unpremul,
+                colorSpace: colorSpace
+            });
             expect(pixels).toBeTruthy('Could not read pixels from surface');
         });
 
@@ -1036,4 +1068,26 @@ describe('Core canvas behavior', () => {
             expect(expected[i]).toBeCloseTo(actual[i], 5, `element ${i}`);
         }
     }
+
+    it('can create a RasterDirectSurface', () => {
+        // Make enough space for a 5x5 8888 surface (4 bytes for R, G, B, A)
+        const rdsData = CanvasKit.Malloc(Uint8Array, 5 * 5 * 4);
+        const surface = CanvasKit.MakeRasterDirectSurface({
+            'width': 5,
+            'height': 5,
+            'colorType': CanvasKit.ColorType.RGBA_8888,
+            'alphaType': CanvasKit.AlphaType.Premul,
+            'colorSpace': CanvasKit.ColorSpace.SRGB,
+        }, rdsData, 5 * 4);
+
+        surface.getCanvas().clear(CanvasKit.Color(200, 100, 0, 0.8));
+        const pixels = rdsData.toTypedArray();
+        // Check that the first pixels colors are right.
+        expect(pixels[0]).toEqual(160); // red (premul, 0.8 * 200)
+        expect(pixels[1]).toEqual(80); // green (premul, 0.8 * 100)
+        expect(pixels[2]).toEqual(0); // blue (premul, not that it matters)
+        expect(pixels[3]).toEqual(204); // alpha (0.8 * 255)
+        surface.delete();
+        CanvasKit.Free(rdsData);
+    });
 });

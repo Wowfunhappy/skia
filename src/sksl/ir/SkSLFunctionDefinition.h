@@ -19,51 +19,71 @@ struct ASTNode;
 /**
  * A function definition (a declaration plus an associated block of code).
  */
-struct FunctionDefinition : public ProgramElement {
+class FunctionDefinition final : public ProgramElement {
+public:
     static constexpr Kind kProgramElementKind = Kind::kFunction;
 
     FunctionDefinition(int offset,
-                       const FunctionDeclaration* declaration,
+                       const FunctionDeclaration* declaration, bool builtin,
                        std::unique_ptr<Statement> body,
                        std::unordered_set<const FunctionDeclaration*> referencedIntrinsics = {})
-        : INHERITED(offset, FunctionDefinitionData{declaration, std::move(referencedIntrinsics),
-                                                   nullptr}) {
-        fStatementChildren.push_back(std::move(body));
-    }
+        : INHERITED(offset, kProgramElementKind)
+        , fDeclaration(declaration)
+        , fBuiltin(builtin)
+        , fBody(std::move(body))
+        , fReferencedIntrinsics(std::move(referencedIntrinsics))
+        , fSource(nullptr) {}
 
     const FunctionDeclaration& declaration() const {
-        return *this->functionDefinitionData().fDeclaration;
+        return *fDeclaration;
+    }
+
+    bool isBuiltin() const {
+        return fBuiltin;
     }
 
     std::unique_ptr<Statement>& body() {
-        return this->fStatementChildren[0];
+        return fBody;
     }
 
     const std::unique_ptr<Statement>& body() const {
-        return this->fStatementChildren[0];
+        return fBody;
     }
 
     const std::unordered_set<const FunctionDeclaration*>& referencedIntrinsics() const {
-        return this->functionDefinitionData().fReferencedIntrinsics;
+        return fReferencedIntrinsics;
     }
 
     const ASTNode* source() const {
-        return this->functionDefinitionData().fSource;
+        return fSource;
     }
 
     void setSource(const ASTNode* source) {
-        this->functionDefinitionData().fSource = source;
+        fSource = source;
     }
 
     std::unique_ptr<ProgramElement> clone() const override {
         return std::make_unique<FunctionDefinition>(fOffset, &this->declaration(),
-                                                    this->body()->clone(),
+                                                    /*builtin=*/false, this->body()->clone(),
                                                     this->referencedIntrinsics());
     }
 
     String description() const override {
         return this->declaration().description() + " " + this->body()->description();
     }
+
+private:
+    const FunctionDeclaration* fDeclaration;
+    bool fBuiltin;
+    std::unique_ptr<Statement> fBody;
+    // We track intrinsic functions we reference so that we can ensure that all of them end up
+    // copied into the final output.
+    std::unordered_set<const FunctionDeclaration*> fReferencedIntrinsics;
+    // This pointer may be null, and even when non-null is not guaranteed to remain valid for
+    // the entire lifespan of this object. The parse tree's lifespan is normally controlled by
+    // IRGenerator, so the IRGenerator being destroyed or being used to compile another file
+    // will invalidate this pointer.
+    const ASTNode* fSource;
 
     using INHERITED = ProgramElement;
 };

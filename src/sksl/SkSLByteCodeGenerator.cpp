@@ -43,10 +43,11 @@ ByteCodeGenerator::ByteCodeGenerator(const Context* context, const Program* prog
     : INHERITED(program, errors, nullptr)
     , fContext(*context)
     , fOutput(output)
-    // If you're adding new intrinsics here, ensure that they're declared in sksl_interp.inc, so
-    // they're available to "generic" interpreter programs (eg particles).
-    // You can probably copy the declarations from sksl_gpu.inc.
+    // If you're adding new intrinsics here, ensure that they're declared in sksl_interp.sksl or
+    // sksl_public.sksl, so they're available to "generic" interpreter programs (eg particles).
+    // You can probably copy the declarations from sksl_gpu.sksl.
     , fIntrinsics {
+        { "abs",       ByteCodeInstruction::kAbs },
         { "atan",      ByteCodeInstruction::kATan },
         { "ceil",      ByteCodeInstruction::kCeil },
         { "clamp",     SpecialIntrinsic::kClamp },
@@ -278,6 +279,7 @@ int ByteCodeGenerator::StackUsage(ByteCodeInstruction inst, int count_) {
         VEC_UNARY(kConvertStoF)
         VEC_UNARY(kConvertUtoF)
 
+        VEC_UNARY(kAbs)
         VEC_UNARY(kATan)
         VEC_UNARY(kCeil)
         VEC_UNARY(kCos)
@@ -678,8 +680,8 @@ void ByteCodeGenerator::writeTypedInstruction(const Type& type,
 }
 
 bool ByteCodeGenerator::writeBinaryExpression(const BinaryExpression& b, bool discard) {
-    const Expression& left = b.left();
-    const Expression& right = b.right();
+    const Expression& left = *b.left();
+    const Expression& right = *b.right();
     Token::Kind op = b.getOperator();
     if (op == Token::Kind::TK_EQ) {
         std::unique_ptr<LValue> lvalue = this->getLValue(left);
@@ -1740,8 +1742,8 @@ void ByteCodeGenerator::writeIfStatement(const IfStatement& i) {
 }
 
 void ByteCodeGenerator::writeReturnStatement(const ReturnStatement& r) {
-    if (fLoopCount || fConditionCount) {
-        fErrors.error(r.fOffset, "return not allowed inside conditional or loop");
+    if (fLoopCount) {
+        fErrors.error(r.fOffset, "return not allowed inside loop");
         return;
     }
     int count = SlotCount(r.expression()->type());

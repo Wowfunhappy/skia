@@ -12,6 +12,7 @@
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrTypes.h"
 #include "include/private/SkTArray.h"
+#include "src/core/SkSpan.h"
 #include "src/core/SkTInternalLList.h"
 #include "src/gpu/GrAttachment.h"
 #include "src/gpu/GrCaps.h"
@@ -348,20 +349,20 @@ public:
     // If a 'stencil' is provided it will be the one bound to 'renderTarget'. If one is not
     // provided but 'renderTarget' has a stencil buffer then that is a signal that the
     // render target's stencil buffer should be ignored.
-    virtual GrOpsRenderPass* getOpsRenderPass(GrRenderTarget* renderTarget,
-                                              GrAttachment* stencil,
-                                              GrSurfaceOrigin,
-                                              const SkIRect& bounds,
-                                              const GrOpsRenderPass::LoadAndStoreInfo&,
-                                              const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-                                              const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
-                                              GrXferBarrierFlags renderPassXferBarriers) = 0;
+    GrOpsRenderPass* getOpsRenderPass(GrRenderTarget* renderTarget,
+                                      GrAttachment* stencil,
+                                      GrSurfaceOrigin,
+                                      const SkIRect& bounds,
+                                      const GrOpsRenderPass::LoadAndStoreInfo&,
+                                      const GrOpsRenderPass::StencilLoadAndStoreInfo&,
+                                      const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+                                      GrXferBarrierFlags renderPassXferBarriers);
 
     // Called by GrDrawingManager when flushing.
     // Provides a hook for post-flush actions (e.g. Vulkan command buffer submits). This will also
     // insert any numSemaphore semaphores on the gpu and set the backendSemaphores to match the
     // inserted semaphores.
-    void executeFlushInfo(GrSurfaceProxy*[], int numProxies,
+    void executeFlushInfo(SkSpan<GrSurfaceProxy*>,
                           SkSurface::BackendSurfaceAccess access,
                           const GrFlushInfo&,
                           const GrBackendSurfaceMutableState* newState);
@@ -857,9 +858,18 @@ private:
     virtual bool onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
                                const SkIPoint& dstPoint) = 0;
 
+    virtual GrOpsRenderPass* onGetOpsRenderPass(
+            GrRenderTarget* renderTarget,
+            GrAttachment* stencil,
+            GrSurfaceOrigin,
+            const SkIRect& bounds,
+            const GrOpsRenderPass::LoadAndStoreInfo&,
+            const GrOpsRenderPass::StencilLoadAndStoreInfo&,
+            const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+            GrXferBarrierFlags renderPassXferBarriers) = 0;
+
     virtual void prepareSurfacesForBackendAccessAndStateUpdates(
-            GrSurfaceProxy* proxies[],
-            int numProxies,
+            SkSpan<GrSurfaceProxy*> proxies,
             SkSurface::BackendSurfaceAccess access,
             const GrBackendSurfaceMutableState* newState) {}
 
@@ -900,6 +910,10 @@ private:
     SkSTArray<4, SubmittedProc> fSubmittedProcs;
 
     bool fOOMed = false;
+
+#if SK_HISTOGRAMS_ENABLED
+    int fCurrentSubmitRenderPassCount = 0;
+#endif
 
     friend class GrPathRendering;
     using INHERITED = SkRefCnt;

@@ -228,6 +228,17 @@ void MetalCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     } else if (builtin && name == "inverse") {
         SkASSERT(arguments.size() == 1);
         this->writeInverseHack(*arguments[0]);
+    } else if (builtin && name == "frexp") {
+        // Our Metal codegen assumes that out params are pointers, but Metal's built-in frexp
+        // actually takes a reference for the exponent, not a pointer. We add in a helper function
+        // here to translate.
+        SkASSERT(arguments.size() == 2);
+        auto [iter, newlyCreated] = fHelpers.insert("frexp");
+        if (newlyCreated) {
+            fExtraFunctions.printf(
+                    "float frexp(float arg, thread int* exp) { return frexp(arg, *exp); }\n");
+        }
+        this->write("frexp");
     } else if (builtin && name == "dFdx") {
         this->write("dfdx");
     } else if (builtin && name == "dFdy") {
@@ -812,8 +823,8 @@ void MetalCodeGenerator::writeMatrixTimesEqualHelper(const Type& left, const Typ
 
 void MetalCodeGenerator::writeBinaryExpression(const BinaryExpression& b,
                                                Precedence parentPrecedence) {
-    const Expression& left = b.left();
-    const Expression& right = b.right();
+    const Expression& left = *b.left();
+    const Expression& right = *b.right();
     const Type& leftType = left.type();
     const Type& rightType = right.type();
     Token::Kind op = b.getOperator();
@@ -933,10 +944,10 @@ void MetalCodeGenerator::writeSetting(const Setting& s) {
     ABORT("internal error; setting was not folded to a constant during compilation\n");
 }
 
-void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
+bool MetalCodeGenerator::writeFunctionDeclaration(const FunctionDeclaration& f) {
     fRTHeightName = fProgram.fInputs.fRTHeight ? "_globals->_anonInterface0->u_skRTHeight" : "";
     const char* separator = "";
-    if ("main" == f.declaration().name()) {
+    if ("main" == f.name()) {
         switch (fProgram.fKind) {
             case Program::kFragment_Kind:
                 this->write("fragment Outputs fragmentMain");
@@ -946,7 +957,7 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
                 break;
             default:
                 fErrors.error(-1, "unsupported kind of program");
-                return;
+                return false;
         }
         this->write("(Inputs _in [[stage_in]]");
         if (-1 != fUniformBuffer) {
@@ -961,12 +972,12 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
                     if (var.var().modifiers().fLayout.fBinding < 0) {
                         fErrors.error(decls.fOffset,
                                         "Metal samplers must have 'layout(binding=...)'");
-                        return;
+                        return false;
                     }
                     if (var.var().type().dimensions() != SpvDim2D) {
-                        // TODO: Support other texture types (skbug.com/10797)
+                        // Not yet implemented--Skia currently only uses 2D textures.
                         fErrors.error(decls.fOffset, "Unsupported texture dimensions");
-                        return;
+                        return false;
                     }
                     this->write(", texture2d<float> ");
                     this->writeName(var.var().name());
@@ -1006,11 +1017,11 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
         }
         separator = ", ";
     } else {
-        this->writeType(f.declaration().returnType());
+        this->writeType(f.returnType());
         this->write(" ");
-        this->writeName(f.declaration().name());
+        this->writeName(f.name());
         this->write("(");
-        Requirements requirements = this->requirements(f.declaration());
+        Requirements requirements = this->requirements(f);
         if (requirements & kInputs_Requirement) {
             this->write("Inputs _in");
             separator = ", ";
@@ -1036,7 +1047,7 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
             separator = ", ";
         }
     }
-    for (const auto& param : f.declaration().parameters()) {
+    for (const auto& param : f.parameters()) {
         this->write(separator);
         separator = ", ";
         this->writeModifiers(param->modifiers(), false);
@@ -1060,9 +1071,23 @@ void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
             }
         }
     }
-    this->writeLine(") {");
+    this->write(")");
+    return true;
+}
 
+void MetalCodeGenerator::writeFunctionPrototype(const FunctionPrototype& f) {
+    this->writeFunctionDeclaration(f.declaration());
+    this->writeLine(";");
+}
+
+void MetalCodeGenerator::writeFunction(const FunctionDefinition& f) {
     SkASSERT(!fProgram.fSettings.fFragColorIsInOut);
+
+    if (!this->writeFunctionDeclaration(f.declaration())) {
+        return;
+    }
+
+    this->writeLine(" {");
 
     if (f.declaration().name() == "main") {
         this->writeGlobalInit();
@@ -1225,10 +1250,10 @@ void MetalCodeGenerator::writeVarDeclaration(const VarDeclaration& var, bool glo
     this->writeType(var.baseType());
     this->write(" ");
     this->writeName(var.var().name());
-    for (int i = 0; i < var.sizeCount(); ++i) {
+    for (const std::unique_ptr<Expression>& size : var.sizes()) {
         this->write("[");
-        if (var.size(i)) {
-            this->writeExpression(*var.size(i), kTopLevel_Precedence);
+        if (size) {
+            this->writeExpression(*size, kTopLevel_Precedence);
         }
         this->write("]");
     }
@@ -1354,19 +1379,19 @@ void MetalCodeGenerator::writeDoStatement(const DoStatement& d) {
 
 void MetalCodeGenerator::writeSwitchStatement(const SwitchStatement& s) {
     this->write("switch (");
-    this->writeExpression(*s.fValue, kTopLevel_Precedence);
+    this->writeExpression(*s.value(), kTopLevel_Precedence);
     this->writeLine(") {");
     fIndentation++;
-    for (const auto& c : s.fCases) {
-        if (c->fValue) {
+    for (const std::unique_ptr<SwitchCase>& c : s.cases()) {
+        if (c->value()) {
             this->write("case ");
-            this->writeExpression(*c->fValue, kTopLevel_Precedence);
+            this->writeExpression(*c->value(), kTopLevel_Precedence);
             this->writeLine(":");
         } else {
             this->writeLine("default:");
         }
         fIndentation++;
-        for (const auto& stmt : c->fStatements) {
+        for (const auto& stmt : c->statements()) {
             this->writeStatement(*stmt);
             this->writeLine();
         }
@@ -1658,6 +1683,9 @@ void MetalCodeGenerator::writeProgramElement(const ProgramElement& e) {
         case ProgramElement::Kind::kFunction:
             this->writeFunction(e.as<FunctionDefinition>());
             break;
+        case ProgramElement::Kind::kFunctionPrototype:
+            this->writeFunctionPrototype(e.as<FunctionPrototype>());
+            break;
         case ProgramElement::Kind::kModifiers:
             this->writeModifiers(e.as<ModifiersDeclaration>().modifiers(), true);
             this->writeLine(";");
@@ -1702,8 +1730,8 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Expressi
             return this->requirements(e->as<Swizzle>().base().get());
         case Expression::Kind::kBinary: {
             const BinaryExpression& bin = e->as<BinaryExpression>();
-            return this->requirements(&bin.left()) |
-                   this->requirements(&bin.right());
+            return this->requirements(bin.left().get()) |
+                   this->requirements(bin.right().get());
         }
         case Expression::Kind::kIndex: {
             const IndexExpression& idx = e->as<IndexExpression>();
@@ -1790,9 +1818,9 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Statemen
         }
         case Statement::Kind::kSwitch: {
             const SwitchStatement& sw = s->as<SwitchStatement>();
-            Requirements result = this->requirements(sw.fValue.get());
-            for (const auto& c : sw.fCases) {
-                for (const auto& st : c->fStatements) {
+            Requirements result = this->requirements(sw.value().get());
+            for (const std::unique_ptr<SwitchCase>& sc : sw.cases()) {
+                for (const auto& st : sc->statements()) {
                     result |= this->requirements(st.get());
                 }
             }
@@ -1820,6 +1848,9 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Function
                 }
             }
         }
+        // We never found a definition for this declared function, but it's legal to prototype a
+        // function without ever giving a definition, as long as you don't call it.
+        return kNo_Requirements;
     }
     return found->second;
 }

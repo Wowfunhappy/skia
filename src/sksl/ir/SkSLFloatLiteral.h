@@ -14,24 +14,27 @@
 namespace SkSL {
 
 /**
- * A literal floating point number.
+ * A literal floating point number. These are generally referred to as FloatLiteral, but
+ * Literal<SKSL_FLOAT> is also available for use with template code.
  */
-class FloatLiteral : public Expression {
+template <typename T> class Literal;
+using FloatLiteral = Literal<SKSL_FLOAT>;
+
+template <>
+class Literal<SKSL_FLOAT> final : public Expression {
 public:
     static constexpr Kind kExpressionKind = Kind::kFloatLiteral;
 
-    FloatLiteral(const Context& context, int offset, float value)
-    : INHERITED(offset, FloatLiteralData{context.fFloatLiteral_Type.get(), value}) {}
+    Literal(const Context& context, int offset, float value)
+        : INHERITED(offset, kExpressionKind, context.fFloatLiteral_Type.get())
+        , fValue(value) {}
 
-    FloatLiteral(int offset, float value, const Type* type)
-    : INHERITED(offset, FloatLiteralData{type, value}) {}
-
-    const Type& type() const override {
-        return *this->floatLiteralData().fType;
-    }
+    Literal(int offset, float value, const Type* type)
+        : INHERITED(offset, kExpressionKind, type)
+        , fValue(value) {}
 
     float value() const {
-        return this->floatLiteralData().fValue;
+        return fValue;
     }
 
     String description() const override {
@@ -62,10 +65,12 @@ public:
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new FloatLiteral(fOffset, this->value(), &this->type()));
+        return std::make_unique<FloatLiteral>(fOffset, this->value(), &this->type());
     }
 
 private:
+    float fValue;
+
     using INHERITED = Expression;
 };
 

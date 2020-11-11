@@ -9,11 +9,12 @@
 #define GrDirectContextPriv_DEFINED
 
 #include "include/gpu/GrDirectContext.h"
+#include "src/core/SkSpan.h"
 
 class GrAtlasManager;
 class GrBackendFormat;
 class GrBackendRenderTarget;
-class GrOpMemoryPool;
+class GrMemoryPool;
 class GrOnFlushCallbackObject;
 class GrRenderTargetProxy;
 class GrSemaphore;
@@ -51,7 +52,7 @@ public:
     // from GrRecordingContext
     GrDrawingManager* drawingManager() { return fContext->drawingManager(); }
 
-    GrOpMemoryPool* opMemoryPool() { return fContext->arenas().opMemoryPool(); }
+    GrMemoryPool* opMemoryPool() { return fContext->arenas().opMemoryPool(); }
     SkArenaAlloc* recordTimeAllocator() { return fContext->arenas().recordTimeAllocator(); }
     GrRecordingContext::Arenas arenas() { return fContext->arenas(); }
 
@@ -80,7 +81,7 @@ public:
      * GrContext will detect when it must perform a resolve before reading pixels back from the
      * surface or using it as a texture.
      */
-    GrSemaphoresSubmitted flushSurfaces(GrSurfaceProxy*[], int numProxies, const GrFlushInfo&);
+    GrSemaphoresSubmitted flushSurfaces(SkSpan<GrSurfaceProxy*>, const GrFlushInfo&);
 
     /** Version of above that flushes for a single proxy and uses a default GrFlushInfo. Null is
      * allowed. */
@@ -119,7 +120,7 @@ public:
         return fContext->onGetSmallPathAtlasMgr();
     }
 
-    void copyRenderTasksFromDDL(sk_sp<const SkDeferredDisplayList>, GrRenderTargetProxy* newDest);
+    void createDDLTask(sk_sp<const SkDeferredDisplayList>, GrRenderTargetProxy* newDest);
 
     bool compile(const GrProgramDesc&, const GrProgramInfo&);
 

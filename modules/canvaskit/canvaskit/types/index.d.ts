@@ -168,6 +168,19 @@ export interface CanvasKit {
     MakeCanvasSurface(canvas: HTMLCanvasElement | string): Surface | null;
 
     /**
+     * Creates a Raster (CPU) Surface that will draw into the provided Malloc'd buffer. This allows
+     * clients to efficiently be able to read the current pixels w/o having to copy.
+     * The length of pixels must be at least height * bytesPerRow bytes big.
+     * @param ii
+     * @param pixels
+     * @param bytesPerRow - How many bytes are per row. This is at least width * bytesPerColorType. For example,
+     *                      an 8888 ColorType has 4 bytes per pixel, so a 5 pixel wide 8888 surface needs at least
+     *                      5 * 4 = 20 bytesPerRow. Some clients may have more than the usual to make the data line
+     *                      up with a particular multiple.
+     */
+    MakeRasterDirectSurface(ii: ImageInfo, pixels: MallocObj, bytesPerRow: number): Surface | null;
+
+    /**
      * Creates a CPU backed (aka raster) surface.
      * @param canvas - either the canvas element itself or a string with the DOM id of it.
      */
@@ -551,6 +564,40 @@ export interface GrDirectContext extends EmbindObject<GrDirectContext> {
 }
 
 /**
+ * See Metrics.h for more on this struct.
+ */
+export interface LineMetrics {
+    /** The index in the text buffer the line begins. */
+    startIndex: number;
+    /** The index in the text buffer the line ends. */
+    endIndex: number;
+    endExcludingWhitespaces: number;
+    endIncludingNewline: number;
+    /** True if the line ends in a hard break (e.g. newline) */
+    isHardBreak: boolean;
+    /**
+     * The final computed ascent for the line. This can be impacted by
+     * the strut, height, scaling, as well as outlying runs that are very tall.
+     */
+    ascent: number;
+    /**
+     * The final computed descent for the line. This can be impacted by
+     * the strut, height, scaling, as well as outlying runs that are very tall.
+     */
+    descent: number;
+    /** round(ascent + descent) */
+    height: number;
+    /** width of the line */
+    width: number;
+    /** The left edge of the line. The right edge can be obtained with `left + width` */
+    left: number;
+    /** The y position of the baseline for this line from the top of the paragraph. */
+    baseline: number;
+    /** Zero indexed line number. */
+    lineNumber: number;
+}
+
+/**
  * This object is a wrapper around a pointer to some memory on the WASM heap. The type of the
  * pointer was determined at creation time.
  */
@@ -602,6 +649,7 @@ export interface Paragraph extends EmbindObject<Paragraph> {
 
     getHeight(): number;
     getIdeographicBaseline(): number;
+    getLineMetrics(): LineMetrics[];
     getLongestLine(): number;
     getMaxIntrinsicWidth(): number;
     getMaxWidth(): number;
@@ -1184,19 +1232,27 @@ export interface Canvas extends EmbindObject<Canvas> {
     markCTM(marker: string): void;
 
     /**
-     * Copies the given rectangle of pixels into a new Uint8Array and returns it. If alphaType,
-     * colorType, and colorSpace are provided, those will describe the output format.
-     * @param x
-     * @param y
-     * @param w
-     * @param h
-     * @param alphaType - defaults to Unpremul
-     * @param colorType - defaults to RGBA_8888
-     * @param colorSpace - defaults to SRGB
-     * @param dstRowBytes
+     * Returns a TypedArray containing the pixels reading starting at (srcX, srcY) and does not
+     * exceed the size indicated by imageInfo. See SkCanvas.h for more on the caveats.
+     *
+     * If dest is not provided, we allocate memory equal to the provided height * the provided
+     * bytesPerRow to fill the data with.
+     *
+     * This is generally a very expensive call for the GPU backend.
+     *
+     * @param srcX
+     * @param srcY
+     * @param imageInfo - describes the destination format of the pixels.
+     * @param dest - If provided, the pixels will be copied into the allocated buffer allowing
+     *        access to the pixels without allocating a new TypedArray.
+     * @param bytesPerRow - number of bytes per row. Must be provided if dest is set. This
+     *        depends on destination ColorType. For example, it must be at least 4 * width for
+     *        the 8888 color type.
+     * @returns a TypedArray appropriate for the specified ColorType. Note that 16 bit floats are
+     *          not supported in JS, so that colorType corresponds to raw bytes Uint8Array.
      */
-    readPixels(x: number, y: number, w: number, h: number, alphaType?: AlphaType,
-               colorType?: ColorType, colorSpace?: ColorSpace, dstRowBytes?: number): Uint8Array;
+    readPixels(srcX: number, srcY: number, imageInfo: ImageInfo, dest?: MallocObj,
+               bytesPerRow?: number): Uint8Array | Float32Array | null;
 
     /**
      * Removes changes to the current matrix and clip since Canvas state was
@@ -1513,14 +1569,24 @@ export interface Image extends EmbindObject<Image> {
 
     /**
      * Returns a TypedArray containing the pixels reading starting at (srcX, srcY) and does not
-     * exceed the size indicated by imageInfo. See Image.h for more on the caveats.
+     * exceed the size indicated by imageInfo. See SkImage.h for more on the caveats.
      *
-     * @param imageInfo - describes the destination format of the pixels.
+     * If dest is not provided, we allocate memory equal to the provided height * the provided
+     * bytesPerRow to fill the data with.
+     *
      * @param srcX
      * @param srcY
-     * @returns a Uint8Array if RGB_8888 was requested, Float32Array if RGBA_F32 was requested.
+     * @param imageInfo - describes the destination format of the pixels.
+     * @param dest - If provided, the pixels will be copied into the allocated buffer allowing
+     *        access to the pixels without allocating a new TypedArray.
+     * @param bytesPerRow - number of bytes per row. Must be provided if dest is set. This
+     *        depends on destination ColorType. For example, it must be at least 4 * width for
+     *        the 8888 color type.
+     * @returns a TypedArray appropriate for the specified ColorType. Note that 16 bit floats are
+     *          not supported in JS, so that colorType corresponds to raw bytes Uint8Array.
      */
-    readPixels(imageInfo: ImageInfo, srcX: number, srcY: number): Uint8Array | Float32Array | null;
+    readPixels(srcX: number, srcY: number, imageInfo: ImageInfo, dest?: MallocObj,
+               bytesPerRow?: number): Uint8Array | Float32Array | null;
 
     /**
      * Return the width in pixels of the image.
