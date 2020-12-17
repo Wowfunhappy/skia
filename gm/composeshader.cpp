@@ -174,9 +174,10 @@ protected:
         draw_alpha8_bm(&fAlpha8Bitmap, squareLength);
         SkMatrix s;
         s.reset();
-        fColorBitmapShader = fColorBitmap.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat, &s);
-        fAlpha8BitmapShader = fAlpha8Bitmap.makeShader(SkTileMode::kRepeat,
-                                                       SkTileMode::kRepeat, &s);
+        fColorBitmapShader = fColorBitmap.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat,
+                                                     SkSamplingOptions(), s);
+        fAlpha8BitmapShader = fAlpha8Bitmap.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat,
+                                                       SkSamplingOptions(), s);
         fLinearGradientShader = make_linear_gradient_shader(squareLength);
     }
 
@@ -274,7 +275,9 @@ DEF_SIMPLE_GM(composeshader_bitmap2, canvas, 200, 200) {
     sk_sp<SkImage> skSrc = SkImage::MakeFromBitmap(skBitmap);
     sk_sp<SkImage> skMaskImage = SkImage::MakeFromBitmap(skMask);
     paint.setShader(
-        SkShaders::Blend(SkBlendMode::kSrcIn, skMaskImage->makeShader(), skSrc->makeShader()));
+        SkShaders::Blend(SkBlendMode::kSrcIn,
+                         skMaskImage->makeShader(SkSamplingOptions()),
+                         skSrc->makeShader(SkSamplingOptions())));
     canvas->drawRect(r, paint);
 }
 

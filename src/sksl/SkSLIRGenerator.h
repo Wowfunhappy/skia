@@ -14,7 +14,6 @@
 #include "src/sksl/SkSLASTFile.h"
 #include "src/sksl/SkSLASTNode.h"
 #include "src/sksl/SkSLErrorReporter.h"
-#include "src/sksl/SkSLInliner.h"
 #include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExtension.h"
@@ -35,6 +34,7 @@ namespace SkSL {
 
 class ExternalValue;
 class FunctionCall;
+class StructDefinition;
 struct ParsedModule;
 struct Swizzle;
 
@@ -96,10 +96,13 @@ private:
  */
 class IRGenerator {
 public:
-    IRGenerator(const Context* context, Inliner* inliner, ErrorReporter& errorReporter);
+    IRGenerator(const Context* context,
+                const ShaderCapsClass* caps,
+                ErrorReporter& errorReporter);
 
     struct IRBundle {
         std::vector<std::unique_ptr<ProgramElement>> fElements;
+        std::vector<const ProgramElement*>           fSharedElements;
         std::unique_ptr<ModifiersPool>               fModifiers;
         std::shared_ptr<SymbolTable>                 fSymbolTable;
         Program::Inputs                              fInputs;
@@ -111,7 +114,6 @@ public:
      */
     IRBundle convertProgram(Program::Kind kind,
                             const Program::Settings* settings,
-                            const ShaderCapsClass* caps,
                             const ParsedModule& base,
                             bool isBuiltinCode,
                             const char* text,
@@ -196,8 +198,6 @@ private:
     std::unique_ptr<Statement> convertFor(const ASTNode& f);
     std::unique_ptr<Expression> convertIdentifier(const ASTNode& identifier);
     std::unique_ptr<Statement> convertIf(const ASTNode& s);
-    std::unique_ptr<Expression> convertIndex(std::unique_ptr<Expression> base,
-                                             const ASTNode& index);
     std::unique_ptr<InterfaceBlock> convertInterfaceBlock(const ASTNode& s);
     Modifiers convertModifiers(const Modifiers& m);
     std::unique_ptr<Expression> convertPrefixExpression(const ASTNode& expression);
@@ -206,8 +206,12 @@ private:
     std::unique_ptr<Expression> convertCallExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertFieldExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertIndexExpression(const ASTNode& expression);
+    std::unique_ptr<Expression> convertIndex(std::unique_ptr<Expression> base,
+                                             const ASTNode& index);
+    std::unique_ptr<Expression> convertEmptyIndex(std::unique_ptr<Expression> base);
     std::unique_ptr<Expression> convertPostfixExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertScopeExpression(const ASTNode& expression);
+    std::unique_ptr<StructDefinition> convertStructDefinition(const ASTNode& expression);
     std::unique_ptr<Expression> convertTypeField(int offset, const Type& type,
                                                  StringFragment field);
     std::unique_ptr<Expression> convertField(std::unique_ptr<Expression> base,
@@ -217,23 +221,24 @@ private:
     std::unique_ptr<Expression> convertTernaryExpression(const ASTNode& expression);
     std::unique_ptr<Statement> convertVarDeclarationStatement(const ASTNode& s);
     std::unique_ptr<Statement> convertWhile(const ASTNode& w);
+    void convertGlobalVarDeclarations(const ASTNode& decl);
     void convertEnum(const ASTNode& e);
     std::unique_ptr<Block> applyInvocationIDWorkaround(std::unique_ptr<Block> main);
     // returns a statement which converts sk_Position from device to normalized coordinates
     std::unique_ptr<Statement> getNormalizeSkPositionCode();
 
     void checkValid(const Expression& expr);
+    bool typeContainsPrivateFields(const Type& type);
     bool setRefKind(Expression& expr, VariableReference::RefKind kind);
     bool getConstantInt(const Expression& value, int64_t* out);
     void copyIntrinsicIfNeeded(const FunctionDeclaration& function);
-    void cloneBuiltinVariables();
+    void findAndDeclareBuiltinVariables();
 
     Program::Inputs fInputs;
     const Program::Settings* fSettings = nullptr;
     const ShaderCapsClass* fCaps = nullptr;
     Program::Kind fKind;
 
-    Inliner* fInliner = nullptr;
     std::unique_ptr<ASTFile> fFile;
     const FunctionDeclaration* fCurrentFunction = nullptr;
     std::unordered_map<String, Program::Settings::Value> fCapsMap;
@@ -249,6 +254,7 @@ private:
     ErrorReporter& fErrors;
     int fInvocations;
     std::vector<std::unique_ptr<ProgramElement>>* fProgramElements = nullptr;
+    std::vector<const ProgramElement*>*           fSharedElements = nullptr;
     const Variable* fRTAdjust = nullptr;
     const Variable* fRTAdjustInterfaceBlock = nullptr;
     int fRTAdjustFieldIndex;

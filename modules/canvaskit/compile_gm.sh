@@ -26,8 +26,8 @@ EMCXX=`which em++`
 EMAR=`which emar`
 
 RELEASE_CONF="-O3 -DSK_RELEASE --pre-js $BASE_DIR/release.js \
-              -DGR_GL_CHECK_ALLOC_WITH_GET_ERROR=0 -DGR_TEST_UTILS"
-EXTRA_CFLAGS="\"-DSK_RELEASE\", \"-DGR_GL_CHECK_ALLOC_WITH_GET_ERROR=0\", \"-DGR_TEST_UTILS\", "
+              -DGR_TEST_UTILS"
+EXTRA_CFLAGS="\"-DSK_RELEASE\", \"-DGR_TEST_UTILS\", "
 IS_OFFICIAL_BUILD="false"
 
 BUILD_DIR=${BUILD_DIR:="out/wasm_gm_tests"}
@@ -148,7 +148,7 @@ TESTS_TO_BUILD="tests/*.cpp"
 # When developing locally, it can be faster to focus only on the gms or tests you care about
 # (since they all have to be recompiled/relinked) every time. To do so, mark the following as true
 if false; then
-   GMS_TO_BUILD="gm/bleed.cpp gm/gm.cpp"
+   GMS_TO_BUILD="gm/coloremoji.cpp gm/gm.cpp"
    TESTS_TO_BUILD="tests/OctoBoundsTest.cpp tests/Test.cpp"
 fi
 
@@ -188,7 +188,6 @@ EMCC_DEBUG=1 ${EMCXX} \
     -I. \
     -DSK_DISABLE_AAA \
     -DSK_FORCE_8_BYTE_ALIGNMENT \
-    -DGR_OP_ALLOCATE_USE_NEW \
     $WASM_GPU \
     -std=c++17 \
     --profiling-funcs \
@@ -209,8 +208,8 @@ EMCC_DEBUG=1 ${EMCXX} \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s EXPORT_NAME="InitWasmGMTests" \
     -s EXPORTED_FUNCTIONS=['_malloc','_free'] \
-    -s FORCE_FILESYSTEM=0 \
-    -s FILESYSTEM=0 \
+    -s FORCE_FILESYSTEM=1 \
+    -s FILESYSTEM=1 \
     -s MODULARIZE=1 \
     -s NO_EXIT_RUNTIME=1 \
     -s INITIAL_MEMORY=256MB \

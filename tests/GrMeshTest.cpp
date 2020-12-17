@@ -21,9 +21,8 @@
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrOpsRenderPass.h"
 #include "src/gpu/GrProgramInfo.h"
-#include "src/gpu/GrRenderTargetContext.h"
-#include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/GrResourceProvider.h"
+#include "src/gpu/GrSurfaceDrawContext.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLGeometryProcessor.h"
 #include "src/gpu/glsl/GrGLSLVarying.h"
@@ -97,7 +96,7 @@ struct Box {
  */
 
 static void run_test(GrDirectContext*, const char* testName, skiatest::Reporter*,
-                     const std::unique_ptr<GrRenderTargetContext>&, const SkBitmap& gold,
+                     const std::unique_ptr<GrSurfaceDrawContext>&, const SkBitmap& gold,
                      std::function<void(DrawMeshHelper*)> prepareFn,
                      std::function<void(DrawMeshHelper*)> executeFn);
 
@@ -111,7 +110,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrMeshTest, reporter, ctxInfo) {
 #endif
     auto dContext = ctxInfo.directContext();
 
-    auto rtc = GrRenderTargetContext::Make(
+    auto rtc = GrSurfaceDrawContext::Make(
             dContext, GrColorType::kRGBA_8888, nullptr, SkBackingFit::kExact,
             {kImageWidth, kImageHeight});
     if (!rtc) {
@@ -431,10 +430,11 @@ private:
     }
 
     void onPrePrepare(GrRecordingContext*,
-                      const GrSurfaceProxyView* writeView,
+                      const GrSurfaceProxyView& writeView,
                       GrAppliedClip*,
                       const GrXferProcessor::DstProxyView&,
-                      GrXferBarrierFlags renderPassXferBarriers) override {}
+                      GrXferBarrierFlags renderPassXferBarriers,
+                      GrLoadOp colorLoadOp) override {}
     void onPrepare(GrOpFlushState* state) override {
         fHelper = std::make_unique<DrawMeshHelper>(state);
         fPrepareFn(fHelper.get());
@@ -453,7 +453,9 @@ private:
 class GrMeshTestProcessor : public GrGeometryProcessor {
 public:
     static GrGeometryProcessor* Make(SkArenaAlloc* arena, bool instanced, bool hasVertexBuffer) {
-        return arena->make<GrMeshTestProcessor>(instanced, hasVertexBuffer);
+        return arena->make([&](void* ptr) {
+            return new (ptr) GrMeshTestProcessor(instanced, hasVertexBuffer);
+        });
     }
 
     const char* name() const override { return "GrMeshTestProcessor"; }
@@ -471,7 +473,6 @@ public:
 
 private:
     friend class GLSLMeshTestProcessor;
-    friend class ::SkArenaAlloc; // for access to ctor
 
     GrMeshTestProcessor(bool instanced, bool hasVertexBuffer)
             : INHERITED(kGrMeshTestProcessor_ClassID) {
@@ -573,10 +574,9 @@ GrOpsRenderPass* DrawMeshHelper::bindPipeline(GrPrimitiveType primitiveType, boo
     GrGeometryProcessor* mtp = GrMeshTestProcessor::Make(fState->allocator(), isInstanced,
                                                          hasVertexBuffer);
 
-    GrProgramInfo programInfo(fState->proxy()->numSamples(), fState->proxy()->numStencilSamples(),
-                              fState->proxy()->backendFormat(), fState->writeView()->origin(),
-                              pipeline, &GrUserStencilSettings::kUnused, mtp, primitiveType, 0,
-                              fState->renderPassBarriers());
+    GrProgramInfo programInfo(fState->writeView(), pipeline, &GrUserStencilSettings::kUnused,
+                              mtp, primitiveType, 0, fState->renderPassBarriers(),
+                              fState->colorLoadOp());
 
     fState->opsRenderPass()->bindPipeline(programInfo, SkRect::MakeIWH(kImageWidth, kImageHeight));
     return fState->opsRenderPass();
@@ -584,7 +584,7 @@ GrOpsRenderPass* DrawMeshHelper::bindPipeline(GrPrimitiveType primitiveType, boo
 
 static void run_test(GrDirectContext* dContext, const char* testName,
                      skiatest::Reporter* reporter,
-                     const std::unique_ptr<GrRenderTargetContext>& rtc, const SkBitmap& gold,
+                     const std::unique_ptr<GrSurfaceDrawContext>& rtc, const SkBitmap& gold,
                      std::function<void(DrawMeshHelper*)> prepareFn,
                      std::function<void(DrawMeshHelper*)> executeFn) {
     const int w = gold.width(), h = gold.height(), rowBytes = gold.rowBytes();
@@ -600,7 +600,7 @@ static void run_test(GrDirectContext* dContext, const char* testName,
 
     SkAutoSTMalloc<kImageHeight * kImageWidth, uint32_t> resultPx(h * rowBytes);
     rtc->clear(SkPMColor4f::FromBytes_RGBA(0xbaaaaaad));
-    rtc->priv().testingOnly_addDrawOp(GrMeshTestOp::Make(dContext, prepareFn, executeFn));
+    rtc->addDrawOp(GrMeshTestOp::Make(dContext, prepareFn, executeFn));
 
     rtc->readPixels(dContext, gold.info(), resultPx, rowBytes, {0, 0});
 

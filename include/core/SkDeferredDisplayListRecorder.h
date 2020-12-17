@@ -17,6 +17,7 @@
 class GrBackendFormat;
 class GrBackendTexture;
 class GrRecordingContext;
+class GrYUVABackendTextureInfo;
 class SkCanvas;
 class SkImage;
 class SkPromiseImageTexture;
@@ -100,56 +101,25 @@ public:
                                       PromiseImageTextureReleaseProc textureReleaseProc,
                                       PromiseImageTextureContext textureContext);
 
-    /** Legacy compatibility version that takes an additional proc that is never called. */
-    sk_sp<SkImage> makePromiseTexture(const GrBackendFormat& backendFormat,
-                                      int width,
-                                      int height,
-                                      GrMipmapped mipMapped,
-                                      GrSurfaceOrigin origin,
-                                      SkColorType colorType,
-                                      SkAlphaType alphaType,
-                                      sk_sp<SkColorSpace> colorSpace,
-                                      PromiseImageTextureFulfillProc textureFulfillProc,
-                                      PromiseImageTextureReleaseProc textureReleaseProc,
-                                      PromiseImageTextureReleaseProc ignoredProc,
-                                      PromiseImageTextureContext textureContext);
-
     /**
         This entry point operates like 'makePromiseTexture' but it is used to construct a SkImage
         from YUV[A] data. The source data may be planar (i.e. spread across multiple textures). In
         the extreme Y, U, V, and A are all in different planes and thus the image is specified by
-        four textures. 'yuvaIndices' specifies the mapping from texture color channels to Y, U, V,
-        and possibly A components. It therefore indicates how many unique textures compose the full
-        image. Separate textureFulfillProc and textureReleaseProc calls are made for each texture
-        but each texture has its own PromiseImageTextureContext. If the 'yuvaindices' are invalid no
-        release proc calls are made. Otherwise the calls will be made even on failure. 'yuvFormats',
-        'yuvaSizes', and 'textureContexts' have one entry for each of the up to four textures, as
-        indicated by 'yuvaIndices'.
-     */
-    sk_sp<SkImage> makeYUVAPromiseTexture(SkYUVColorSpace yuvColorSpace,
-                                          const GrBackendFormat yuvaFormats[],
-                                          const SkISize yuvaSizes[],
-                                          const SkYUVAIndex yuvaIndices[4],
-                                          int imageWidth,
-                                          int imageHeight,
-                                          GrSurfaceOrigin imageOrigin,
-                                          sk_sp<SkColorSpace> imageColorSpace,
-                                          PromiseImageTextureFulfillProc textureFulfillProc,
-                                          PromiseImageTextureReleaseProc textureReleaseProc,
-                                          PromiseImageTextureContext textureContexts[]);
+        four textures. 'yuvaBackendTextureInfo' describes the planar arrangement, texture formats,
+        conversion to RGB, and origin of the textures. Separate 'textureFulfillProc' and
+        'textureReleaseProc' calls are made for each texture. Each texture has its own
+        PromiseImageTextureContext. If 'yuvaBackendTextureinfo' is not valid then no release proc
+        calls are made. Otherwise, the calls will be made even on failure. 'textureContexts' has one
+        entry for each of the up to four textures, as indicated by 'yuvaBackendTextureinfo'.
 
-    /** Legacy compatibility version that takes an additional proc that is never called. */
-    sk_sp<SkImage> makeYUVAPromiseTexture(SkYUVColorSpace yuvColorSpace,
-                                          const GrBackendFormat yuvaFormats[],
-                                          const SkISize yuvaSizes[],
-                                          const SkYUVAIndex yuvaIndices[4],
-                                          int imageWidth,
-                                          int imageHeight,
-                                          GrSurfaceOrigin imageOrigin,
+        Currently the mip mapped property of 'yuvaBackendTextureInfo' is ignored. However, in the
+        near future it will be required that if it is kYes then textureFulfillProc must return
+        a mip mapped texture for each plane in order to successfully draw the image.
+     */
+    sk_sp<SkImage> makeYUVAPromiseTexture(const GrYUVABackendTextureInfo& yuvaBackendTextureInfo,
                                           sk_sp<SkColorSpace> imageColorSpace,
                                           PromiseImageTextureFulfillProc textureFulfillProc,
                                           PromiseImageTextureReleaseProc textureReleaseProc,
-                                          PromiseImageTextureReleaseProc ignoredProc,
                                           PromiseImageTextureContext textureContexts[]);
 
 private:

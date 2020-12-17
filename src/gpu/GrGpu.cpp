@@ -33,6 +33,7 @@
 #include "src/gpu/GrStencilSettings.h"
 #include "src/gpu/GrTextureProxyPriv.h"
 #include "src/gpu/GrTracing.h"
+#include "src/sksl/SkSLCompiler.h"
 #include "src/utils/SkJSONWriter.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -41,6 +42,11 @@ GrGpu::GrGpu(GrDirectContext* direct) : fResetBits(kAll_GrBackendState), fContex
 
 GrGpu::~GrGpu() {
     this->callSubmittedProcs(false);
+}
+
+void GrGpu::initCapsAndCompiler(sk_sp<const GrCaps> caps) {
+    fCaps = std::move(caps);
+    fCompiler = std::make_unique<SkSL::Compiler>(fCaps->shaderCaps());
 }
 
 void GrGpu::disconnect(DisconnectType type) {}
@@ -661,6 +667,12 @@ bool GrGpu::submitToGpu(bool syncCpu) {
 
     this->callSubmittedProcs(submitted);
 
+    this->reportSubmitHistograms();
+
+    return submitted;
+}
+
+void GrGpu::reportSubmitHistograms() {
 #if SK_HISTOGRAMS_ENABLED
     // The max allowed value for SK_HISTOGRAM_EXACT_LINEAR is 100. If we want to support higher
     // values we can add SK_HISTOGRAM_CUSTOM_COUNTS but this has a number of buckets that is less
@@ -672,7 +684,7 @@ bool GrGpu::submitToGpu(bool syncCpu) {
     fCurrentSubmitRenderPassCount = 0;
 #endif
 
-    return submitted;
+    this->onReportSubmitHistograms();
 }
 
 bool GrGpu::checkAndResetOOMed() {

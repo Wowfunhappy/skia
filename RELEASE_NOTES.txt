@@ -4,13 +4,73 @@ This file includes a list of high level updates for each milestone release.
 
 * * *
 
+Milestone 89
+------------
+  * Add kDirectionalLight_ShadowFlag support. If enabled, light position represents
+    a vector pointing towards the light, and light radius is blur radius at elevation 1.
+    https://review.skia.org/321792
+
+  * Removed previously deprecated SkImage::MakeFromYUVATexturesCopyToExternal.
+    https://review.skia.org/342077
+
+  * Add versions of GrDirectContext::createBackendTexture and updateBackendTexture
+    that take a GrSurfaceOrigin. The previous versions are deprecated.
+    https://review.skia.org/341005
+
+  * Remove support for deprecated kDontClipToLayer_SaveLayerFlag in SkCanvas::SaveLayerRec
+    https://review.skia.org/339988
+
+  * Expose more info in SkCodec::FrameInfo
+    https://review.skia.org/339857
+
+  * Added dither control to the SkImageFilters::Shader factory.
+    https://review.skia.org/338156
+
+  * Add MTLBinaryArchive parameter to GrMtlBackendContext. This allows
+    Skia to cache PipelineStates in the given archive for faster
+    shader compiles on future runs. The client must handle loading and
+    saving of the archive.
+    https://review.skia.org/333758
+
+  * Deprecated enum SkYUVAInfo::PlanarConfig has been removed.
+    https://review.skia.org/334161
+
+  * Deprecated SkImage factories have been removed from
+    SkDeferredDisplayListRecorder.
+
+  * The following YUV image factories have been removed:
+    SkImage::MakeFromYUVTexturesCopyWithExternalBackend
+    SkImage::MakeFromNV12TexturesCopyWithExternalBackend
+    Replacement pattern outlined below.
+        1) Make image using MakeFromYUVATextures
+        2) Make a SkSurface around result texture using SkSurface::MakeFromBackendTexture
+        3) surface->getCanvas()->drawImage(image, 0, 0);
+        4) surface->flushAndSubmit()
+        5) Optional: SkImage::MakeFromBackendTexture() to use as SkImage.
+    https://review.skia.org/334596
+
+  * Added a new interface for GrDirectContext creation in Metal, using
+    a new struct called GrMtlBackendContext. The previous interface taking
+    a MTLDevice and MTLCommandQueue is deprecated.
+    https://review.skia.org/334426
+
+  * SkCanvas::flush has been deprecated.
+
+* * *
+
 Milestone 88
 ------------
 
+  * SkYUVAInfo now has separate enums for division of channels among planes and
+    the subsampling. The previous combined enum, PlanarConfig, is deprecated.
+    https://review.skia.org/334102
+
   * Simplified SkDeferredDisplayListRecorder promise image API. Removed "release"
     callback and renamed "done" callback to "release". The new "release" proc can
-    be null.
+    be null. Added a new SkYUVAInfo-based factory for YUVA promise texture images
+    and deprecated the old SkYUVAIndex-based one.
     https://review.skia.org/331836
+    https://review.skia.org/333519
 
   * Limit the types and intrinsics supported in SkRuntimeEffect to GLSL ES 1.00
     https://review.skia.org/332597

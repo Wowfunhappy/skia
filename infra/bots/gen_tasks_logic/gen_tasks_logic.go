@@ -116,9 +116,7 @@ var (
 	}
 
 	// TODO(borenet): This hacky and bad.
-	CIPD_PKG_LUCI_AUTH = specs.CIPD_PKGS_KITCHEN[1]
-	CIPD_PKGS_KITCHEN  = append(specs.CIPD_PKGS_KITCHEN[:2], specs.CIPD_PKGS_PYTHON[1])
-	CIPD_PKG_CPYTHON   = specs.CIPD_PKGS_PYTHON[0]
+	CIPD_PKG_LUCI_AUTH = cipd.MustGetPackage("infra/tools/luci-auth/${platform}")
 
 	CIPD_PKGS_GOLDCTL = []*specs.CipdPackage{cipd.MustGetPackage("skia/tools/goldctl/${platform}")}
 
@@ -378,7 +376,8 @@ func marshalJson(data interface{}) string {
 // kitchenTaskNoBundle sets up the task to run a recipe via Kitchen, without the
 // recipe bundle.
 func (b *taskBuilder) kitchenTaskNoBundle(recipe string, outputDir string) {
-	b.cipd(CIPD_PKGS_KITCHEN...)
+	b.cipd(CIPD_PKG_LUCI_AUTH)
+	b.cipd(cipd.MustGetPackage("infra/tools/luci/kitchen/${platform}"))
 	b.usesPython()
 	b.recipeProp("swarm_out_dir", outputDir)
 	if outputDir != OUTPUT_NONE {
@@ -472,6 +471,7 @@ func (b *jobBuilder) deriveCompileTaskName() string {
 			task_os = "Mac"
 			// iPhone11 requires xcode 11.4.1 which requires >10.15.2.
 			if b.parts["model"] == "iPhone11" {
+				// TODO(westont): Make this Mac10.15.7. We only have a single 10.15.5.
 				task_os = "Mac10.15.5"
 			}
 		} else if b.matchOs("Win") {
@@ -484,6 +484,9 @@ func (b *jobBuilder) deriveCompileTaskName() string {
 			task_os = COMPILE_TASK_NAME_OS_LINUX
 		} else if b.matchOs("Mac") {
 			task_os = "Mac"
+			if b.extraConfig("CommandBuffer") {
+				task_os = "Mac10.15.7"
+			}
 		}
 		jobNameMap := map[string]string{
 			"role":          "Build",
@@ -546,6 +549,7 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 			"Mac10.14":   "Mac-10.14.3",
 			"Mac10.15":   "Mac-10.15.1",
 			"Mac10.15.5": "Mac-10.15.5", // We have some builders at 10.15.5 to run Xcode 11.4.1
+			"Mac10.15.7": "Mac-10.15.7", // We have some Golo machines at 10.15.7 to run Xcode 12.2
 			"Ubuntu18":   "Ubuntu-18.04",
 			"Win":        DEFAULT_OS_WIN,
 			"Win10":      "Windows-10-18363",
@@ -564,6 +568,10 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 		if os == "Mac10.14" && b.parts["model"] == "VMware7.1" {
 			// ChOps VMs are at a newer version of MacOS.
 			d["os"] = "Mac-10.14.6"
+		}
+		if os == "Mac10.15" && b.parts["model"] == "VMware7.1" {
+			// ChOps VMs are at a newer version of MacOS.
+			d["os"] = "Mac-10.15.7"
 		}
 		if b.parts["model"] == "LenovoYogaC630" {
 			// This is currently a unique snowflake.
@@ -789,7 +797,7 @@ func (b *builder) relpath(f string) string {
 func (b *jobBuilder) bundleRecipes() string {
 	b.addTask(BUNDLE_RECIPES_NAME, func(b *taskBuilder) {
 		b.cipd(specs.CIPD_PKGS_GIT_LINUX_AMD64...)
-		b.cipd(specs.CIPD_PKGS_PYTHON...)
+		b.cipd(specs.CIPD_PKGS_PYTHON_LINUX_AMD64...)
 		b.cmd("/bin/bash", "skia/infra/bots/bundle_recipes.sh", specs.PLACEHOLDER_ISOLATED_OUTDIR)
 		b.linuxGceDimensions(MACHINE_TYPE_SMALL)
 		b.addToPATH("cipd_bin_packages", "cipd_bin_packages/bin")
@@ -941,40 +949,6 @@ func (b *jobBuilder) createPushAppsFromWASMDockerImage() {
 			"--alsologtostderr",
 		)
 		b.dep(b.buildTaskDrivers())
-		b.dep(b.createDockerImage(true))
-		b.addToPATH("cipd_bin_packages", "cipd_bin_packages/bin", "go/go/bin")
-		b.isolate("empty.isolate")
-		b.serviceAccount(b.cfg.ServiceAccountCompile)
-		b.linuxGceDimensions(MACHINE_TYPE_MEDIUM)
-		b.usesDocker()
-		b.cache(CACHES_DOCKER...)
-	})
-}
-
-// createPushAppsFromSkiaWASMDockerImages creates and pushes docker images of some apps
-// (eg: debugger-assets) using the skia-release and skia-wasm-release
-// docker images.
-func (b *jobBuilder) createPushAppsFromSkiaWASMDockerImages() {
-	b.addTask(b.Name, func(b *taskBuilder) {
-		// TODO(borenet): Make this task not use Git.
-		b.usesGit()
-		b.cmd(
-			"./push_apps_from_skia_wasm_images",
-			"--project_id", "skia-swarming-bots",
-			"--task_id", specs.PLACEHOLDER_TASK_ID,
-			"--task_name", b.Name,
-			"--workdir", ".",
-			"--gerrit_project", "buildbot",
-			"--gerrit_url", "https://skia-review.googlesource.com",
-			"--repo", specs.PLACEHOLDER_REPO,
-			"--revision", specs.PLACEHOLDER_REVISION,
-			"--patch_issue", specs.PLACEHOLDER_ISSUE,
-			"--patch_set", specs.PLACEHOLDER_PATCHSET,
-			"--patch_server", specs.PLACEHOLDER_CODEREVIEW_SERVER,
-			"--alsologtostderr",
-		)
-		b.dep(b.buildTaskDrivers())
-		b.dep(b.createDockerImage(false))
 		b.dep(b.createDockerImage(true))
 		b.addToPATH("cipd_bin_packages", "cipd_bin_packages/bin", "go/go/bin")
 		b.isolate("empty.isolate")

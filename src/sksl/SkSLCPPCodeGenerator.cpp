@@ -116,7 +116,7 @@ void CPPCodeGenerator::writeBinaryExpression(const BinaryExpression& b,
 }
 
 static String default_value(const Type& type) {
-    if (type.name() == "bool") {
+    if (type.isBoolean()) {
         return "false";
     }
     switch (type.typeKind()) {
@@ -153,7 +153,7 @@ String CPPCodeGenerator::formatRuntimeValue(const Type& type,
                                             const Layout& layout,
                                             const String& cppCode,
                                             std::vector<String>* formatArgs) {
-    if (type.typeKind() == Type::TypeKind::kArray) {
+    if (type.isArray()) {
         String result("[");
         const char* separator = "";
         for (int i = 0; i < type.columns(); i++) {
@@ -220,7 +220,7 @@ String CPPCodeGenerator::formatRuntimeValue(const Type& type,
         }
         return type.name() + "(%f, %f, %f, %f)";
     }
-    if (type.typeKind() == Type::TypeKind::kMatrix) {
+    if (type.isMatrix()) {
         SkASSERT(type.componentType() == *fContext.fFloat_Type ||
                  type.componentType() == *fContext.fHalf_Type);
 
@@ -301,26 +301,12 @@ void CPPCodeGenerator::writeSwizzle(const Swizzle& swizzle) {
     }
 }
 
-void CPPCodeGenerator::setReturnType(int offset, ReturnType typeToSet) {
-    if (fReturnType == ReturnType::kNothing) {
-        fReturnType = typeToSet;
-    } else if (fReturnType != typeToSet) {
-        fErrors.error(offset,
-                      "Fragment processors must not mix sk_OutColor and return statements\n");
-    }
-}
-
 void CPPCodeGenerator::writeVariableReference(const VariableReference& ref) {
     if (fCPPMode) {
         this->write(ref.variable()->name());
         return;
     }
     switch (ref.variable()->modifiers().fLayout.fBuiltin) {
-        case SK_OUTCOLOR_BUILTIN:
-            this->write("%s");
-            fFormatArgs.push_back(String("args.fOutputColor"));
-            this->setReturnType(ref.fOffset, ReturnType::kUsesSkOutColor);
-            break;
         case SK_MAIN_COORDS_BUILTIN:
             this->write("%s");
             fFormatArgs.push_back(String("args.fSampleCoord"));
@@ -373,9 +359,6 @@ void CPPCodeGenerator::writeIfStatement(const IfStatement& s) {
 }
 
 void CPPCodeGenerator::writeReturnStatement(const ReturnStatement& s) {
-    if (fInMain) {
-        this->setReturnType(s.fOffset, ReturnType::kUsesExplicitReturn);
-    }
     INHERITED::writeReturnStatement(s);
 }
 
@@ -413,7 +396,7 @@ void CPPCodeGenerator::writeFieldAccess(const FieldAccess& access) {
 
 int CPPCodeGenerator::getChildFPIndex(const Variable& var) const {
     int index = 0;
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<GlobalVarDeclaration>()) {
             const VarDeclaration& decl =
                                   p->as<GlobalVarDeclaration>().declaration()->as<VarDeclaration>();
@@ -727,7 +710,7 @@ void CPPCodeGenerator::addUniform(const Variable& var) {
         this->writef("        if (%s) {\n    ", String(var.modifiers().fLayout.fWhen).c_str());
     }
     String name(var.name());
-    if (var.type().typeKind() != Type::TypeKind::kArray) {
+    if (!var.type().isArray()) {
         this->writef("        %sVar = args.fUniformHandler->addUniform(&_outer, "
                      "kFragment_GrShaderFlag, %s, \"%s\");\n",
                      HCodeGenerator::FieldName(name.c_str()).c_str(),
@@ -750,7 +733,7 @@ void CPPCodeGenerator::writeInputVars() {
 }
 
 void CPPCodeGenerator::writePrivateVars() {
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<GlobalVarDeclaration>()) {
             const GlobalVarDeclaration& global = p->as<GlobalVarDeclaration>();
             const Variable& var = global.declaration()->as<VarDeclaration>().var();
@@ -788,7 +771,7 @@ void CPPCodeGenerator::writePrivateVars() {
 }
 
 void CPPCodeGenerator::writePrivateVarValues() {
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<GlobalVarDeclaration>()) {
             const GlobalVarDeclaration& global = p->as<GlobalVarDeclaration>();
             const VarDeclaration& decl = global.declaration()->as<VarDeclaration>();
@@ -1016,7 +999,7 @@ bool CPPCodeGenerator::writeEmitCode(std::vector<const Variable*>& uniforms) {
     this->writef("        const %s& _outer = args.fFp.cast<%s>();\n"
                  "        (void) _outer;\n",
                  fFullName.c_str(), fFullName.c_str());
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<GlobalVarDeclaration>()) {
             const GlobalVarDeclaration& global = p->as<GlobalVarDeclaration>();
             const VarDeclaration& decl = global.declaration()->as<VarDeclaration>();
@@ -1045,7 +1028,7 @@ bool CPPCodeGenerator::writeEmitCode(std::vector<const Variable*>& uniforms) {
 
     // Generate mangled names and argument lists for helper functions.
     std::unordered_set<const FunctionDeclaration*> definedHelpers;
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<FunctionDefinition>()) {
             const FunctionDeclaration* decl = &p->as<FunctionDefinition>().declaration();
             definedHelpers.insert(decl);
@@ -1055,7 +1038,7 @@ bool CPPCodeGenerator::writeEmitCode(std::vector<const Variable*>& uniforms) {
 
     // Emit prototypes for defined helper functions that originally had prototypes in the FP file.
     // (If a function was prototyped but never defined, we skip it, since it wasn't prepared above.)
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<FunctionPrototype>()) {
             const FunctionDeclaration* decl = &p->as<FunctionPrototype>().declaration();
             if (definedHelpers.find(decl) != definedHelpers.end()) {
@@ -1152,7 +1135,7 @@ void CPPCodeGenerator::writeSetData(std::vector<const Variable*>& uniforms) {
     }
     if (section) {
         int samplerIndex = 0;
-        for (const auto& p : fProgram.elements()) {
+        for (const ProgramElement* p : fProgram.elements()) {
             if (p->is<GlobalVarDeclaration>()) {
                 const GlobalVarDeclaration& global = p->as<GlobalVarDeclaration>();
                 const VarDeclaration& decl = global.declaration()->as<VarDeclaration>();
@@ -1326,7 +1309,7 @@ void CPPCodeGenerator::writeGetKey() {
     this->writef("void %s::onGetGLSLProcessorKey(const GrShaderCaps& caps, "
                                                 "GrProcessorKeyBuilder* b) const {\n",
                  fFullName.c_str());
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<GlobalVarDeclaration>()) {
             const GlobalVarDeclaration& global = p->as<GlobalVarDeclaration>();
             const VarDeclaration& decl = global.declaration()->as<VarDeclaration>();
@@ -1385,7 +1368,7 @@ void CPPCodeGenerator::writeGetKey() {
                     }
                     break;
                 case Layout::kIdentity_Key:
-                    if (varType.typeKind() != Type::TypeKind::kMatrix) {
+                    if (!varType.isMatrix()) {
                         fErrors.error(var.fOffset, "layout(key=identity) requires matrix type");
                     }
                     this->writef("    b->add32(%s.isIdentity() ? 1 : 0);\n",
@@ -1401,7 +1384,7 @@ void CPPCodeGenerator::writeGetKey() {
 
 bool CPPCodeGenerator::generateCode() {
     std::vector<const Variable*> uniforms;
-    for (const auto& p : fProgram.elements()) {
+    for (const ProgramElement* p : fProgram.elements()) {
         if (p->is<GlobalVarDeclaration>()) {
             const GlobalVarDeclaration& global = p->as<GlobalVarDeclaration>();
             const VarDeclaration& decl = global.declaration()->as<VarDeclaration>();
@@ -1492,10 +1475,6 @@ bool CPPCodeGenerator::generateCode() {
     }
     this->write("    return true;\n"
                 "}\n");
-    this->writef("bool %s::usesExplicitReturn() const {\n"
-                 "    return %s;\n"
-                 "}\n",
-                 fullName, fReturnType == ReturnType::kUsesExplicitReturn ? "true" : "false");
     this->writeClone();
     this->writeDumpInfo();
     this->writeOnTextureSampler();

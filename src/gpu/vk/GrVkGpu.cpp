@@ -23,7 +23,7 @@
 #include "src/gpu/GrNativeRect.h"
 #include "src/gpu/GrPipeline.h"
 #include "src/gpu/GrRenderTarget.h"
-#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrSurfaceDrawContext.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/SkGpuDevice.h"
 #include "src/gpu/SkGr.h"
@@ -45,7 +45,6 @@
 #include "src/gpu/vk/GrVkTransferBuffer.h"
 #include "src/image/SkImage_Gpu.h"
 #include "src/image/SkSurface_Gpu.h"
-#include "src/sksl/SkSLCompiler.h"
 
 #include "include/gpu/vk/GrVkExtensions.h"
 #include "include/gpu/vk/GrVkTypes.h"
@@ -230,9 +229,7 @@ GrVkGpu::GrVkGpu(GrDirectContext* direct, const GrVkBackendContext& backendConte
     SkASSERT(!backendContext.fOwnsInstanceAndDevice);
     SkASSERT(fMemoryAllocator);
 
-    fCompiler = new SkSL::Compiler(fVkCaps->shaderCaps());
-
-    fCaps.reset(SkRef(fVkCaps.get()));
+    this->initCapsAndCompiler(fVkCaps);
 
     VK_CALL(GetPhysicalDeviceProperties(backendContext.fPhysicalDevice, &fPhysDevProps));
     VK_CALL(GetPhysicalDeviceMemoryProperties(backendContext.fPhysicalDevice, &fPhysDevMemProps));
@@ -299,7 +296,6 @@ GrVkGpu::~GrVkGpu() {
     if (!fDisconnected) {
         this->destroyResources();
     }
-    delete fCompiler;
     // We don't delete the memory allocator until the very end of the GrVkGpu lifetime so that
     // clients can continue to delete backend textures even after a context has been abandoned.
     fMemoryAllocator.reset();
@@ -660,7 +656,8 @@ void GrVkGpu::resolveImage(GrSurface* dst, GrVkRenderTarget* src, const SkIRect&
                                      VK_ACCESS_TRANSFER_READ_BIT,
                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
                                      false);
-
+    this->currentCommandBuffer()->addGrSurface(sk_ref_sp<const GrSurface>(src));
+    this->currentCommandBuffer()->addGrSurface(sk_ref_sp<const GrSurface>(dst));
     this->currentCommandBuffer()->resolveImage(this, *src->msaaImage(), *dstImage, 1, &resolveInfo);
 }
 
@@ -1710,6 +1707,7 @@ bool GrVkGpu::onUpdateBackendTexture(const GrBackendTexture& backendTexture,
                                               backendTexture.fMipmapped, data->color());
         }
 
+        cmdBuffer->addGrSurface(texture);
         cmdBuffer->copyBufferToImage(this, static_cast<GrVkTransferBuffer*>(slice.fBuffer),
                                      texture.get(), texture->currentLayout(), regions.count(),
                                      regions.begin());
@@ -1956,8 +1954,10 @@ bool GrVkGpu::compile(const GrProgramDesc& desc, const GrProgramInfo& programInf
         selfDepFlags |= GrVkRenderPass::SelfDependencyFlags::kForInputAttachment;
     }
 
+    GrVkRenderPass::LoadFromResolve loadFromResolve = GrVkRenderPass::LoadFromResolve::kNo;
+
     sk_sp<const GrVkRenderPass> renderPass(this->resourceProvider().findCompatibleRenderPass(
-            &attachmentsDescriptor, attachmentFlags, selfDepFlags));
+            &attachmentsDescriptor, attachmentFlags, selfDepFlags, loadFromResolve));
     if (!renderPass) {
         return false;
     }
@@ -2128,6 +2128,21 @@ bool GrVkGpu::onSubmitToGpu(bool syncCpu) {
     }
 }
 
+void GrVkGpu::onReportSubmitHistograms() {
+#if SK_HISTOGRAMS_ENABLED
+    uint64_t allocatedMemory = fMemoryAllocator->totalAllocatedMemory();
+    uint64_t usedMemory = fMemoryAllocator->totalUsedMemory();
+    SkASSERT(usedMemory <= allocatedMemory);
+    if (allocatedMemory > 0) {
+        SK_HISTOGRAM_PERCENTAGE("VulkanMemoryAllocator.PercentUsed",
+                                (usedMemory * 100) / allocatedMemory);
+    }
+    // allocatedMemory is in bytes and need to be reported it in kilobytes. SK_HISTOGRAM_MEMORY_KB
+    // supports samples up to around 500MB which should support the amounts of memory we allocate.
+    SK_HISTOGRAM_MEMORY_KB("VulkanMemoryAllocator.AmountAllocated", allocatedMemory >> 10);
+#endif
+}
+
 static int get_surface_sample_cnt(GrSurface* surf) {
     if (const GrRenderTarget* rt = surf->asRenderTarget()) {
         return rt->numSamples();
@@ -2180,6 +2195,8 @@ void GrVkGpu::copySurfaceAsCopyImage(GrSurface* dst, GrSurface* src, GrVkImage* 
     copyRegion.dstOffset = { dstPoint.fX, dstPoint.fY, 0 };
     copyRegion.extent = { (uint32_t)srcRect.width(), (uint32_t)srcRect.height(), 1 };
 
+    this->currentCommandBuffer()->addGrSurface(sk_ref_sp<const GrSurface>(src));
+    this->currentCommandBuffer()->addGrSurface(sk_ref_sp<const GrSurface>(dst));
     this->currentCommandBuffer()->copyImage(this,
                                             srcImage,
                                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
@@ -2244,6 +2261,8 @@ void GrVkGpu::copySurfaceAsBlit(GrSurface* dst, GrSurface* src, GrVkImage* dstIm
     blitRegion.dstOffsets[0] = { dstRect.fLeft, dstRect.fTop, 0 };
     blitRegion.dstOffsets[1] = { dstRect.fRight, dstRect.fBottom, 1 };
 
+    this->currentCommandBuffer()->addGrSurface(sk_ref_sp<const GrSurface>(src));
+    this->currentCommandBuffer()->addGrSurface(sk_ref_sp<const GrSurface>(dst));
     this->currentCommandBuffer()->blitImage(this,
                                             *srcImage,
                                             *dstImage,
@@ -2481,71 +2500,15 @@ bool GrVkGpu::onReadPixels(GrSurface* surface, int left, int top, int width, int
     return true;
 }
 
-// The RenderArea bounds we pass into BeginRenderPass must have a start x value that is a multiple
-// of the granularity. The width must also be a multiple of the granularity or eaqual to the width
-// the the entire attachment. Similar requirements for the y and height components.
-void adjust_bounds_to_granularity(SkIRect* dstBounds, const SkIRect& srcBounds,
-                                  const VkExtent2D& granularity, int maxWidth, int maxHeight) {
-    // Adjust Width
-    if ((0 != granularity.width && 1 != granularity.width)) {
-        // Start with the right side of rect so we know if we end up going pass the maxWidth.
-        int rightAdj = srcBounds.fRight % granularity.width;
-        if (rightAdj != 0) {
-            rightAdj = granularity.width - rightAdj;
-        }
-        dstBounds->fRight = srcBounds.fRight + rightAdj;
-        if (dstBounds->fRight > maxWidth) {
-            dstBounds->fRight = maxWidth;
-            dstBounds->fLeft = 0;
-        } else {
-            dstBounds->fLeft = srcBounds.fLeft - srcBounds.fLeft % granularity.width;
-        }
-    } else {
-        dstBounds->fLeft = srcBounds.fLeft;
-        dstBounds->fRight = srcBounds.fRight;
-    }
-
-    // Adjust height
-    if ((0 != granularity.height && 1 != granularity.height)) {
-        // Start with the bottom side of rect so we know if we end up going pass the maxHeight.
-        int bottomAdj = srcBounds.fBottom % granularity.height;
-        if (bottomAdj != 0) {
-            bottomAdj = granularity.height - bottomAdj;
-        }
-        dstBounds->fBottom = srcBounds.fBottom + bottomAdj;
-        if (dstBounds->fBottom > maxHeight) {
-            dstBounds->fBottom = maxHeight;
-            dstBounds->fTop = 0;
-        } else {
-            dstBounds->fTop = srcBounds.fTop - srcBounds.fTop % granularity.height;
-        }
-    } else {
-        dstBounds->fTop = srcBounds.fTop;
-        dstBounds->fBottom = srcBounds.fBottom;
-    }
-}
-
 bool GrVkGpu::beginRenderPass(const GrVkRenderPass* renderPass,
                               const VkClearValue* colorClear,
-                              GrVkRenderTarget* target, GrSurfaceOrigin origin,
-                              const SkIRect& bounds, bool forSecondaryCB) {
+                              GrVkRenderTarget* target,
+                              const SkIRect& renderPassBounds,
+                              bool forSecondaryCB) {
     if (!this->currentCommandBuffer()) {
         return false;
     }
     SkASSERT (!target->wrapsSecondaryCommandBuffer());
-    auto nativeBounds = GrNativeRect::MakeRelativeTo(origin, target->height(), bounds);
-
-    // The bounds we use for the render pass should be of the granularity supported
-    // by the device.
-    const VkExtent2D& granularity = renderPass->granularity();
-    SkIRect adjustedBounds;
-    if ((0 != granularity.width && 1 != granularity.width) ||
-        (0 != granularity.height && 1 != granularity.height)) {
-        adjust_bounds_to_granularity(&adjustedBounds, nativeBounds.asSkIRect(), granularity,
-                                     target->width(), target->height());
-    } else {
-        adjustedBounds = nativeBounds.asSkIRect();
-    }
 
 #ifdef SK_DEBUG
     uint32_t index;
@@ -2562,7 +2525,7 @@ bool GrVkGpu::beginRenderPass(const GrVkRenderPass* renderPass,
     clears[1].depthStencil.stencil = 0;
 
    return this->currentCommandBuffer()->beginRenderPass(this, renderPass, clears, target,
-                                                        adjustedBounds, forSecondaryCB);
+                                                        renderPassBounds, forSecondaryCB);
 }
 
 void GrVkGpu::endRenderPass(GrRenderTarget* target, GrSurfaceOrigin origin,

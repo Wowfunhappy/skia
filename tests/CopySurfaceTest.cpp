@@ -18,8 +18,8 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrImageInfo.h"
-#include "src/gpu/GrRenderTargetContext.h"
 #include "src/gpu/GrSurfaceContext.h"
+#include "src/gpu/GrSurfaceDrawContext.h"
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrTextureProxy.h"
 #include "src/gpu/SkGr.h"
@@ -105,11 +105,9 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(CopySurface, reporter, ctxInfo) {
                                     }
                                 }
 
-                                GrColorType grColorType = SkColorTypeToGrColorType(ii.colorType());
                                 auto dstContext = GrSurfaceContext::Make(dContext,
                                                                          std::move(dstView),
-                                                                         grColorType,
-                                                                         ii.alphaType(), nullptr);
+                                                                         ii.colorInfo());
 
                                 bool result = false;
                                 if (sOrigin == dOrigin) {
@@ -117,8 +115,8 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(CopySurface, reporter, ctxInfo) {
                                                                   srcRect,
                                                                   dstPoint);
                                 } else if (dRenderable == GrRenderable::kYes) {
-                                    SkASSERT(dstContext->asRenderTargetContext());
-                                    result = dstContext->asRenderTargetContext()->blitTexture(
+                                    SkASSERT(dstContext->asFillContext());
+                                    result = dstContext->asFillContext()->blitTexture(
                                             std::move(srcView), srcRect, dstPoint);
                                 }
 

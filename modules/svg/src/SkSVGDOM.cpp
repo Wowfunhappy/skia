@@ -6,6 +6,7 @@
  */
 
 #include "include/core/SkCanvas.h"
+#include "include/core/SkFontMgr.h"
 #include "include/core/SkString.h"
 #include "include/private/SkTo.h"
 #include "include/utils/SkParsePath.h"
@@ -17,6 +18,7 @@
 #include "modules/svg/include/SkSVGEllipse.h"
 #include "modules/svg/include/SkSVGFeColorMatrix.h"
 #include "modules/svg/include/SkSVGFeComposite.h"
+#include "modules/svg/include/SkSVGFeFlood.h"
 #include "modules/svg/include/SkSVGFeTurbulence.h"
 #include "modules/svg/include/SkSVGFilter.h"
 #include "modules/svg/include/SkSVGG.h"
@@ -39,18 +41,6 @@
 #include "src/xml/SkDOM.h"
 
 namespace {
-
-bool SetColorAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                       const char* stringValue) {
-    SkSVGColorType color;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseColor(&color)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGColorValue(color));
-    return true;
-}
 
 bool SetIRIAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                       const char* stringValue) {
@@ -104,18 +94,6 @@ bool SetLengthAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
     return true;
 }
 
-bool SetNumberAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                        const char* stringValue) {
-    SkSVGNumberType number;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseNumber(&number)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGNumberValue(number));
-    return true;
-}
-
 bool SetViewBoxAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
                          const char* stringValue) {
     SkSVGViewBoxType viewBox;
@@ -125,18 +103,6 @@ bool SetViewBoxAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
     }
 
     node->setAttribute(attr, SkSVGViewBoxValue(viewBox));
-    return true;
-}
-
-bool SetStopColorAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                           const char* stringValue) {
-    SkSVGStopColor stopColor;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseStopColor(&stopColor)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGStopColorValue(stopColor));
     return true;
 }
 
@@ -161,18 +127,6 @@ bool SetPointsAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
     }
 
     node->setAttribute(attr, SkSVGPointsValue(points));
-    return true;
-}
-
-bool SetFilterAttribute(const sk_sp<SkSVGNode>& node, SkSVGAttribute attr,
-                        const char* stringValue) {
-    SkSVGFilterType filter;
-    SkSVGAttributeParser parser(stringValue);
-    if (!parser.parseFilter(&filter)) {
-        return false;
-    }
-
-    node->setAttribute(attr, SkSVGFilterValue(filter));
     return true;
 }
 
@@ -266,12 +220,9 @@ struct AttrParseInfo {
 };
 
 SortedDictionaryEntry<AttrParseInfo> gAttributeParseInfo[] = {
-    { "color"              , { SkSVGAttribute::kColor            , SetColorAttribute        }},
     { "cx"                 , { SkSVGAttribute::kCx               , SetLengthAttribute       }},
     { "cy"                 , { SkSVGAttribute::kCy               , SetLengthAttribute       }},
     { "d"                  , { SkSVGAttribute::kD                , SetPathDataAttribute     }},
-    { "fill-opacity"       , { SkSVGAttribute::kFillOpacity      , SetNumberAttribute       }},
-    { "filter"             , { SkSVGAttribute::kFilter           , SetFilterAttribute       }},
     { "filterUnits"        , { SkSVGAttribute::kFilterUnits      ,
                                SetObjectBoundingBoxUnitsAttribute }},
     // focal point x & y
@@ -279,7 +230,6 @@ SortedDictionaryEntry<AttrParseInfo> gAttributeParseInfo[] = {
     { "fy"                 , { SkSVGAttribute::kFy               , SetLengthAttribute       }},
     { "height"             , { SkSVGAttribute::kHeight           , SetLengthAttribute       }},
     { "offset"             , { SkSVGAttribute::kOffset           , SetLengthAttribute       }},
-    { "opacity"            , { SkSVGAttribute::kOpacity          , SetNumberAttribute       }},
     { "patternTransform"   , { SkSVGAttribute::kPatternTransform , SetTransformAttribute    }},
     { "points"             , { SkSVGAttribute::kPoints           , SetPointsAttribute       }},
     { "preserveAspectRatio", { SkSVGAttribute::kPreserveAspectRatio,
@@ -287,12 +237,6 @@ SortedDictionaryEntry<AttrParseInfo> gAttributeParseInfo[] = {
     { "r"                  , { SkSVGAttribute::kR                , SetLengthAttribute       }},
     { "rx"                 , { SkSVGAttribute::kRx               , SetLengthAttribute       }},
     { "ry"                 , { SkSVGAttribute::kRy               , SetLengthAttribute       }},
-    { "stop-color"         , { SkSVGAttribute::kStopColor        , SetStopColorAttribute    }},
-    { "stop-opacity"       , { SkSVGAttribute::kStopOpacity      , SetNumberAttribute       }},
-    { "stroke-dashoffset"  , { SkSVGAttribute::kStrokeDashOffset , SetLengthAttribute       }},
-    { "stroke-miterlimit"  , { SkSVGAttribute::kStrokeMiterLimit , SetNumberAttribute       }},
-    { "stroke-opacity"     , { SkSVGAttribute::kStrokeOpacity    , SetNumberAttribute       }},
-    { "stroke-width"       , { SkSVGAttribute::kStrokeWidth      , SetLengthAttribute       }},
     { "style"              , { SkSVGAttribute::kUnknown          , SetStyleAttributes       }},
     { "text"               , { SkSVGAttribute::kText             , SetStringAttribute       }},
     { "transform"          , { SkSVGAttribute::kTransform        , SetTransformAttribute    }},
@@ -315,6 +259,7 @@ SortedDictionaryEntry<sk_sp<SkSVGNode>(*)()> gTagFactories[] = {
     { "ellipse"       , []() -> sk_sp<SkSVGNode> { return SkSVGEllipse::Make();        }},
     { "feColorMatrix" , []() -> sk_sp<SkSVGNode> { return SkSVGFeColorMatrix::Make();  }},
     { "feComposite"   , []() -> sk_sp<SkSVGNode> { return SkSVGFeComposite::Make();    }},
+    { "feFlood"       , []() -> sk_sp<SkSVGNode> { return SkSVGFeFlood::Make();        }},
     { "feTurbulence"  , []() -> sk_sp<SkSVGNode> { return SkSVGFeTurbulence::Make();   }},
     { "filter"        , []() -> sk_sp<SkSVGNode> { return SkSVGFilter::Make();         }},
     { "g"             , []() -> sk_sp<SkSVGNode> { return SkSVGG::Make();              }},
@@ -329,6 +274,7 @@ SortedDictionaryEntry<sk_sp<SkSVGNode>(*)()> gTagFactories[] = {
     { "stop"          , []() -> sk_sp<SkSVGNode> { return SkSVGStop::Make();           }},
     { "svg"           , []() -> sk_sp<SkSVGNode> { return SkSVGSVG::Make();            }},
     { "text"          , []() -> sk_sp<SkSVGNode> { return SkSVGText::Make();           }},
+    { "tspan"         , []() -> sk_sp<SkSVGNode> { return SkSVGTSpan::Make();          }},
     { "use"           , []() -> sk_sp<SkSVGNode> { return SkSVGUse::Make();            }},
 };
 
@@ -389,11 +335,12 @@ sk_sp<SkSVGNode> construct_svg_node(const SkDOM& dom, const ConstructionContext&
     const SkDOM::Type elemType = dom.getType(xmlNode);
 
     if (elemType == SkDOM::kText_Type) {
+        // Text literals require special handling.
         SkASSERT(dom.countChildren(xmlNode) == 0);
-        // TODO: add type conversion helper to SkSVGNode
-        if (ctx.fParent->tag() == SkSVGTag::kText) {
-            static_cast<SkSVGText*>(ctx.fParent)->setText(SkString(dom.getName(xmlNode)));
-        }
+        auto txt = SkSVGTextLiteral::Make();
+        txt->setText(SkString(dom.getName(xmlNode)));
+        ctx.fParent->appendChild(std::move(txt));
+
         return nullptr;
     }
 
@@ -427,47 +374,42 @@ sk_sp<SkSVGNode> construct_svg_node(const SkDOM& dom, const ConstructionContext&
 
 } // anonymous namespace
 
-SkSVGDOM::SkSVGDOM()
-    : fContainerSize(SkSize::Make(0, 0)) {
+SkSVGDOM::Builder& SkSVGDOM::Builder::setFontManager(sk_sp<SkFontMgr> fmgr) {
+    fFontMgr = std::move(fmgr);
+    return *this;
 }
 
-sk_sp<SkSVGDOM> SkSVGDOM::MakeFromDOM(const SkDOM& xmlDom) {
-    sk_sp<SkSVGDOM> dom = sk_make_sp<SkSVGDOM>();
-
-    ConstructionContext ctx(&dom->fIDMapper);
-    dom->fRoot = construct_svg_node(xmlDom, ctx, xmlDom.getRootNode());
-
-    // Reset the default container size to match the intrinsic SVG size.
-    dom->setContainerSize(dom->intrinsicSize());
-
-    return dom;
-}
-
-sk_sp<SkSVGDOM> SkSVGDOM::MakeFromStream(SkStream& svgStream) {
+sk_sp<SkSVGDOM> SkSVGDOM::Builder::make(SkStream& str) const {
     SkDOM xmlDom;
-    if (!xmlDom.build(svgStream)) {
+    if (!xmlDom.build(str)) {
         return nullptr;
     }
 
-    return MakeFromDOM(xmlDom);
+    SkSVGIDMapper mapper;
+    ConstructionContext ctx(&mapper);
+
+    auto root = construct_svg_node(xmlDom, ctx, xmlDom.getRootNode());
+    if (!root || root->tag() != SkSVGTag::kSvg) {
+        return nullptr;
+    }
+
+    return sk_sp<SkSVGDOM>(new SkSVGDOM(sk_sp<SkSVGSVG>(static_cast<SkSVGSVG*>(root.release())),
+                                        std::move(fFontMgr), std::move(mapper)));
 }
+
+SkSVGDOM::SkSVGDOM(sk_sp<SkSVGSVG> root, sk_sp<SkFontMgr> fmgr, SkSVGIDMapper&& mapper)
+    : fRoot(std::move(root))
+    , fFontMgr(std::move(fmgr))
+    , fIDMapper(std::move(mapper))
+    , fContainerSize(fRoot->intrinsicSize(SkSVGLengthContext(SkSize::Make(0, 0))))
+{}
 
 void SkSVGDOM::render(SkCanvas* canvas) const {
     if (fRoot) {
         SkSVGLengthContext       lctx(fContainerSize);
         SkSVGPresentationContext pctx;
-        fRoot->render(SkSVGRenderContext(canvas, fIDMapper, lctx, pctx, nullptr));
+        fRoot->render(SkSVGRenderContext(canvas, fFontMgr, fIDMapper, lctx, pctx, nullptr));
     }
-}
-
-SkSize SkSVGDOM::intrinsicSize() const {
-    if (!fRoot || fRoot->tag() != SkSVGTag::kSvg) {
-        return SkSize::Make(0, 0);
-    }
-
-    // Intrinsic sizes are never relative, so the viewport size is irrelevant.
-    const SkSVGLengthContext lctx(SkSize::Make(0, 0));
-    return static_cast<const SkSVGSVG*>(fRoot.get())->intrinsicSize(lctx);
 }
 
 const SkSize& SkSVGDOM::containerSize() const {
@@ -482,10 +424,6 @@ void SkSVGDOM::setContainerSize(const SkSize& containerSize) {
 sk_sp<SkSVGNode>* SkSVGDOM::findNodeById(const char* id) {
     SkString idStr(id);
     return this->fIDMapper.find(idStr);
-}
-
-void SkSVGDOM::setRoot(sk_sp<SkSVGNode> root) {
-    fRoot = std::move(root);
 }
 
 // TODO(fuego): move this to SkSVGNode or its own CU.

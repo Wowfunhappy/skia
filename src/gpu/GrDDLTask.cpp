@@ -13,14 +13,18 @@
 
 GrDDLTask::GrDDLTask(GrDrawingManager* drawingMgr,
                      sk_sp<GrRenderTargetProxy> ddlTarget,
-                     sk_sp<const SkDeferredDisplayList> ddl)
+                     sk_sp<const SkDeferredDisplayList> ddl,
+                     SkIPoint offset)
         : fDDL(std::move(ddl))
-        , fDDLTarget(std::move(ddlTarget)) {
-    for (auto& task : fDDL->priv().renderTasks()) {
+        , fDDLTarget(std::move(ddlTarget))
+        , fOffset(offset) {
+    (void) fOffset;  // fOffset will be used shortly
+
+    for (const sk_sp<GrRenderTask>& task : fDDL->priv().renderTasks()) {
         SkASSERT(task->isClosed());
 
         for (int i = 0; i < task->numTargets(); ++i) {
-            this->addTarget(drawingMgr, task->target(i));
+            drawingMgr->setLastRenderTask(task->target(i).proxy(), task.get());
         }
     }
 
@@ -47,11 +51,8 @@ void GrDDLTask::disown(GrDrawingManager* drawingManager) {
 }
 
 bool GrDDLTask::onIsUsed(GrSurfaceProxy* proxy) const {
-    // In the ctor we've added all the targets from the sub-renderTasks into the targets list
-    // of the this task. The base class' 'isUsed' call checks those so we don't want to check
-    // them again here. The following 'onIsUsed' methods just check the other (non-target) proxies.
     for (auto& task : fDDL->priv().renderTasks()) {
-        if (task->onIsUsed(proxy)) {
+        if (task->isUsed(proxy)) {
             return true;
         }
     }

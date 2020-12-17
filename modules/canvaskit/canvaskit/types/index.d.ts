@@ -264,6 +264,12 @@ export interface CanvasKit {
     setCurrentContext(ctx: WebGLContextHandle): void;
 
     /**
+     * Deletes the associated WebGLContext. Function not available on the CPU version.
+     * @param ctx
+     */
+    deleteContext(ctx: WebGLContextHandle): void;
+
+    /**
      * Returns the max size of the global cache for bitmaps used by CanvasKit.
      */
     getDecodeCacheLimitBytes(): number;
@@ -291,6 +297,19 @@ export interface CanvasKit {
      * @param height
      */
     MakeCanvas(width: number, height: number): EmulatedCanvas2D;
+
+    /**
+     * Returns an image with the given pixel data and format.
+     * Note that we will always make a copy of the pixel data, because of inconsistencies in
+     * behavior between GPU and CPU (i.e. the pixel data will be turned into a GPU texture and
+     * not modifiable after creation).
+     *
+     * @param info
+     * @param bytes - bytes representing the pixel data.
+     * @param bytesPerRow
+     */
+    MakeImage(info: ImageInfo, bytes: number[] | Uint8Array | Uint8ClampedArray,
+              bytesPerRow: number): Image | null;
 
     /**
      * Return an Image backed by the encoded data, but attempt to defer decoding until the image
@@ -326,9 +345,10 @@ export interface CanvasKit {
      * @param indices
      * @param isVolatile
      */
-    MakeVertices(mode: VertexMode, positions: number[][], textureCoordinates?: number[][] | null,
-                   colors?: Float32Array | ColorIntArray | null, indices?: number[] | null,
-                   isVolatile?: boolean): Vertices;
+    MakeVertices(mode: VertexMode, positions: InputFlattenedPointArray,
+                 textureCoordinates?: InputFlattenedPointArray | null,
+                 colors?: Float32Array | ColorIntArray | null, indices?: number[] | null,
+                 isVolatile?: boolean): Vertices;
 
     /**
      * Returns a Skottie animation built from the provided json string.
@@ -398,10 +418,12 @@ export interface CanvasKit {
     readonly ClipOp: ClipOpEnumValues;
     readonly ColorType: ColorTypeEnumValues;
     readonly FillType: FillTypeEnumValues;
+    readonly FilterMode: FilterModeEnumValues;
     readonly FilterQuality: FilterQualityEnumValues;
     readonly FontEdging: FontEdgingEnumValues;
     readonly FontHinting: FontHintingEnumValues;
     readonly ImageFormat: ImageFormatEnumValues;
+    readonly MipmapMode: MipmapModeEnumValues;
     readonly PaintStyle: PaintStyleEnumValues;
     readonly PathOp: PathOpEnumValues;
     readonly PointMode: PointModeEnumValues;
@@ -482,12 +504,6 @@ export interface EmbindObject<T extends EmbindObject<T>> {
     deleteAfter(): void;
     isAliasOf(other: any): boolean;
     isDeleted(): boolean;
-}
-
-export interface EmbindSingleton {
-    // Technically Embind includes the other methods too, but they should not be called for a
-    // singleton.
-    isAliasOf(other: any): boolean;
 }
 
 /**
@@ -1024,6 +1040,33 @@ export interface Canvas extends EmbindObject<Canvas> {
     drawImage(img: Image, left: number, top: number, paint?: Paint): void;
 
     /**
+     * Draws the given image with its top-left corner at (left, top) using the current clip,
+     * the current matrix. It will use the cubic sampling options B and C if necessary.
+     * @param img
+     * @param left
+     * @param top
+     * @param B - See CubicResampler in SkSamplingOptions.h for more information
+     * @param C - See CubicResampler in SkSamplingOptions.h for more information
+     * @param paint
+     */
+    drawImageCubic(img: Image, left: number, top: number, B: number, C: number,
+                   paint: Paint | null): void;
+
+    /**
+     * Draws the given image with its top-left corner at (left, top) using the current clip,
+     * the current matrix. It will use the provided sampling options if necessary.
+     * @param img
+     * @param left
+     * @param top
+     * @param fm - The filter mode.
+     * @param mm - The mipmap mode. Note: for settings other than None, the image must have mipmaps
+     *             calculated with makeCopyWithDefaultMipmaps;
+     * @param paint
+     */
+    drawImageOptions(img: Image, left: number, top: number, fm: FilterMode,
+                     mm: MipmapMode, paint: Paint | null): void;
+
+    /**
      * Draws the current frame of the given animated image with its top-left corner at
      * (left, top) using the current clip, the current matrix, and optionally-provided paint.
      * @param aImg
@@ -1055,6 +1098,33 @@ export interface Canvas extends EmbindObject<Canvas> {
      */
     drawImageRect(img: Image, src: InputRect, dest: InputRect, paint: Paint,
                   fastSample?: boolean): void;
+
+    /**
+     * Draws sub-rectangle src from provided image, scaled and translated to fill dst rectangle.
+     * It will use the cubic sampling options B and C if necessary.
+     * @param img
+     * @param src
+     * @param dest
+     * @param B - See CubicResampler in SkSamplingOptions.h for more information
+     * @param C - See CubicResampler in SkSamplingOptions.h for more information
+     * @param paint
+     */
+    drawImageRectCubic(img: Image, src: InputRect, dest: InputRect,
+                       B: number, C: number, paint?: Paint): void;
+
+    /**
+     * Draws sub-rectangle src from provided image, scaled and translated to fill dst rectangle.
+     * It will use the provided sampling options if necessary.
+     * @param img
+     * @param src
+     * @param dest
+     * @param fm - The filter mode.
+     * @param mm - The mipmap mode. Note: for settings other than None, the image must have mipmaps
+     *             calculated with makeCopyWithDefaultMipmaps;
+     * @param paint
+     */
+    drawImageRectOptions(img: Image, src: InputRect, dest: InputRect, fm: FilterMode,
+                         mm: MipmapMode, paint?: Paint): void;
 
     /**
      * Draws line segment from (x0, y0) to (x1, y1) using the current clip, current matrix,
@@ -1555,17 +1625,50 @@ export interface Image extends EmbindObject<Image> {
     encodeToDataWithFormat(fmt: EncodedImageFormat, quality: number): Data;
 
     /**
+     * Returns the color space associated with this object.
+     * It is the user's responsibility to call delete() on this after it has been used.
+     */
+    getColorSpace(): ColorSpace;
+
+    /**
+     * Returns the width, height, colorType and alphaType associated with this image.
+     * Colorspace is separate so as to not accidentally leak that memory.
+     */
+    getImageInfo(): PartialImageInfo;
+
+    /**
      * Return the height in pixels of the image.
      */
     height(): number;
 
     /**
-     * Returns this image as a shader with the specified tiling.
+     * Returns an Image with the same "base" pixels as the this image, but with mipmap levels
+     * automatically generated and attached.
+     */
+    makeCopyWithDefaultMipmaps(): Image;
+
+    /**
+     * Returns this image as a shader with the specified tiling. It will use cubic sampling.
      * @param tx - tile mode in the x direction.
      * @param ty - tile mode in the y direction.
+     * @param B - See CubicResampler in SkSamplingOptions.h for more information
+     * @param C - See CubicResampler in SkSamplingOptions.h for more information
      * @param localMatrix
      */
-    makeShader(tx: TileMode, ty: TileMode, localMatrix?: InputMatrix): Shader;
+    makeShaderCubic(tx: TileMode, ty: TileMode, B: number, C: number,
+                    localMatrix?: InputMatrix): Shader;
+
+    /**
+     * Returns this image as a shader with the specified tiling. It will use cubic sampling.
+     * @param tx - tile mode in the x direction.
+     * @param ty - tile mode in the y direction.
+     * @param fm - The filter mode.
+     * @param mm - The mipmap mode. Note: for settings other than None, the image must have mipmaps
+     *             calculated with makeCopyWithDefaultMipmaps;
+     * @param localMatrix
+     */
+    makeShaderOptions(tx: TileMode, ty: TileMode, fm: FilterMode, mm: MipmapMode,
+                    localMatrix?: InputMatrix): Shader;
 
     /**
      * Returns a TypedArray containing the pixels reading starting at (srcX, srcY) and does not
@@ -1607,6 +1710,13 @@ export interface ImageInfo {
     width: number;
 }
 
+export interface PartialImageInfo {
+    alphaType: AlphaType;
+    colorType: ColorType;
+    height: number;
+    width: number;
+}
+
 /**
  * See SkMaskFilter.h for more on this class. The objects are opaque.
  */
@@ -1632,12 +1742,6 @@ export interface Paint extends EmbindObject<Paint> {
      * (sRGB gamut, and encoded with the sRGB transfer function).
      */
     getColor(): Color;
-
-    /**
-     * Returns the image filtering level.
-     * [deprecated] This will be removed in an upcoming release.
-     */
-    getFilterQuality(): FilterQuality;
 
     /**
      * Returns the geometry drawn at the beginning and end of strokes.
@@ -1713,13 +1817,6 @@ export interface Paint extends EmbindObject<Paint> {
      * @param colorSpace - defaults to sRGB.
      */
     setColorInt(color: ColorInt, colorSpace?: ColorSpace): void;
-
-    /**
-     * Sets the image filtering level.
-     * [deprecated] This will be removed in an upcoming release.
-     * @param quality
-     */
-    setFilterQuality(quality: FilterQuality): void;
 
     /**
      * Sets the current image filter, replacing the existing one if there was one.
@@ -1821,11 +1918,10 @@ export interface Path extends EmbindObject<Path> {
      * in pts array. If close is true, appends kClose_Verb to Path, connecting
      * pts[count - 1] and pts[0].
      * Returns the modified path for easier chaining.
-     * @param points - either an array of 2-arrays representing points or a malloc'd object of
-     *                 length n to represent 2*n points. Even indices are x, odd are y.
-     * @param close - should add a line connecting last point to the first point.
+     * @param points
+     * @param close - if true, will add a line connecting last point to the first point.
      */
-    addPoly(points: MallocObj | number[][], close: boolean): Path;
+    addPoly(points: InputFlattenedPointArray, close: boolean): Path;
 
     /**
      * Adds Rect to Path, appending kMove_Verb, three kLine_Verb, and kClose_Verb,
@@ -3401,9 +3497,10 @@ export type InputFlattenedRectangleArray = MallocObj | FlattenedRectangleArray |
 /**
  * Some APIs accept a flattened array of colors in one of two ways - groups of 4 float values for
  * r, g, b, a or just integers that have 8 bits for each these. CanvasKit will detect which one
- * it is and act accordingly.
+ * it is and act accordingly. Additionally, this can be an array of Float32Arrays of length 4
+ * (e.g. Color). This is convenient for things like gradients when matching up colors to stops.
  */
-export type InputFlexibleColorArray = Float32Array | Uint32Array;
+export type InputFlexibleColorArray = Float32Array | Uint32Array | Float32Array[];
 /**
  * CanvasKit APIs accept all of these matrix types. Under the hood, we generally use 4x4 matrices.
  */
@@ -3433,15 +3530,17 @@ export type AlphaType = EmbindEnumEntity;
 export type BlendMode = EmbindEnumEntity;
 export type BlurStyle = EmbindEnumEntity;
 export type ClipOp = EmbindEnumEntity;
-export type ColorSpace = EmbindSingleton;
+export type ColorSpace = EmbindObject<ColorSpace>;
 export type ColorType = EmbindEnumEntity;
 export type EncodedImageFormat = EmbindEnumEntity;
 export type FillType = EmbindEnumEntity;
+export type FilterMode = EmbindEnumEntity;
 export type FilterQuality = EmbindEnumEntity;
 export type FontEdging = EmbindEnumEntity;
 export type FontHinting = EmbindEnumEntity;
-export type PathOp = EmbindEnumEntity;
+export type MipmapMode = EmbindEnumEntity;
 export type PaintStyle = EmbindEnumEntity;
+export type PathOp = EmbindEnumEntity;
 export type PointMode = EmbindEnumEntity;
 export type StrokeCap = EmbindEnumEntity;
 export type StrokeJoin = EmbindEnumEntity;
@@ -3519,9 +3618,17 @@ export interface ClipOpEnumValues extends EmbindEnum {
  * The currently supported color spaces. These are all singleton values.
  */
 export interface ColorSpaceEnumValues { // not a typical enum, but effectively like one.
+    // These are all singleton values - don't call delete on them.
     readonly SRGB: ColorSpace;
     readonly DISPLAY_P3: ColorSpace;
     readonly ADOBE_RGB: ColorSpace;
+
+    /**
+     * Returns true if the two color spaces are equal.
+     * @param a
+     * @param b
+     */
+    Equals(a: ColorSpace, b: ColorSpace): boolean;
 }
 
 export interface ColorTypeEnumValues extends EmbindEnum {
@@ -3547,6 +3654,11 @@ export interface DecorationStyleEnumValues extends EmbindEnum {
 export interface FillTypeEnumValues extends EmbindEnum {
     Winding: FillType;
     EvenOdd: FillType;
+}
+
+export interface FilterModeEnumValues extends EmbindEnum {
+    Linear: FilterMode;
+    Nearest: FilterMode;
 }
 
 export interface FilterQualityEnumValues extends EmbindEnum {
@@ -3607,6 +3719,12 @@ export interface ImageFormatEnumValues extends EmbindEnum {
     PNG: EncodedImageFormat;
     JPEG: EncodedImageFormat;
     WEBP: EncodedImageFormat;
+}
+
+export interface MipmapModeEnumValues extends EmbindEnum {
+    None: MipmapMode;
+    Nearest: MipmapMode;
+    Linear: MipmapMode;
 }
 
 export interface PaintStyleEnumValues extends EmbindEnum {

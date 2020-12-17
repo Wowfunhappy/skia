@@ -226,27 +226,22 @@ void SkPictureRecord::didConcat44(const SkM44& m) {
     this->INHERITED::didConcat44(m);
 }
 
+void SkPictureRecord::didSetM44(const SkM44& m) {
+    this->validate(fWriter.bytesWritten(), 0);
+    // op + matrix
+    size_t size = kUInt32Size + 16 * sizeof(SkScalar);
+    size_t initialOffset = this->addDraw(SET_M44, &size);
+    fWriter.write(SkMatrixPriv::M44ColMajor(m), 16 * sizeof(SkScalar));
+    this->validate(initialOffset, size);
+    this->INHERITED::didSetM44(m);
+}
+
 void SkPictureRecord::didScale(SkScalar x, SkScalar y) {
-    this->didConcat(SkMatrix::Scale(x, y));
+    this->didConcat44(SkM44::Scale(x, y));
 }
 
 void SkPictureRecord::didTranslate(SkScalar x, SkScalar y) {
-    this->didConcat(SkMatrix::Translate(x, y));
-}
-
-void SkPictureRecord::didConcat(const SkMatrix& matrix) {
-    switch (matrix.getType()) {
-        case SkMatrix::kTranslate_Mask:
-            this->recordTranslate(matrix);
-            break;
-        case SkMatrix::kScale_Mask:
-            this->recordScale(matrix);
-            break;
-        default:
-            this->recordConcat(matrix);
-            break;
-    }
-    this->INHERITED::didConcat(matrix);
+    this->didConcat44(SkM44::Translate(x, y));
 }
 
 void SkPictureRecord::recordConcat(const SkMatrix& matrix) {
@@ -256,16 +251,6 @@ void SkPictureRecord::recordConcat(const SkMatrix& matrix) {
     size_t initialOffset = this->addDraw(CONCAT, &size);
     this->addMatrix(matrix);
     this->validate(initialOffset, size);
-}
-
-void SkPictureRecord::didSetMatrix(const SkMatrix& matrix) {
-    this->validate(fWriter.bytesWritten(), 0);
-    // op + matrix
-    size_t size = kUInt32Size + SkMatrixPriv::WriteToMemory(matrix, nullptr);
-    size_t initialOffset = this->addDraw(SET_MATRIX, &size);
-    this->addMatrix(matrix);
-    this->validate(initialOffset, size);
-    this->INHERITED::didSetMatrix(matrix);
 }
 
 static bool clipOpExpands(SkClipOp op) {

@@ -13,6 +13,8 @@
 
 #include "tests/Test.h"
 
+#if defined(SK_ENABLE_SKSL_INTERPRETER)
+
 static bool nearly_equal(const float a[], const float b[], int count) {
     for (int i = 0; i < count; ++i) {
         if (!SkScalarNearlyEqual(a[i], b[i])) {
@@ -24,7 +26,8 @@ static bool nearly_equal(const float a[], const float b[], int count) {
 
 void test(skiatest::Reporter* r, const char* src, float* in, float* expected,
           bool exactCompare = true) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
                                                                      SkSL::String(src), settings);
@@ -68,7 +71,8 @@ void test(skiatest::Reporter* r, const char* src, float* in, float* expected,
 }
 
 void vec_test(skiatest::Reporter* r, const char* src) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
                                                                      SkSL::String(src), settings);
@@ -132,7 +136,8 @@ void vec_test(skiatest::Reporter* r, const char* src) {
 
 void test(skiatest::Reporter* r, const char* src, float inR, float inG, float inB, float inA,
           float expectedR, float expectedG, float expectedB, float expectedA) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
                                                                      SkSL::String(src), settings);
@@ -213,10 +218,6 @@ DEF_TEST(SkSLInterpreterDivide, r) {
 }
 
 DEF_TEST(SkSLInterpreterRemainder, r) {
-    test(r, "void main(inout half4 color) { color.r = color.r % color.g; }", 3.125, 2, 0, 0,
-         1.125, 2, 0, 0);
-    test(r, "void main(inout half4 color) { color %= half4(1, 2, 3, 4); }", 9.5, 9.5, 9.5, 9.5,
-         0.5, 1.5, 0.5, 1.5);
     test(r, "void main(inout half4 color) { color.r = int(color.r) % int(color.g); }", 8, 3, 0, 0,
          2, 3, 0, 0);
     test(r, "void main(inout half4 color) { color.rg = half2(int2(int(color.r), int(color.g)) % "
@@ -596,13 +597,13 @@ DEF_TEST(SkSLInterpreterCompound, r) {
         "RectAndColor copy_big(RectAndColor r) { RectAndColor s; s = r; return s; }\n"
 
         // Same for arrays, including some non-constant indexing
-        "float tempFloats[8];\n"
         "int median(int a[15]) { return a[7]; }\n"
-        "float[8] sums(float a[8]) {\n"
-        "  float tempFloats[8];\n"
+
+        "float tempFloats[8];\n"
+        "float sums(float a[8]) {\n"
         "  tempFloats[0] = a[0];\n"
         "  for (int i = 1; i < 8; ++i) { tempFloats[i] = tempFloats[i - 1] + a[i]; }\n"
-        "  return tempFloats;\n"
+        "  return tempFloats[7];\n"
         "}\n"
 
         // Uniforms, array-of-structs, dynamic indices
@@ -619,7 +620,8 @@ DEF_TEST(SkSLInterpreterCompound, r) {
         "  }\n"
         "}\n";
 
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     settings.fRemoveDeadFunctions = false;
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
@@ -665,11 +667,9 @@ DEF_TEST(SkSLInterpreterCompound, r) {
 
     {
         float in[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-        float out[8] = { 0 };
-        SkAssertResult(byteCode->run(sums, in, 8, out, 8, fRects, 16));
-        for (int i = 0; i < 8; ++i) {
-            REPORTER_ASSERT(r, out[i] == static_cast<float>((i + 1) * (i + 2) / 2));
-        }
+        float out = 0;
+        SkAssertResult(byteCode->run(sums, in, 8, &out, 1, fRects, 16));
+        REPORTER_ASSERT(r, out == static_cast<float>((7 + 1) * (7 + 2) / 2));
     }
 
     {
@@ -697,7 +697,8 @@ DEF_TEST(SkSLInterpreterCompound, r) {
 }
 
 static void expect_failure(skiatest::Reporter* r, const char* src) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     auto program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
                                            SkSL::String(src), settings);
@@ -709,7 +710,8 @@ static void expect_failure(skiatest::Reporter* r, const char* src) {
 }
 
 static void expect_run_failure(skiatest::Reporter* r, const char* src, float* in) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     auto program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
                                            SkSL::String(src), settings);
@@ -738,7 +740,8 @@ DEF_TEST(SkSLInterpreterEarlyReturn, r) {
     // Unlike returns in loops, returns in conditionals should work.
     const char* src = "float main(float x, float y) { if (x < y) { return x; } return y; }";
 
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
                                                                      SkSL::String(src),
                                                                      SkSL::Program::Settings{});
@@ -770,11 +773,10 @@ DEF_TEST(SkSLInterpreterEarlyReturn, r) {
 }
 
 DEF_TEST(SkSLInterpreterArrayBounds, r) {
-    // Out of bounds array access at compile time
-    expect_failure(r, "float main(float x[4]) { return x[-1]; }");
-    expect_failure(r, "float2 main(float2 x[2]) { return x[2]; }");
+    // Out of bounds array access at compile time prevents a program from being generated at all
+    // (tested in ArrayIndexOutOfRange.sksl).
 
-    // Out of bounds array access at runtime is pinned, and we don't update any inout data
+    // Out of bounds array access at runtime is pinned, and we don't update any inout data.
     float in[3] = { -1.0f, 1.0f, 2.0f };
     expect_run_failure(r, "void main(inout float data[3]) { data[int(data[0])] = 0; }", in);
     REPORTER_ASSERT(r, in[0] == -1.0f && in[1] == 1.0f && in[2] == 2.0f);
@@ -796,7 +798,8 @@ DEF_TEST(SkSLInterpreterFunctions, r) {
         "float dot3_test(float x) { return dot(float3(x, x + 1, x + 2), float3(1, -1, 2)); }\n"
         "float dot2_test(float x) { return dot(float2(x, x + 1), float2(1, -1)); }\n";
 
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     settings.fRemoveDeadFunctions = false;
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(SkSL::Program::kGeneric_Kind,
@@ -1052,7 +1055,8 @@ private:
 DEF_TEST(SkSLInterpreterExternalValues, r) {
     const char* json = "{ \"value1\": 12, \"child\": { \"value2\": true, \"value3\": 5.5 } }";
     skjson::DOM dom(json, strlen(json));
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     const char* src = "float main() {"
                       "    outValue = 152;"
@@ -1084,7 +1088,8 @@ DEF_TEST(SkSLInterpreterExternalValues, r) {
 }
 
 DEF_TEST(SkSLInterpreterExternalValuesVector, r) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     const char* src = "void main() {"
                       "    value *= 2;"
@@ -1146,7 +1151,8 @@ private:
 };
 
 DEF_TEST(SkSLInterpreterExternalValuesCall, r) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     const char* src = "float main() {"
                       "    return external(25);"
@@ -1207,7 +1213,8 @@ private:
 
 
 DEF_TEST(SkSLInterpreterExternalValuesVectorCall, r) {
-    SkSL::Compiler compiler(/*caps=*/nullptr);
+    GrShaderCaps caps(GrContextOptions{});
+    SkSL::Compiler compiler(&caps);
     SkSL::Program::Settings settings;
     const char* src =
             "float4 main() {"
@@ -1244,3 +1251,5 @@ DEF_TEST(SkSLInterpreterExternalValuesVectorCall, r) {
         printf("%s\n%s", src, compiler.errorText().c_str());
     }
 }
+
+#endif // SK_ENABLE_SKSL_INTERPRETER

@@ -36,45 +36,27 @@ class Variable;
  */
 class Inliner {
 public:
-    Inliner() {}
+    Inliner(const Context* context, const ShaderCapsClass* caps) : fContext(context), fCaps(caps) {}
 
-    void reset(const Context*,
-               ModifiersPool* modifiers,
-               const Program::Settings*,
-               const ShaderCapsClass* caps);
-
-    /**
-     * Processes the passed-in FunctionCall expression. The FunctionCall expression should be
-     * replaced with `fReplacementExpr`. If non-null, `fInlinedBody` should be inserted immediately
-     * above the statement containing the inlined expression.
-     */
-    struct InlinedCall {
-        std::unique_ptr<Block> fInlinedBody;
-        std::unique_ptr<Expression> fReplacementExpr;
-    };
-    InlinedCall inlineCall(FunctionCall*, SymbolTable*, const FunctionDeclaration* caller);
-
-    /** Adds a scope to inlined bodies returned by `inlineCall`, if one is required. */
-    void ensureScopedBlocks(Statement* inlinedBody, Statement* parentStmt);
-
-    /** Checks whether inlining is viable for a FunctionCall, modulo recursion and function size. */
-    bool isSafeToInline(const FunctionDefinition* functionDef);
-
-    /** Checks whether a function's size exceeds the inline threshold from Settings. */
-    bool isLargeFunction(const FunctionDefinition* functionDef);
+    void reset(ModifiersPool* modifiers, const Program::Settings*);
 
     /** Inlines any eligible functions that are found. Returns true if any changes are made. */
-    bool analyze(Program& program);
+    bool analyze(const std::vector<std::unique_ptr<ProgramElement>>& elements,
+                 std::shared_ptr<SymbolTable> symbols,
+                 ProgramUsage* usage);
 
 private:
     using VariableRewriteMap = std::unordered_map<const Variable*, std::unique_ptr<Expression>>;
 
-    String uniqueNameForInlineVar(const String& baseName, SymbolTable* symbolTable);
+    String uniqueNameForInlineVar(String baseName, SymbolTable* symbolTable);
 
-    void buildCandidateList(Program& program, InlineCandidateList* candidateList);
+    void buildCandidateList(const std::vector<std::unique_ptr<ProgramElement>>& elements,
+                            std::shared_ptr<SymbolTable> symbols, ProgramUsage* usage,
+                            InlineCandidateList* candidateList);
 
     std::unique_ptr<Expression> inlineExpression(int offset,
                                                  VariableRewriteMap* varMap,
+                                                 SymbolTable* symbolTableForExpression,
                                                  const Expression& expression);
     std::unique_ptr<Statement> inlineStatement(int offset,
                                                VariableRewriteMap* varMap,
@@ -87,14 +69,34 @@ private:
     using InlinabilityCache = std::unordered_map<const FunctionDeclaration*, bool>;
     bool candidateCanBeInlined(const InlineCandidate& candidate, InlinabilityCache* cache);
 
-    using LargeFunctionCache = std::unordered_map<const FunctionDeclaration*, bool>;
-    bool isLargeFunction(const InlineCandidate& candidate, LargeFunctionCache* cache);
+    using FunctionSizeCache = std::unordered_map<const FunctionDeclaration*, int>;
+    int getFunctionSize(const FunctionDeclaration& fnDecl, FunctionSizeCache* cache);
+
+    /**
+     * Processes the passed-in FunctionCall expression. The FunctionCall expression should be
+     * replaced with `fReplacementExpr`. If non-null, `fInlinedBody` should be inserted immediately
+     * above the statement containing the inlined expression.
+     */
+    struct InlinedCall {
+        std::unique_ptr<Block> fInlinedBody;
+        std::unique_ptr<Expression> fReplacementExpr;
+    };
+    InlinedCall inlineCall(FunctionCall*,
+                           std::shared_ptr<SymbolTable>,
+                           const FunctionDeclaration* caller);
+
+    /** Adds a scope to inlined bodies returned by `inlineCall`, if one is required. */
+    void ensureScopedBlocks(Statement* inlinedBody, Statement* parentStmt);
+
+    /** Checks whether inlining is viable for a FunctionCall, modulo recursion and function size. */
+    bool isSafeToInline(const FunctionDefinition* functionDef);
 
     const Context* fContext = nullptr;
     ModifiersPool* fModifiers = nullptr;
     const Program::Settings* fSettings = nullptr;
     const ShaderCapsClass* fCaps = nullptr;
     int fInlineVarCounter = 0;
+    int fInlinedStatementCounter = 0;
 };
 
 }  // namespace SkSL

@@ -71,17 +71,19 @@ public:
      * This is the implementation of SkDeferredDisplayListRecorder::makeYUVAPromiseTexture.
      */
     static sk_sp<SkImage> MakePromiseYUVATexture(GrRecordingContext*,
-                                                 SkYUVColorSpace yuvColorSpace,
-                                                 const GrBackendFormat yuvaFormats[],
-                                                 const SkISize yuvaSizes[],
-                                                 const SkYUVAIndex yuvaIndices[4],
-                                                 int width,
-                                                 int height,
-                                                 GrSurfaceOrigin textureOrigin,
+                                                 const GrYUVABackendTextureInfo&,
                                                  sk_sp<SkColorSpace> imageColorSpace,
                                                  PromiseImageTextureFulfillProc textureFulfillProc,
                                                  PromiseImageTextureReleaseProc textureReleaseProc,
                                                  PromiseImageTextureContext textureContexts[]);
+
+    static bool MakeTempTextureProxies(GrRecordingContext*,
+                                       const GrBackendTexture yuvaTextures[],
+                                       int numTextures,
+                                       const SkYUVAIndex[4],
+                                       GrSurfaceOrigin imageOrigin,
+                                       GrSurfaceProxyView tempViews[4],
+                                       sk_sp<GrRefCntedCallback> releaseHelper);
 
 private:
     SkImage_GpuYUVA(sk_sp<GrImageContext>, const SkImage_GpuYUVA* image, sk_sp<SkColorSpace>);

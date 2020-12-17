@@ -76,9 +76,6 @@ config("skia_private") {
   ]
 
   defines = [ "SK_GAMMA_APPLY_TO_A8" ]
-  if (skia_enable_gpu) {
-    defines += [ "GR_OP_ALLOCATE_USE_NEW" ]
-  }
   if (skia_use_fixed_gamma_text) {
     defines += [
       "SK_GAMMA_EXPONENT=1.4",
@@ -558,7 +555,11 @@ if (skia_lex) {
 # `Compile Processors` and `Compile SkSL Tests` both rely on skslc.
 if (skia_compile_processors || skia_compile_sksl_tests) {
   executable("skslc") {
-    defines = [ "SKSL_STANDALONE" ]
+    defines = [
+      "SKSL_STANDALONE",
+      "SK_ENABLE_SKSL_INTERPRETER",
+      "SK_ENABLE_SPIRV_VALIDATION",
+    ]
     sources = [
       "src/core/SkMalloc.cpp",
       "src/core/SkMath.cpp",
@@ -575,6 +576,7 @@ if (skia_compile_processors || skia_compile_sksl_tests) {
     deps = [
       ":run_sksllex",
       "//third_party/spirv-tools:spvtools",
+      "//third_party/spirv-tools:spvtools_val",
     ]
   }
 
@@ -702,10 +704,20 @@ if (skia_compile_sksl_tests) {
       foreach(src, sources) {
         dir = get_path_info(src, "dir")
         name = get_path_info(src, "name")
+        ext = get_path_info(src, "extension")
         foreach(outputPattern, invoker.outputPatterns) {
-          outputs += [ target_out_dir + "/" + rebase_path(
-                           dir + outputPattern[0] + name + outputPattern[1],
-                           target_out_dir) ]
+          outDirectory = outputPattern[0]
+          outExtension = outputPattern[1]
+
+          # SPIR-V uses separate extensions for .vert and .geom shaders.
+          if (outExtension == ".asm.frag" && ext == "vert") {
+            outExtension = ".asm.vert"
+          } else if (outExtension == ".asm.frag" && ext == "geom") {
+            outExtension = ".asm.geom"
+          }
+          outputs += [ target_out_dir + "/" +
+                       rebase_path(dir + outDirectory + name + outExtension,
+                                   target_out_dir) ]
         }
       }
       args = [
@@ -758,6 +770,15 @@ if (skia_compile_sksl_tests) {
     lang = "--metal"
     settings = "--settings"
   }
+  compile_sksl("spirv_tests") {
+    sources = sksl_spirv_tests_sources
+    outputPatterns = [ [
+          "/golden/",
+          ".asm.frag",
+        ] ]
+    lang = "--spirv"
+    settings = "--settings"
+  }
 } else {
   group("compile_sksl_fp_tests") {
   }
@@ -766,6 +787,8 @@ if (skia_compile_sksl_tests) {
   group("compile_sksl_glsl_nosettings_tests") {
   }
   group("compile_sksl_metal_tests") {
+  }
+  group("compile_sksl_spirv_tests") {
   }
 }
 
@@ -777,6 +800,7 @@ optional("gpu") {
     ":compile_sksl_glsl_nosettings_tests",
     ":compile_sksl_glsl_tests",
     ":compile_sksl_metal_tests",
+    ":compile_sksl_spirv_tests",
     ":dehydrate_sksl",
     ":run_sksllex",
   ]
@@ -1236,7 +1260,7 @@ component("skia") {
     "src/sfnt/SkOTUtils.cpp",
   ]
 
-  defines = []
+  defines = [ "SK_HAS_ANDROID_CODEC" ]
   libs = []
 
   if (is_win) {
@@ -2020,6 +2044,15 @@ if (skia_enable_tools) {
         "modules/svg",
       ]
     }
+
+    # optional separate library to dlopen when running CanvasStateTests.
+    shared_library("canvas_state_lib") {
+      sources = [
+        "tests/CanvasStateHelpers.cpp",
+        "tests/CanvasStateHelpers.h",
+      ]
+      deps = [ ":skia" ]
+    }
   }
 
   if (!is_win) {
@@ -2320,7 +2353,6 @@ if (skia_enable_tools) {
         ":skia",
         "modules/skottie",
         "modules/sksg:samples",
-        "//third_party/oboe",
       ]
     }
   }
@@ -3075,4 +3107,10 @@ if (is_ios && skia_enable_skottie && !skia_enable_flutter_defines) {
   group("skottie_ios") {
     deps = [ "tools/skottie_ios_app" ]
   }
+}
+
+executable("skia_c_api_example") {
+  sources = [ "experimental/c-api-example/skia-c-example.c" ]
+  include_dirs = [ "." ]
+  deps = [ ":skia" ]
 }

@@ -19,6 +19,7 @@ gm_sources = [
   "$_gm/analytic_gradients.cpp",
   "$_gm/androidblendmodes.cpp",
   "$_gm/animated_gif.cpp",
+  "$_gm/animated_image_orientation.cpp",
   "$_gm/animatedimageblurs.cpp",
   "$_gm/anisotropic.cpp",
   "$_gm/annotated_text.cpp",
@@ -74,6 +75,7 @@ gm_sources = [
   "$_gm/circles.cpp",
   "$_gm/circulararcs.cpp",
   "$_gm/circularclips.cpp",
+  "$_gm/clear_swizzle.cpp",
   "$_gm/clip_error.cpp",
   "$_gm/clip_sierpinski_region.cpp",
   "$_gm/clip_strokerect.cpp",
@@ -110,6 +112,7 @@ gm_sources = [
   "$_gm/crbug_1086705.cpp",
   "$_gm/crbug_1113794.cpp",
   "$_gm/crbug_1139750.cpp",
+  "$_gm/crbug_1156804.cpp",
   "$_gm/crbug_224618.cpp",
   "$_gm/crbug_691386.cpp",
   "$_gm/crbug_788500.cpp",
@@ -309,6 +312,7 @@ gm_sources = [
   "$_gm/rrects.cpp",
   "$_gm/runtimecolorfilter.cpp",
   "$_gm/runtimefunctions.cpp",
+  "$_gm/runtimeintrinsics.cpp",
   "$_gm/runtimeshader.cpp",
   "$_gm/sample_matrix_constant.cpp",
   "$_gm/sample_matrix_variable.cpp",
@@ -398,7 +402,7 @@ gm_sources = [
   "$_gm/xfermodes3.cpp",
   "$_gm/ycbcrimage.cpp",
   "$_gm/yuv420_odd_dim.cpp",
-  "$_gm/yuvtorgbeffect.cpp",
+  "$_gm/yuvtorgbsubset.cpp",
 ]
 
 gl_gm_sources = [ "$_gm/rectangletexture.cpp" ]

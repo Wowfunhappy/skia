@@ -48,8 +48,7 @@ GrSurfaceProxyView MakeTextureProxyViewFromData(GrDirectContext* dContext,
         return {};
     }
     GrSurfaceProxyView view(proxy, origin, swizzle);
-    auto sContext = GrSurfaceContext::Make(dContext, std::move(view), imageInfo.colorType(),
-                                           imageInfo.alphaType(), imageInfo.refColorSpace());
+    auto sContext = GrSurfaceContext::Make(dContext, std::move(view), imageInfo.colorInfo());
     if (!sContext) {
         return {};
     }
@@ -61,13 +60,14 @@ GrSurfaceProxyView MakeTextureProxyViewFromData(GrDirectContext* dContext,
 
 GrProgramInfo* CreateProgramInfo(const GrCaps* caps,
                                  SkArenaAlloc* arena,
-                                 const GrSurfaceProxyView* writeView,
+                                 const GrSurfaceProxyView& writeView,
                                  GrAppliedClip&& appliedClip,
                                  const GrXferProcessor::DstProxyView& dstProxyView,
                                  GrGeometryProcessor* geomProc,
                                  SkBlendMode blendMode,
                                  GrPrimitiveType primitiveType,
                                  GrXferBarrierFlags renderPassXferBarriers,
+                                 GrLoadOp colorLoadOp,
                                  GrPipeline::InputFlags flags,
                                  const GrUserStencilSettings* stencilSettings) {
 
@@ -84,8 +84,8 @@ GrProgramInfo* CreateProgramInfo(const GrCaps* caps,
     return GrSimpleMeshDrawOpHelper::CreateProgramInfo(caps, arena, writeView,
                                                        std::move(appliedClip), dstProxyView,
                                                        geomProc, std::move(processors),
-                                                       primitiveType, renderPassXferBarriers, flags,
-                                                       stencilSettings);
+                                                       primitiveType, renderPassXferBarriers,
+                                                       colorLoadOp, flags, stencilSettings);
 }
 
 

@@ -29,7 +29,8 @@ class SK_API SkYUVAPixmapInfo {
 public:
     static constexpr auto kMaxPlanes = SkYUVAInfo::kMaxPlanes;
 
-    using PlanarConfig = SkYUVAInfo::PlanarConfig;
+    using PlaneConfig  = SkYUVAInfo::PlaneConfig;
+    using Subsampling  = SkYUVAInfo::Subsampling;
 
     /**
      * Data type for Y, U, V, and possibly A channels independent of how values are packed into
@@ -53,14 +54,14 @@ public:
         /** Init based on texture formats supported by the context. */
         SupportedDataTypes(const GrImageContext&);
 
-        /** All legal combinations of PlanarConfig and DataType are supported. */
+        /** All legal combinations of PlaneConfig and DataType are supported. */
         static constexpr SupportedDataTypes All();
 
         /**
          * Checks whether there is a supported combination of color types for planes structured
-         * as indicated by PlanarConfig with channel data types as indicated by DataType.
+         * as indicated by PlaneConfig with channel data types as indicated by DataType.
          */
-        constexpr bool supported(PlanarConfig, DataType) const;
+        constexpr bool supported(PlaneConfig, DataType) const;
 
         /**
          * Update to add support for pixmaps with numChannel channels where each channel is
@@ -120,7 +121,7 @@ public:
     SkYUVColorSpace yuvColorSpace() const { return fYUVAInfo.yuvColorSpace(); }
 
     /** The number of SkPixmap planes, 0 if this SkYUVAPixmapInfo is invalid. */
-    int numPlanes() const { return this->isValid() ? fYUVAInfo.numPlanes() : 0; }
+    int numPlanes() const { return fYUVAInfo.numPlanes(); }
 
     /** The per-YUV[A] channel data type. */
     DataType dataType() const { return fDataType; }
@@ -152,7 +153,7 @@ public:
      * Returns true if this has been configured with a non-empty dimensioned SkYUVAInfo with
      * compatible color types and row bytes.
      */
-    bool isValid() const { return fPlaneInfos[0].colorType() != kUnknown_SkColorType; }
+    bool isValid() const { return fYUVAInfo.isValid(); }
 
     /** Is this valid and does it use color types allowed by the passed SupportedDataTypes? */
     bool isSupported(const SupportedDataTypes&) const;
@@ -281,7 +282,7 @@ constexpr SkYUVAPixmapInfo::SupportedDataTypes SkYUVAPixmapInfo::SupportedDataTy
     return combinations;
 }
 
-constexpr bool SkYUVAPixmapInfo::SupportedDataTypes::supported(PlanarConfig config,
+constexpr bool SkYUVAPixmapInfo::SupportedDataTypes::supported(PlaneConfig config,
                                                                DataType type) const {
     int n = SkYUVAInfo::NumPlanes(config);
     for (int i = 0; i < n; ++i) {

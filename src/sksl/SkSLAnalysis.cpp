@@ -161,17 +161,17 @@ public:
 
     bool visitExpression(const Expression& e) override {
         ++fCount;
-        return (fCount > fLimit) || INHERITED::visitExpression(e);
+        return (fCount >= fLimit) || INHERITED::visitExpression(e);
     }
 
     bool visitProgramElement(const ProgramElement& p) override {
         ++fCount;
-        return (fCount > fLimit) || INHERITED::visitProgramElement(p);
+        return (fCount >= fLimit) || INHERITED::visitProgramElement(p);
     }
 
     bool visitStatement(const Statement& s) override {
         ++fCount;
-        return (fCount > fLimit) || INHERITED::visitStatement(s);
+        return (fCount >= fLimit) || INHERITED::visitStatement(s);
     }
 
 private:
@@ -262,15 +262,14 @@ private:
 // know if the base (`x`) is assignable; the index expression (`1`) doesn't need to be.
 class IsAssignableVisitor {
 public:
-    IsAssignableVisitor(VariableReference** assignableVar, ErrorReporter* errors)
-            : fAssignableVar(assignableVar), fErrors(errors) {
-        if (fAssignableVar) {
-            *fAssignableVar = nullptr;
-        }
-    }
+    IsAssignableVisitor(ErrorReporter* errors) : fErrors(errors) {}
 
-    bool visit(Expression& expr) {
+    bool visit(Expression& expr, Analysis::AssignmentInfo* info) {
         this->visitExpression(expr);
+        if (info) {
+            info->fAssignedVar = fAssignedVar;
+            info->fIsSwizzled = fIsSwizzled;
+        }
         return fErrors->errorCount() == 0;
     }
 
@@ -283,9 +282,9 @@ public:
                                                Modifiers::kVarying_Flag)) {
                     fErrors->error(expr.fOffset,
                                    "cannot modify immutable variable '" + var->name() + "'");
-                } else if (fAssignableVar) {
-                    SkASSERT(*fAssignableVar == nullptr);
-                    *fAssignableVar = &varRef;
+                } else {
+                    SkASSERT(fAssignedVar == nullptr);
+                    fAssignedVar = &varRef;
                 }
                 break;
             }
@@ -295,14 +294,17 @@ public:
 
             case Expression::Kind::kSwizzle: {
                 const Swizzle& swizzle = expr.as<Swizzle>();
+                fIsSwizzled = true;
                 this->checkSwizzleWrite(swizzle);
                 this->visitExpression(*swizzle.base());
                 break;
             }
-            case Expression::Kind::kIndex:
-                this->visitExpression(*expr.as<IndexExpression>().base());
+            case Expression::Kind::kIndex: {
+                Expression& inner = *expr.as<IndexExpression>().base();
+                fIsSwizzled |= inner.type().isVector();
+                this->visitExpression(inner);
                 break;
-
+            }
             case Expression::Kind::kExternalValue: {
                 const ExternalValue& var = expr.as<ExternalValueReference>().value();
                 if (!var.canWrite()) {
@@ -332,8 +334,9 @@ private:
         }
     }
 
-    VariableReference** fAssignableVar;
     ErrorReporter* fErrors;
+    VariableReference* fAssignedVar = nullptr;
+    bool fIsSwizzled = false;
 
     using INHERITED = ProgramVisitor;
 };
@@ -361,14 +364,23 @@ bool Analysis::ReferencesFragCoords(const Program& program) {
     return Analysis::ReferencesBuiltin(program, SK_FRAGCOORD_BUILTIN);
 }
 
-bool Analysis::NodeCountExceeds(const FunctionDefinition& function, int limit) {
-    return NodeCountVisitor{limit}.visit(*function.body()) > limit;
+int Analysis::NodeCountUpToLimit(const FunctionDefinition& function, int limit) {
+    return NodeCountVisitor{limit}.visit(*function.body());
 }
 
 std::unique_ptr<ProgramUsage> Analysis::GetUsage(const Program& program) {
     auto usage = std::make_unique<ProgramUsage>();
     ProgramUsageVisitor addRefs(usage.get(), /*delta=*/+1);
     addRefs.visit(program);
+    return usage;
+}
+
+std::unique_ptr<ProgramUsage> Analysis::GetUsage(const LoadedModule& module) {
+    auto usage = std::make_unique<ProgramUsage>();
+    ProgramUsageVisitor addRefs(usage.get(), /*delta=*/+1);
+    for (const auto& element : module.fElements) {
+        addRefs.visitProgramElement(*element);
+    }
     return usage;
 }
 
@@ -433,18 +445,35 @@ bool Analysis::StatementWritesToVariable(const Statement& stmt, const Variable& 
     return VariableWriteVisitor(&var).visit(stmt);
 }
 
-bool Analysis::IsAssignable(Expression& expr, VariableReference** assignableVar,
-                            ErrorReporter* errors) {
+bool Analysis::IsAssignable(Expression& expr, AssignmentInfo* info, ErrorReporter* errors) {
     TrivialErrorReporter trivialErrors;
-    return IsAssignableVisitor{assignableVar, errors ? errors : &trivialErrors}.visit(expr);
+    return IsAssignableVisitor{errors ? errors : &trivialErrors}.visit(expr, info);
+}
+
+bool Analysis::IsTrivialExpression(const Expression& expr) {
+    return expr.is<IntLiteral>() ||
+           expr.is<FloatLiteral>() ||
+           expr.is<BoolLiteral>() ||
+           expr.is<VariableReference>() ||
+           (expr.is<Swizzle>() &&
+            IsTrivialExpression(*expr.as<Swizzle>().base())) ||
+           (expr.is<FieldAccess>() &&
+            IsTrivialExpression(*expr.as<FieldAccess>().base())) ||
+           (expr.is<Constructor>() &&
+            expr.as<Constructor>().arguments().size() == 1 &&
+            IsTrivialExpression(*expr.as<Constructor>().arguments().front())) ||
+           (expr.is<Constructor>() &&
+            expr.isConstantOrUniform()) ||
+           (expr.is<IndexExpression>() &&
+            expr.as<IndexExpression>().index()->is<IntLiteral>() &&
+            IsTrivialExpression(*expr.as<IndexExpression>().base()));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // ProgramVisitor
 
-template <typename PROG, typename EXPR, typename STMT, typename ELEM>
-bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visit(PROG program) {
-    for (const auto& pe : program.elements()) {
+bool ProgramVisitor::visit(const Program& program) {
+    for (const ProgramElement* pe : program.elements()) {
         if (this->visitProgramElement(*pe)) {
             return true;
         }
@@ -585,11 +614,6 @@ bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visitStatement(STMT s) {
         }
         case Statement::Kind::kVarDeclaration: {
             auto& v = s.template as<VarDeclaration>();
-            for (const std::unique_ptr<Expression>& size : v.sizes()) {
-                if (size && this->visitExpression(*size)) {
-                    return true;
-                }
-            }
             return v.value() && this->visitExpression(*v.value());
         }
         case Statement::Kind::kWhile: {
@@ -607,21 +631,15 @@ bool TProgramVisitor<PROG, EXPR, STMT, ELEM>::visitProgramElement(ELEM pe) {
         case ProgramElement::Kind::kEnum:
         case ProgramElement::Kind::kExtension:
         case ProgramElement::Kind::kFunctionPrototype:
+        case ProgramElement::Kind::kInterfaceBlock:
         case ProgramElement::Kind::kModifiers:
         case ProgramElement::Kind::kSection:
+        case ProgramElement::Kind::kStructDefinition:
             // Leaf program elements just return false by default
             return false;
 
         case ProgramElement::Kind::kFunction:
             return this->visitStatement(*pe.template as<FunctionDefinition>().body());
-
-        case ProgramElement::Kind::kInterfaceBlock:
-            for (auto& e : pe.template as<InterfaceBlock>().sizes()) {
-                if (e && this->visitExpression(*e)) {
-                    return true;
-                }
-            }
-            return false;
 
         case ProgramElement::Kind::kGlobalVar:
             if (this->visitStatement(*pe.template as<GlobalVarDeclaration>().declaration())) {

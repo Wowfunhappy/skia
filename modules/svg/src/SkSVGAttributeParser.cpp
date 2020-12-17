@@ -224,7 +224,8 @@ bool SkSVGAttributeParser::parseRGBColorToken(SkColor* c) {
 // https://www.w3.org/TR/SVG11/types.html#DataTypeColor
 // And https://www.w3.org/TR/CSS2/syndata.html#color-units for the alternative
 // forms supported by SVG (e.g. RGB percentages).
-bool SkSVGAttributeParser::parseColor(SkSVGColorType* color) {
+template <>
+bool SkSVGAttributeParser::parse(SkSVGColorType* color) {
     SkColor c;
 
     // consume preceding whitespace
@@ -239,6 +240,23 @@ bool SkSVGAttributeParser::parseColor(SkSVGColorType* color) {
 
         // consume trailing whitespace
         this->parseWSToken();
+    }
+
+    return parsedValue && this->parseEOSToken();
+}
+
+// https://www.w3.org/TR/SVG11/types.html#InterfaceSVGColor
+template <>
+bool SkSVGAttributeParser::parse(SkSVGColor* color) {
+    SkSVGColorType c;
+    bool parsedValue = false;
+
+    if (this->parse(&c)) {
+        *color = SkSVGColor(c);
+        parsedValue = true;
+    } else if (this->parseExpectedStringToken("currentColor")) {
+        *color = SkSVGColor(SkSVGColor::Type::kCurrentColor);
+        parsedValue = true;
     }
 
     return parsedValue && this->parseEOSToken();
@@ -286,7 +304,8 @@ bool SkSVGAttributeParser::parse(SkSVGStringType* result) {
 }
 
 // https://www.w3.org/TR/SVG11/types.html#DataTypeNumber
-bool SkSVGAttributeParser::parseNumber(SkSVGNumberType* number) {
+template <>
+bool SkSVGAttributeParser::parse(SkSVGNumberType* number) {
     // consume WS
     this->parseWSToken();
 
@@ -503,20 +522,14 @@ bool SkSVGAttributeParser::parse(SkSVGTransformType* t) {
 // https://www.w3.org/TR/SVG11/painting.html#SpecifyingPaint
 template <>
 bool SkSVGAttributeParser::parse(SkSVGPaint* paint) {
-    SkSVGColorType c;
+    SkSVGColor c;
     SkSVGStringType iri;
     bool parsedValue = false;
-    if (this->parseColor(&c)) {
+    if (this->parse(&c)) {
         *paint = SkSVGPaint(c);
         parsedValue = true;
     } else if (this->parseExpectedStringToken("none")) {
         *paint = SkSVGPaint(SkSVGPaint::Type::kNone);
-        parsedValue = true;
-    } else if (this->parseExpectedStringToken("currentColor")) {
-        *paint = SkSVGPaint(SkSVGPaint::Type::kCurrentColor);
-        parsedValue = true;
-    } else if (this->parseExpectedStringToken("inherit")) {
-        *paint = SkSVGPaint(SkSVGPaint::Type::kInherit);
         parsedValue = true;
     } else if (this->parseFuncIRI(&iri)) {
         *paint = SkSVGPaint(iri);
@@ -534,9 +547,6 @@ bool SkSVGAttributeParser::parse(SkSVGClip* clip) {
     if (this->parseExpectedStringToken("none")) {
         *clip = SkSVGClip(SkSVGClip::Type::kNone);
         parsedValue = true;
-    } else if (this->parseExpectedStringToken("inherit")) {
-        *clip = SkSVGClip(SkSVGClip::Type::kInherit);
-        parsedValue = true;
     } else if (this->parseFuncIRI(&iri)) {
         *clip = SkSVGClip(iri);
         parsedValue = true;
@@ -549,13 +559,12 @@ bool SkSVGAttributeParser::parse(SkSVGClip* clip) {
 template <>
 bool SkSVGAttributeParser::parse(SkSVGLineCap* cap) {
     static const struct {
-        SkSVGLineCap::Type fType;
+        SkSVGLineCap fType;
         const char*        fName;
     } gCapInfo[] = {
-        { SkSVGLineCap::Type::kButt   , "butt"    },
-        { SkSVGLineCap::Type::kRound  , "round"   },
-        { SkSVGLineCap::Type::kSquare , "square"  },
-        { SkSVGLineCap::Type::kInherit, "inherit" },
+        { SkSVGLineCap::kButt   , "butt"    },
+        { SkSVGLineCap::kRound  , "round"   },
+        { SkSVGLineCap::kSquare , "square"  },
     };
 
     bool parsedValue = false;
@@ -592,23 +601,6 @@ bool SkSVGAttributeParser::parse(SkSVGLineJoin* join) {
         }
     }
 
-    return parsedValue && this->parseEOSToken();
-}
-
-// https://www.w3.org/TR/SVG11/pservers.html#StopElement
-bool SkSVGAttributeParser::parseStopColor(SkSVGStopColor* stopColor) {
-    SkSVGColorType c;
-    bool parsedValue = false;
-    if (this->parseColor(&c)) {
-        *stopColor = SkSVGStopColor(c);
-        parsedValue = true;
-    } else if (this->parseExpectedStringToken("currentColor")) {
-        *stopColor = SkSVGStopColor(SkSVGStopColor::Type::kCurrentColor);
-        parsedValue = true;
-    } else if (this->parseExpectedStringToken("inherit")) {
-        *stopColor = SkSVGStopColor(SkSVGStopColor::Type::kInherit);
-        parsedValue = true;
-    }
     return parsedValue && this->parseEOSToken();
 }
 
@@ -701,7 +693,8 @@ bool SkSVGAttributeParser::parse(SkSVGFillRule* fillRule) {
 }
 
 // https://www.w3.org/TR/SVG11/filters.html#FilterProperty
-bool SkSVGAttributeParser::parseFilter(SkSVGFilterType* filter) {
+template <>
+bool SkSVGAttributeParser::parse(SkSVGFilterType* filter) {
     SkSVGStringType iri;
     bool parsedValue = false;
 

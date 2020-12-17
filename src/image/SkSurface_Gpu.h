@@ -23,7 +23,7 @@ public:
 
     // This is an internal-only factory
     static sk_sp<SkSurface> MakeWrappedRenderTarget(GrRecordingContext*,
-                                                    std::unique_ptr<GrRenderTargetContext>);
+                                                    std::unique_ptr<GrSurfaceDrawContext>);
 
     GrRecordingContext* onGetRecordingContext() override;
 
@@ -58,7 +58,7 @@ public:
     bool onCharacterize(SkSurfaceCharacterization*) const override;
     bool onIsCompatible(const SkSurfaceCharacterization&) const override;
     void onDraw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkPaint* paint) override;
-    bool onDraw(sk_sp<const SkDeferredDisplayList>, int xOffset, int yOffset) override;
+    bool onDraw(sk_sp<const SkDeferredDisplayList>, SkIPoint offset) override;
 
     SkGpuDevice* getDevice() { return fDevice.get(); }
 

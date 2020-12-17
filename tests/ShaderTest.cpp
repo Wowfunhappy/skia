@@ -45,8 +45,8 @@ DEF_TEST(Shader_isAImage, reporter) {
     const SkTileMode tmx = SkTileMode::kRepeat;
     const SkTileMode tmy = SkTileMode::kMirror;
 
-    auto shader0 = bm.makeShader(tmx, tmy, &localM);
-    auto shader1 = SkImage::MakeFromBitmap(bm)->makeShader(tmx, tmy, &localM);
+    auto shader0 = bm.makeShader(tmx, tmy, SkSamplingOptions(), localM);
+    auto shader1 = SkImage::MakeFromBitmap(bm)->makeShader(tmx, tmy, SkSamplingOptions(), localM);
 
     check_isaimage(reporter, shader0.get(), W, H, tmx, tmy, localM);
     check_isaimage(reporter, shader1.get(), W, H, tmx, tmy, localM);

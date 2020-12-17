@@ -10,7 +10,6 @@
 #include "src/core/SkMatrixProvider.h"
 #include "src/gpu/GrBitmapTextureMaker.h"
 #include "src/gpu/GrDirectContextPriv.h"
-#include "src/gpu/GrRenderTargetContextPriv.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/ops/GrFillRectOp.h"
 #include "tools/Resources.h"
@@ -47,7 +46,7 @@ class GLSLSampleMatrixConstantEffect : public GrGLSLFragmentProcessor {
     void emitCode(EmitArgs& args) override {
         GrGLSLFPFragmentBuilder* fragBuilder = args.fFragBuilder;
         SkString sample = this->invokeChildWithMatrix(0, args);
-        fragBuilder->codeAppendf("%s = %s;\n", args.fOutputColor, sample.c_str());
+        fragBuilder->codeAppendf("return %s;\n", sample.c_str());
     }
 };
 

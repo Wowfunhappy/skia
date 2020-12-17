@@ -14,7 +14,6 @@
 #include <unordered_set>
 
 #include "src/sksl/SkSLCodeGenerator.h"
-#include "src/sksl/SkSLMemoryLayout.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBoolLiteral.h"
@@ -105,8 +104,18 @@ protected:
     };
 
     enum SpecialIntrinsic {
-        kTexture_SpecialIntrinsic,
+        kBitcast_SpecialIntrinsic,
+        kDegrees_SpecialIntrinsic,
+        kDistance_SpecialIntrinsic,
+        kDot_SpecialIntrinsic,
+        kFaceforward_SpecialIntrinsic,
+        kFindLSB_SpecialIntrinsic,
+        kFindMSB_SpecialIntrinsic,
+        kLength_SpecialIntrinsic,
         kMod_SpecialIntrinsic,
+        kNormalize_SpecialIntrinsic,
+        kRadians_SpecialIntrinsic,
+        kTexture_SpecialIntrinsic,
     };
 
     enum MetalIntrinsic {
@@ -117,6 +126,8 @@ protected:
         kGreaterThan_MetalIntrinsic,
         kGreaterThanEqual_MetalIntrinsic,
     };
+
+    static const char* OperatorName(Token::Kind op);
 
     class GlobalStructVisitor;
     void visitGlobalStruct(GlobalStructVisitor* visitor);
@@ -143,6 +154,8 @@ protected:
 
     void writeInterfaceBlocks();
 
+    void writeStructDefinitions();
+
     void writeFields(const std::vector<Type::Field>& fields, int parentOffset,
                      const InterfaceBlock* parentIntf = nullptr);
 
@@ -157,13 +170,24 @@ protected:
 
     String typeName(const Type& type);
 
-    void writeType(const Type& type);
+    bool writeStructDefinition(const Type& type);
+
+    void disallowArrayTypes(const Type& type, int offset);
+
+    void writeBaseType(const Type& type);
+
+    void writeArrayDimensions(const Type& type);
 
     void writeExtension(const Extension& ext);
 
     void writeInterfaceBlock(const InterfaceBlock& intf);
 
     void writeFunctionStart(const FunctionDeclaration& f);
+
+    void writeFunctionRequirementParams(const FunctionDeclaration& f,
+                                        const char*& separator);
+
+    void writeFunctionRequirementArgs(const FunctionDeclaration& f, const char*& separator);
 
     bool writeFunctionDeclaration(const FunctionDeclaration& f);
 
@@ -191,9 +215,17 @@ protected:
 
     void writeMinAbsHack(Expression& absExpr, Expression& otherExpr);
 
-    void writeFunctionCall(const FunctionCall& c);
+    String getOutParamHelper(const FunctionCall& c,
+                             const ExpressionArray& arguments,
+                             const SkTArray<VariableReference*>& outVars);
 
-    void writeInverseHack(const Expression& mat);
+    String getInverseHack(const Expression& mat);
+
+    String getBitcastIntrinsic(const Type& outType);
+
+    String getTempVariable(const Type& varType);
+
+    void writeFunctionCall(const FunctionCall& c);
 
     bool matrixConstructHelperIsNeeded(const Constructor& c);
     String getMatrixConstructHelper(const Constructor& c);
@@ -248,6 +280,8 @@ protected:
 
     void writeSwitchStatement(const SwitchStatement& s);
 
+    void writeReturnStatementFromMain();
+
     void writeReturnStatement(const ReturnStatement& r);
 
     void writeProgramElement(const ProgramElement& e);
@@ -267,7 +301,6 @@ protected:
     int fPaddingCount = 0;
     const char* fLineEnding;
     const Context& fContext;
-    StringStream fHeader;
     String fFunctionHeader;
     StringStream fExtraFunctions;
     Program::Kind fProgramKind;
@@ -287,6 +320,9 @@ protected:
     std::unordered_set<String> fHelpers;
     int fUniformBuffer = -1;
     String fRTHeightName;
+    const FunctionDeclaration* fCurrentFunction = nullptr;
+    int fSwizzleHelperCount = 0;
+    bool fIgnoreVariableReferenceModifiers = false;
 
     using INHERITED = CodeGenerator;
 };

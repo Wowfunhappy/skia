@@ -32,7 +32,7 @@
 #include "tools/Resources.h"
 #include "tools/gpu/YUVUtils.h"
 
-class GrRenderTargetContext;
+class GrSurfaceDrawContext;
 
 namespace skiagm {
 class ImageFromYUVTextures : public GpuGM {
@@ -61,7 +61,8 @@ protected:
             bmp = copy;
         }
         SkYUVAPixmapInfo pixmapInfo({bmp.dimensions(),
-                                     SkYUVAInfo::PlanarConfig::kY_U_V_A_4204,
+                                     SkYUVAInfo::PlaneConfig::kY_U_V_A,
+                                     SkYUVAInfo::Subsampling::k420,
                                      kJPEG_Full_SkYUVColorSpace},
                                     SkYUVAPixmapInfo::DataType::kUnorm8,
                                     nullptr);
@@ -194,7 +195,7 @@ protected:
         return fYUVAImages[index].get();
     }
 
-    void onDraw(GrRecordingContext*, GrRenderTargetContext*, SkCanvas* canvas) override {
+    void onDraw(GrRecordingContext*, GrSurfaceDrawContext*, SkCanvas* canvas) override {
         auto draw_image = [canvas](SkImage* image, SkFilterQuality fq) -> SkSize {
             if (!image) {
                 return {0, 0};
@@ -224,10 +225,9 @@ protected:
             }
             SkMatrix m;
             m.setRotate(45, image->width()/2.f, image->height()/2.f);
-            auto shader = image->makeShader(SkTileMode::kMirror, SkTileMode::kDecal, m);
             SkPaint paint;
-            paint.setFilterQuality(fq);
-            paint.setShader(std::move(shader));
+            paint.setShader(image->makeShader(SkTileMode::kMirror, SkTileMode::kDecal,
+                                              SkSamplingOptions(fq), m));
             auto rect = SkRect::MakeWH(image->width() * 1.3f, image->height());
             canvas->drawRect(rect, paint);
             return {rect.width(), rect.height()};

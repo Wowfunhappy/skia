@@ -62,6 +62,7 @@ var CanvasKit = {
   Free: function() {},
   computeTonalColors: function() {},
   currentContext: function() {},
+  deleteContext: function() {},
   getColorComponents: function() {},
   getDecodeCacheLimitBytes: function() {},
   getDecodeCacheUsageBytes: function() {},
@@ -72,7 +73,7 @@ var CanvasKit = {
   setDecodeCacheLimitBytes: function() {},
 
   // Defined by emscripten.
-  createContext:function() {},
+  createContext: function() {},
 
   // private API (i.e. things declared in the bindings that we use
   // in the pre-js file)
@@ -84,7 +85,6 @@ var CanvasKit = {
   _decodeAnimatedImage: function() {},
   _decodeImage: function() {},
   _drawShapedText: function() {},
-  _getRasterDirectSurface: function() {},
 
   // The testing object is meant to expose internal functions
   // for more fine-grained testing, e.g. parseColor
@@ -199,6 +199,8 @@ var CanvasKit = {
     drawCircle: function() {},
     drawColorInt: function() {},
     drawImage: function() {},
+    drawImageCubic: function() {},
+    drawImageOptions: function() {},
     drawImageAtCurrentFrame: function() {},
     drawLine: function() {},
     drawPaint: function() {},
@@ -227,7 +229,6 @@ var CanvasKit = {
       clear: function() {},
       clipRRect: function() {},
       clipRect: function() {},
-      concat44: function() {}, // deprecated
       concat: function() {},
       drawArc: function() {},
       drawAtlas: function() {},
@@ -236,6 +237,8 @@ var CanvasKit = {
       drawDRRect:  function() {},
       drawImageNine: function() {},
       drawImageRect: function() {},
+      drawImageRectCubic: function() {},
+      drawImageRectOptions: function() {},
       drawOval: function() {},
       drawPoints: function() {},
       drawRect: function() {},
@@ -261,6 +264,8 @@ var CanvasKit = {
     _drawDRRect:  function() {},
     _drawImageNine: function() {},
     _drawImageRect: function() {},
+    _drawImageRectCubic: function() {},
+    _drawImageRectOptions: function() {},
     _drawOval: function() {},
     _drawPoints: function() {},
     _drawRect: function() {},
@@ -370,12 +375,22 @@ var CanvasKit = {
 
   Image: {
     // public API (from C++ bindings)
+    getColorSpace: function() {},
+    getImageInfo: function() {},
+    makeCopyWithDefaultMipmaps: function() {},
     height: function() {},
     width: function() {},
+
+    prototype: {
+      encodeToData: function() {},
+      makeShaderCubic: function() {},
+      makeShaderOptions: function() {},
+    },
     // private API
     _encodeToData: function() {},
     _encodeToDataWithFormat: function() {},
-    _makeShader: function() {},
+    _makeShaderCubic: function() {},
+    _makeShaderOptions: function() {},
   },
 
   ImageFilter: {
@@ -647,6 +662,7 @@ var CanvasKit = {
     // private API
     _flush: function() {},
     _makeImageSnapshot: function() {},
+    _makeRasterDirect: function() {},
     delete: function() {},
   },
 
@@ -998,9 +1014,6 @@ CanvasKit.Surface.prototype.dispose = function() {};
 CanvasKit.Surface.prototype.flush = function() {};
 CanvasKit.Surface.prototype.requestAnimationFrame = function() {};
 CanvasKit.Surface.prototype.drawOnce = function() {};
-
-CanvasKit.Image.prototype.encodeToData = function() {};
-CanvasKit.Image.prototype.makeShader = function() {};
 
 CanvasKit.FontMgr.prototype.MakeTypefaceFromData = function() {};
 

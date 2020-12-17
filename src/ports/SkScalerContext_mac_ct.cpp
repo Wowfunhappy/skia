@@ -181,9 +181,6 @@ SkScalerContext_Mac::SkScalerContext_Mac(sk_sp<SkTypeface_Mac> typeface,
 
 {
     CTFontRef ctFont = (CTFontRef)this->getTypeface()->internal_private_getCTFontRef();
-    CFIndex numGlyphs = CTFontGetGlyphCount(ctFont);
-    SkASSERT(numGlyphs >= 1 && numGlyphs <= 0xFFFF);
-    fGlyphCount = SkToU16(numGlyphs);
 
     // CT on (at least) 10.9 will size color glyphs down from the requested size, but not up.
     // As a result, it is necessary to know the actual device size and request that.

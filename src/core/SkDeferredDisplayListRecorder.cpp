@@ -39,13 +39,7 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makePromiseTexture(
 }
 
 sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
-        SkYUVColorSpace yuvColorSpace,
-        const GrBackendFormat yuvaFormats[],
-        const SkISize yuvaSizes[],
-        const SkYUVAIndex yuvaIndices[4],
-        int imageWidth,
-        int imageHeight,
-        GrSurfaceOrigin imageOrigin,
+        const GrYUVABackendTextureInfo& yuvaBackendTextureInfo,
         sk_sp<SkColorSpace> imageColorSpace,
         PromiseImageTextureFulfillProc textureFulfillProc,
         PromiseImageTextureReleaseProc textureReleaseProc,
@@ -58,9 +52,10 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
 #include "include/core/SkPromiseImageTexture.h"
 #include "include/core/SkYUVASizeInfo.h"
 #include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/GrYUVABackendTextures.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
-#include "src/gpu/GrRenderTargetContext.h"
+#include "src/gpu/GrSurfaceDrawContext.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/SkGr.h"
 #include "src/image/SkImage_Gpu.h"
@@ -196,10 +191,10 @@ bool SkDeferredDisplayListRecorder::init() {
     GrSurfaceProxyView readView(fTargetProxy, fCharacterization.origin(), readSwizzle);
     GrSurfaceProxyView writeView(fTargetProxy, fCharacterization.origin(), writeSwizzle);
 
-    auto rtc = std::make_unique<GrRenderTargetContext>(fContext.get(), std::move(readView),
-                                                       std::move(writeView), grColorType,
-                                                       fCharacterization.refColorSpace(),
-                                                       &fCharacterization.surfaceProps());
+    auto rtc = std::make_unique<GrSurfaceDrawContext>(fContext.get(), std::move(readView),
+                                                      std::move(writeView), grColorType,
+                                                      fCharacterization.refColorSpace(),
+                                                      &fCharacterization.surfaceProps());
     fSurface = SkSurface_Gpu::MakeWrappedRenderTarget(fContext.get(), std::move(rtc));
     return SkToBool(fSurface.get());
 }
@@ -265,25 +260,13 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makePromiseTexture(
 }
 
 sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
-        SkYUVColorSpace yuvColorSpace,
-        const GrBackendFormat yuvaFormats[],
-        const SkISize yuvaSizes[],
-        const SkYUVAIndex yuvaIndices[4],
-        int imageWidth,
-        int imageHeight,
-        GrSurfaceOrigin imageOrigin,
+        const GrYUVABackendTextureInfo& yuvaBackendTextureInfo,
         sk_sp<SkColorSpace> imageColorSpace,
         PromiseImageTextureFulfillProc textureFulfillProc,
         PromiseImageTextureReleaseProc textureReleaseProc,
         PromiseImageTextureContext textureContexts[]) {
     return SkImage_GpuYUVA::MakePromiseYUVATexture(fContext.get(),
-                                                   yuvColorSpace,
-                                                   yuvaFormats,
-                                                   yuvaSizes,
-                                                   yuvaIndices,
-                                                   imageWidth,
-                                                   imageHeight,
-                                                   imageOrigin,
+                                                   yuvaBackendTextureInfo,
                                                    std::move(imageColorSpace),
                                                    textureFulfillProc,
                                                    textureReleaseProc,
@@ -291,55 +274,3 @@ sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
 }
 
 #endif
-
-sk_sp<SkImage> SkDeferredDisplayListRecorder::makePromiseTexture(
-        const GrBackendFormat& backendFormat,
-        int width,
-        int height,
-        GrMipmapped mipmapped,
-        GrSurfaceOrigin origin,
-        SkColorType colorType,
-        SkAlphaType alphaType,
-        sk_sp<SkColorSpace> colorSpace,
-        PromiseImageTextureFulfillProc textureFulfillProc,
-        PromiseImageTextureReleaseProc textureReleaseProc,
-        PromiseImageTextureReleaseProc ignoredProc,
-        PromiseImageTextureContext textureContext) {
-    return this->makePromiseTexture(backendFormat,
-                                    width,
-                                    height,
-                                    mipmapped,
-                                    origin,
-                                    colorType,
-                                    alphaType,
-                                    std::move(colorSpace),
-                                    textureFulfillProc,
-                                    textureReleaseProc,
-                                    textureContext);
-}
-
-sk_sp<SkImage> SkDeferredDisplayListRecorder::makeYUVAPromiseTexture(
-        SkYUVColorSpace yuvColorSpace,
-        const GrBackendFormat yuvaFormats[],
-        const SkISize yuvaSizes[],
-        const SkYUVAIndex yuvaIndices[4],
-        int imageWidth,
-        int imageHeight,
-        GrSurfaceOrigin imageOrigin,
-        sk_sp<SkColorSpace> imageColorSpace,
-        PromiseImageTextureFulfillProc textureFulfillProc,
-        PromiseImageTextureReleaseProc textureReleaseProc,
-        PromiseImageTextureReleaseProc ignoredProc,
-        PromiseImageTextureContext textureContexts[]) {
-    return this->makeYUVAPromiseTexture(yuvColorSpace,
-                                        yuvaFormats,
-                                        yuvaSizes,
-                                        yuvaIndices,
-                                        imageWidth,
-                                        imageHeight,
-                                        imageOrigin,
-                                        std::move(imageColorSpace),
-                                        textureFulfillProc,
-                                        textureReleaseProc,
-                                        textureContexts);
-}

@@ -640,6 +640,13 @@ void GrVkCaps::initGrCaps(const GrVkInterface* vkInterface,
     if (kARM_VkVendor == properties.vendorID) {
         fShouldCollapseSrcOverToSrcWhenAble = true;
     }
+
+    // We're seeing vkCmdClearAttachments take a lot of cpu time when clearing the color attachment.
+    // We really should only be getting in there for partial clears. So instead we will do all
+    // partial clears as draws.
+    if (kQualcomm_VkVendor == properties.vendorID) {
+        fPerformPartialClearsAsDraws = true;
+    }
 }
 
 void GrVkCaps::initShaderCaps(const VkPhysicalDeviceProperties& properties,
@@ -1722,12 +1729,16 @@ GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progra
         selfDepFlags |= GrVkRenderPass::SelfDependencyFlags::kForInputAttachment;
     }
 
+    GrVkRenderPass::LoadFromResolve loadFromResolve = GrVkRenderPass::LoadFromResolve::kNo;
+
     if (rt) {
         GrVkRenderTarget* vkRT = (GrVkRenderTarget*) rt;
 
+        bool needsResolve = false;
         bool needsStencil = programInfo.numStencilSamples() || programInfo.isStencilEnabled();
         // TODO: support failure in getSimpleRenderPass
-        const GrVkRenderPass* rp = vkRT->getSimpleRenderPass(needsStencil, selfDepFlags);
+        const GrVkRenderPass* rp = vkRT->getSimpleRenderPass(needsResolve, needsStencil,
+                                                             selfDepFlags, loadFromResolve);
         SkASSERT(rp);
         rp->genKey(&b);
 
@@ -1740,7 +1751,8 @@ GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progra
             GrVkRenderTarget::ReconstructAttachmentsDescriptor(*this, programInfo,
                                                                &attachmentsDescriptor,
                                                                &attachmentFlags);
-            SkASSERT(rp->isCompatible(attachmentsDescriptor, attachmentFlags, selfDepFlags));
+            SkASSERT(rp->isCompatible(attachmentsDescriptor, attachmentFlags, selfDepFlags,
+                                      loadFromResolve));
         }
 #endif
     } else {
@@ -1753,7 +1765,8 @@ GrProgramDesc GrVkCaps::makeDesc(GrRenderTarget* rt, const GrProgramInfo& progra
         // kExternal_AttachmentFlag is only set for wrapped secondary command buffers - which
         // will always go through the above 'rt' path (i.e., we can always pass 0 as the final
         // parameter to GenKey).
-        GrVkRenderPass::GenKey(&b, attachmentFlags, attachmentsDescriptor, selfDepFlags, 0);
+        GrVkRenderPass::GenKey(&b, attachmentFlags, attachmentsDescriptor, selfDepFlags,
+                               loadFromResolve, 0);
     }
 
     GrStencilSettings stencil = programInfo.nonGLStencilSettings();

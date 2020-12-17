@@ -108,14 +108,7 @@ void SkNWayCanvas::didConcat44(const SkM44& m) {
     }
 }
 
-void SkNWayCanvas::didConcat(const SkMatrix& matrix) {
-    Iter iter(fList);
-    while (iter.next()) {
-        iter->concat(matrix);
-    }
-}
-
-void SkNWayCanvas::didSetMatrix(const SkMatrix& matrix) {
+void SkNWayCanvas::didSetM44(const SkM44& matrix) {
     Iter iter(fList);
     while (iter.next()) {
         iter->setMatrix(matrix);

@@ -130,7 +130,7 @@ sk_sp<SkShader> create_checkerboard_shader(SkColor c1, SkColor c2, int size) {
     bm.eraseColor(c1);
     bm.eraseArea(SkIRect::MakeLTRB(0, 0, size, size), c2);
     bm.eraseArea(SkIRect::MakeLTRB(size, size, 2 * size, 2 * size), c2);
-    return bm.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat);
+    return bm.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat, SkSamplingOptions());
 }
 
 SkBitmap create_checkerboard_bitmap(int w, int h, SkColor c1, SkColor c2, int checkSize) {
@@ -140,6 +140,12 @@ SkBitmap create_checkerboard_bitmap(int w, int h, SkColor c1, SkColor c2, int ch
 
     ToolUtils::draw_checkerboard(&canvas, c1, c2, checkSize);
     return bitmap;
+}
+
+sk_sp<SkImage> create_checkerboard_image(int w, int h, SkColor c1, SkColor c2, int checkSize) {
+    auto surf = SkSurface::MakeRasterN32Premul(w, h);
+    ToolUtils::draw_checkerboard(surf->getCanvas(), c1, c2, checkSize);
+    return surf->makeImageSnapshot();
 }
 
 void draw_checkerboard(SkCanvas* canvas, SkColor c1, SkColor c2, int size) {

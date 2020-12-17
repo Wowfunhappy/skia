@@ -27,7 +27,6 @@
 
 #define SK_FRAGCOLOR_BUILTIN           10001
 #define SK_IN_BUILTIN                  10002
-#define SK_OUTCOLOR_BUILTIN            10004
 #define SK_OUT_BUILTIN                 10007
 #define SK_LASTFRAGCOLOR_BUILTIN       10008
 #define SK_MAIN_COORDS_BUILTIN         10009
@@ -54,6 +53,7 @@ struct PipelineStageArgs;
 class ProgramUsage;
 
 struct LoadedModule {
+    Program::Kind                                fKind;
     std::shared_ptr<SymbolTable>                 fSymbols;
     std::vector<std::unique_ptr<ProgramElement>> fElements;
 };
@@ -90,7 +90,6 @@ public:
 
     struct FormatArg {
         enum class Kind {
-            kOutput,
             kCoords,
             kUniform,
             kChildProcessor,
@@ -226,6 +225,9 @@ public:
     const ParsedModule& moduleForProgramKind(Program::Kind kind);
 
 private:
+    const ParsedModule& loadGPUModule();
+    const ParsedModule& loadFragmentModule();
+    const ParsedModule& loadVertexModule();
     const ParsedModule& loadFPModule();
     const ParsedModule& loadGeometryModule();
     const ParsedModule& loadPublicModule();
@@ -267,8 +269,11 @@ private:
      */
     bool optimize(Program& program);
 
+    bool optimize(LoadedModule& module);
+
     Position position(int offset);
 
+    std::shared_ptr<Context> fContext;
     const ShaderCapsClass* fCaps = nullptr;
 
     std::shared_ptr<SymbolTable> fRootSymbolTable;
@@ -295,7 +300,6 @@ private:
     int fFlags;
 
     const String* fSource;
-    std::shared_ptr<Context> fContext;
     int fErrorCount;
     String fErrorText;
 

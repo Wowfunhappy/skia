@@ -16,18 +16,13 @@ class SkSVGAttributeParser : public SkNoncopyable {
 public:
     SkSVGAttributeParser(const char[]);
 
-    bool parseColor(SkSVGColorType*);
-    bool parseFilter(SkSVGFilterType*);
-    bool parseNumber(SkSVGNumberType*);
     bool parseInteger(SkSVGIntegerType*);
     bool parseViewBox(SkSVGViewBoxType*);
     bool parsePoints(SkSVGPointsType*);
-    bool parseStopColor(SkSVGStopColor*);
     bool parsePreserveAspectRatio(SkSVGPreserveAspectRatio*);
 
     // TODO: Migrate all parse*() functions to this style (and delete the old version)
     //      so they can be used by parse<T>():
-    bool parse(SkSVGNumberType* v) { return parseNumber(v); }
     bool parse(SkSVGIntegerType* v) { return parseInteger(v); }
 
     template <typename T> using ParseResult = SkTLazy<T>;
@@ -52,6 +47,27 @@ public:
         return ParseResult<T>();
     }
 
+    template <typename PropertyT>
+    static ParseResult<PropertyT> parseProperty(const char* expectedName,
+                                                const char* name,
+                                                const char* value) {
+        if (strcmp(name, expectedName) != 0) {
+            return ParseResult<PropertyT>();
+        }
+
+        if (!strcmp(value, "inherit")) {
+            PropertyT result(SkSVGPropertyState::kInherit);
+            return ParseResult<PropertyT>(&result);
+        }
+
+        auto pr = parse<typename PropertyT::ValueT>(value);
+        if (pr.isValid()) {
+            PropertyT result(*pr);
+            return ParseResult<PropertyT>(&result);
+        }
+
+        return ParseResult<PropertyT>();
+    }
 
 private:
     // Stack-only
