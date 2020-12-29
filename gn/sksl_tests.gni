@@ -47,7 +47,6 @@ sksl_fp_tests = [
   "$_tests/sksl/fp/GrNestedCall.fp",
   "$_tests/sksl/fp/GrNestedChildProcessors.fp",
   "$_tests/sksl/fp/GrNonInlinedInUniform.fp",
-  "$_tests/sksl/fp/GrNullableChildProcessor.fp",
   "$_tests/sksl/fp/GrSectionClass.fp",
   "$_tests/sksl/fp/GrSectionConstructor.fp",
   "$_tests/sksl/fp/GrSectionConstructorParams.fp",
@@ -112,6 +111,8 @@ sksl_error_tests = [
   "$_tests/sksl/errors/InvalidOutParams.sksl",
   "$_tests/sksl/errors/InvalidUnary.sksl",
   "$_tests/sksl/errors/ModifiersInStruct.sksl",
+  "$_tests/sksl/errors/OpaqueTypeAssignment.sksl",
+  "$_tests/sksl/errors/OpaqueTypeConstruction.sksl",
   "$_tests/sksl/errors/OpaqueTypeInArray.sksl",
   "$_tests/sksl/errors/OpaqueTypeInInterfaceBlock.sksl",
   "$_tests/sksl/errors/OpaqueTypeInStruct.sksl",
@@ -120,7 +121,9 @@ sksl_error_tests = [
   "$_tests/sksl/errors/Ossfuzz26759.sksl",
   "$_tests/sksl/errors/Ossfuzz27650.sksl",
   "$_tests/sksl/errors/Ossfuzz27663.sksl",
+  "$_tests/sksl/errors/OverflowFloatLiteral.sksl",
   "$_tests/sksl/errors/OverflowIntLiteral.sksl",
+  "$_tests/sksl/errors/OverflowParamArraySize.sksl",
   "$_tests/sksl/errors/OverflowUintLiteral.sksl",
   "$_tests/sksl/errors/PrivateTypes.sksl",
   "$_tests/sksl/errors/RedeclareBasicType.sksl",
@@ -192,6 +195,7 @@ sksl_metal_tests = [
 ]
 
 sksl_spirv_tests = [
+  "$_tests/sksl/spirv/ConstantVectorFromVector.sksl",
   "$_tests/sksl/spirv/LayoutMultipleOf4.sksl",
   "$_tests/sksl/spirv/LayoutOutOfOrder.sksl",
   "$_tests/sksl/spirv/OpaqueTypeInArray.sksl",
@@ -207,6 +211,7 @@ sksl_shared_tests = [
   "$_tests/sksl/intrinsics/Asinh.sksl",
   "$_tests/sksl/intrinsics/Atan.sksl",
   "$_tests/sksl/intrinsics/Atanh.sksl",
+  "$_tests/sksl/intrinsics/BitCount.sksl",
   "$_tests/sksl/intrinsics/Ceil.sksl",
   "$_tests/sksl/intrinsics/Clamp.sksl",
   "$_tests/sksl/intrinsics/Cos.sksl",
@@ -253,6 +258,7 @@ sksl_shared_tests = [
   "$_tests/sksl/intrinsics/Normalize.sksl",
   "$_tests/sksl/intrinsics/Not.sksl",
   "$_tests/sksl/intrinsics/NotEqual.sksl",
+  "$_tests/sksl/intrinsics/OuterProduct.sksl",
   "$_tests/sksl/intrinsics/Pack.sksl",
   "$_tests/sksl/intrinsics/Pow.sksl",
   "$_tests/sksl/intrinsics/Radians.sksl",
@@ -331,6 +337,8 @@ sksl_shared_tests = [
   "$_tests/sksl/shared/Ossfuzz26167.sksl",
   "$_tests/sksl/shared/Ossfuzz27614.sksl",
   "$_tests/sksl/shared/Ossfuzz28050.sksl",
+  "$_tests/sksl/shared/Ossfuzz28794.sksl",
+  "$_tests/sksl/shared/Ossfuzz28904.sksl",
   "$_tests/sksl/shared/OutParams.sksl",
   "$_tests/sksl/shared/OutParamsTricky.sksl",
   "$_tests/sksl/shared/RectangleTexture.sksl",
@@ -389,6 +397,9 @@ sksl_inliner_tests = [
   "$_tests/sksl/inliner/IfWithReturnsCanBeInlined.sksl",
   "$_tests/sksl/inliner/InlineKeywordOverridesThreshold.sksl",
   "$_tests/sksl/inliner/InlineThreshold.sksl",
+  "$_tests/sksl/inliner/InlinerElidesTempVarForReturnsInsideBlock.sksl",
+  "$_tests/sksl/inliner/InlinerUsesTempVarForMultipleReturns.sksl",
+  "$_tests/sksl/inliner/InlinerUsesTempVarForReturnsInsideBlockWithVar.sksl",
   "$_tests/sksl/inliner/InlineWithInoutArgument.sksl",
   "$_tests/sksl/inliner/InlineWithModifiedArgument.sksl",
   "$_tests/sksl/inliner/InlineWithNestedBigCalls.sksl",
@@ -397,9 +408,10 @@ sksl_inliner_tests = [
   "$_tests/sksl/inliner/InlineWithUnnecessaryBlocks.sksl",
   "$_tests/sksl/inliner/InlinerAvoidsVariableNameOverlap.sksl",
   "$_tests/sksl/inliner/InlinerManglesNames.sksl",
+  "$_tests/sksl/inliner/InlinerWrapsEarlyReturnsWithForLoop.sksl",
+  "$_tests/sksl/inliner/InlinerWrapsSwitchWithReturnInsideWithForLoop.sksl",
   "$_tests/sksl/inliner/ShortCircuitEvaluationsCannotInlineRightHandSide.sksl",
   "$_tests/sksl/inliner/SwitchWithCastCanBeInlined.sksl",
-  "$_tests/sksl/inliner/SwitchWithReturnInsideCannotBeInlined.sksl",
   "$_tests/sksl/inliner/SwitchWithoutReturnInsideCanBeInlined.sksl",
   "$_tests/sksl/inliner/SwizzleCanBeInlinedDirectly.sksl",
   "$_tests/sksl/inliner/TernaryResultsCannotBeInlined.sksl",
@@ -446,7 +458,6 @@ sksl_settings_tests = [
   "$_tests/sksl/glsl/TypePrecision.sksl",
   "$_tests/sksl/inliner/ExponentialGrowth.sksl",
   "$_tests/sksl/inliner/InlinerCanBeDisabled.sksl",
-  "$_tests/sksl/inliner/InlinerWrapsEarlyReturnsWithDoWhileBlock.sksl",
   "$_tests/sksl/shared/Derivatives.sksl",
   "$_tests/sksl/shared/DerivativesFlipY.sksl",
   "$_tests/sksl/workarounds/AbsInt.sksl",
@@ -460,6 +471,19 @@ sksl_settings_tests = [
   "$_tests/sksl/workarounds/PowWithConstantExponent.sksl",
   "$_tests/sksl/workarounds/RewriteDoWhileLoops.sksl",
   "$_tests/sksl/workarounds/TernaryShortCircuit.sksl",
+]
+
+sksl_rte_tests = [
+  "$_tests/sksl/runtime/SampleWithConstantMatrix.rte",
+  "$_tests/sksl/runtime/SampleWithExplicitCoord.rte",
+  "$_tests/sksl/runtime/SampleWithUniformMatrix.rte",
+  "$_tests/sksl/runtime/SampleWithVariableMatrix.rte",
+]
+
+sksl_rte_error_tests = [
+  "$_tests/sksl/errors/Discard.rte",
+  "$_tests/sksl/errors/UnsupportedTypeSampler.rte",
+  "$_tests/sksl/errors/UnsupportedTypeTexture.rte",
 ]
 
 # Tests in sksl_fp_tests_sources will be compiled with --settings on, and are expected to generate
@@ -484,3 +508,7 @@ sksl_metal_tests_sources =
 # generate a .asm.(frag|vert|geom) output file.
 sksl_spirv_tests_sources =
     sksl_blend_tests + sksl_shared_tests + sksl_spirv_tests
+
+## Tests in sksl_skvm_tests_sources will be compiled with --settings on, and are expected to
+## generate a .skvm output file.
+sksl_skvm_tests_sources = sksl_rte_tests + sksl_rte_error_tests

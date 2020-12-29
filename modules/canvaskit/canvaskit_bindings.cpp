@@ -753,10 +753,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                   size_t length)->sk_sp<SkAnimatedImage> {
         uint8_t* imgData = reinterpret_cast<uint8_t*>(iptr);
         auto bytes = SkData::MakeFromMalloc(imgData, length);
-        auto stream = SkMemoryStream::Make(std::move(bytes));
-        auto codec = SkCodec::MakeFromStream(std::move(stream), nullptr, nullptr);
-        auto aCodec = SkAndroidCodec::MakeFromCodec(std::move(codec),
-                                                    SkAndroidCodec::ExifOrientationBehavior::kRespect);
+        auto aCodec = SkAndroidCodec::MakeFromData(std::move(bytes));
         if (nullptr == aCodec) {
             return nullptr;
         }
@@ -914,11 +911,11 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
         .function("_drawImageNine", optional_override([](SkCanvas& self, const sk_sp<SkImage>& image,
                                                          uintptr_t /* int* */ centerPtr, uintptr_t /* float* */ dstPtr,
-                                                         const SkPaint* paint)->void {
+                                                         SkFilterMode filter, const SkPaint* paint)->void {
             const SkIRect* center = reinterpret_cast<const SkIRect*>(centerPtr);
             const SkRect* dst = reinterpret_cast<const SkRect*>(dstPtr);
 
-            self.drawImageNine(image, *center, *dst, paint);
+            self.drawImageNine(image.get(), *center, *dst, filter, paint);
         }), allow_raw_pointers())
         .function("_drawImageRect", optional_override([](SkCanvas& self, const sk_sp<SkImage>& image,
                                                          uintptr_t /* float* */ srcPtr, uintptr_t /* float* */ dstPtr,

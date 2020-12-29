@@ -85,31 +85,6 @@ void CPPCodeGenerator::writeBinaryExpression(const BinaryExpression& b,
         if (precedence >= parentPrecedence) {
             this->write(")");
         }
-    } else if (left.kind() == Expression::Kind::kNullLiteral ||
-               right.kind() == Expression::Kind::kNullLiteral) {
-        const Variable* var;
-        if (left.kind() != Expression::Kind::kNullLiteral) {
-            var = left.as<VariableReference>().variable();
-        } else {
-            var = right.as<VariableReference>().variable();
-        }
-        SkASSERT(var->type().typeKind() == Type::TypeKind::kNullable &&
-                 var->type().componentType() == *fContext.fFragmentProcessor_Type);
-        this->write("%s");
-        const char* prefix = "";
-        switch (op) {
-            case Token::Kind::TK_EQEQ:
-                prefix = "!";
-                break;
-            case Token::Kind::TK_NEQ:
-                prefix = "";
-                break;
-            default:
-                SkASSERT(false);
-        }
-        int childIndex = this->getChildFPIndex(*var);
-        fFormatArgs.push_back(String(prefix) + "_outer.childProcessor(" + to_string(childIndex) +
-                              ") ? \"true\" : \"false\"");
     } else {
         INHERITED::writeBinaryExpression(b, parentPrecedence);
     }
@@ -402,7 +377,7 @@ int CPPCodeGenerator::getChildFPIndex(const Variable& var) const {
                                   p->as<GlobalVarDeclaration>().declaration()->as<VarDeclaration>();
             if (&decl.var() == &var) {
                 return index;
-            } else if (decl.var().type().nonnullable() == *fContext.fFragmentProcessor_Type) {
+            } else if (decl.var().type() == *fContext.fFragmentProcessor_Type) {
                 ++index;
             }
         }
@@ -424,8 +399,7 @@ void CPPCodeGenerator::writeFunctionCall(const FunctionCall& c) {
 
         // Validity checks that are detected by function definition in sksl_fp.inc
         SkASSERT(arguments.size() >= 1 && arguments.size() <= 3);
-        SkASSERT("fragmentProcessor"  == arguments[0]->type().name() ||
-                 "fragmentProcessor?" == arguments[0]->type().name());
+        SkASSERT("fragmentProcessor"  == arguments[0]->type().name());
 
         // Actually fail during compilation if arguments with valid types are
         // provided that are not variable references, since sample() is a
@@ -787,7 +761,7 @@ void CPPCodeGenerator::writePrivateVarValues() {
 }
 
 static bool is_accessible(const Variable& var) {
-    const Type& type = var.type().nonnullable();
+    const Type& type = var.type();
     return Type::TypeKind::kSampler != type.typeKind() &&
            Type::TypeKind::kOther != type.typeKind();
 }
@@ -845,8 +819,11 @@ void CPPCodeGenerator::flushEmittedCode() {
                 // fFormatArgs will be in a valid state for any future sksl
                 this->writeCodeAppend(toFlush);
 
-                int codeBlock = stoi(String(sksl.c_str() + tokenStart + 2, i - tokenStart - 2));
-                SkASSERT(codeBlock < (int) fExtraEmitCodeBlocks.size());
+                int codeBlock;
+                SkAssertResult(
+                        stoi(StringFragment(sksl.c_str() + tokenStart + 2, i - tokenStart - 2),
+                             &codeBlock));
+                SkASSERT(codeBlock < (int)fExtraEmitCodeBlocks.size());
                 if (fExtraEmitCodeBlocks[codeBlock].size() > 0) {
                     this->write(fExtraEmitCodeBlocks[codeBlock].c_str());
                 }
@@ -1162,7 +1139,7 @@ void CPPCodeGenerator::writeSetData(std::vector<const Variable*>& uniforms) {
                         wroteProcessor = true;
                     }
 
-                    if (variable.type().nonnullable() != *fContext.fFragmentProcessor_Type) {
+                    if (variable.type() != *fContext.fFragmentProcessor_Type) {
                         this->writef("        auto %s = _outer.%s;\n"
                                         "        (void) %s;\n",
                                         name, name, name);
@@ -1209,7 +1186,7 @@ void CPPCodeGenerator::writeClone() {
                      fFullName.c_str(), fFullName.c_str(), fFullName.c_str());
         for (const Variable* param : fSectionAndParameterHelper.getParameters()) {
             String fieldName = HCodeGenerator::FieldName(String(param->name()).c_str());
-            if (param->type().nonnullable() != *fContext.fFragmentProcessor_Type) {
+            if (param->type() != *fContext.fFragmentProcessor_Type) {
                 this->writef("\n, %s(src.%s)",
                              fieldName.c_str(),
                              fieldName.c_str());
@@ -1253,7 +1230,7 @@ void CPPCodeGenerator::writeDumpInfo() {
 
         for (const Variable* param : fSectionAndParameterHelper.getParameters()) {
             // dumpInfo() doesn't need to log child FPs.
-            if (param->type().nonnullable() == *fContext.fFragmentProcessor_Type) {
+            if (param->type() == *fContext.fFragmentProcessor_Type) {
                 continue;
             }
 
@@ -1464,7 +1441,7 @@ bool CPPCodeGenerator::generateCode() {
                  "    (void) that;\n",
                  fullName, fullName, fullName);
     for (const auto& param : fSectionAndParameterHelper.getParameters()) {
-        if (param->type().nonnullable() == *fContext.fFragmentProcessor_Type) {
+        if (param->type() == *fContext.fFragmentProcessor_Type) {
             continue;
         }
         String nameString(param->name());

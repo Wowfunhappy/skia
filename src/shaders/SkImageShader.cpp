@@ -447,8 +447,8 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
     bool sharpen = args.fContext->priv().options().fSharpenMipmappedTextures;
     GrSamplerState::Filter     fm = GrSamplerState::Filter::kNearest;
     GrSamplerState::MipmapMode mm = GrSamplerState::MipmapMode::kNone;
-    bool bicubic;
-    SkCubicResampler kernel = GrBicubicEffect::gMitchell;
+    bool bicubic = false;
+    SkCubicResampler kernel = kInvalidCubicResampler;
 
     if (fUseSamplingOptions) {
         bicubic = fSampling.useCubic;
@@ -466,13 +466,14 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
             }
         }
     } else {    // inherit filterquality from paint
-        std::tie(fm, mm, bicubic) =
-                GrInterpretFilterQuality(fImage->dimensions(),
-                                         args.fFilterQuality,
+        std::tie(fm, mm, kernel) =
+              GrInterpretSamplingOptions(fImage->dimensions(),
+                                         args.fSampling,
                                          args.fMatrixProvider.localToDevice(),
                                          *lm,
                                          sharpen,
                                          args.fAllowFilterQualityReduction);
+        bicubic = GrValidCubicResampler(kernel);
     }
     std::unique_ptr<GrFragmentProcessor> fp;
     if (bicubic) {
@@ -485,14 +486,14 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
     }
     fp = GrColorSpaceXformEffect::Make(std::move(fp), fImage->colorSpace(), producer->alphaType(),
                                        args.fDstColorInfo->colorSpace(), kPremul_SkAlphaType);
-    fp = GrBlendFragmentProcessor::Make(std::move(fp), nullptr, SkBlendMode::kModulate);
-    bool isAlphaOnly = SkColorTypeIsAlphaOnly(fImage->colorType());
-    if (isAlphaOnly) {
-        return fp;
+    if (fImage->isAlphaOnly()) {
+        return GrBlendFragmentProcessor::Make(std::move(fp), nullptr, SkBlendMode::kDstIn);
     } else if (args.fInputColorIsOpaque) {
+        // This special case isn't needed for correctness. It just avoids a multiplication by
+        // a vertex attribute alpha that is known to be 1 if we take the kSrcIn path.
         return GrFragmentProcessor::OverrideInput(std::move(fp), SK_PMColor4fWHITE, false);
     }
-    return GrFragmentProcessor::MulChildByInputAlpha(std::move(fp));
+    return GrBlendFragmentProcessor::Make(std::move(fp), nullptr, SkBlendMode::kSrcIn);
 }
 
 #endif
@@ -500,17 +501,12 @@ std::unique_ptr<GrFragmentProcessor> SkImageShader::asFragmentProcessor(
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 #include "src/core/SkImagePriv.h"
 
-sk_sp<SkShader> SkMakeBitmapShader(const SkBitmap& src, SkTileMode tmx, SkTileMode tmy,
-                                   const SkMatrix* localMatrix, SkCopyPixelsMode cpm) {
-    const SkSamplingOptions* inherit_from_paint = nullptr;
-    return SkImageShader::Make(SkMakeImageFromRasterBitmap(src, cpm),
-                               tmx, tmy, inherit_from_paint, localMatrix);
-}
-
 sk_sp<SkShader> SkMakeBitmapShaderForPaint(const SkPaint& paint, const SkBitmap& src,
                                            SkTileMode tmx, SkTileMode tmy,
+                                           const SkSamplingOptions& sampling,
                                            const SkMatrix* localMatrix, SkCopyPixelsMode mode) {
-    auto s = SkMakeBitmapShader(src, tmx, tmy, localMatrix, mode);
+    auto s = SkImageShader::Make(SkMakeImageFromRasterBitmap(src, mode),
+                                 tmx, tmy, &sampling, localMatrix);
     if (!s) {
         return nullptr;
     }

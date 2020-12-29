@@ -10,6 +10,7 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPixmap.h"
 #include "include/core/SkSurface.h"
+#include "src/core/SkCanvasPriv.h"
 #include "src/core/SkTLazy.h"
 
 class SkPaintFilterCanvas::AutoPaintFilter {
@@ -129,14 +130,6 @@ void SkPaintFilterCanvas::onDrawImageRect(const SkImage* image, const SkRect* sr
     AutoPaintFilter apf(this, paint);
     if (apf.shouldDraw()) {
         this->SkNWayCanvas::onDrawImageRect(image, src, dst, &apf.paint(), constraint);
-    }
-}
-
-void SkPaintFilterCanvas::onDrawImageNine(const SkImage* image, const SkIRect& center,
-                                          const SkRect& dst, const SkPaint* paint) {
-    AutoPaintFilter apf(this, paint);
-    if (apf.shouldDraw()) {
-        this->SkNWayCanvas::onDrawImageNine(image, center, dst, &apf.paint());
     }
 }
 
@@ -273,4 +266,8 @@ SkImageInfo SkPaintFilterCanvas::onImageInfo() const {
 
 bool SkPaintFilterCanvas::onGetProps(SkSurfaceProps* props) const {
     return proxy()->getProps(props);
+}
+
+GrSurfaceDrawContext* SkPaintFilterCanvas::topDeviceSurfaceDrawContext() {
+    return SkCanvasPriv::TopDeviceSurfaceDrawContext(this->proxy());
 }

@@ -1069,10 +1069,6 @@ void GLSLCodeGenerator::writeFunction(const FunctionDefinition& f) {
     fSetupFragPositionLocal = false;
     fSetupFragCoordWorkaround = false;
 
-    // The pipeline-stage code generator can't use functions written this way, so make sure we don't
-    // accidentally end up here.
-    SkASSERT(fProgramKind != Program::kPipelineStage_Kind);
-
     this->writeFunctionDeclaration(f.declaration());
     this->writeLine(" {");
     fIndentation++;
@@ -1308,9 +1304,6 @@ void GLSLCodeGenerator::writeStatement(const Statement& s) {
         case Statement::Kind::kFor:
             this->writeForStatement(s.as<ForStatement>());
             break;
-        case Statement::Kind::kWhile:
-            this->writeWhileStatement(s.as<WhileStatement>());
-            break;
         case Statement::Kind::kDo:
             this->writeDoStatement(s.as<DoStatement>());
             break;
@@ -1368,6 +1361,15 @@ void GLSLCodeGenerator::writeIfStatement(const IfStatement& stmt) {
 }
 
 void GLSLCodeGenerator::writeForStatement(const ForStatement& f) {
+    // Emit loops of the form 'for(;test;)' as 'while(test)', which is probably how they started
+    if (!f.initializer() && f.test() && !f.next()) {
+        this->write("while (");
+        this->writeExpression(*f.test(), kTopLevel_Precedence);
+        this->write(") ");
+        this->writeStatement(*f.statement());
+        return;
+    }
+
     this->write("for (");
     if (f.initializer() && !f.initializer()->isEmpty()) {
         this->writeStatement(*f.initializer());
@@ -1391,13 +1393,6 @@ void GLSLCodeGenerator::writeForStatement(const ForStatement& f) {
     }
     this->write(") ");
     this->writeStatement(*f.statement());
-}
-
-void GLSLCodeGenerator::writeWhileStatement(const WhileStatement& w) {
-    this->write("while (");
-    this->writeExpression(*w.test(), kTopLevel_Precedence);
-    this->write(") ");
-    this->writeStatement(*w.statement());
 }
 
 void GLSLCodeGenerator::writeDoStatement(const DoStatement& d) {

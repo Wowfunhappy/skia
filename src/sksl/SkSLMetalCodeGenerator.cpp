@@ -49,6 +49,7 @@ void MetalCodeGenerator::setupIntrinsics() {
     fIntrinsicMap[String("distance")]           = SPECIAL(Distance);
     fIntrinsicMap[String("dot")]                = SPECIAL(Dot);
     fIntrinsicMap[String("faceforward")]        = SPECIAL(Faceforward);
+    fIntrinsicMap[String("bitCount")]           = SPECIAL(BitCount);
     fIntrinsicMap[String("findLSB")]            = SPECIAL(FindLSB);
     fIntrinsicMap[String("findMSB")]            = SPECIAL(FindMSB);
     fIntrinsicMap[String("length")]             = SPECIAL(Length);
@@ -675,6 +676,12 @@ void MetalCodeGenerator::writeSpecialIntrinsic(const FunctionCall & c, SpecialIn
             this->write("((");
             this->writeExpression(*arguments[0], kSequence_Precedence);
             this->write(") * 0.0174532925)");
+            break;
+        }
+        case kBitCount_SpecialIntrinsic: {
+            this->write("popcount(");
+            this->writeExpression(*arguments[0], kSequence_Precedence);
+            this->write(")");
             break;
         }
         case kFindLSB_SpecialIntrinsic: {
@@ -1670,9 +1677,6 @@ void MetalCodeGenerator::writeStatement(const Statement& s) {
         case Statement::Kind::kFor:
             this->writeForStatement(s.as<ForStatement>());
             break;
-        case Statement::Kind::kWhile:
-            this->writeWhileStatement(s.as<WhileStatement>());
-            break;
         case Statement::Kind::kDo:
             this->writeDoStatement(s.as<DoStatement>());
             break;
@@ -1730,6 +1734,15 @@ void MetalCodeGenerator::writeIfStatement(const IfStatement& stmt) {
 }
 
 void MetalCodeGenerator::writeForStatement(const ForStatement& f) {
+    // Emit loops of the form 'for(;test;)' as 'while(test)', which is probably how they started
+    if (!f.initializer() && f.test() && !f.next()) {
+        this->write("while (");
+        this->writeExpression(*f.test(), kTopLevel_Precedence);
+        this->write(") ");
+        this->writeStatement(*f.statement());
+        return;
+    }
+
     this->write("for (");
     if (f.initializer() && !f.initializer()->isEmpty()) {
         this->writeStatement(*f.initializer());
@@ -1745,13 +1758,6 @@ void MetalCodeGenerator::writeForStatement(const ForStatement& f) {
     }
     this->write(") ");
     this->writeStatement(*f.statement());
-}
-
-void MetalCodeGenerator::writeWhileStatement(const WhileStatement& w) {
-    this->write("while (");
-    this->writeExpression(*w.test(), kTopLevel_Precedence);
-    this->write(") ");
-    this->writeStatement(*w.statement());
 }
 
 void MetalCodeGenerator::writeDoStatement(const DoStatement& d) {
@@ -2246,11 +2252,6 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Statemen
                    this->requirements(f.test().get()) |
                    this->requirements(f.next().get()) |
                    this->requirements(f.statement().get());
-        }
-        case Statement::Kind::kWhile: {
-            const WhileStatement& w = s->as<WhileStatement>();
-            return this->requirements(w.test().get()) |
-                   this->requirements(w.statement().get());
         }
         case Statement::Kind::kDo: {
             const DoStatement& d = s->as<DoStatement>();

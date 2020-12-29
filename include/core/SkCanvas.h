@@ -1656,9 +1656,7 @@ public:
 
         If SkPaint paint is supplied, apply SkColorFilter, alpha, SkImageFilter, and
         SkBlendMode. If image is kAlpha_8_SkColorType, apply SkShader.
-        If paint contains SkMaskFilter, generate mask from image bounds. If paint
-        SkFilterQuality set to kNone_SkFilterQuality, disable pixel filtering. For all
-        other values of paint SkFilterQuality, use kLow_SkFilterQuality to filter pixels.
+        If paint contains SkMaskFilter, generate mask from image bounds.
         Any SkMaskFilter on paint is ignored as is paint anti-aliasing state.
 
         If generated mask extends beyond image bounds, replicate image edge colors, just
@@ -1829,9 +1827,7 @@ public:
 
         If SkPaint paint is supplied, apply SkColorFilter, alpha, SkImageFilter, and
         SkBlendMode. If image is kAlpha_8_SkColorType, apply SkShader.
-        If paint contains SkMaskFilter, generate mask from image bounds. If paint
-        SkFilterQuality set to kNone_SkFilterQuality, disable pixel filtering. For all
-        other values of paint SkFilterQuality, use kLow_SkFilterQuality to filter pixels.
+        If paint contains SkMaskFilter, generate mask from image bounds.
         Any SkMaskFilter on paint is ignored as is paint anti-aliasing state.
 
         If generated mask extends beyond bitmap bounds, replicate bitmap edge colors,
@@ -2444,13 +2440,9 @@ public:
 
     ///////////////////////////////////////////////////////////////////////////
 
-    // don't call
-    virtual GrSurfaceDrawContext* internal_private_accessTopLayerRenderTargetContext();
-    SkIRect internal_private_getTopLayerBounds() const { return this->internalGetTopLayerBounds(); }
-
 #if defined(SK_BUILD_FOR_ANDROID_FRAMEWORK) && SK_SUPPORT_GPU
     // These methods exist to support WebView in Android Framework.
-    SkIRect topLayerBounds() const { return this->internalGetTopLayerBounds(); }
+    SkIRect topLayerBounds() const;
     GrBackendRenderTarget topLayerBackendRenderTarget() const;
 #endif
 
@@ -2531,10 +2523,11 @@ protected:
     virtual void onDrawImage(const SkImage* image, SkScalar dx, SkScalar dy, const SkPaint* paint);
     virtual void onDrawImageRect(const SkImage* image, const SkRect* src, const SkRect& dst,
                                  const SkPaint* paint, SrcRectConstraint constraint);
-    virtual void onDrawImageNine(const SkImage* image, const SkIRect& center, const SkRect& dst,
-                                 const SkPaint* paint);
     virtual void onDrawImageLattice(const SkImage* image, const Lattice& lattice, const SkRect& dst,
                                     const SkPaint* paint);
+
+    // never called -- remove from clients' subclasses
+    virtual void onDrawImageNine(const SkImage*, const SkIRect&, const SkRect&, const SkPaint*) {}
 
     virtual void onDrawAtlas(const SkImage* atlas, const SkRSXform xform[], const SkRect rect[],
                              const SkColor colors[], int count, SkBlendMode mode,
@@ -2573,8 +2566,6 @@ protected:
     bool clipRectBounds(const SkRect* bounds, SkIRect* intersection,
                         const SkImageFilter* imageFilter = nullptr);
 
-    SkBaseDevice* getTopDevice() const;
-
 private:
     static void DrawDeviceWithFilter(SkBaseDevice* src, const SkImageFilter* filter,
                                      SkBaseDevice* dst, const SkIPoint& dstOrigin,
@@ -2591,7 +2582,17 @@ private:
     void predrawNotify(bool willOverwritesEntireSurface = false);
     void predrawNotify(const SkRect* rect, const SkPaint* paint, ShaderOverrideOpacity);
 
-    SkBaseDevice* getDevice() const;
+    // The bottom-most device in the stack, only changed by init(). Image properties and the final
+    // canvas pixels are determined by this device.
+    SkBaseDevice* baseDevice() const {
+        SkASSERT(fBaseDevice);
+        return fBaseDevice.get();
+    }
+
+    // The top-most device in the stack, will change within saveLayer()'s. All drawing and clipping
+    // operations should route to this device.
+    SkBaseDevice* topDevice() const;
+    virtual GrSurfaceDrawContext* topDeviceSurfaceDrawContext();
 
     class MCRec;
 
@@ -2672,12 +2673,6 @@ private:
 
     void init(sk_sp<SkBaseDevice>);
 
-    /**
-     * Gets the bounds of the top level layer in global canvas coordinates. We don't want this
-     * to be public because it exposes decisions about layer sizes that are internal to the canvas.
-     */
-    SkIRect internalGetTopLayerBounds() const;
-
     // All base onDrawX() functions should call this and skip drawing if it returns true.
     // If 'matrix' is non-null, it maps the paint's fast bounds before checking for quick rejection
     bool internalQuickReject(const SkRect& bounds, const SkPaint& paint,
@@ -2704,7 +2699,8 @@ private:
     /**
      *  Returns true if the paint's imagefilter can be invoked directly, without needed a layer.
      */
-    bool canDrawBitmapAsSprite(SkScalar x, SkScalar y, int w, int h, const SkPaint&);
+    bool canDrawBitmapAsSprite(SkScalar x, SkScalar y, int w, int h, const SkSamplingOptions&,
+                               const SkPaint&);
 
     /**
      *  Returns true if the clip (for any active layer) contains antialiasing.

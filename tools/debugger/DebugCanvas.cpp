@@ -5,6 +5,8 @@
  * found in the LICENSE file.
  */
 
+#include "tools/debugger/DebugCanvas.h"
+
 #include "include/core/SkPaint.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPicture.h"
@@ -15,14 +17,12 @@
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkClipOpPriv.h"
 #include "src/core/SkRectPriv.h"
-#include "src/utils/SkJSONWriter.h"
-#include "tools/debugger/DebugCanvas.h"
-#include "tools/debugger/DebugLayerManager.h"
-#include "tools/debugger/DrawCommand.h"
-
 #include "src/gpu/GrAuditTrail.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrSurfaceDrawContext.h"
+#include "src/utils/SkJSONWriter.h"
+#include "tools/debugger/DebugLayerManager.h"
+#include "tools/debugger/DrawCommand.h"
 
 #include <string>
 
@@ -212,9 +212,8 @@ void DebugCanvas::drawTo(SkCanvas* originalCanvas, int index, int m) {
 
         // get the render target of the top device (from the original canvas) so we can ignore ops
         // drawn offscreen
-        GrSurfaceDrawContext* rtc =
-                originalCanvas->internal_private_accessTopLayerRenderTargetContext();
-        GrSurfaceProxy::UniqueID proxyID = rtc->asSurfaceProxy()->uniqueID();
+        GrSurfaceDrawContext* sdc = SkCanvasPriv::TopDeviceSurfaceDrawContext(originalCanvas);
+        GrSurfaceProxy::UniqueID proxyID = sdc->asSurfaceProxy()->uniqueID();
 
         // get the bounding boxes to draw
         SkTArray<GrAuditTrail::OpInfo> childrenBounds;
@@ -440,13 +439,6 @@ void DebugCanvas::onDrawImageRect(const SkImage*    image,
     fnextDrawImageRectLayerId = -1;
 }
 
-void DebugCanvas::onDrawImageNine(const SkImage* image,
-                                  const SkIRect& center,
-                                  const SkRect&  dst,
-                                  const SkPaint* paint) {
-    this->addDrawCommand(new DrawImageNineCommand(image, center, dst, paint));
-}
-
 void DebugCanvas::onDrawOval(const SkRect& oval, const SkPaint& paint) {
     this->addDrawCommand(new DrawOvalCommand(oval, paint));
 }
@@ -618,10 +610,6 @@ std::map<int, std::vector<int>> DebugCanvas::getImageIdToCommandMap(UrlDataManag
             }
             case DrawCommand::OpType::kDrawImageRect_OpType: {
                 imageIndex = static_cast<const DrawImageRectCommand*>(command)->imageId(udm);
-                break;
-            }
-            case DrawCommand::OpType::kDrawImageNine_OpType: {
-                imageIndex = static_cast<const DrawImageNineCommand*>(command)->imageId(udm);
                 break;
             }
             case DrawCommand::OpType::kDrawImageLattice_OpType: {

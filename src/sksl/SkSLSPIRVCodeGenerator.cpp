@@ -65,11 +65,13 @@ void SPIRVCodeGenerator::setupIntrinsics() {
     fIntrinsicMap[String("log2")]          = ALL_GLSL(Log2);
     fIntrinsicMap[String("sqrt")]          = ALL_GLSL(Sqrt);
     fIntrinsicMap[String("inverse")]       = ALL_GLSL(MatrixInverse);
+    fIntrinsicMap[String("outerProduct")]  = ALL_SPIRV(OuterProduct);
     fIntrinsicMap[String("transpose")]     = ALL_SPIRV(Transpose);
     fIntrinsicMap[String("isinf")]         = ALL_SPIRV(IsInf);
     fIntrinsicMap[String("isnan")]         = ALL_SPIRV(IsNan);
     fIntrinsicMap[String("inversesqrt")]   = ALL_GLSL(InverseSqrt);
     fIntrinsicMap[String("determinant")]   = ALL_GLSL(Determinant);
+    fIntrinsicMap[String("matrixCompMult")] = SPECIAL(MatrixCompMult);
     fIntrinsicMap[String("matrixInverse")] = ALL_GLSL(MatrixInverse);
     fIntrinsicMap[String("mod")]           = SPECIAL(Mod);
     fIntrinsicMap[String("modf")]          = ALL_GLSL(Modf);
@@ -101,6 +103,7 @@ void SPIRVCodeGenerator::setupIntrinsics() {
     fIntrinsicMap[String("faceforward")] = ALL_GLSL(FaceForward);
     fIntrinsicMap[String("reflect")]     = ALL_GLSL(Reflect);
     fIntrinsicMap[String("refract")]     = ALL_GLSL(Refract);
+    fIntrinsicMap[String("bitCount")]    = ALL_SPIRV(BitCount);
     fIntrinsicMap[String("findLSB")]     = ALL_GLSL(FindILsb);
     fIntrinsicMap[String("findMSB")]     = BY_TYPE_GLSL(FindSMsb, FindSMsb, FindUMsb);
     fIntrinsicMap[String("dFdx")]        = std::make_tuple(kSPIRV_IntrinsicKind, SpvOpDPdx,
@@ -1062,6 +1065,14 @@ SpvId SPIRVCodeGenerator::writeSpecialIntrinsic(const FunctionCall& c, SpecialIn
                                                SpvOpUndef, args, out);
             break;
         }
+        case kMatrixCompMult_SpecialIntrinsic: {
+            SkASSERT(arguments.size() == 2);
+            SpvId lhs = this->writeExpression(*arguments[0], out);
+            SpvId rhs = this->writeExpression(*arguments[1], out);
+            result = this->writeComponentwiseMatrixBinary(callType, lhs, rhs, SpvOpFMul, SpvOpUndef,
+                                                          out);
+            break;
+        }
     }
     return result;
 }
@@ -1435,7 +1446,10 @@ SpvId SPIRVCodeGenerator::writeMatrixConstructor(const Constructor& c, OutputStr
 SpvId SPIRVCodeGenerator::writeVectorConstructor(const Constructor& c, OutputStream& out) {
     const Type& type = c.type();
     SkASSERT(type.isVector());
-    if (c.isCompileTimeConstant()) {
+    // Constructing a vector from another vector (even if it's constant) requires our general
+    // case code, to deal with (possible) per-element type conversion.
+    bool vectorToVector = c.arguments().size() == 1 && c.arguments()[0]->type().isVector();
+    if (c.isCompileTimeConstant() && !vectorToVector) {
         return this->writeConstantVector(c);
     }
     // go ahead and write the arguments so we don't try to write new instructions in the middle of
@@ -1868,7 +1882,7 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
     this->writeInstruction(SpvOpLoad, this->getType(ref.variable()->type()), result, var, out);
     this->writePrecisionModifier(ref.variable()->type(), result);
     if (ref.variable()->modifiers().fLayout.fBuiltin == SK_FRAGCOORD_BUILTIN &&
-        (fProgram.fSettings.fFlipY || fProgram.fSettings.fInverseW)) {
+        fProgram.fSettings.fFlipY) {
         // The x component never changes, so just grab it
         SpvId xId = this->nextId();
         this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fFloat_Type), xId,
@@ -1949,19 +1963,10 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
         FloatLiteral zero(fContext, -1, 0.0);
         SpvId zeroId = writeFloatLiteral(zero);
 
-        // Calculate the w component which may need to be inverted
+        // Calculate the w component
         SpvId rawWId = this->nextId();
         this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fFloat_Type), rawWId,
                                result, 3, out);
-        SpvId invWId = 0;
-        if (fProgram.fSettings.fInverseW) {
-            // We need to invert w
-            FloatLiteral one(fContext, -1, 1.0);
-            SpvId oneId = writeFloatLiteral(one);
-            invWId = this->nextId();
-            this->writeInstruction(SpvOpFDiv, this->getType(*fContext.fFloat_Type), invWId, oneId,
-                                   rawWId, out);
-        }
 
         // Fill in the new fragcoord with the components from above
         SpvId adjusted = this->nextId();
@@ -1975,11 +1980,7 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
             this->writeWord(rawYId, out);
         }
         this->writeWord(zeroId, out);
-        if (fProgram.fSettings.fInverseW) {
-            this->writeWord(invWId, out);
-        } else {
-            this->writeWord(rawWId, out);
-        }
+        this->writeWord(rawWId, out);
 
         return adjusted;
     }
@@ -2927,9 +2928,6 @@ void SPIRVCodeGenerator::writeStatement(const Statement& s, OutputStream& out) {
         case Statement::Kind::kFor:
             this->writeForStatement(s.as<ForStatement>(), out);
             break;
-        case Statement::Kind::kWhile:
-            this->writeWhileStatement(s.as<WhileStatement>(), out);
-            break;
         case Statement::Kind::kDo:
             this->writeDoStatement(s.as<DoStatement>(), out);
             break;
@@ -3021,33 +3019,6 @@ void SPIRVCodeGenerator::writeForStatement(const ForStatement& f, OutputStream& 
     if (f.next()) {
         this->writeExpression(*f.next(), out);
     }
-    this->writeInstruction(SpvOpBranch, header, out);
-    this->writeLabel(end, out);
-    fBreakTarget.pop();
-    fContinueTarget.pop();
-}
-
-void SPIRVCodeGenerator::writeWhileStatement(const WhileStatement& w, OutputStream& out) {
-    SpvId header = this->nextId();
-    SpvId start = this->nextId();
-    SpvId body = this->nextId();
-    SpvId continueTarget = this->nextId();
-    fContinueTarget.push(continueTarget);
-    SpvId end = this->nextId();
-    fBreakTarget.push(end);
-    this->writeInstruction(SpvOpBranch, header, out);
-    this->writeLabel(header, out);
-    this->writeInstruction(SpvOpLoopMerge, end, continueTarget, SpvLoopControlMaskNone, out);
-    this->writeInstruction(SpvOpBranch, start, out);
-    this->writeLabel(start, out);
-    SpvId test = this->writeExpression(*w.test(), out);
-    this->writeInstruction(SpvOpBranchConditional, test, body, end, out);
-    this->writeLabel(body, out);
-    this->writeStatement(*w.statement(), out);
-    if (fCurrentBlock) {
-        this->writeInstruction(SpvOpBranch, continueTarget, out);
-    }
-    this->writeLabel(continueTarget, out);
     this->writeInstruction(SpvOpBranch, header, out);
     this->writeLabel(end, out);
     fBreakTarget.pop();
