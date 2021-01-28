@@ -45,8 +45,11 @@ class SkSLCompileBench;
 
 namespace SkSL {
 
-class ByteCode;
-class ExternalValue;
+namespace dsl {
+    class DSLWriter;
+}
+
+class ExternalFunction;
 class IRGenerator;
 class IRIntrinsicMap;
 struct PipelineStageArgs;
@@ -118,6 +121,8 @@ public:
         bool fNeedsRescan = false;
         // Metadata about function and variable usage within the program
         ProgramUsage* fUsage = nullptr;
+        // Nodes which we can't throw away until the end of optimization
+        StatementArray fOwnedStatements;
     };
 
 #if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
@@ -141,14 +146,14 @@ public:
     Compiler& operator=(const Compiler&) = delete;
 
     /**
-     * If externalValues is supplied, those values are registered in the symbol table of the
+     * If externalFunctions is supplied, those values are registered in the symbol table of the
      * Program, but ownership is *not* transferred. It is up to the caller to keep them alive.
      */
     std::unique_ptr<Program> convertProgram(
             Program::Kind kind,
             String text,
             const Program::Settings& settings,
-            const std::vector<std::unique_ptr<ExternalValue>>* externalValues = nullptr);
+            const std::vector<std::unique_ptr<ExternalFunction>>* externalFunctions = nullptr);
 
     bool toSPIRV(Program& program, OutputStream& out);
 
@@ -170,21 +175,21 @@ public:
     bool toH(Program& program, String name, OutputStream& out);
 #endif
 
-    std::unique_ptr<ByteCode> toByteCode(Program& program);
-
 #if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
     bool toPipelineStage(Program& program, PipelineStageArgs* outArgs);
 #endif
 
     void error(int offset, String msg) override;
 
-    String errorText();
+    String errorText(bool showCount = true);
 
     void writeErrorCount();
 
     int errorCount() override {
         return fErrorCount;
     }
+
+    void setErrorCount(int c) override;
 
     Context& context() {
         return *fContext;
@@ -231,7 +236,6 @@ private:
     const ParsedModule& loadFPModule();
     const ParsedModule& loadGeometryModule();
     const ParsedModule& loadPublicModule();
-    const ParsedModule& loadInterpreterModule();
     const ParsedModule& loadRuntimeEffectModule();
 
     void addDefinition(const Expression* lvalue, std::unique_ptr<Expression>* expr,
@@ -289,7 +293,6 @@ private:
     ParsedModule fFPModule;             // [GPU] + FP features
 
     ParsedModule fPublicModule;         // [Root] + Public features
-    ParsedModule fInterpreterModule;    // [Public] + Interpreter-only decls
     ParsedModule fRuntimeEffectModule;  // [Public] + Runtime effect decls
 
     // holds ModifiersPools belonging to the core includes for lifetime purposes
@@ -302,9 +305,11 @@ private:
     const String* fSource;
     int fErrorCount;
     String fErrorText;
+    std::vector<size_t> fErrorTextLength;
 
     friend class AutoSource;
     friend class ::SkSLCompileBench;
+    friend class dsl::DSLWriter;
 };
 
 #if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU

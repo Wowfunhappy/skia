@@ -340,6 +340,8 @@ enum GrSLType {
     kInt4_GrSLType,
     kUint_GrSLType,
     kUint2_GrSLType,
+    kUint3_GrSLType,
+    kUint4_GrSLType,
     kTexture2DSampler_GrSLType,
     kTextureExternalSampler_GrSLType,
     kTexture2DRectSampler_GrSLType,
@@ -429,6 +431,8 @@ static constexpr bool GrSLTypeIsFloatType(GrSLType type) {
         case kInt4_GrSLType:
         case kUint_GrSLType:
         case kUint2_GrSLType:
+        case kUint3_GrSLType:
+        case kUint4_GrSLType:
         case kTexture2D_GrSLType:
         case kSampler_GrSLType:
         case kInput_GrSLType:
@@ -468,6 +472,7 @@ static constexpr int GrSLTypeVecLength(GrSLType type) {
         case kShort3_GrSLType:
         case kUShort3_GrSLType:
         case kInt3_GrSLType:
+        case kUint3_GrSLType:
             return 3;
 
         case kFloat4_GrSLType:
@@ -477,6 +482,7 @@ static constexpr int GrSLTypeVecLength(GrSLType type) {
         case kShort4_GrSLType:
         case kUShort4_GrSLType:
         case kInt4_GrSLType:
+        case kUint4_GrSLType:
             return 4;
 
         case kFloat2x2_GrSLType:
@@ -554,6 +560,8 @@ static constexpr bool GrSLTypeIsCombinedSamplerType(GrSLType type) {
         case kInt4_GrSLType:
         case kUint_GrSLType:
         case kUint2_GrSLType:
+        case kUint3_GrSLType:
+        case kUint4_GrSLType:
         case kBool_GrSLType:
         case kByte_GrSLType:
         case kByte2_GrSLType:
@@ -780,7 +788,7 @@ enum class GpuPathRenderers {
     kAALinearizing     =   1 << 6,
     kSmall             =   1 << 7,
     kTriangulating     =   1 << 8,
-    kDefault           = ((1 << 9) - 1) & ~kTessellation  // All but kTessellation.
+    kDefault           = ((1 << 9) - 1)  // All path renderers.
 };
 
 /**

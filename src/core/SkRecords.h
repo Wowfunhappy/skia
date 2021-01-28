@@ -238,7 +238,8 @@ RECORD(DrawImage, kDraw_Tag|kHasImage_Tag|kHasPaint_Tag,
         Optional<SkPaint> paint;
         sk_sp<const SkImage> image;
         SkScalar left;
-        SkScalar top);
+        SkScalar top;
+        SkSamplingOptions sampling);
 RECORD(DrawImageLattice, kDraw_Tag|kHasImage_Tag|kHasPaint_Tag,
         Optional<SkPaint> paint;
         sk_sp<const SkImage> image;
@@ -250,12 +251,14 @@ RECORD(DrawImageLattice, kDraw_Tag|kHasImage_Tag|kHasPaint_Tag,
         PODArray<SkCanvas::Lattice::RectType> flags;
         PODArray<SkColor> colors;
         SkIRect src;
-        SkRect dst);
+        SkRect dst;
+        SkFilterMode filter);
 RECORD(DrawImageRect, kDraw_Tag|kHasImage_Tag|kHasPaint_Tag,
         Optional<SkPaint> paint;
         sk_sp<const SkImage> image;
-        Optional<SkRect> src;
+        SkRect src;
         SkRect dst;
+        SkSamplingOptions sampling;
         SkCanvas::SrcRectConstraint constraint);
 RECORD(DrawOval, kDraw_Tag|kHasPaint_Tag,
         SkPaint paint;
@@ -304,6 +307,7 @@ RECORD(DrawAtlas, kDraw_Tag|kHasImage_Tag|kHasPaint_Tag,
         PODArray<SkColor> colors;
         int count;
         SkBlendMode mode;
+        SkSamplingOptions sampling;
         Optional<SkRect> cull);
 RECORD(DrawVertices, kDraw_Tag|kHasPaint_Tag,
         SkPaint paint;
@@ -328,6 +332,7 @@ RECORD(DrawEdgeAAImageSet, kDraw_Tag|kHasImage_Tag|kHasPaint_Tag,
        int count;
        PODArray<SkPoint> dstClips;
        PODArray<SkMatrix> preViewMatrices;
+       SkSamplingOptions sampling;
        SkCanvas::SrcRectConstraint constraint);
 #undef RECORD
 

@@ -175,10 +175,10 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
                 body.append("x = pow(max(A + B * pow(x, C), 0) / (D + E * pow(x, C)), F);");
                 break;
             case TFKind::HLGish_TF:
-                body.append("x = (x*A <= 1) ? pow(x*A, B) : exp((x-E)*C) + D;");
+                body.append("x = (x*A <= 1) ? pow(x*A, B) : exp((x-E)*C) + D; x *= (F+1);");
                 break;
             case TFKind::HLGinvish_TF:
-                body.append("x = (x <= 1) ? A * pow(x, B) : C * log(x - D) + E;");
+                body.append("x /= (F+1); x = (x <= 1) ? A * pow(x, B) : C * log(x - D) + E;");
                 break;
             default:
                 SkASSERT(false);
@@ -227,7 +227,7 @@ void GrGLSLShaderBuilder::appendColorGamutXform(SkString* out,
                 GrShaderVar("color", useFloat ? kFloat4_GrSLType : kHalf4_GrSLType)};
         SkString body;
         if (colorXformHelper->applyUnpremul()) {
-            body.appendf("color = unpremul%s(color);", useFloat ? "_float" : "");
+            body.appendf("color = %s(color);", useFloat ? "unpremul_float" : "unpremul");
         }
         if (colorXformHelper->applySrcTF()) {
             body.appendf("color.r = %s(half(color.r));", srcTFFuncName.c_str());

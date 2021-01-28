@@ -14,9 +14,7 @@
 #include "src/image/SkImage_Base.h"
 
 #if SK_SUPPORT_GPU
-#include "include/core/SkYUVAIndex.h"
 #include "include/core/SkYUVAPixmaps.h"
-#include "include/core/SkYUVASizeInfo.h"
 #include "src/gpu/GrTextureMaker.h"
 #endif
 
@@ -36,6 +34,12 @@ public:
     };
 
     SkImage_Lazy(Validator* validator);
+
+    bool onHasMipmaps() const override {
+        // TODO: Should we defer to the generator? The generator interface currently doesn't have
+        // a way to provide content for levels other than via SkImageGenerator::generateTexture().
+        return false;
+    }
 
     bool onReadPixels(GrDirectContext*, const SkImageInfo&, void*, size_t, int srcX, int srcY,
                       CachingHint) const override;

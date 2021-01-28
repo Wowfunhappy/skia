@@ -98,14 +98,18 @@ static void test_copy_to_surface(skiatest::Reporter* reporter,
 
     for (auto renderable : {GrRenderable::kNo, GrRenderable::kYes}) {
         auto origin = dstContext->origin();
-        auto srcView = sk_gpu_test::MakeTextureProxyViewFromData(
-                dContext, renderable, origin,
-                {GrColorType::kRGBA_8888, kPremul_SkAlphaType, nullptr, dstContext->width(),
-                 dstContext->height()},
-                pixels.get(), 0);
+        GrImageInfo info(GrColorType::kRGBA_8888,
+                         kPremul_SkAlphaType,
+                         nullptr,
+                         dstContext->dimensions());
+        GrPixmap pixmap(info, pixels.get(), dstContext->width()*sizeof(uint32_t));
+        auto srcView = sk_gpu_test::MakeTextureProxyViewFromData(dContext,
+                                                                 renderable,
+                                                                 origin,
+                                                                 pixmap);
         // If this assert ever fails we can add a fallback to do copy as draw, but until then we can
         // be more restrictive.
-        SkAssertResult(dstContext->testCopy(srcView.proxy()));
+        SkAssertResult(dstContext->testCopy(srcView.refProxy()));
         TestReadPixels(reporter, dContext, dstContext, pixels.get(), testName);
     }
 }
@@ -175,8 +179,8 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(RectangleTexture, reporter, ctxInfo) {
                                refPixels);
 
         // Test copy to both a texture and RT
-        TestCopyFromSurface(reporter, dContext, rectProxy.get(), origin, grII.colorType(),
-                            refPixels, "RectangleTexture-copy-from");
+        TestCopyFromSurface(reporter, dContext, rectProxy, origin, grII.colorType(), refPixels,
+                            "RectangleTexture-copy-from");
 
         auto rectContext = GrSurfaceContext::Make(dContext, std::move(view), grII.colorInfo());
         SkASSERT(rectContext);

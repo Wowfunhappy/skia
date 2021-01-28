@@ -422,8 +422,8 @@ static void test_copy_on_write(skiatest::Reporter* reporter, SkSurface* surface)
     EXPECT_COPY_ON_WRITE(drawRect(testRect, testPaint))
     EXPECT_COPY_ON_WRITE(drawRRect(testRRect, testPaint))
     EXPECT_COPY_ON_WRITE(drawPath(testPath, testPaint))
-    EXPECT_COPY_ON_WRITE(drawBitmap(testBitmap, 0, 0))
-    EXPECT_COPY_ON_WRITE(drawBitmapRect(testBitmap, testRect, nullptr))
+    EXPECT_COPY_ON_WRITE(drawImage(testBitmap.asImage(), 0, 0))
+    EXPECT_COPY_ON_WRITE(drawImageRect(testBitmap.asImage(), testRect, SkSamplingOptions()))
     EXPECT_COPY_ON_WRITE(drawString(testText, 0, 1, SkFont(), testPaint))
 }
 DEF_TEST(SurfaceCopyOnWrite, reporter) {
@@ -486,13 +486,13 @@ static void test_crbug263329(skiatest::Reporter* reporter,
     SkImage_GpuBase* gpuImage3 = static_cast<SkImage_GpuBase*>(as_IB(image3));
     SkImage_GpuBase* gpuImage4 = static_cast<SkImage_GpuBase*>(as_IB(image4));
 
-    REPORTER_ASSERT(reporter, gpuImage4->getTexture() != gpuImage3->getTexture());
+    REPORTER_ASSERT(reporter, gpuImage4->peekProxy() != gpuImage3->peekProxy());
     // The following assertion checks crbug.com/263329
-    REPORTER_ASSERT(reporter, gpuImage4->getTexture() != gpuImage2->getTexture());
-    REPORTER_ASSERT(reporter, gpuImage4->getTexture() != gpuImage1->getTexture());
-    REPORTER_ASSERT(reporter, gpuImage3->getTexture() != gpuImage2->getTexture());
-    REPORTER_ASSERT(reporter, gpuImage3->getTexture() != gpuImage1->getTexture());
-    REPORTER_ASSERT(reporter, gpuImage2->getTexture() != gpuImage1->getTexture());
+    REPORTER_ASSERT(reporter, gpuImage4->peekProxy() != gpuImage2->peekProxy());
+    REPORTER_ASSERT(reporter, gpuImage4->peekProxy() != gpuImage1->peekProxy());
+    REPORTER_ASSERT(reporter, gpuImage3->peekProxy() != gpuImage2->peekProxy());
+    REPORTER_ASSERT(reporter, gpuImage3->peekProxy() != gpuImage1->peekProxy());
+    REPORTER_ASSERT(reporter, gpuImage2->peekProxy() != gpuImage1->peekProxy());
 }
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SurfaceCRBug263329_Gpu, reporter, ctxInfo) {
     for (auto& surface_func : { &create_gpu_surface, &create_gpu_scratch_surface }) {
@@ -729,8 +729,7 @@ static void test_surface_context_clear(skiatest::Reporter* reporter,
     readback.alloc(ii);
 
     readback.erase(~expectedValue);
-    surfaceContext->readPixels(dContext, readback.info(), readback.writable_addr(),
-                               readback.rowBytes(), {0, 0});
+    surfaceContext->readPixels(dContext, readback, {0, 0});
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
             uint32_t pixel = readback.addr32()[y * w + x];
@@ -895,7 +894,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SurfaceWrappedWithRelease_Gpu, reporter, ctxI
         if (useTexture) {
             SkImageInfo ii = SkImageInfo::Make(kWidth, kHeight, SkColorType::kRGBA_8888_SkColorType,
                                                kPremul_SkAlphaType);
-            mbet = sk_gpu_test::ManagedBackendTexture::MakeFromInfo(ctx, ii, GrMipMapped::kNo,
+            mbet = sk_gpu_test::ManagedBackendTexture::MakeFromInfo(ctx, ii, GrMipmapped::kNo,
                                                                     GrRenderable::kYes);
             if (!mbet) {
                 continue;

@@ -17,6 +17,7 @@
 #include "src/sksl/ir/SkSLFunctionCall.h"
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
+#include "src/sksl/ir/SkSLNop.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
@@ -34,12 +35,18 @@ void BasicBlock::Node::setExpression(std::unique_ptr<Expression> expr, ProgramUs
     *fExpression = std::move(expr);
 }
 
-void BasicBlock::Node::setStatement(std::unique_ptr<Statement> stmt, ProgramUsage* usage) {
+std::unique_ptr<Statement> BasicBlock::Node::setStatement(std::unique_ptr<Statement> stmt,
+                                                          ProgramUsage* usage) {
     SkASSERT(!this->isExpression());
     // See comment in header - we assume that stmt was already counted in usage (it was a subset
     // of fStatement). There is no way to verify that, unfortunately.
     usage->remove(fStatement->get());
+    std::unique_ptr<Statement> result;
+    if (stmt->is<Nop>()) {
+        result = std::move(*fStatement);
+    }
     *fStatement = std::move(stmt);
+    return result;
 }
 
 BlockId CFG::newBlock() {
@@ -80,9 +87,10 @@ void BasicBlock::dump() const {
     printf("Before: [");
     const char* separator = "";
     for (const auto& [var, expr] : fBefore) {
-        printf("%s%s = %s", separator,
-                            var->description().c_str(),
-                            expr ? (*expr)->description().c_str() : "<undefined>");
+        printf("%s%s = %s",
+               separator,
+               var->description().c_str(),
+               expr ? *expr ? (*expr)->description().c_str() : "NULL" : "<undefined>");
         separator = ", ";
     }
     printf("]\nIs Reachable: [%s]\n", fIsReachable ? "yes" : "no");
@@ -154,7 +162,6 @@ bool BasicBlock::tryRemoveExpressionBefore(std::vector<BasicBlock::Node>::iterat
 bool BasicBlock::tryRemoveLValueBefore(std::vector<BasicBlock::Node>::iterator* iter,
                                        Expression* lvalue) {
     switch (lvalue->kind()) {
-        case Expression::Kind::kExternalValue: // fall through
         case Expression::Kind::kVariableReference:
             return true;
         case Expression::Kind::kSwizzle:
@@ -432,7 +439,6 @@ void CFGGenerator::addExpression(CFG& cfg, std::unique_ptr<Expression>* e, bool 
             cfg.currentBlock().fNodes.push_back(BasicBlock::MakeExpression(e, constantPropagate));
             break;
         case Expression::Kind::kBoolLiteral:   // fall through
-        case Expression::Kind::kExternalValue: // fall through
         case Expression::Kind::kFloatLiteral:  // fall through
         case Expression::Kind::kIntLiteral:    // fall through
         case Expression::Kind::kSetting:       // fall through
@@ -454,6 +460,7 @@ void CFGGenerator::addExpression(CFG& cfg, std::unique_ptr<Expression>* e, bool 
             cfg.fCurrent = next;
             break;
         }
+        case Expression::Kind::kExternalFunctionReference:     // fall through
         case Expression::Kind::kFunctionReference: // fall through
         case Expression::Kind::kTypeReference:     // fall through
         case Expression::Kind::kDefined:
@@ -477,7 +484,6 @@ void CFGGenerator::addLValue(CFG& cfg, std::unique_ptr<Expression>* e) {
         case Expression::Kind::kSwizzle:
             this->addLValue(cfg, &e->get()->as<Swizzle>().base());
             break;
-        case Expression::Kind::kExternalValue: // fall through
         case Expression::Kind::kVariableReference:
             break;
         case Expression::Kind::kTernary: {

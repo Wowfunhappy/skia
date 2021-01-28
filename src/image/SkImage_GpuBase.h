@@ -9,9 +9,9 @@
 #define SkImage_GpuBase_DEFINED
 
 #include "include/core/SkDeferredDisplayListRecorder.h"
-#include "include/core/SkYUVAIndex.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/private/GrTypesPriv.h"
+#include "src/core/SkYUVAInfoLocation.h"
 #include "src/image/SkImage_Base.h"
 
 class GrColorSpaceXform;
@@ -43,11 +43,6 @@ public:
         return *this->view(context);
     }
 
-    GrBackendTexture onGetBackendTexture(bool flushPendingGrContextIO,
-                                         GrSurfaceOrigin* origin) const final;
-
-    GrTexture* getTexture() const;
-
     bool onIsValid(GrRecordingContext*) const final;
 
 #if GR_TEST_UTILS
@@ -59,11 +54,6 @@ public:
                                        sk_sp<SkColorSpace> cs);
     static bool ValidateCompressedBackendTexture(const GrCaps*, const GrBackendTexture& tex,
                                                  SkAlphaType);
-
-    static SkAlphaType GetAlphaTypeFromYUVAIndices(const SkYUVAIndex yuvaIndices[4]) {
-        return -1 != yuvaIndices[SkYUVAIndex::kA_Index].fIndex ? kPremul_SkAlphaType
-                                                               : kOpaque_SkAlphaType;
-    }
 
     using PromiseImageTextureContext = SkDeferredDisplayListRecorder::PromiseImageTextureContext;
     using PromiseImageTextureFulfillProc =

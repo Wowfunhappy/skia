@@ -42,8 +42,8 @@ void SkSVGGradient::collectColorStops(const SkSVGRenderContext& ctx,
 
     SkASSERT(colors->count() == pos->count());
 
-    if (pos->empty() && !fHref.fIRI.isEmpty()) {
-        const auto ref = ctx.findNodeById(fHref.fIRI);
+    if (pos->empty() && !fHref.iri().isEmpty()) {
+        const auto ref = ctx.findNodeById(fHref);
         if (ref && (ref->tag() == SkSVGTag::kLinearGradient ||
                     ref->tag() == SkSVGTag::kRadialGradient)) {
             static_cast<const SkSVGGradient*>(ref.get())->collectColorStops(ctx, pos, colors);
@@ -51,18 +51,19 @@ void SkSVGGradient::collectColorStops(const SkSVGRenderContext& ctx,
     }
 }
 
-SkColor SkSVGGradient::resolveStopColor(const SkSVGRenderContext& ctx,
-                                        const SkSVGStop& stop) const {
+SkColor4f SkSVGGradient::resolveStopColor(const SkSVGRenderContext& ctx,
+                                          const SkSVGStop& stop) const {
     const auto& stopColor = stop.getStopColor();
     const auto& stopOpacity = stop.getStopOpacity();
     // Uninherited presentation attrs should have a concrete value at this point.
     if (!stopColor.isValue() || !stopOpacity.isValue()) {
         SkDebugf("unhandled: stop-color or stop-opacity has no value\n");
-        return SK_ColorBLACK;
+        return SkColors::kBlack;
     }
 
-    const SkColor color = ctx.resolveSvgColor(*stopColor);
-    return SkColorSetA(color, SkScalarRoundToInt(*stopOpacity * 255));
+    const auto color = SkColor4f::FromColor(ctx.resolveSvgColor(*stopColor));
+
+    return { color.fR, color.fG, color.fB, *stopOpacity };
 }
 
 bool SkSVGGradient::onAsPaint(const SkSVGRenderContext& ctx, SkPaint* paint) const {

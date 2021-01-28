@@ -173,8 +173,7 @@ DEF_SIMPLE_GM(drawimage_sampling, canvas, 500, 500) {
     auto img = make_checker_img(N, N, SK_ColorBLACK, SK_ColorWHITE, 7)->withDefaultMipmaps();
     const SkRect src = SkRect::MakeIWH(img->width(), img->height());
 
-    SkMatrix mx;
-    mx.setRectToRect(src, dst, SkMatrix::kFill_ScaleToFit);
+    SkMatrix mx = SkMatrix::RectToRect(src, dst);
 
     SkPaint paint;
 
@@ -196,7 +195,8 @@ DEF_SIMPLE_GM(drawimage_sampling, canvas, 500, 500) {
 
             canvas->translate(dst.width() + 4, 0);
 
-            canvas->drawImageRect(img.get(), src, dst, sampling);
+            canvas->drawImageRect(img.get(), src, dst, sampling, nullptr,
+                                  SkCanvas::kFast_SrcRectConstraint);
             canvas->restore();
 
             canvas->translate(0, dst.height() + 8);

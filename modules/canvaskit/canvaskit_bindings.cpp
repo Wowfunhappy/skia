@@ -48,6 +48,7 @@
 #include "include/effects/SkPerlinNoiseShader.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/effects/SkTrimPathEffect.h"
+#include "include/private/SkShadowFlags.h"
 #include "include/utils/SkParsePath.h"
 #include "include/utils/SkShadowUtils.h"
 #include "modules/skshaper/include/SkShaper.h"
@@ -780,6 +781,18 @@ EMSCRIPTEN_BINDINGS(Skia) {
         return SkImage::MakeRasterData(info, pixelData, rowBytes);
     }), allow_raw_pointers());
 
+    function("_getShadowLocalBounds", optional_override([](
+            uintptr_t /* float* */ ctmPtr, const SkPath& path,
+            const SkPoint3& zPlaneParams, const SkPoint3& lightPos, SkScalar lightRadius,
+            uint32_t flags, uintptr_t /* SkRect* */ outPtr) -> bool {
+        SkMatrix ctm;
+        const SkScalar* nineMatrixValues = reinterpret_cast<const SkScalar*>(ctmPtr);
+        ctm.set9(nineMatrixValues);
+        SkRect* outputBounds = reinterpret_cast<SkRect*>(outPtr);
+        return SkShadowUtils::GetLocalBounds(ctm, path, zPlaneParams, lightPos, lightRadius,
+                              flags, outputBounds);
+    }));
+
 #ifdef SK_SERIALIZE_SKP
     function("_MakePicture", optional_override([](uintptr_t /* unint8_t* */ dPtr,
                                                     size_t bytes)->sk_sp<SkPicture> {
@@ -871,7 +884,10 @@ EMSCRIPTEN_BINDINGS(Skia) {
             if (cptr) {
                 colors = reinterpret_cast<const SkColor*>(cptr);
             }
-            self.drawAtlas(atlas, dstXforms, srcRects, colors, count, mode, nullptr, paint);
+            // TODO: take sampling as an explicit parameter from the caller
+            SkSamplingOptions sampling(SkFilterMode::kLinear);
+            self.drawAtlas(atlas.get(), dstXforms, srcRects, colors, count, mode, sampling,
+                           nullptr, paint);
         }), allow_raw_pointers())
         .function("drawCircle", select_overload<void (SkScalar, SkScalar, SkScalar, const SkPaint& paint)>(&SkCanvas::drawCircle))
         .function("_drawColor", optional_override([](SkCanvas& self, uintptr_t /* float* */ cPtr) {
@@ -932,7 +948,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                               const SkPaint* paint)->void {
             const SkRect* src = reinterpret_cast<const SkRect*>(srcPtr);
             const SkRect* dst = reinterpret_cast<const SkRect*>(dstPtr);
-            self.drawImageRect(image.get(), *src, *dst, SkSamplingOptions({B, C}), paint);
+            auto constraint = SkCanvas::kStrict_SrcRectConstraint;  // TODO: get from caller
+            self.drawImageRect(image.get(), *src, *dst, SkSamplingOptions({B, C}), paint, constraint);
         }), allow_raw_pointers())
         .function("_drawImageRectOptions", optional_override([](SkCanvas& self, const sk_sp<SkImage>& image,
                                                                 uintptr_t /* float* */ srcPtr, uintptr_t /* float* */ dstPtr,
@@ -940,7 +957,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                                 const SkPaint* paint)->void {
             const SkRect* src = reinterpret_cast<const SkRect*>(srcPtr);
             const SkRect* dst = reinterpret_cast<const SkRect*>(dstPtr);
-            self.drawImageRect(image.get(), *src, *dst, {filter, mipmap}, paint);
+            auto constraint = SkCanvas::kStrict_SrcRectConstraint;  // TODO: get from caller
+            self.drawImageRect(image.get(), *src, *dst, {filter, mipmap}, paint, constraint);
         }), allow_raw_pointers())
         .function("drawLine", select_overload<void (SkScalar, SkScalar, SkScalar, SkScalar, const SkPaint&)>(&SkCanvas::drawLine))
         .function("_drawOval", optional_override([](SkCanvas& self, uintptr_t /* float* */ fPtr,
@@ -1552,7 +1570,6 @@ EMSCRIPTEN_BINDINGS(Skia) {
             return SkPerlinNoiseShader::MakeFractalNoise(baseFreqX, baseFreqY,
                                                          numOctaves, seed, &tileSize);
         }))
-        .class_function("MakeImprovedNoise", &SkPerlinNoiseShader::MakeImprovedNoise)
          // Here and in other gradient functions, cPtr is a pointer to an array of data
          // representing colors. whether this is an array of SkColor or SkColor4f is indicated
          // by the colorType argument. Only RGBA_8888 and RGBA_F32 are accepted.
@@ -2006,4 +2023,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
     constant("SaveLayerInitWithPrevious", (int)SkCanvas::SaveLayerFlagsSet::kInitWithPrevious_SaveLayerFlag);
     constant("SaveLayerF16ColorType",     (int)SkCanvas::SaveLayerFlagsSet::kF16ColorType);
 
+    constant("ShadowTransparentOccluder", (int)SkShadowFlags::kTransparentOccluder_ShadowFlag);
+    constant("ShadowGeometricOnly", (int)SkShadowFlags::kGeometricOnly_ShadowFlag);
+    constant("ShadowDirectionalLight", (int)SkShadowFlags::kDirectionalLight_ShadowFlag);
 }

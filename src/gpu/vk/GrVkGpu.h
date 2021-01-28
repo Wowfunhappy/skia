@@ -13,6 +13,7 @@
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrStagingBufferManager.h"
 #include "src/gpu/vk/GrVkCaps.h"
+#include "src/gpu/vk/GrVkMSAALoadManager.h"
 #include "src/gpu/vk/GrVkMemory.h"
 #include "src/gpu/vk/GrVkMeshBuffer.h"
 #include "src/gpu/vk/GrVkResourceProvider.h"
@@ -128,6 +129,12 @@ public:
                                bool byRegion,
                                VkImageMemoryBarrier* barrier) const;
 
+    bool loadMSAAFromResolve(GrVkCommandBuffer* commandBuffer,
+                             const GrVkRenderPass& renderPass,
+                             GrSurface* dst,
+                             GrSurface* src,
+                             const SkIRect& srcRect);
+
     bool onRegenerateMipMapLevels(GrTexture* tex) override;
 
     void onResolveRenderTarget(GrRenderTarget* target, const SkIRect& resolveRect) override;
@@ -190,8 +197,6 @@ private:
     GrVkGpu(GrDirectContext*, const GrVkBackendContext&, const sk_sp<GrVkCaps> caps,
             sk_sp<const GrVkInterface>, uint32_t instanceVersion, uint32_t physicalDeviceVersion,
             sk_sp<GrVkMemoryAllocator>);
-
-    void onResetContext(uint32_t resetBits) override {}
 
     void destroyResources();
 
@@ -346,6 +351,8 @@ private:
     // Created by GrVkGpu
     GrVkResourceProvider                                  fResourceProvider;
     GrStagingBufferManager                                fStagingBufferManager;
+
+    GrVkMSAALoadManager                                   fMSAALoadManager;
 
     GrVkCommandPool*                                      fMainCmdPool;
     // just a raw pointer; object's lifespan is managed by fCmdPool

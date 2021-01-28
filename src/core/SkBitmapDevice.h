@@ -97,12 +97,13 @@ protected:
     void drawGlyphRunList(const SkGlyphRunList& glyphRunList) override;
     void drawVertices(const SkVertices*, SkBlendMode, const SkPaint&) override;
     void drawAtlas(const SkImage*, const SkRSXform[], const SkRect[], const SkColor[], int count,
-                   SkBlendMode, const SkPaint&) override;
+                   SkBlendMode, const SkSamplingOptions&, const SkPaint&) override;
 
     ///////////////////////////////////////////////////////////////////////////
 
-    void drawDevice(SkBaseDevice*, const SkPaint&) override;
-    void drawSpecial(SkSpecialImage*, const SkMatrix&, const SkPaint&) override;
+    void drawDevice(SkBaseDevice*, const SkSamplingOptions&, const SkPaint&) override;
+    void drawSpecial(SkSpecialImage*, const SkMatrix&, const SkSamplingOptions&,
+                     const SkPaint&) override;
 
     sk_sp<SkSpecialImage> makeSpecial(const SkBitmap&) override;
     sk_sp<SkSpecialImage> makeSpecial(const SkImage*) override;
@@ -133,7 +134,7 @@ protected:
     SkIRect onDevClipBounds() const override;
 
     void drawBitmap(const SkBitmap&, const SkMatrix&, const SkRect* dstOrNull,
-                    const SkPaint&);
+                    const SkSamplingOptions&, const SkPaint&);
 
 private:
     friend class SkCanvas;

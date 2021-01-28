@@ -10,6 +10,7 @@
 #include "src/sksl/GLSL.std.450.h"
 
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
 #include "src/sksl/ir/SkSLExtension.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
@@ -18,6 +19,8 @@
 #ifdef SK_VULKAN
 #include "src/gpu/vk/GrVkCaps.h"
 #endif
+
+#define kLast_Capability SpvCapabilityMultiViewport
 
 namespace SkSL {
 
@@ -461,25 +464,25 @@ void SPIRVCodeGenerator::writeStruct(const Type& type, const MemoryLayout& memor
 
 const Type& SPIRVCodeGenerator::getActualType(const Type& type) {
     if (type.isFloat()) {
-        return *fContext.fFloat_Type;
+        return *fContext.fTypes.fFloat;
     }
     if (type.isSigned()) {
-        return *fContext.fInt_Type;
+        return *fContext.fTypes.fInt;
     }
     if (type.isUnsigned()) {
-        return *fContext.fUInt_Type;
+        return *fContext.fTypes.fUInt;
     }
     if (type.isMatrix() || type.isVector()) {
-        if (type.componentType() == *fContext.fHalf_Type) {
-            return fContext.fFloat_Type->toCompound(fContext, type.columns(), type.rows());
+        if (type.componentType() == *fContext.fTypes.fHalf) {
+            return fContext.fTypes.fFloat->toCompound(fContext, type.columns(), type.rows());
         }
-        if (type.componentType() == *fContext.fShort_Type ||
-            type.componentType() == *fContext.fByte_Type) {
-            return fContext.fInt_Type->toCompound(fContext, type.columns(), type.rows());
+        if (type.componentType() == *fContext.fTypes.fShort ||
+            type.componentType() == *fContext.fTypes.fByte) {
+            return fContext.fTypes.fInt->toCompound(fContext, type.columns(), type.rows());
         }
-        if (type.componentType() == *fContext.fUShort_Type ||
-            type.componentType() == *fContext.fUByte_Type) {
-            return fContext.fUInt_Type->toCompound(fContext, type.columns(), type.rows());
+        if (type.componentType() == *fContext.fTypes.fUShort ||
+            type.componentType() == *fContext.fTypes.fUByte) {
+            return fContext.fTypes.fUInt->toCompound(fContext, type.columns(), type.rows());
         }
     }
     return type;
@@ -494,6 +497,15 @@ SpvId SPIRVCodeGenerator::getType(const Type& rawType, const MemoryLayout& layou
     String key = type.name();
     if (type.isStruct() || type.isArray()) {
         key += to_string((int)layout.fStd);
+#ifdef SK_DEBUG
+        SkASSERT(layout.fStd == MemoryLayout::Standard::k140_Standard ||
+                 layout.fStd == MemoryLayout::Standard::k430_Standard);
+        MemoryLayout::Standard otherStd = layout.fStd == MemoryLayout::Standard::k140_Standard
+                                                  ? MemoryLayout::Standard::k430_Standard
+                                                  : MemoryLayout::Standard::k140_Standard;
+        String otherKey = type.name() + to_string((int)otherStd);
+        SkASSERT(fTypeMap.find(otherKey) == fTypeMap.end());
+#endif
     }
     auto entry = fTypeMap.find(key);
     if (entry == fTypeMap.end()) {
@@ -502,13 +514,13 @@ SpvId SPIRVCodeGenerator::getType(const Type& rawType, const MemoryLayout& layou
             case Type::TypeKind::kScalar:
                 if (type.isBoolean()) {
                     this->writeInstruction(SpvOpTypeBool, result, fConstantBuffer);
-                } else if (type == *fContext.fInt_Type || type == *fContext.fShort_Type ||
-                           type == *fContext.fIntLiteral_Type) {
+                } else if (type == *fContext.fTypes.fInt || type == *fContext.fTypes.fShort ||
+                           type == *fContext.fTypes.fIntLiteral) {
                     this->writeInstruction(SpvOpTypeInt, result, 32, 1, fConstantBuffer);
-                } else if (type == *fContext.fUInt_Type || type == *fContext.fUShort_Type) {
+                } else if (type == *fContext.fTypes.fUInt || type == *fContext.fTypes.fUShort) {
                     this->writeInstruction(SpvOpTypeInt, result, 32, 0, fConstantBuffer);
-                } else if (type == *fContext.fFloat_Type || type == *fContext.fHalf_Type ||
-                           type == *fContext.fFloatLiteral_Type) {
+                } else if (type == *fContext.fTypes.fFloat || type == *fContext.fTypes.fHalf ||
+                           type == *fContext.fTypes.fFloatLiteral) {
                     this->writeInstruction(SpvOpTypeFloat, result, 32, fConstantBuffer);
                 } else {
                     SkASSERT(false);
@@ -536,10 +548,11 @@ SpvId SPIRVCodeGenerator::getType(const Type& rawType, const MemoryLayout& layou
                     return this->nextId();
                 }
                 if (type.columns() > 0) {
-                    IntLiteral count(fContext, -1, type.columns());
-                    this->writeInstruction(SpvOpTypeArray, result,
-                                           this->getType(type.componentType(), layout),
-                                           this->writeIntLiteral(count), fConstantBuffer);
+                    SpvId typeId = this->getType(type.componentType(), layout);
+                    IntLiteral countLiteral(fContext, /*offset=*/-1, type.columns());
+                    SpvId countId = this->writeIntLiteral(countLiteral);
+                    this->writeInstruction(SpvOpTypeArray, result, typeId, countId,
+                                           fConstantBuffer);
                     this->writeInstruction(SpvOpDecorate, result, SpvDecorationArrayStride,
                                            (int32_t) layout.stride(type),
                                            fDecorationBuffer);
@@ -574,7 +587,7 @@ SpvId SPIRVCodeGenerator::getType(const Type& rawType, const MemoryLayout& layou
             }
             case Type::TypeKind::kTexture: {
                 this->writeInstruction(SpvOpTypeImage, result,
-                                       this->getType(*fContext.fFloat_Type, layout),
+                                       this->getType(*fContext.fTypes.fFloat, layout),
                                        type.dimensions(), type.isDepth(), type.isArrayedTexture(),
                                        type.isMultisampled(), type.isSampled() ? 1 : 2,
                                        SpvImageFormatUnknown, fConstantBuffer);
@@ -582,7 +595,7 @@ SpvId SPIRVCodeGenerator::getType(const Type& rawType, const MemoryLayout& layou
                 break;
             }
             default:
-                if (type == *fContext.fVoid_Type) {
+                if (type == *fContext.fTypes.fVoid) {
                     this->writeInstruction(SpvOpTypeVoid, result, fConstantBuffer);
                 } else {
 #ifdef SK_DEBUG
@@ -720,13 +733,13 @@ SpvId SPIRVCodeGenerator::writeExpression(const Expression& expr, OutputStream& 
 
 SpvId SPIRVCodeGenerator::writeIntrinsicCall(const FunctionCall& c, OutputStream& out) {
     const FunctionDeclaration& function = c.function();
-    const ExpressionArray& arguments = c.arguments();
     auto intrinsic = fIntrinsicMap.find(function.name());
     if (intrinsic == fIntrinsicMap.end()) {
         fErrors.error(c.fOffset, "unsupported intrinsic '" + function.description() + "'");
         return -1;
     }
     int32_t intrinsicId;
+    const ExpressionArray& arguments = c.arguments();
     if (arguments.size() > 0) {
         const Type& type = arguments[0]->type();
         if (std::get<0>(intrinsic->second) == kSpecial_IntrinsicKind || is_float(fContext, type)) {
@@ -778,7 +791,7 @@ SpvId SPIRVCodeGenerator::writeIntrinsicCall(const FunctionCall& c, OutputStream
                     argumentIds.push_back(this->writeExpression(*arguments[i], out));
                 }
             }
-            if (c.type() != *fContext.fVoid_Type) {
+            if (c.type() != *fContext.fTypes.fVoid) {
                 this->writeOpCode((SpvOp_) intrinsicId, 3 + (int32_t) arguments.size(), out);
                 this->writeWord(this->getType(c.type()), out);
                 this->writeWord(result, out);
@@ -894,7 +907,7 @@ SpvId SPIRVCodeGenerator::writeSpecialIntrinsic(const FunctionCall& c, SpecialIn
             args.reserve_back(2);
             args.push_back(std::make_unique<IntLiteral>(fContext, /*offset=*/-1, /*value=*/0));
             args.push_back(std::make_unique<IntLiteral>(fContext, /*offset=*/-1, /*value=*/0));
-            Constructor ctor(-1, fContext.fInt2_Type.get(), std::move(args));
+            Constructor ctor(-1, fContext.fTypes.fInt2.get(), std::move(args));
             SpvId coords = this->writeConstantVector(ctor);
             if (arguments.size() == 1) {
                 this->writeInstruction(SpvOpImageRead,
@@ -922,24 +935,24 @@ SpvId SPIRVCodeGenerator::writeSpecialIntrinsic(const FunctionCall& c, SpecialIn
             const Type& arg1Type = arguments[1]->type();
             switch (arguments[0]->type().dimensions()) {
                 case SpvDim1D:
-                    if (arg1Type == *fContext.fFloat2_Type) {
+                    if (arg1Type == *fContext.fTypes.fFloat2) {
                         op = SpvOpImageSampleProjImplicitLod;
                     } else {
-                        SkASSERT(arg1Type == *fContext.fFloat_Type);
+                        SkASSERT(arg1Type == *fContext.fTypes.fFloat);
                     }
                     break;
                 case SpvDim2D:
-                    if (arg1Type == *fContext.fFloat3_Type) {
+                    if (arg1Type == *fContext.fTypes.fFloat3) {
                         op = SpvOpImageSampleProjImplicitLod;
                     } else {
-                        SkASSERT(arg1Type == *fContext.fFloat2_Type);
+                        SkASSERT(arg1Type == *fContext.fTypes.fFloat2);
                     }
                     break;
                 case SpvDim3D:
-                    if (arg1Type == *fContext.fFloat4_Type) {
+                    if (arg1Type == *fContext.fTypes.fFloat4) {
                         op = SpvOpImageSampleProjImplicitLod;
                     } else {
-                        SkASSERT(arg1Type == *fContext.fFloat3_Type);
+                        SkASSERT(arg1Type == *fContext.fTypes.fFloat3);
                     }
                     break;
                 case SpvDimCube:   // fall through
@@ -1079,10 +1092,14 @@ SpvId SPIRVCodeGenerator::writeSpecialIntrinsic(const FunctionCall& c, SpecialIn
 
 SpvId SPIRVCodeGenerator::writeFunctionCall(const FunctionCall& c, OutputStream& out) {
     const FunctionDeclaration& function = c.function();
+    if (function.isBuiltin() && !function.definition()) {
+        return this->writeIntrinsicCall(c, out);
+    }
     const ExpressionArray& arguments = c.arguments();
     const auto& entry = fFunctionMap.find(&function);
     if (entry == fFunctionMap.end()) {
-        return this->writeIntrinsicCall(c, out);
+        fErrors.error(c.fOffset, "function '" + function.description() + "' is not defined");
+        return -1;
     }
     // stores (variable, type, lvalue) pairs to extract and save after the function call is complete
     std::vector<std::tuple<SpvId, const Type*, std::unique_ptr<LValue>>> lvalues;
@@ -1144,86 +1161,196 @@ SpvId SPIRVCodeGenerator::writeFunctionCall(const FunctionCall& c, OutputStream&
 SpvId SPIRVCodeGenerator::writeConstantVector(const Constructor& c) {
     const Type& type = c.type();
     SkASSERT(type.isVector() && c.isCompileTimeConstant());
-    SpvId result = this->nextId();
-    std::vector<SpvId> arguments;
-    for (const std::unique_ptr<Expression>& arg : c.arguments()) {
-        arguments.push_back(this->writeExpression(*arg, fConstantBuffer));
-    }
-    SpvId typeId = this->getType(type);
-    if (c.arguments().size() == 1) {
-        // with a single argument, a vector will have all of its entries equal to the argument
-        this->writeOpCode(SpvOpConstantComposite, 3 + type.columns(), fConstantBuffer);
-        this->writeWord(typeId, fConstantBuffer);
-        this->writeWord(result, fConstantBuffer);
+
+    // Get each of the constructor components as SPIR-V constants.
+    SPIRVVectorConstant key{this->getType(type),
+                            /*fValueId=*/{SpvId(-1), SpvId(-1), SpvId(-1), SpvId(-1)}};
+
+    if (c.componentType().isFloat()) {
         for (int i = 0; i < type.columns(); i++) {
-            this->writeWord(arguments[0], fConstantBuffer);
+            FloatLiteral literal(c.fOffset, c.getFVecComponent(i), &c.componentType());
+            key.fValueId[i] = this->writeFloatLiteral(literal);
+        }
+    } else if (c.componentType().isInteger()) {
+        for (int i = 0; i < type.columns(); i++) {
+            IntLiteral literal(c.fOffset, c.getIVecComponent(i), &c.componentType());
+            key.fValueId[i] = this->writeIntLiteral(literal);
+        }
+    } else if (c.componentType().isBoolean()) {
+        for (int i = 0; i < type.columns(); i++) {
+            BoolLiteral literal(c.fOffset, c.getBVecComponent(i), &c.componentType());
+            key.fValueId[i] = this->writeBoolLiteral(literal);
         }
     } else {
-        this->writeOpCode(SpvOpConstantComposite, 3 + (int32_t) c.arguments().size(),
-                          fConstantBuffer);
-        this->writeWord(typeId, fConstantBuffer);
-        this->writeWord(result, fConstantBuffer);
-        for (SpvId id : arguments) {
-            this->writeWord(id, fConstantBuffer);
-        }
+        SkDEBUGFAILF("unexpected vector component type: %s",
+                     c.componentType().displayName().c_str());
+        return SpvId(-1);
     }
-    return result;
+
+    // Check to see if we've already synthesized this vector constant.
+    auto [iter, newlyCreated] = fVectorConstants.insert({key, (SpvId)-1});
+    if (newlyCreated) {
+        // Emit an OpConstantComposite instruction for this constant.
+        SpvId result = this->nextId();
+        this->writeOpCode(SpvOpConstantComposite, 3 + type.columns(), fConstantBuffer);
+        this->writeWord(key.fTypeId, fConstantBuffer);
+        this->writeWord(result, fConstantBuffer);
+        for (int i = 0; i < type.columns(); i++) {
+            this->writeWord(key.fValueId[i], fConstantBuffer);
+        }
+        iter->second = result;
+    }
+    return iter->second;
 }
 
 SpvId SPIRVCodeGenerator::writeFloatConstructor(const Constructor& c, OutputStream& out) {
-    const Type& constructorType = c.type();
     SkASSERT(c.arguments().size() == 1);
-    const Type& argType = c.arguments()[0]->type();
-    SkASSERT(constructorType.isFloat());
-    SkASSERT(argType.isNumber());
+    SkASSERT(c.type().isFloat());
+    const Expression& ctorExpr = *c.arguments()[0];
+    SpvId expressionId = this->writeExpression(ctorExpr, out);
+    return this->castScalarToFloat(expressionId, ctorExpr.type(), c.type(), out);
+}
+
+SpvId SPIRVCodeGenerator::castScalarToFloat(SpvId inputId, const Type& inputType,
+                                            const Type& outputType, OutputStream& out) {
+    // Casting a float to float is a no-op.
+    if (inputType.isFloat()) {
+        return inputId;
+    }
+
+    // Given the input type, generate the appropriate instruction to cast to float.
     SpvId result = this->nextId();
-    SpvId parameter = this->writeExpression(*c.arguments()[0], out);
-    if (argType.isSigned()) {
-        this->writeInstruction(SpvOpConvertSToF, this->getType(constructorType), result, parameter,
-                               out);
+    if (inputType.isBoolean()) {
+        // Use OpSelect to convert the boolean argument to a literal 1.0 or 0.0.
+        FloatLiteral one(fContext, /*offset=*/-1, /*value=*/1);
+        SpvId        oneID = this->writeFloatLiteral(one);
+        FloatLiteral zero(fContext, /*offset=*/-1, /*value=*/0);
+        SpvId        zeroID = this->writeFloatLiteral(zero);
+        this->writeInstruction(SpvOpSelect, this->getType(outputType), result,
+                               inputId, oneID, zeroID, out);
+    } else if (inputType.isSigned()) {
+        this->writeInstruction(SpvOpConvertSToF, this->getType(outputType), result, inputId, out);
+    } else if (inputType.isUnsigned()) {
+        this->writeInstruction(SpvOpConvertUToF, this->getType(outputType), result, inputId, out);
     } else {
-        SkASSERT(argType.isUnsigned());
-        this->writeInstruction(SpvOpConvertUToF, this->getType(constructorType), result, parameter,
-                               out);
+        SkDEBUGFAILF("unsupported type for float typecast: %s", inputType.description().c_str());
+        return (SpvId)-1;
     }
     return result;
 }
 
 SpvId SPIRVCodeGenerator::writeIntConstructor(const Constructor& c, OutputStream& out) {
-    const Type& constructorType = c.type();
     SkASSERT(c.arguments().size() == 1);
-    const Type& argType = c.arguments()[0]->type();
-    SkASSERT(constructorType.isSigned());
-    SkASSERT(argType.isNumber());
-    SpvId result = this->nextId();
-    SpvId parameter = this->writeExpression(*c.arguments()[0], out);
-    if (argType.isFloat()) {
-        this->writeInstruction(SpvOpConvertFToS, this->getType(constructorType), result, parameter,
-                               out);
+    SkASSERT(c.type().isSigned());
+    const Expression& ctorExpr = *c.arguments()[0];
+    SpvId expressionId = this->writeExpression(ctorExpr, out);
+    return this->castScalarToSignedInt(expressionId, ctorExpr.type(), c.type(), out);
+}
+
+SpvId SPIRVCodeGenerator::castScalarToSignedInt(SpvId inputId, const Type& inputType,
+                                                const Type& outputType, OutputStream& out) {
+    // Casting a signed int to signed int is a no-op.
+    if (inputType.isSigned()) {
+        return inputId;
     }
-    else {
-        SkASSERT(argType.isUnsigned());
-        this->writeInstruction(SpvOpBitcast, this->getType(constructorType), result, parameter,
-                               out);
+
+    // Given the input type, generate the appropriate instruction to cast to signed int.
+    SpvId result = this->nextId();
+    if (inputType.isBoolean()) {
+        // Use OpSelect to convert the boolean argument to a literal 1 or 0.
+        IntLiteral one(/*offset=*/-1, /*value=*/1, fContext.fTypes.fInt.get());
+        SpvId      oneID = this->writeIntLiteral(one);
+        IntLiteral zero(/*offset=*/-1, /*value=*/0, fContext.fTypes.fInt.get());
+        SpvId      zeroID = this->writeIntLiteral(zero);
+        this->writeInstruction(SpvOpSelect, this->getType(outputType), result,
+                               inputId, oneID, zeroID, out);
+    } else if (inputType.isFloat()) {
+        this->writeInstruction(SpvOpConvertFToS, this->getType(outputType), result, inputId, out);
+    } else if (inputType.isUnsigned()) {
+        this->writeInstruction(SpvOpBitcast, this->getType(outputType), result, inputId, out);
+    } else {
+        SkDEBUGFAILF("unsupported type for signed int typecast: %s",
+                     inputType.description().c_str());
+        return (SpvId)-1;
     }
     return result;
 }
 
 SpvId SPIRVCodeGenerator::writeUIntConstructor(const Constructor& c, OutputStream& out) {
-    const Type& constructorType = c.type();
     SkASSERT(c.arguments().size() == 1);
-    const Type& argType = c.arguments()[0]->type();
-    SkASSERT(constructorType.isUnsigned());
-    SkASSERT(argType.isNumber());
+    SkASSERT(c.type().isUnsigned());
+    const Expression& ctorExpr = *c.arguments()[0];
+    SpvId expressionId = this->writeExpression(ctorExpr, out);
+    return this->castScalarToUnsignedInt(expressionId, ctorExpr.type(), c.type(), out);
+}
+
+SpvId SPIRVCodeGenerator::castScalarToUnsignedInt(SpvId inputId, const Type& inputType,
+                                                  const Type& outputType, OutputStream& out) {
+    // Casting an unsigned int to unsigned int is a no-op.
+    if (inputType.isUnsigned()) {
+        return inputId;
+    }
+
+    // Given the input type, generate the appropriate instruction to cast to unsigned int.
     SpvId result = this->nextId();
-    SpvId parameter = this->writeExpression(*c.arguments()[0], out);
-    if (argType.isFloat()) {
-        this->writeInstruction(SpvOpConvertFToU, this->getType(constructorType), result, parameter,
-                               out);
+    if (inputType.isBoolean()) {
+        // Use OpSelect to convert the boolean argument to a literal 1u or 0u.
+        IntLiteral one(/*offset=*/-1, /*value=*/1, fContext.fTypes.fUInt.get());
+        SpvId      oneID = this->writeIntLiteral(one);
+        IntLiteral zero(/*offset=*/-1, /*value=*/0, fContext.fTypes.fUInt.get());
+        SpvId      zeroID = this->writeIntLiteral(zero);
+        this->writeInstruction(SpvOpSelect, this->getType(outputType), result,
+                               inputId, oneID, zeroID, out);
+    } else if (inputType.isFloat()) {
+        this->writeInstruction(SpvOpConvertFToU, this->getType(outputType), result, inputId, out);
+    } else if (inputType.isSigned()) {
+        this->writeInstruction(SpvOpBitcast, this->getType(outputType), result, inputId, out);
     } else {
-        SkASSERT(argType.isSigned());
-        this->writeInstruction(SpvOpBitcast, this->getType(constructorType), result, parameter,
-                               out);
+        SkDEBUGFAILF("unsupported type for unsigned int typecast: %s",
+                     inputType.description().c_str());
+        return (SpvId)-1;
+    }
+    return result;
+}
+
+SpvId SPIRVCodeGenerator::writeBooleanConstructor(const Constructor& c, OutputStream& out) {
+    SkASSERT(c.arguments().size() == 1);
+    SkASSERT(c.type().isBoolean());
+    const Expression& ctorExpr = *c.arguments()[0];
+    SpvId expressionId = this->writeExpression(ctorExpr, out);
+    return this->castScalarToBoolean(expressionId, ctorExpr.type(), c.type(), out);
+}
+
+SpvId SPIRVCodeGenerator::castScalarToBoolean(SpvId inputId, const Type& inputType,
+                                              const Type& outputType, OutputStream& out) {
+    // Casting a bool to bool is a no-op.
+    if (inputType.isBoolean()) {
+        return inputId;
+    }
+
+    // Given the input type, generate the appropriate instruction to cast to bool.
+    SpvId result = this->nextId();
+    if (inputType.isSigned()) {
+        // Synthesize a boolean result by comparing the input against a signed zero literal.
+        IntLiteral zero(/*offset=*/-1, /*value=*/0, fContext.fTypes.fInt.get());
+        SpvId      zeroID = this->writeIntLiteral(zero);
+        this->writeInstruction(SpvOpINotEqual, this->getType(outputType), result,
+                               inputId, zeroID, out);
+    } else if (inputType.isUnsigned()) {
+        // Synthesize a boolean result by comparing the input against an unsigned zero literal.
+        IntLiteral zero(/*offset=*/-1, /*value=*/0, fContext.fTypes.fUInt.get());
+        SpvId      zeroID = this->writeIntLiteral(zero);
+        this->writeInstruction(SpvOpINotEqual, this->getType(outputType), result,
+                               inputId, zeroID, out);
+    } else if (inputType.isFloat()) {
+        // Synthesize a boolean result by comparing the input against a floating-point zero literal.
+        FloatLiteral zero(/*offset=*/-1, /*value=*/0, fContext.fTypes.fFloat.get());
+        SpvId        zeroID = this->writeFloatLiteral(zero);
+        this->writeInstruction(SpvOpFUnordNotEqual, this->getType(outputType), result,
+                               inputId, zeroID, out);
+    } else {
+        SkDEBUGFAILF("unsupported type for boolean typecast: %s", inputType.description().c_str());
+        return (SpvId)-1;
     }
     return result;
 }
@@ -1268,10 +1395,10 @@ void SPIRVCodeGenerator::writeMatrixCopy(SpvId id, SpvId src, const Type& srcTyp
                                                                            dstType.rows(),
                                                                            1));
     SpvId zeroId;
-    if (dstType.componentType() == *fContext.fFloat_Type) {
+    if (dstType.componentType() == *fContext.fTypes.fFloat) {
         FloatLiteral zero(fContext, -1, 0.0);
         zeroId = this->writeFloatLiteral(zero);
-    } else if (dstType.componentType() == *fContext.fInt_Type) {
+    } else if (dstType.componentType() == *fContext.fTypes.fInt) {
         IntLiteral zero(fContext, -1, 0);
         zeroId = this->writeIntLiteral(zero);
     } else {
@@ -1460,76 +1587,33 @@ SpvId SPIRVCodeGenerator::writeVectorConstructor(const Constructor& c, OutputStr
         if (argType.isVector()) {
             // SPIR-V doesn't support vector(vector-of-different-type) directly, so we need to
             // extract the components and convert them in that case manually. On top of that,
-            // as of this writing there's a bug in the Intel Vulkan driver where OpCreateComposite
-            // doesn't handle vector arguments at all, so we always extract vector components and
-            // pass them into OpCreateComposite individually.
+            // as of this writing there's a bug in the Intel Vulkan driver where
+            // OpCompositeConstruct doesn't handle vector arguments at all, so we always extract
+            // vector components and pass them into OpCompositeConstruct individually.
             SpvId vec = this->writeExpression(*c.arguments()[i], out);
-            SpvOp_ op = SpvOpUndef;
             const Type& src = argType.componentType();
             const Type& dst = type.componentType();
-            if (dst == *fContext.fFloat_Type || dst == *fContext.fHalf_Type) {
-                if (src == *fContext.fFloat_Type || src == *fContext.fHalf_Type) {
-                    if (c.arguments().size() == 1) {
-                        return vec;
-                    }
-                } else if (src == *fContext.fInt_Type ||
-                           src == *fContext.fShort_Type ||
-                           src == *fContext.fByte_Type) {
-                    op = SpvOpConvertSToF;
-                } else if (src == *fContext.fUInt_Type ||
-                           src == *fContext.fUShort_Type ||
-                           src == *fContext.fUByte_Type) {
-                    op = SpvOpConvertUToF;
-                } else {
-                    SkASSERT(false);
-                }
-            } else if (dst == *fContext.fInt_Type ||
-                       dst == *fContext.fShort_Type ||
-                       dst == *fContext.fByte_Type) {
-                if (src == *fContext.fFloat_Type || src == *fContext.fHalf_Type) {
-                    op = SpvOpConvertFToS;
-                } else if (src == *fContext.fInt_Type ||
-                           src == *fContext.fShort_Type ||
-                           src == *fContext.fByte_Type) {
-                    if (c.arguments().size() == 1) {
-                        return vec;
-                    }
-                } else if (src == *fContext.fUInt_Type ||
-                           src == *fContext.fUShort_Type ||
-                           src == *fContext.fUByte_Type) {
-                    op = SpvOpBitcast;
-                } else {
-                    SkASSERT(false);
-                }
-            } else if (dst == *fContext.fUInt_Type ||
-                       dst == *fContext.fUShort_Type ||
-                       dst == *fContext.fUByte_Type) {
-                if (src == *fContext.fFloat_Type || src == *fContext.fHalf_Type) {
-                    op = SpvOpConvertFToS;
-                } else if (src == *fContext.fInt_Type ||
-                           src == *fContext.fShort_Type ||
-                           src == *fContext.fByte_Type) {
-                    op = SpvOpBitcast;
-                } else if (src == *fContext.fUInt_Type ||
-                           src == *fContext.fUShort_Type ||
-                           src == *fContext.fUByte_Type) {
-                    if (c.arguments().size() == 1) {
-                        return vec;
-                    }
-                } else {
-                    SkASSERT(false);
-                }
+            if (c.arguments().size() == 1 && src.numberKind() == dst.numberKind()) {
+                return vec;
             }
+
             for (int j = 0; j < argType.columns(); j++) {
                 SpvId swizzle = this->nextId();
                 this->writeInstruction(SpvOpCompositeExtract, this->getType(src), swizzle, vec, j,
                                        out);
-                if (op != SpvOpUndef) {
-                    SpvId cast = this->nextId();
-                    this->writeInstruction(op, this->getType(dst), cast, swizzle, out);
-                    arguments.push_back(cast);
+                if (dst.isFloat()) {
+                    arguments.push_back(this->castScalarToFloat(swizzle, src, dst, out));
+                } else if (dst.isSigned()) {
+                    arguments.push_back(this->castScalarToSignedInt(swizzle, src, dst, out));
+                } else if (dst.isUnsigned()) {
+                    arguments.push_back(this->castScalarToUnsignedInt(swizzle, src, dst, out));
+                } else if (dst.isBoolean()) {
+                    arguments.push_back(this->castScalarToBoolean(swizzle, src, dst, out));
                 } else {
                     arguments.push_back(swizzle);
+                    fErrors.error(c.arguments()[i]->fOffset, "unsupported cast in SPIR-V: vector " +
+                                                             src.description() + " to " +
+                                                             dst.description());
                 }
             }
         } else {
@@ -1581,16 +1665,14 @@ SpvId SPIRVCodeGenerator::writeConstructor(const Constructor& c, OutputStream& o
         this->getActualType(type) == this->getActualType(c.arguments()[0]->type())) {
         return this->writeExpression(*c.arguments()[0], out);
     }
-    if (type == *fContext.fFloat_Type || type == *fContext.fHalf_Type) {
+    if (type.isFloat()) {
         return this->writeFloatConstructor(c, out);
-    } else if (type == *fContext.fInt_Type ||
-               type == *fContext.fShort_Type ||
-               type == *fContext.fByte_Type) {
+    } else if (type.isSigned()) {
         return this->writeIntConstructor(c, out);
-    } else if (type == *fContext.fUInt_Type ||
-               type == *fContext.fUShort_Type ||
-               type == *fContext.fUByte_Type) {
+    } else if (type.isUnsigned()) {
         return this->writeUIntConstructor(c, out);
+    } else if (type.isBoolean()) {
+        return this->writeBooleanConstructor(c, out);
     }
     switch (type.typeKind()) {
         case Type::TypeKind::kVector:
@@ -1600,42 +1682,44 @@ SpvId SPIRVCodeGenerator::writeConstructor(const Constructor& c, OutputStream& o
         case Type::TypeKind::kArray:
             return this->writeArrayConstructor(c, out);
         default:
-#ifdef SK_DEBUG
-            ABORT("unsupported constructor: %s", c.description().c_str());
-#endif
+            fErrors.error(c.fOffset, "unsupported constructor: " + c.description());
             return -1;
     }
 }
 
-SpvStorageClass_ get_storage_class(const Modifiers& modifiers) {
+static SpvStorageClass_ get_storage_class(const Variable& var,
+                                          SpvStorageClass_ fallbackStorageClass) {
+    const Modifiers& modifiers = var.modifiers();
     if (modifiers.fFlags & Modifiers::kIn_Flag) {
         SkASSERT(!(modifiers.fLayout.fFlags & Layout::kPushConstant_Flag));
         return SpvStorageClassInput;
-    } else if (modifiers.fFlags & Modifiers::kOut_Flag) {
+    }
+    if (modifiers.fFlags & Modifiers::kOut_Flag) {
         SkASSERT(!(modifiers.fLayout.fFlags & Layout::kPushConstant_Flag));
         return SpvStorageClassOutput;
-    } else if (modifiers.fFlags & Modifiers::kUniform_Flag) {
+    }
+    if (modifiers.fFlags & Modifiers::kUniform_Flag) {
         if (modifiers.fLayout.fFlags & Layout::kPushConstant_Flag) {
             return SpvStorageClassPushConstant;
         }
+        if (var.type().typeKind() == Type::TypeKind::kSampler ||
+            var.type().typeKind() == Type::TypeKind::kSeparateSampler ||
+            var.type().typeKind() == Type::TypeKind::kTexture) {
+            return SpvStorageClassUniformConstant;
+        }
         return SpvStorageClassUniform;
-    } else {
-        return SpvStorageClassFunction;
     }
+    return fallbackStorageClass;
 }
 
-SpvStorageClass_ get_storage_class(const Expression& expr) {
+static SpvStorageClass_ get_storage_class(const Expression& expr) {
     switch (expr.kind()) {
         case Expression::Kind::kVariableReference: {
             const Variable& var = *expr.as<VariableReference>().variable();
             if (var.storage() != Variable::Storage::kGlobal) {
                 return SpvStorageClassFunction;
             }
-            SpvStorageClass_ result = get_storage_class(var.modifiers());
-            if (result == SpvStorageClassFunction) {
-                result = SpvStorageClassPrivate;
-            }
-            return result;
+            return get_storage_class(var, SpvStorageClassPrivate);
         }
         case Expression::Kind::kFieldAccess:
             return get_storage_class(*expr.as<FieldAccess>().base());
@@ -1650,13 +1734,13 @@ std::vector<SpvId> SPIRVCodeGenerator::getAccessChain(const Expression& expr, Ou
     std::vector<SpvId> chain;
     switch (expr.kind()) {
         case Expression::Kind::kIndex: {
-            IndexExpression& indexExpr = (IndexExpression&) expr;
+            const IndexExpression& indexExpr = expr.as<IndexExpression>();
             chain = this->getAccessChain(*indexExpr.base(), out);
             chain.push_back(this->writeExpression(*indexExpr.index(), out));
             break;
         }
         case Expression::Kind::kFieldAccess: {
-            FieldAccess& fieldExpr = (FieldAccess&) expr;
+            const FieldAccess& fieldExpr = expr.as<FieldAccess>();
             chain = this->getAccessChain(*fieldExpr.base(), out);
             IntLiteral index(fContext, -1, fieldExpr.fieldIndex());
             chain.push_back(this->writeIntLiteral(index));
@@ -1795,7 +1879,7 @@ std::unique_ptr<SPIRVCodeGenerator::LValue> SPIRVCodeGenerator::getLValue(const 
                 typeId = this->getType(*Type::MakeArrayType("sk_in", var.type().componentType(),
                                                             fSkInCount));
             } else {
-                typeId = this->getType(type);
+                typeId = this->getType(type, this->memoryLayoutForVariable(var));
             }
             auto entry = fVariableMap.find(&var);
             SkASSERT(entry != fVariableMap.end());
@@ -1814,22 +1898,18 @@ std::unique_ptr<SPIRVCodeGenerator::LValue> SPIRVCodeGenerator::getLValue(const 
             return std::make_unique<PointerLValue>(*this, member, this->getType(type), precision);
         }
         case Expression::Kind::kSwizzle: {
-            Swizzle& swizzle = (Swizzle&) expr;
+            const Swizzle& swizzle = expr.as<Swizzle>();
             size_t count = swizzle.components().size();
             SpvId base = this->getLValue(*swizzle.base(), out)->getPointer();
             if (!base) {
                 fErrors.error(swizzle.fOffset, "unable to retrieve lvalue from swizzle");
             }
             if (count == 1) {
-                IntLiteral index(fContext, -1, swizzle.components()[0]);
                 SpvId member = this->nextId();
-                this->writeInstruction(SpvOpAccessChain,
-                                       this->getPointerType(type,
-                                                            get_storage_class(*swizzle.base())),
-                                       member,
-                                       base,
-                                       this->writeIntLiteral(index),
-                                       out);
+                SpvId typeId = this->getPointerType(type, get_storage_class(*swizzle.base()));
+                IntLiteral index(fContext, /*offset=*/-1, swizzle.components()[0]);
+                SpvId indexId = this->writeIntLiteral(index);
+                this->writeInstruction(SpvOpAccessChain, typeId, member, base, indexId, out);
                 return std::make_unique<PointerLValue>(*this, member, this->getType(type),
                                                        precision);
             } else {
@@ -1838,7 +1918,7 @@ std::unique_ptr<SPIRVCodeGenerator::LValue> SPIRVCodeGenerator::getLValue(const 
             }
         }
         case Expression::Kind::kTernary: {
-            TernaryExpression& t = (TernaryExpression&) expr;
+            const TernaryExpression& t = expr.as<TernaryExpression>();
             SpvId test = this->writeExpression(*t.test(), out);
             SpvId end = this->nextId();
             SpvId ifTrueLabel = this->nextId();
@@ -1855,8 +1935,8 @@ std::unique_ptr<SPIRVCodeGenerator::LValue> SPIRVCodeGenerator::getLValue(const 
             ifFalseLabel = fCurrentBlock;
             this->writeInstruction(SpvOpBranch, end, out);
             SpvId result = this->nextId();
-            this->writeInstruction(SpvOpPhi, this->getType(*fContext.fBool_Type), result, ifTrue,
-                       ifTrueLabel, ifFalse, ifFalseLabel, out);
+            this->writeInstruction(SpvOpPhi, this->getType(*fContext.fTypes.fBool), result, ifTrue,
+                                   ifTrueLabel, ifFalse, ifFalseLabel, out);
             return std::make_unique<PointerLValue>(*this, result, this->getType(type), precision);
         }
         default: {
@@ -1885,13 +1965,13 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
         fProgram.fSettings.fFlipY) {
         // The x component never changes, so just grab it
         SpvId xId = this->nextId();
-        this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fFloat_Type), xId,
+        this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fTypes.fFloat), xId,
                                result, 0, out);
 
         // Calculate the y component which may need to be flipped
         SpvId rawYId = this->nextId();
-        this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fFloat_Type), rawYId,
-                               result, 1, out);
+        this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fTypes.fFloat),
+                               rawYId, result, 1, out);
         SpvId flippedYId = 0;
         if (fProgram.fSettings.fFlipY) {
             // need to remap to a top-left coordinate system
@@ -1908,7 +1988,7 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                                          Layout::kUnspecified_Primitive, 1, -1, "", "",
                                          Layout::kNo_Key, Layout::CType::kDefault),
                                     0),
-                        SKSL_RTHEIGHT_NAME, fContext.fFloat_Type.get());
+                        SKSL_RTHEIGHT_NAME, fContext.fTypes.fFloat.get());
                 StringFragment name("sksl_synthetic_uniforms");
                 std::unique_ptr<Type> intfStruct = Type::MakeStructType(/*offset=*/-1, name,
                                                                         fields);
@@ -1945,17 +2025,17 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
             SpvId fieldIndexId = this->writeIntLiteral(fieldIndex);
             SpvId heightPtr = this->nextId();
             this->writeOpCode(SpvOpAccessChain, 5, out);
-            this->writeWord(this->getPointerType(*fContext.fFloat_Type, fRTHeightStorageClass),
+            this->writeWord(this->getPointerType(*fContext.fTypes.fFloat, fRTHeightStorageClass),
                             out);
             this->writeWord(heightPtr, out);
             this->writeWord(fRTHeightStructId, out);
             this->writeWord(fieldIndexId, out);
             SpvId heightRead = this->nextId();
-            this->writeInstruction(SpvOpLoad, this->getType(*fContext.fFloat_Type), heightRead,
+            this->writeInstruction(SpvOpLoad, this->getType(*fContext.fTypes.fFloat), heightRead,
                                    heightPtr, out);
 
             flippedYId = this->nextId();
-            this->writeInstruction(SpvOpFSub, this->getType(*fContext.fFloat_Type), flippedYId,
+            this->writeInstruction(SpvOpFSub, this->getType(*fContext.fTypes.fFloat), flippedYId,
                                    heightRead, rawYId, out);
         }
 
@@ -1965,13 +2045,13 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
 
         // Calculate the w component
         SpvId rawWId = this->nextId();
-        this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fFloat_Type), rawWId,
-                               result, 3, out);
+        this->writeInstruction(SpvOpCompositeExtract, this->getType(*fContext.fTypes.fFloat),
+                               rawWId, result, 3, out);
 
         // Fill in the new fragcoord with the components from above
         SpvId adjusted = this->nextId();
         this->writeOpCode(SpvOpCompositeConstruct, 7, out);
-        this->writeWord(this->getType(*fContext.fFloat4_Type), out);
+        this->writeWord(this->getType(*fContext.fTypes.fFloat4), out);
         this->writeWord(adjusted, out);
         this->writeWord(xId, out);
         if (fProgram.fSettings.fFlipY) {
@@ -1989,7 +2069,7 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
         // FrontFacing in Vulkan is defined in terms of a top-down render target. In skia, we use
         // the default convention of "counter-clockwise face is front".
         SpvId inverse = this->nextId();
-        this->writeInstruction(SpvOpLogicalNot, this->getType(*fContext.fBool_Type), inverse,
+        this->writeInstruction(SpvOpLogicalNot, this->getType(*fContext.fTypes.fBool), inverse,
                                result, out);
         return inverse;
     }
@@ -2062,7 +2142,7 @@ SpvId SPIRVCodeGenerator::foldToBool(SpvId id, const Type& operandType, SpvOp op
                                      OutputStream& out) {
     if (operandType.isVector()) {
         SpvId result = this->nextId();
-        this->writeInstruction(op, this->getType(*fContext.fBool_Type), result, id, out);
+        this->writeInstruction(op, this->getType(*fContext.fTypes.fBool), result, id, out);
         return result;
     }
     return id;
@@ -2077,10 +2157,10 @@ SpvId SPIRVCodeGenerator::writeMatrixComparison(const Type& operandType, SpvId l
     SpvId columnType = this->getType(operandType.componentType().toCompound(fContext,
                                                                             operandType.rows(),
                                                                             1));
-    SpvId bvecType = this->getType(fContext.fBool_Type->toCompound(fContext,
+    SpvId bvecType = this->getType(fContext.fTypes.fBool->toCompound(fContext,
                                                                     operandType.rows(),
                                                                     1));
-    SpvId boolType = this->getType(*fContext.fBool_Type);
+    SpvId boolType = this->getType(*fContext.fTypes.fBool);
     SpvId result = 0;
     for (int i = 0; i < operandType.columns(); i++) {
         SpvId columnL = this->nextId();
@@ -2131,7 +2211,7 @@ SpvId SPIRVCodeGenerator::writeComponentwiseMatrixBinary(const Type& operandType
     return result;
 }
 
-std::unique_ptr<Expression> create_literal_1(const Context& context, const Type& type) {
+static std::unique_ptr<Expression> create_literal_1(const Context& context, const Type& type) {
     if (type.isInteger()) {
         return std::unique_ptr<Expression>(new IntLiteral(-1, 1, &type));
     }
@@ -2238,9 +2318,9 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
             SkASSERT(resultType.isBoolean());
             const Type* tmpType;
             if (operandType->isVector()) {
-                tmpType = &fContext.fBool_Type->toCompound(fContext,
-                                                           operandType->columns(),
-                                                           operandType->rows());
+                tmpType = &fContext.fTypes.fBool->toCompound(fContext,
+                                                             operandType->columns(),
+                                                             operandType->rows());
             } else {
                 tmpType = &resultType;
             }
@@ -2259,9 +2339,9 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
             SkASSERT(resultType.isBoolean());
             const Type* tmpType;
             if (operandType->isVector()) {
-                tmpType = &fContext.fBool_Type->toCompound(fContext,
-                                                           operandType->columns(),
-                                                           operandType->rows());
+                tmpType = &fContext.fTypes.fBool->toCompound(fContext,
+                                                             operandType->columns(),
+                                                             operandType->rows());
             } else {
                 tmpType = &resultType;
             }
@@ -2397,7 +2477,7 @@ SpvId SPIRVCodeGenerator::writeLogicalAnd(const BinaryExpression& a, OutputStrea
     this->writeInstruction(SpvOpBranch, end, out);
     this->writeLabel(end, out);
     SpvId result = this->nextId();
-    this->writeInstruction(SpvOpPhi, this->getType(*fContext.fBool_Type), result, falseConstant,
+    this->writeInstruction(SpvOpPhi, this->getType(*fContext.fTypes.fBool), result, falseConstant,
                            lhsBlock, rhs, rhsBlock, out);
     return result;
 }
@@ -2418,7 +2498,7 @@ SpvId SPIRVCodeGenerator::writeLogicalOr(const BinaryExpression& o, OutputStream
     this->writeInstruction(SpvOpBranch, end, out);
     this->writeLabel(end, out);
     SpvId result = this->nextId();
-    this->writeInstruction(SpvOpPhi, this->getType(*fContext.fBool_Type), result, trueConstant,
+    this->writeInstruction(SpvOpPhi, this->getType(*fContext.fTypes.fBool), result, trueConstant,
                            lhsBlock, rhs, rhsBlock, out);
     return result;
 }
@@ -2564,59 +2644,41 @@ SpvId SPIRVCodeGenerator::writeBoolLiteral(const BoolLiteral& b) {
 }
 
 SpvId SPIRVCodeGenerator::writeIntLiteral(const IntLiteral& i) {
-    const Type& type = i.type();
-    ConstantType constantType;
-    if (type == *fContext.fInt_Type || type.typeKind() == Type::TypeKind::kEnum) {
-        constantType = ConstantType::kInt;
-    } else if (type == *fContext.fUInt_Type) {
-        constantType = ConstantType::kUInt;
-    } else if (type == *fContext.fShort_Type || type == *fContext.fByte_Type) {
-        constantType = ConstantType::kShort;
-    } else if (type == *fContext.fUShort_Type || type == *fContext.fUByte_Type) {
-        constantType = ConstantType::kUShort;
-    } else {
-        SkASSERT(false);
-    }
-    std::pair<ConstantValue, ConstantType> key(i.value(), constantType);
-    auto entry = fNumberConstants.find(key);
-    if (entry == fNumberConstants.end()) {
+    SPIRVNumberConstant key{i.value(), i.type().numberKind()};
+    auto [iter, newlyCreated] = fNumberConstants.insert({key, (SpvId)-1});
+    if (newlyCreated) {
         SpvId result = this->nextId();
-        this->writeInstruction(SpvOpConstant, this->getType(type), result, (SpvId) i.value(),
+        this->writeInstruction(SpvOpConstant, this->getType(i.type()), result, (SpvId) i.value(),
                                fConstantBuffer);
-        fNumberConstants[key] = result;
-        return result;
+        iter->second = result;
     }
-    return entry->second;
+    return iter->second;
 }
 
 SpvId SPIRVCodeGenerator::writeFloatLiteral(const FloatLiteral& f) {
-    const Type& type = f.type();
-    ConstantType constantType;
-    if (type == *fContext.fHalf_Type) {
-        constantType = ConstantType::kHalf;
-    } else {
-        constantType = ConstantType::kFloat;
-    }
-    float value = (float) f.value();
-    std::pair<ConstantValue, ConstantType> key(f.value(), constantType);
-    auto entry = fNumberConstants.find(key);
-    if (entry == fNumberConstants.end()) {
+    // Convert the float literal into its bit-representation.
+    float value = f.value();
+    uint32_t valueBits;
+    static_assert(sizeof(valueBits) == sizeof(value));
+    memcpy(&valueBits, &value, sizeof(value));
+
+    SPIRVNumberConstant key{valueBits, f.type().numberKind()};
+    auto [iter, newlyCreated] = fNumberConstants.insert({key, (SpvId)-1});
+    if (newlyCreated) {
         SpvId result = this->nextId();
-        uint32_t bits;
-        SkASSERT(sizeof(bits) == sizeof(value));
-        memcpy(&bits, &value, sizeof(bits));
-        this->writeInstruction(SpvOpConstant, this->getType(type), result, bits,
+        this->writeInstruction(SpvOpConstant, this->getType(f.type()), result, (SpvId) valueBits,
                                fConstantBuffer);
-        fNumberConstants[key] = result;
-        return result;
+        iter->second = result;
     }
-    return entry->second;
+    return iter->second;
 }
 
 SpvId SPIRVCodeGenerator::writeFunctionStart(const FunctionDeclaration& f, OutputStream& out) {
     SpvId result = fFunctionMap[&f];
-    this->writeInstruction(SpvOpFunction, this->getType(f.returnType()), result,
-                           SpvFunctionControlMaskNone, this->getFunctionType(f), out);
+    SpvId returnTypeId = this->getType(f.returnType());
+    SpvId functionTypeId = this->getFunctionType(f);
+    this->writeInstruction(SpvOpFunction, returnTypeId, result,
+                           SpvFunctionControlMaskNone, functionTypeId, out);
     this->writeInstruction(SpvOpName, result, f.name(), fNameBuffer);
     const std::vector<const Variable*>& parameters = f.parameters();
     for (size_t i = 0; i < parameters.size(); i++) {
@@ -2635,14 +2697,14 @@ SpvId SPIRVCodeGenerator::writeFunction(const FunctionDefinition& f, OutputStrea
     fCurrentBlock = 0;
     this->writeLabel(this->nextId(), out);
     StringStream bodyBuffer;
-    this->writeBlock((Block&) *f.body(), bodyBuffer);
+    this->writeBlock(f.body()->as<Block>(), bodyBuffer);
     write_stringstream(fVariableBuffer, out);
     if (f.declaration().name() == "main") {
         write_stringstream(fGlobalInitializersBuffer, out);
     }
     write_stringstream(bodyBuffer, out);
     if (fCurrentBlock) {
-        if (f.declaration().returnType() == *fContext.fVoid_Type) {
+        if (f.declaration().returnType() == *fContext.fTypes.fVoid) {
             this->writeInstruction(SpvOpReturn, out);
         } else {
             this->writeInstruction(SpvOpUnreachable, out);
@@ -2708,6 +2770,12 @@ void SPIRVCodeGenerator::writeLayout(const Layout& layout, SpvId target, int mem
     }
 }
 
+MemoryLayout SPIRVCodeGenerator::memoryLayoutForVariable(const Variable& v) const {
+    bool isBuffer     = ((v.modifiers().fFlags & Modifiers::kBuffer_Flag) != 0);
+    bool pushConstant = ((v.modifiers().fLayout.fFlags & Layout::kPushConstant_Flag) != 0);
+    return (pushConstant || isBuffer) ? MemoryLayout(MemoryLayout::k430_Standard) : fDefaultLayout;
+}
+
 static void update_sk_in_count(const Modifiers& m, int* outSkInCount) {
     switch (m.fLayout.fPrimitive) {
         case Layout::kPoints_Primitive:
@@ -2731,12 +2799,7 @@ static void update_sk_in_count(const Modifiers& m, int* outSkInCount) {
 }
 
 SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool appendRTHeight) {
-    bool isBuffer = ((intf.variable().modifiers().fFlags & Modifiers::kBuffer_Flag) != 0);
-    bool pushConstant = ((intf.variable().modifiers().fLayout.fFlags &
-                          Layout::kPushConstant_Flag) != 0);
-    MemoryLayout memoryLayout = (pushConstant || isBuffer) ?
-                                MemoryLayout(MemoryLayout::k430_Standard) :
-                                fDefaultLayout;
+    MemoryLayout memoryLayout = this->memoryLayoutForVariable(intf.variable());
     SpvId result = this->nextId();
     std::unique_ptr<Type> rtHeightStructType;
     const Type* type = &intf.variable().type();
@@ -2744,8 +2807,7 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
         fErrors.error(type->fOffset, "type '" + type->name() + "' is not permitted here");
         return this->nextId();
     }
-    Modifiers intfModifiers = intf.variable().modifiers();
-    SpvStorageClass_ storageClass = get_storage_class(intfModifiers);
+    SpvStorageClass_ storageClass = get_storage_class(intf.variable(), SpvStorageClassFunction);
     if (fProgram.fInputs.fRTHeight && appendRTHeight) {
         SkASSERT(fRTHeightStructId == (SpvId) -1);
         SkASSERT(fRTHeightFieldIndex == (SpvId) -1);
@@ -2754,11 +2816,12 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
         fRTHeightFieldIndex = fields.size();
         fRTHeightStorageClass = storageClass;
         fields.emplace_back(Modifiers(), StringFragment(SKSL_RTHEIGHT_NAME),
-                            fContext.fFloat_Type.get());
+                            fContext.fTypes.fFloat.get());
         rtHeightStructType = Type::MakeStructType(type->fOffset, type->name(), std::move(fields));
         type = rtHeightStructType.get();
     }
     SpvId typeId;
+    const Modifiers& intfModifiers = intf.variable().modifiers();
     if (intfModifiers.fLayout.fBuiltin == SK_IN_BUILTIN) {
         for (const ProgramElement* e : fProgram.elements()) {
             if (e->is<ModifiersDeclaration>()) {
@@ -2799,7 +2862,7 @@ void SPIRVCodeGenerator::writePrecisionModifier(Precision precision, SpvId id) {
     }
 }
 
-bool is_dead(const Variable& var, const ProgramUsage* usage) {
+static bool is_dead(const Variable& var, const ProgramUsage* usage) {
     ProgramUsage::VariableCounts counts = usage->get(var);
     if (counts.fRead || counts.fWrite) {
         return false;
@@ -2816,18 +2879,20 @@ bool is_dead(const Variable& var, const ProgramUsage* usage) {
     return var.modifiers().fLayout.fBuiltin == SK_SAMPLEMASK_BUILTIN;
 }
 
-#define BUILTIN_IGNORE 9999
 void SPIRVCodeGenerator::writeGlobalVar(Program::Kind kind, const VarDeclaration& varDecl,
                                         OutputStream& out) {
     const Variable& var = varDecl.var();
     // These haven't been implemented in our SPIR-V generator yet and we only currently use them
     // in the OpenGL backend.
     SkASSERT(!(var.modifiers().fFlags & (Modifiers::kReadOnly_Flag |
-                                          Modifiers::kWriteOnly_Flag |
-                                          Modifiers::kCoherent_Flag |
-                                          Modifiers::kVolatile_Flag |
-                                          Modifiers::kRestrict_Flag)));
-    if (var.modifiers().fLayout.fBuiltin == BUILTIN_IGNORE) {
+                                         Modifiers::kWriteOnly_Flag |
+                                         Modifiers::kCoherent_Flag |
+                                         Modifiers::kVolatile_Flag |
+                                         Modifiers::kRestrict_Flag)));
+    // 9999 is a sentinel value used in our built-in modules that causes us to ignore these
+    // declarations, beyond adding them to the symbol table.
+    constexpr int kBuiltinIgnore = 9999;
+    if (var.modifiers().fLayout.fBuiltin == kBuiltinIgnore) {
         return;
     }
     if (var.modifiers().fLayout.fBuiltin == SK_FRAGCOLOR_BUILTIN &&
@@ -2839,21 +2904,11 @@ void SPIRVCodeGenerator::writeGlobalVar(Program::Kind kind, const VarDeclaration
         return;
     }
     const Type& type = var.type();
-    SpvStorageClass_ storageClass;
-    if (var.modifiers().fFlags & Modifiers::kIn_Flag) {
-        storageClass = SpvStorageClassInput;
-    } else if (var.modifiers().fFlags & Modifiers::kOut_Flag) {
-        storageClass = SpvStorageClassOutput;
-    } else if (var.modifiers().fFlags & Modifiers::kUniform_Flag) {
-        if (type.typeKind() == Type::TypeKind::kSampler ||
-            type.typeKind() == Type::TypeKind::kSeparateSampler ||
-            type.typeKind() == Type::TypeKind::kTexture) {
-            storageClass = SpvStorageClassUniformConstant;
-        } else {
-            storageClass = SpvStorageClassUniform;
-        }
-    } else {
-        storageClass = SpvStorageClassPrivate;
+    SpvStorageClass_ storageClass = get_storage_class(var, SpvStorageClassPrivate);
+    Layout layout = var.modifiers().fLayout;
+    if (layout.fSet < 0 && (storageClass == SpvStorageClassUniform ||
+                            storageClass == SpvStorageClassUniformConstant)) {
+        layout.fSet = fProgram.fSettings.fDefaultUniformSet;
     }
     SpvId id = this->nextId();
     fVariableMap[&var] = id;
@@ -2875,7 +2930,7 @@ void SPIRVCodeGenerator::writeGlobalVar(Program::Kind kind, const VarDeclaration
         this->writeInstruction(SpvOpStore, id, value, fGlobalInitializersBuffer);
         fCurrentBlock = 0;
     }
-    this->writeLayout(var.modifiers().fLayout, id);
+    this->writeLayout(layout, id);
     if (var.modifiers().fFlags & Modifiers::kFlat_Flag) {
         this->writeInstruction(SpvOpDecorate, id, SpvDecorationFlat, fDecorationBuffer);
     }
@@ -2911,7 +2966,7 @@ void SPIRVCodeGenerator::writeStatement(const Statement& s, OutputStream& out) {
         case Statement::Kind::kNop:
             break;
         case Statement::Kind::kBlock:
-            this->writeBlock((Block&) s, out);
+            this->writeBlock(s.as<Block>(), out);
             break;
         case Statement::Kind::kExpression:
             this->writeExpression(*s.as<ExpressionStatement>().expression(), out);
@@ -3169,22 +3224,86 @@ void SPIRVCodeGenerator::writeGeometryShaderExecutionMode(SpvId entryPoint, Outp
                            invocations, out);
 }
 
+SPIRVCodeGenerator::EntrypointAdapter SPIRVCodeGenerator::writeEntrypointAdapter(
+        const FunctionDeclaration& main) {
+    // Our goal is to synthesize a tiny helper function which looks like this:
+    //     void _entrypoint() { sk_FragColor = main(); }
+
+    // Fish a symbol table out of main().
+    std::shared_ptr<SymbolTable> symbolTable =
+            main.definition()->body()->as<Block>().symbolTable()->fParent;
+
+    // Get `sk_FragColor` as a writable reference.
+    const Symbol* skFragColorSymbol = (*symbolTable)["sk_FragColor"];
+    SkASSERT(skFragColorSymbol);
+    const Variable& skFragColorVar = skFragColorSymbol->as<Variable>();
+    auto skFragColorRef = std::make_unique<VariableReference>(/*offset=*/-1, &skFragColorVar,
+                                                              VariableReference::RefKind::kWrite);
+    // Synthesize a call to the `main()` function.
+    if (main.returnType() != skFragColorRef->type()) {
+        fErrors.error(main.fOffset, "SPIR-V does not support returning '" +
+                                    main.returnType().description() + "' from main()");
+        return {};
+    }
+    auto callMainFn = std::make_unique<FunctionCall>(/*offset=*/-1, &main.returnType(), &main,
+                                                     /*arguments=*/ExpressionArray{});
+
+    // Synthesize `skFragColor = main()` as a BinaryExpression.
+    auto assignmentStmt = std::make_unique<ExpressionStatement>(std::make_unique<BinaryExpression>(
+            /*offset=*/-1,
+            std::move(skFragColorRef),
+            Token::Kind::TK_EQ,
+            std::move(callMainFn),
+            &main.returnType()));
+
+    // Function bodies are always wrapped in a Block.
+    StatementArray entrypointStmts;
+    entrypointStmts.push_back(std::move(assignmentStmt));
+    auto entrypointBlock = std::make_unique<Block>(/*offset=*/-1, std::move(entrypointStmts),
+                                                   symbolTable, /*isScope=*/true);
+    // Declare an entrypoint function.
+    EntrypointAdapter adapter;
+    adapter.fLayout = {};
+    adapter.fModifiers = Modifiers{adapter.fLayout, Modifiers::kHasSideEffects_Flag};
+    adapter.entrypointDecl =
+            std::make_unique<FunctionDeclaration>(/*offset=*/-1,
+                                                  &adapter.fModifiers,
+                                                  "_entrypoint",
+                                                  /*parameters=*/std::vector<const Variable*>{},
+                                                  /*returnType=*/fContext.fTypes.fVoid.get(),
+                                                  /*builtin=*/false);
+    // Define it.
+    adapter.entrypointDef =
+            std::make_unique<FunctionDefinition>(/*offset=*/-1, adapter.entrypointDecl.get(),
+                                                 /*builtin=*/false,
+                                                 /*body=*/std::move(entrypointBlock));
+
+    adapter.entrypointDecl->setDefinition(adapter.entrypointDef.get());
+    return adapter;
+}
+
 void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream& out) {
     fGLSLExtendedInstructions = this->nextId();
     StringStream body;
-    std::set<SpvId> interfaceVars;
-    // assign IDs to functions
+    // Assign SpvIds to functions.
+    const FunctionDeclaration* main = nullptr;
     for (const ProgramElement* e : program.elements()) {
-        switch (e->kind()) {
-            case ProgramElement::Kind::kFunction: {
-                const FunctionDefinition& f = e->as<FunctionDefinition>();
-                fFunctionMap[&f.declaration()] = this->nextId();
-                break;
+        if (e->is<FunctionDefinition>()) {
+            const FunctionDefinition& funcDef = e->as<FunctionDefinition>();
+            const FunctionDeclaration& funcDecl = funcDef.declaration();
+            fFunctionMap[&funcDecl] = this->nextId();
+            if (funcDecl.name() == "main") {
+                main = &funcDecl;
             }
-            default:
-                break;
         }
     }
+    // Make sure we have a main() function.
+    if (!main) {
+        fErrors.error(/*offset=*/0, "program does not contain a main() function");
+        return;
+    }
+    // Emit interface blocks.
+    std::set<SpvId> interfaceVars;
     for (const ProgramElement* e : program.elements()) {
         if (e->is<InterfaceBlock>()) {
             const InterfaceBlock& intf = e->as<InterfaceBlock>();
@@ -3192,13 +3311,14 @@ void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream&
 
             const Modifiers& modifiers = intf.variable().modifiers();
             if (((modifiers.fFlags & Modifiers::kIn_Flag) ||
-                (modifiers.fFlags & Modifiers::kOut_Flag)) &&
+                 (modifiers.fFlags & Modifiers::kOut_Flag)) &&
                 modifiers.fLayout.fBuiltin == -1 &&
                 !is_dead(intf.variable(), fProgram.fUsage.get())) {
                 interfaceVars.insert(id);
             }
         }
     }
+    // Emit global variable declarations.
     for (const ProgramElement* e : program.elements()) {
         if (e->is<GlobalVarDeclaration>()) {
             this->writeGlobalVar(program.fKind,
@@ -3206,21 +3326,24 @@ void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream&
                                  body);
         }
     }
+    // If main() returns a half4, synthesize a tiny entrypoint function which invokes the real
+    // main() and stores the result into sk_FragColor.
+    EntrypointAdapter adapter;
+    if (main->returnType() == *fContext.fTypes.fHalf4) {
+        adapter = this->writeEntrypointAdapter(*main);
+        if (adapter.entrypointDecl) {
+            fFunctionMap[adapter.entrypointDecl.get()] = this->nextId();
+            this->writeFunction(*adapter.entrypointDef, body);
+            main = adapter.entrypointDecl.get();
+        }
+    }
+    // Emit all the functions.
     for (const ProgramElement* e : program.elements()) {
         if (e->is<FunctionDefinition>()) {
             this->writeFunction(e->as<FunctionDefinition>(), body);
         }
     }
-    const FunctionDeclaration* main = nullptr;
-    for (auto entry : fFunctionMap) {
-        if (entry.first->name() == "main") {
-            main = entry.first;
-        }
-    }
-    if (!main) {
-        fErrors.error(0, "program does not contain a main() function");
-        return;
-    }
+    // Add global in/out variables to the list of interface variables.
     for (auto entry : fVariableMap) {
         const Variable* var = entry.first;
         if (var->storage() == Variable::Storage::kGlobal &&

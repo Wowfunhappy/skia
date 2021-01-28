@@ -169,16 +169,12 @@ static void init(Source* source, std::shared_ptr<SkCodec> codec) {
             info = canvas->imageInfo().makeDimensions(info.dimensions());
         }
 
-        SkBitmap bm;
-        bm.allocPixels(info);
-        switch (SkCodec::Result result = codec->getPixels(info, bm.getPixels(), bm.rowBytes())) {
-            case SkCodec::kSuccess:
-            case SkCodec::kErrorInInput:
-            case SkCodec::kIncompleteInput: canvas->drawBitmap(bm, 0,0);
-                                            break;
-            default: return fail("codec->getPixels() failed: %d\n", result);
+        auto [image, result] = codec->getImage(info);
+        if (image) {
+            canvas->drawImage(image, 0,0);
+            return ok;
         }
-        return ok;
+        return fail("codec->getPixels() failed: %d\n", result);
     };
 }
 
@@ -211,9 +207,8 @@ static void init(Source* source, sk_sp<skottie::Animation> animation) {
 
             SkAutoCanvasRestore _(canvas, /*doSave=*/true);
             canvas->clipRect(dst, /*doAntiAlias=*/true);
-            canvas->concat(SkMatrix::MakeRectToRect(SkRect::MakeSize(animation->size()),
-                                                    dst,
-                                                    SkMatrix::kCenter_ScaleToFit));
+            canvas->concat(SkMatrix::RectToRect(SkRect::MakeSize(animation->size()), dst,
+                                                SkMatrix::kCenter_ScaleToFit));
             float t = (y*tiles + x) * dt;
             animation->seek(t);
             animation->render(canvas);

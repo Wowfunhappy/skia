@@ -12,6 +12,7 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/GrYUVABackendTextures.h"
 #include "src/core/SkBitmapCache.h"
 #include "src/core/SkTLList.h"
 #include "src/gpu/GrDirectContextPriv.h"
@@ -22,6 +23,7 @@
 #include "src/gpu/GrSurfaceDrawContext.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/GrTextureAdjuster.h"
+#include "src/gpu/GrYUVATextureProxies.h"
 #include "src/gpu/effects/GrYUVtoRGBEffect.h"
 #include "src/image/SkImage_Gpu.h"
 #include "src/image/SkReadPixelsRec.h"
@@ -126,8 +128,7 @@ bool SkImage_GpuBase::getROPixels(GrDirectContext* dContext,
         return false;
     }
 
-    if (!sContext->readPixels(dContext, pmap.info(), pmap.writable_addr(), pmap.rowBytes(),
-                              {0, 0})) {
+    if (!sContext->readPixels(dContext, pmap, {0, 0})) {
         return false;
     }
 
@@ -166,8 +167,8 @@ bool SkImage_GpuBase::onReadPixels(GrDirectContext* dContext,
                                    int srcX,
                                    int srcY,
                                    CachingHint) const {
-    if (!fContext->priv().matches(dContext)
-            || !SkImageInfoValidConversion(dstInfo, this->imageInfo())) {
+    if (!fContext->priv().matches(dContext) ||
+        !SkImageInfoValidConversion(dstInfo, this->imageInfo())) {
         return false;
     }
 
@@ -182,13 +183,12 @@ bool SkImage_GpuBase::onReadPixels(GrDirectContext* dContext,
         return false;
     }
 
-    return sContext->readPixels(dContext, dstInfo, dstPixels, dstRB, {srcX, srcY});
+    return sContext->readPixels(dContext, {dstInfo, dstPixels, dstRB}, {srcX, srcY});
 }
 
 GrSurfaceProxyView SkImage_GpuBase::refView(GrRecordingContext* context,
                                             GrMipmapped mipMapped) const {
     if (!context || !fContext->priv().matches(context)) {
-        SkASSERT(0);
         return {};
     }
 
@@ -196,61 +196,6 @@ GrSurfaceProxyView SkImage_GpuBase::refView(GrRecordingContext* context,
     GrTextureAdjuster adjuster(context, *this->view(context), this->imageInfo().colorInfo(),
                                this->uniqueID());
     return adjuster.view(mipMapped);
-}
-
-GrBackendTexture SkImage_GpuBase::onGetBackendTexture(bool flushPendingGrContextIO,
-                                                      GrSurfaceOrigin* origin) const {
-    auto direct = fContext->asDirectContext();
-    if (!direct) {
-        // This image was created with a DDL context and cannot be instantiated.
-        return GrBackendTexture();  // invalid
-    }
-
-    const GrSurfaceProxyView* view = this->view(direct);
-    SkASSERT(view && *view);
-    GrSurfaceProxy* proxy = view->proxy();
-
-    if (!proxy->isInstantiated()) {
-        auto resourceProvider = direct->priv().resourceProvider();
-
-        if (!proxy->instantiate(resourceProvider)) {
-            return GrBackendTexture();  // invalid
-        }
-    }
-
-    GrTexture* texture = proxy->peekTexture();
-    if (texture) {
-        if (flushPendingGrContextIO) {
-            direct->priv().flushSurface(proxy);
-        }
-        if (origin) {
-            *origin = view->origin();
-        }
-        return texture->getBackendTexture();
-    }
-    return GrBackendTexture();  // invalid
-}
-
-GrTexture* SkImage_GpuBase::getTexture() const {
-    GrTextureProxy* proxy = this->peekProxy();
-    if (proxy && proxy->isInstantiated()) {
-        return proxy->peekTexture();
-    }
-
-    auto direct = fContext->asDirectContext();
-    if (!direct) {
-        // This image was created with a DDL context and cannot be instantiated.
-        return nullptr;
-    }
-
-    const GrSurfaceProxyView* view = this->view(direct);
-    SkASSERT(view && *view && !view->proxy()->isInstantiated());
-
-    if (!view->proxy()->instantiate(direct->priv().resourceProvider())) {
-        return nullptr;
-    }
-
-    return view->proxy()->peekTexture();
 }
 
 bool SkImage_GpuBase::onIsValid(GrRecordingContext* context) const {

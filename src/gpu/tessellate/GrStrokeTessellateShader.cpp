@@ -623,7 +623,7 @@ static void append_eval_stroke_edge_fn(SkString* code, bool hasConics) {
         float maxRotation0 = (1 + combinedEdgeID) * abs(radsPerSegment);
         for (int exp = MAX_PARAMETRIC_SEGMENTS_LOG2 - 1; exp >= 0; --exp) {
             // Test the parametric edge at lastParametricEdgeID + 2^exp.
-            float testParametricID = lastParametricEdgeID + (1 << exp);
+            float testParametricID = lastParametricEdgeID + float(1 << exp);
             if (testParametricID <= maxParametricEdgeID) {
                 float2 testTan = fma(float2(testParametricID), A, B_);
                 testTan = fma(float2(testParametricID), testTan, C_);
@@ -940,7 +940,8 @@ class GrStrokeTessellateShader::IndirectImpl : public GrGLSLGeometryProcessor {
 
         args.fVertBuilder->codeAppend(R"(
         float numParametricSegments = ceil(sqrt(uParametricIntolerance * sqrt(m)));
-        numParametricSegments = clamp(numParametricSegments, 1, 1 << MAX_PARAMETRIC_SEGMENTS_LOG2);
+        numParametricSegments = clamp(numParametricSegments,
+                                      1, float(1 << MAX_PARAMETRIC_SEGMENTS_LOG2));
         if (P[0] == P[1] && P[2] == P[3]) {
             // This is how we describe lines, but Wang's formula does not return 1 in this case.
             numParametricSegments = 1;
@@ -980,7 +981,7 @@ class GrStrokeTessellateShader::IndirectImpl : public GrGLSLGeometryProcessor {
             })");
         } else {
             args.fVertBuilder->codeAppendf(R"(
-            float numEdgesInJoin = %i;")", IndirectInstance::NumExtraEdgesInJoin(joinType));
+            float numEdgesInJoin = %i;)", IndirectInstance::NumExtraEdgesInJoin(joinType));
         }
 
         args.fVertBuilder->codeAppend(R"(
@@ -1022,7 +1023,7 @@ class GrStrokeTessellateShader::IndirectImpl : public GrGLSLGeometryProcessor {
                 // for seaming with the previous stroke. (The double sided edge at the end will
                 // actually come from the section of our strip that belongs to the stroke.)
                 if (combinedEdgeID >= 0) {
-                    outset = clamp(outset, (turn < 0) ? -1 : 0, (turn >= 0) ? 1 : 0);
+                    outset = (turn < 0) ? min(outset, 0) : max(outset, 0);
                 }
             }
             combinedEdgeID = max(combinedEdgeID, 0);

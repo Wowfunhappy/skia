@@ -174,8 +174,7 @@ struct SK_API GrContextOptions {
     Enable fUseDrawInsteadOfClear = Enable::kDefault;
 
     /**
-     * Allow Ganesh to more aggressively reorder operations.
-     * Eventually this will just be what is done and will not be optional.
+     * Experimental: Allow Ganesh to more aggressively reorder operations.
      */
     Enable fReduceOpsTaskSplitting = Enable::kDefault;
 

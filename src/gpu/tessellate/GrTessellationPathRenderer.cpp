@@ -17,6 +17,7 @@
 #include "src/gpu/geometry/GrStyledShape.h"
 #include "src/gpu/ops/GrFillRectOp.h"
 #include "src/gpu/tessellate/GrDrawAtlasPathOp.h"
+#include "src/gpu/tessellate/GrPathStencilFillOp.h"
 #include "src/gpu/tessellate/GrPathTessellateOp.h"
 #include "src/gpu/tessellate/GrStrokeIndirectOp.h"
 #include "src/gpu/tessellate/GrStrokeTessellateOp.h"
@@ -36,7 +37,14 @@ constexpr static auto kAtlasAlgorithm = GrDynamicAtlas::RectanizerAlgorithm::kPo
 constexpr static int kMaxAtlasPathHeight = 128;
 
 bool GrTessellationPathRenderer::IsSupported(const GrCaps& caps) {
-    return caps.drawInstancedSupport() && caps.shaderCaps()->vertexIDSupport();
+    return !caps.avoidStencilBuffers() &&
+           caps.drawInstancedSupport() &&
+           // We see perf regressions on platforms that don't have native support for indirect
+           // draws. Disable while we investigate.
+           // (crbug.com/1163441, skbug.com/11138, skbug.com/11139)
+           caps.nativeDrawIndirectSupport() &&
+           caps.shaderCaps()->vertexIDSupport() &&
+           !caps.disableTessellationPathRenderer();
 }
 
 GrTessellationPathRenderer::GrTessellationPathRenderer(GrRecordingContext* rContext)
@@ -225,8 +233,26 @@ static GrOp::Owner make_op(GrRecordingContext* rContext, const GrSurfaceContext*
             // indirect draws.
             opFlags |= OpFlags::kDisableHWTessellation;
         }
-        return GrOp::Make<GrPathTessellateOp>(rContext, viewMatrix, path, std::move(paint), aaType,
-                                              opFlags);
+        int numVerbs = path.countVerbs();
+        if (numVerbs > 0) {
+            // Check if the path is large and/or simple enough that we can triangulate the inner fan
+            // on the CPU. This is our fastest approach. It allows us to stencil only the curves,
+            // and then fill the inner fan directly to the final render target, thus drawing the
+            // majority of pixels in a single render pass.
+            SkScalar scales[2];
+            SkAssertResult(viewMatrix.getMinMaxScales(scales));  // Will fail if perspective.
+            const SkRect& bounds = path.getBounds();
+            float gpuFragmentWork = bounds.height() * scales[0] * bounds.width() * scales[1];
+            float cpuTessellationWork = numVerbs * SkNextLog2(numVerbs);  // N log N.
+            constexpr static float kCpuWeight = 512;
+            constexpr static float kMinNumPixelsToTriangulate = 256 * 256;
+            if (cpuTessellationWork * kCpuWeight + kMinNumPixelsToTriangulate < gpuFragmentWork) {
+                return GrOp::Make<GrPathTessellateOp>(rContext, viewMatrix, path, std::move(paint),
+                                                      aaType, opFlags);
+            }
+        }
+        return GrOp::Make<GrPathStencilFillOp>(rContext, viewMatrix, path, std::move(paint), aaType,
+                                               opFlags);
     }
 }
 
@@ -313,7 +339,7 @@ bool GrTessellationPathRenderer::tryAddPathToAtlas(
 
     // Check if the path is too large for an atlas. Since we use "minDimension" for height in the
     // atlas, limiting to kMaxAtlasPathHeight^2 pixels guarantees height <= kMaxAtlasPathHeight.
-    if (maxDimenstion * minDimension > kMaxAtlasPathHeight * kMaxAtlasPathHeight ||
+    if ((uint64_t)maxDimenstion * minDimension > kMaxAtlasPathHeight * kMaxAtlasPathHeight ||
         maxDimenstion > fMaxAtlasPathWidth) {
         return false;
     }
@@ -396,7 +422,7 @@ void GrTessellationPathRenderer::renderAtlas(GrOnFlushResourceProvider* onFlushR
             }
             uberPath->setFillType(fillType);
             GrAAType aaType = (antialias) ? GrAAType::kMSAA : GrAAType::kNone;
-            auto op = GrOp::Make<GrPathTessellateOp>(onFlushRP->recordingContext(),
+            auto op = GrOp::Make<GrPathStencilFillOp>(onFlushRP->recordingContext(),
                     SkMatrix::I(), *uberPath, GrPaint(), aaType, fStencilAtlasFlags);
             rtc->addDrawOp(nullptr, std::move(op));
         }

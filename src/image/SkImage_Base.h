@@ -27,7 +27,6 @@ class GrDirectContext;
 class GrImageContext;
 class GrSamplerState;
 class SkCachedData;
-struct SkYUVASizeInfo;
 
 enum {
     kNeedNewImageUniqueID = 0
@@ -49,6 +48,8 @@ public:
                               int srcY,
                               CachingHint) const = 0;
 
+    virtual bool onHasMipmaps() const = 0;
+
     virtual SkMipmap* onPeekMips() const { return nullptr; }
 
     sk_sp<SkMipmap> refMips() const {
@@ -61,7 +62,7 @@ public:
     virtual void onAsyncRescaleAndReadPixels(const SkImageInfo&,
                                              const SkIRect& srcRect,
                                              RescaleGamma,
-                                             SkFilterQuality,
+                                             RescaleMode,
                                              ReadPixelsCallback,
                                              ReadPixelsContext);
     /**
@@ -72,7 +73,7 @@ public:
                                                    const SkIRect& srcRect,
                                                    const SkISize& dstSize,
                                                    RescaleGamma,
-                                                   SkFilterQuality,
+                                                   RescaleMode,
                                                    ReadPixelsCallback,
                                                    ReadPixelsContext);
 

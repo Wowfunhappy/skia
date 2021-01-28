@@ -94,7 +94,7 @@ sk_sp<SkIDChangeListener> GrMakeUniqueKeyInvalidationListener(GrUniqueKey* key,
 }
 
 sk_sp<GrSurfaceProxy> GrCopyBaseMipMapToTextureProxy(GrRecordingContext* ctx,
-                                                     GrSurfaceProxy* baseProxy,
+                                                     sk_sp<GrSurfaceProxy> baseProxy,
                                                      GrSurfaceOrigin origin,
                                                      SkBudgeted budgeted) {
     SkASSERT(baseProxy);
@@ -102,7 +102,7 @@ sk_sp<GrSurfaceProxy> GrCopyBaseMipMapToTextureProxy(GrRecordingContext* ctx,
     if (!ctx->priv().caps()->isFormatCopyable(baseProxy->backendFormat())) {
         return {};
     }
-    auto copy = GrSurfaceProxy::Copy(ctx, baseProxy, origin, GrMipmapped::kYes,
+    auto copy = GrSurfaceProxy::Copy(ctx, std::move(baseProxy), origin, GrMipmapped::kYes,
                                      SkBackingFit::kExact, budgeted);
     if (!copy) {
         return {};
@@ -116,7 +116,7 @@ GrSurfaceProxyView GrCopyBaseMipMapToView(GrRecordingContext* context,
                                           SkBudgeted budgeted) {
     auto origin = src.origin();
     auto swizzle = src.swizzle();
-    auto* proxy = src.proxy();
+    auto proxy = src.refProxy();
     return {GrCopyBaseMipMapToTextureProxy(context, proxy, origin, budgeted), origin, swizzle};
 }
 
@@ -485,29 +485,23 @@ GrInterpretSamplingOptions(SkISize imageDims,
         }
     }
 
-    Filter f = sampling.filter == SkFilterMode::kNearest ? Filter::kNearest
-                                                         : Filter::kLinear;
-    MipmapMode m = MipmapMode::kNone;
-    if (sampling.mipmap != SkMipmapMode::kNone) {
-        m = MipmapMode::kLinear;
-        if (allowFilterQualityReduction) {
-            SkMatrix matrix;
-            matrix.setConcat(viewM, localM);
-            // With sharp mips, we bias lookups by -0.5. That means our final LOD is >= 0 until
-            // the computed LOD is >= 0.5. At what scale factor does a texture get an LOD of
-            // 0.5?
-            //
-            // Want:  0       = log2(1/s) - 0.5
-            //        0.5     = log2(1/s)
-            //        2^0.5   = 1/s
-            //        1/2^0.5 = s
-            //        2^0.5/2 = s
-            SkScalar mipScale = sharpenMipmappedTextures ? SK_ScalarRoot2Over2 : SK_Scalar1;
-            if (matrix.getMinScale() >= mipScale) {
-                m = MipmapMode::kNone;
-            }
-        } else if (sampling.mipmap == SkMipmapMode::kNearest) {
-            m = MipmapMode::kNearest;
+    Filter     f = sampling.filter;
+    MipmapMode m = sampling.mipmap;
+    if (allowFilterQualityReduction && (m != MipmapMode::kNone)) {
+        SkMatrix matrix;
+        matrix.setConcat(viewM, localM);
+        // With sharp mips, we bias lookups by -0.5. That means our final LOD is >= 0 until
+        // the computed LOD is >= 0.5. At what scale factor does a texture get an LOD of
+        // 0.5?
+        //
+        // Want:  0       = log2(1/s) - 0.5
+        //        0.5     = log2(1/s)
+        //        2^0.5   = 1/s
+        //        1/2^0.5 = s
+        //        2^0.5/2 = s
+        SkScalar mipScale = sharpenMipmappedTextures ? SK_ScalarRoot2Over2 : SK_Scalar1;
+        if (matrix.getMinScale() >= mipScale) {
+            m = MipmapMode::kNone;
         }
     }
     return {f, m, kInvalidCubicResampler};

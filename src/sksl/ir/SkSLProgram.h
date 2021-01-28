@@ -130,6 +130,9 @@ struct Program {
         // binding and set number of the uniform buffer.
         int fRTHeightBinding = -1;
         int fRTHeightSet = -1;
+        // If layout(binding=N) is not specified for a uniform, this value will be used. At present,
+        // zero is always used by our backends.
+        int fDefaultUniformSet = 0;
         // If true, remove any uncalled functions other than main(). Note that a function which
         // starts out being used may end up being uncalled after optimization.
         bool fRemoveDeadFunctions = true;
@@ -300,7 +303,6 @@ private:
     std::unique_ptr<ModifiersPool> fModifiers;
     std::unique_ptr<ProgramUsage> fUsage;
 
-    friend class ByteCodeGenerator;   // fModifiers
     friend class Compiler;
     friend class Inliner;             // fUsage
     friend class SPIRVCodeGenerator;  // fModifiers

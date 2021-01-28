@@ -288,6 +288,8 @@ void GrVkGpu::destroyResources() {
 
     fStagingBufferManager.reset();
 
+    fMSAALoadManager.destroyResources(this);
+
     // must call this just before we destroy the command pool and VkDevice
     fResourceProvider.destroyResources(VK_ERROR_DEVICE_LOST == res);
 }
@@ -666,6 +668,11 @@ void GrVkGpu::onResolveRenderTarget(GrRenderTarget* target, const SkIRect& resol
     GrVkRenderTarget* rt = static_cast<GrVkRenderTarget*>(target);
     SkASSERT(rt->msaaImage());
     SkASSERT(rt->colorAttachmentView() && rt->resolveAttachmentView());
+
+    if (this->vkCaps().preferDiscardableMSAAAttachment() && rt->supportsInputAttachmentUsage()) {
+        // We would have resolved the RT during the render pass;
+        return;
+    }
 
     this->resolveImage(target, rt, resolveRect,
                        SkIPoint::Make(resolveRect.x(), resolveRect.y()));
@@ -1414,6 +1421,14 @@ sk_sp<GrRenderTarget> GrVkGpu::onWrapVulkanSecondaryCBAsRenderTarget(
     return GrVkRenderTarget::MakeSecondaryCBRenderTarget(this, imageInfo.dimensions(), vkInfo);
 }
 
+bool GrVkGpu::loadMSAAFromResolve(GrVkCommandBuffer* commandBuffer,
+                                  const GrVkRenderPass& renderPass,
+                                  GrSurface* dst,
+                                  GrSurface* src,
+                                  const SkIRect& srcRect) {
+    return fMSAALoadManager.loadMSAAFromResolve(this, commandBuffer, renderPass, dst, src, srcRect);
+}
+
 bool GrVkGpu::onRegenerateMipMapLevels(GrTexture* tex) {
     if (!this->currentCommandBuffer()) {
         return false;
@@ -1738,8 +1753,6 @@ GrBackendTexture GrVkGpu::onCreateBackendTexture(SkISize dimensions,
                                                  GrRenderable renderable,
                                                  GrMipmapped mipMapped,
                                                  GrProtected isProtected) {
-    this->handleDirtyContext();
-
     const GrVkCaps& caps = this->vkCaps();
 
     if (fProtectedContext != isProtected) {
@@ -2014,8 +2027,6 @@ GrBackendRenderTarget GrVkGpu::createTestingOnlyBackendRenderTarget(SkISize dime
                                                                     GrColorType ct,
                                                                     int sampleCnt,
                                                                     GrProtected isProtected) {
-    this->handleDirtyContext();
-
     if (dimensions.width()  > this->caps()->maxRenderTargetSize() ||
         dimensions.height() > this->caps()->maxRenderTargetSize()) {
         return {};
@@ -2547,10 +2558,11 @@ bool GrVkGpu::beginRenderPass(const GrVkRenderPass* renderPass,
         SkASSERT(1 == index);
     }
 #endif
-    VkClearValue clears[2];
+    VkClearValue clears[3];
+    int stencilIndex = renderPass->hasResolveAttachment() ? 2 : 1;
     clears[0].color = colorClear->color;
-    clears[1].depthStencil.depth = 0.0f;
-    clears[1].depthStencil.stencil = 0;
+    clears[stencilIndex].depthStencil.depth = 0.0f;
+    clears[stencilIndex].depthStencil.stencil = 0;
 
    return this->currentCommandBuffer()->beginRenderPass(this, renderPass, clears, target,
                                                         renderPassBounds, forSecondaryCB);

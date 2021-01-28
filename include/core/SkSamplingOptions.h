@@ -14,12 +14,16 @@
 enum class SkFilterMode {
     kNearest,   // single sample point (nearest neighbor)
     kLinear,    // interporate between 2x2 sample points (bilinear interpolation)
+
+    kLast = kLinear,
 };
 
 enum class SkMipmapMode {
     kNone,      // ignore mipmap levels, sample from the "base"
     kNearest,   // sample from the nearest level
     kLinear,    // interpolate between the two nearest levels
+
+    kLast = kLinear,
 };
 
 /*
@@ -61,6 +65,11 @@ struct SK_API SkSamplingOptions {
         : useCubic(false)
         , filter(fm)
         , mipmap(mm) {}
+
+    explicit SkSamplingOptions(SkFilterMode fm)
+        : useCubic(false)
+        , filter(fm)
+        , mipmap(SkMipmapMode::kNone) {}
 
     explicit SkSamplingOptions(const SkCubicResampler& c)
         : useCubic(true)

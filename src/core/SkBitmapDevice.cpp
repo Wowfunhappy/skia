@@ -398,7 +398,8 @@ void SkBitmapDevice::drawPath(const SkPath& path,
 }
 
 void SkBitmapDevice::drawBitmap(const SkBitmap& bitmap, const SkMatrix& matrix,
-                                const SkRect* dstOrNull, const SkPaint& paint) {
+                                const SkRect* dstOrNull, const SkSamplingOptions& sampling,
+                                const SkPaint& paint) {
     const SkRect* bounds = dstOrNull;
     SkRect storage;
     if (!bounds && SkDrawTiler::NeedsTiling(this)) {
@@ -409,7 +410,6 @@ void SkBitmapDevice::drawBitmap(const SkBitmap& bitmap, const SkMatrix& matrix,
             bounds = &storage;
         }
     }
-    SkSamplingOptions sampling(paint.getFilterQuality());   // TODO, pass this in directly
     LOOP_TILER(drawBitmap(bitmap, matrix, dstOrNull, sampling, paint), bounds)
 }
 
@@ -435,7 +435,6 @@ void SkBitmapDevice::drawImageRect(const SkImage* image, const SkRect* src, cons
         return;
     }
 
-    SkMatrix    matrix;
     SkRect      bitmapBounds, tmpSrc, tmpDst;
     SkBitmap    tmpBitmap;
 
@@ -447,7 +446,7 @@ void SkBitmapDevice::drawImageRect(const SkImage* image, const SkRect* src, cons
     } else {
         tmpSrc = bitmapBounds;
     }
-    matrix.setRectToRect(tmpSrc, dst, SkMatrix::kFill_ScaleToFit);
+    SkMatrix matrix = SkMatrix::RectToRect(tmpSrc, dst);
 
     const SkRect* dstPtr = &dst;
     const SkBitmap* bitmapPtr = &bitmap;
@@ -516,7 +515,7 @@ void SkBitmapDevice::drawImageRect(const SkImage* image, const SkRect* src, cons
         // matrix with the CTM, and try to call drawSprite if it can. If not,
         // it will make a shader and call drawRect, as we do below.
         if (CanApplyDstMatrixAsCTM(matrix, paint)) {
-            this->drawBitmap(*bitmapPtr, matrix, dstPtr, paint);
+            this->drawBitmap(*bitmapPtr, matrix, dstPtr, sampling, paint);
             return;
         }
     }
@@ -529,10 +528,8 @@ void SkBitmapDevice::drawImageRect(const SkImage* image, const SkRect* src, cons
     // if its mutable, since that precaution is not needed (give the short lifetime of the shader).
 
     // construct a shader, so we can call drawRect with the dst
-    auto s = SkMakeBitmapShaderForPaint(paint, *bitmapPtr, SkTileMode::kClamp,
-                                        SkTileMode::kClamp,
-                                        SkSamplingOptions(paint.getFilterQuality()), &matrix,
-                                        kNever_SkCopyPixelsMode);
+    auto s = SkMakeBitmapShaderForPaint(paint, *bitmapPtr, SkTileMode::kClamp, SkTileMode::kClamp,
+                                        sampling, &matrix, kNever_SkCopyPixelsMode);
     if (!s) {
         return;
     }
@@ -557,18 +554,20 @@ void SkBitmapDevice::drawVertices(const SkVertices* vertices, SkBlendMode bmode,
 
 void SkBitmapDevice::drawAtlas(const SkImage* atlas, const SkRSXform xform[],
                                const SkRect tex[], const SkColor colors[], int count,
-                               SkBlendMode mode, const SkPaint& paint) {
+                               SkBlendMode mode, const SkSamplingOptions& sampling,
+                               const SkPaint& paint) {
     // set this to true for performance comparisons with the old drawVertices way
     if (false) {
-        this->INHERITED::drawAtlas(atlas, xform, tex, colors, count, mode, paint);
+        this->INHERITED::drawAtlas(atlas, xform, tex, colors, count, mode, sampling, paint);
         return;
     }
-    BDDraw(this).drawAtlas(atlas, xform, tex, colors, count, mode, paint);
+    BDDraw(this).drawAtlas(atlas, xform, tex, colors, count, mode, sampling, paint);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void SkBitmapDevice::drawDevice(SkBaseDevice* device, const SkPaint& paint) {
+void SkBitmapDevice::drawDevice(SkBaseDevice* device, const SkSamplingOptions& sampling,
+                                const SkPaint& paint) {
     SkASSERT(!paint.getImageFilter());
     SkASSERT(!paint.getMaskFilter());
 
@@ -582,16 +581,17 @@ void SkBitmapDevice::drawDevice(SkBaseDevice* device, const SkPaint& paint) {
         draw.fRC = &fRCStack.rc();
 
         SkPaint deviceAsShader = paint;
-        SkSamplingOptions sampling;    // nearest-neighbor, since we in sprite mode
-        deviceAsShader.setShader(src->fBitmap.makeShader(sampling));
+        SkSamplingOptions nearest;    // nearest-neighbor, since we in sprite mode
+        deviceAsShader.setShader(src->fBitmap.makeShader(nearest));
         draw.drawBitmap(*src->fCoverage, SkMatrix::I(), nullptr, sampling, deviceAsShader);
     } else {
-        this->INHERITED::drawDevice(device, paint);
+        this->INHERITED::drawDevice(device, sampling, paint);
     }
 }
 
 void SkBitmapDevice::drawSpecial(SkSpecialImage* src,
                                  const SkMatrix& localToDevice,
+                                 const SkSamplingOptions& sampling,
                                  const SkPaint& paint) {
     SkASSERT(!paint.getImageFilter());
     SkASSERT(!paint.getMaskFilter());
@@ -604,8 +604,7 @@ void SkBitmapDevice::drawSpecial(SkSpecialImage* src,
         draw.fDst = fBitmap.pixmap();
         draw.fMatrixProvider = &matrixProvider;
         draw.fRC = &fRCStack.rc();
-        draw.drawBitmap(resultBM, SkMatrix::I(), nullptr,
-                        SkSamplingOptions(paint.getFilterQuality()), paint);
+        draw.drawBitmap(resultBM, SkMatrix::I(), nullptr, sampling, paint);
     }
 }
 sk_sp<SkSpecialImage> SkBitmapDevice::makeSpecial(const SkBitmap& bitmap) {

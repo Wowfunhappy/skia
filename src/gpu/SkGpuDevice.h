@@ -105,8 +105,8 @@ public:
     void drawGlyphRunList(const SkGlyphRunList& glyphRunList) override;
     void drawVertices(const SkVertices*, SkBlendMode, const SkPaint&) override;
     void drawShadow(const SkPath&, const SkDrawShadowRec&) override;
-    void drawAtlas(const SkImage* atlas, const SkRSXform[], const SkRect[],
-                   const SkColor[], int count, SkBlendMode, const SkPaint&) override;
+    void drawAtlas(const SkImage* atlas, const SkRSXform[], const SkRect[], const SkColor[],
+                   int count, SkBlendMode, const SkSamplingOptions&, const SkPaint&) override;
 
     void drawImageRect(const SkImage*, const SkRect* src, const SkRect& dst,
                        const SkSamplingOptions&, const SkPaint&,
@@ -116,13 +116,15 @@ public:
 
     void drawDrawable(SkDrawable*, const SkMatrix*, SkCanvas* canvas) override;
 
-    void drawDevice(SkBaseDevice*, const SkPaint&) override;
-    void drawSpecial(SkSpecialImage*, const SkMatrix&, const SkPaint&) override;
+    void drawDevice(SkBaseDevice*, const SkSamplingOptions&, const SkPaint&) override;
+    void drawSpecial(SkSpecialImage*, const SkMatrix&, const SkSamplingOptions&,
+                     const SkPaint&) override;
 
     void drawEdgeAAQuad(const SkRect& rect, const SkPoint clip[4], SkCanvas::QuadAAFlags aaFlags,
                         const SkColor4f& color, SkBlendMode mode) override;
     void drawEdgeAAImageSet(const SkCanvas::ImageSetEntry[], int count, const SkPoint dstClips[],
-                            const SkMatrix[], const SkPaint&, SkCanvas::SrcRectConstraint) override;
+                            const SkMatrix[], const SkSamplingOptions&, const SkPaint&,
+                            SkCanvas::SrcRectConstraint) override;
 
     sk_sp<SkSpecialImage> makeSpecial(const SkBitmap&) override;
     sk_sp<SkSpecialImage> makeSpecial(const SkImage*) override;
@@ -205,12 +207,13 @@ private:
     // If 'preViewMatrix' is not null, final CTM will be this->ctm() * preViewMatrix.
     void drawImageQuad(const SkImage*, const SkRect* src, const SkRect* dst,
                        const SkPoint dstClip[4], GrAA aa, GrQuadAAFlags aaFlags,
-                       const SkMatrix* preViewMatrix, const SkPaint&, SkCanvas::SrcRectConstraint);
+                       const SkMatrix* preViewMatrix, const SkSamplingOptions&,
+                       const SkPaint&, SkCanvas::SrcRectConstraint);
 
     // FIXME(michaelludwig) - Should be removed in favor of using drawImageQuad with edge flags to
     // for every element in the SkLatticeIter.
     void drawProducerLattice(GrTextureProducer*, std::unique_ptr<SkLatticeIter>, const SkRect& dst,
-                             const SkPaint&);
+                             SkFilterMode, const SkPaint&);
 
     void drawStrokedLine(const SkPoint pts[2], const SkPaint&);
 
