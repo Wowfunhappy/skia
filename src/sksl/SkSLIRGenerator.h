@@ -34,6 +34,7 @@ namespace SkSL {
 
 namespace dsl {
     class DSLCore;
+    class DSLFunction;
     class DSLVar;
     class DSLWriter;
 }
@@ -224,6 +225,7 @@ private:
     std::unique_ptr<InterfaceBlock> convertInterfaceBlock(const ASTNode& s);
     Modifiers convertModifiers(const Modifiers& m);
     std::unique_ptr<Expression> convertPrefixExpression(const ASTNode& expression);
+    std::unique_ptr<Statement> convertReturn(int offset, std::unique_ptr<Expression> result);
     std::unique_ptr<Statement> convertReturn(const ASTNode& r);
     std::unique_ptr<Section> convertSection(const ASTNode& e);
     std::unique_ptr<Expression> convertCallExpression(const ASTNode& expression);
@@ -287,6 +289,7 @@ private:
     int fLoopLevel = 0;
     int fSwitchLevel = 0;
     int fInvocations;
+    std::unordered_set<const Type*> fDefinedStructs;
     std::vector<std::unique_ptr<ProgramElement>>* fProgramElements = nullptr;
     std::vector<const ProgramElement*>*           fSharedElements = nullptr;
     const Variable* fRTAdjust = nullptr;
@@ -303,6 +306,7 @@ private:
     friend class AutoDisableInline;
     friend class Compiler;
     friend class dsl::DSLCore;
+    friend class dsl::DSLFunction;
     friend class dsl::DSLVar;
     friend class dsl::DSLWriter;
 };

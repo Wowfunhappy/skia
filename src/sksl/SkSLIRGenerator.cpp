@@ -820,18 +820,14 @@ std::unique_ptr<Statement> IRGenerator::convertExpressionStatement(const ASTNode
     return std::unique_ptr<Statement>(new ExpressionStatement(std::move(e)));
 }
 
-std::unique_ptr<Statement> IRGenerator::convertReturn(const ASTNode& r) {
-    SkASSERT(r.fKind == ASTNode::Kind::kReturn);
+std::unique_ptr<Statement> IRGenerator::convertReturn(int offset,
+                                                      std::unique_ptr<Expression> result) {
     SkASSERT(fCurrentFunction);
     // early returns from a vertex main function will bypass the sk_Position normalization, so
     // SkASSERT that we aren't doing that. It is of course possible to fix this by adding a
     // normalization before each return, but it will probably never actually be necessary.
     SkASSERT(Program::kVertex_Kind != fKind || !fRTAdjust || "main" != fCurrentFunction->name());
-    if (r.begin() != r.end()) {
-        std::unique_ptr<Expression> result = this->convertExpression(*r.begin());
-        if (!result) {
-            return nullptr;
-        }
+    if (result) {
         if (fCurrentFunction->returnType() == *fContext.fTypes.fVoid) {
             this->errorReporter().error(result->fOffset,
                                         "may not return a value from a void function");
@@ -845,11 +841,24 @@ std::unique_ptr<Statement> IRGenerator::convertReturn(const ASTNode& r) {
         return std::make_unique<ReturnStatement>(std::move(result));
     } else {
         if (fCurrentFunction->returnType() != *fContext.fTypes.fVoid) {
-            this->errorReporter().error(r.fOffset,
-                                        "expected function to return '" +
+            this->errorReporter().error(offset, "expected function to return '" +
                                                 fCurrentFunction->returnType().displayName() + "'");
+            return nullptr;
         }
-        return std::make_unique<ReturnStatement>(r.fOffset);
+        return std::make_unique<ReturnStatement>(offset);
+    }
+}
+
+std::unique_ptr<Statement> IRGenerator::convertReturn(const ASTNode& r) {
+    SkASSERT(r.fKind == ASTNode::Kind::kReturn);
+    if (r.begin() != r.end()) {
+        std::unique_ptr<Expression> value = this->convertExpression(*r.begin());
+        if (!value) {
+            return nullptr;
+        }
+        return this->convertReturn(r.fOffset, std::move(value));
+    } else {
+        return this->convertReturn(r.fOffset, /*result=*/nullptr);
     }
 }
 
@@ -1296,6 +1305,8 @@ std::unique_ptr<StructDefinition> IRGenerator::convertStructDefinition(const AST
                                     "expected a struct here, found '" + type->name() + "'");
         return nullptr;
     }
+    SkDEBUGCODE(auto [iter, wasInserted] =) fDefinedStructs.insert(type);
+    SkASSERT(wasInserted);
     return std::make_unique<StructDefinition>(node.fOffset, *type);
 }
 
@@ -1406,6 +1417,14 @@ bool IRGenerator::getConstantInt(const Expression& value, SKSL_INT* out) {
 void IRGenerator::convertGlobalVarDeclarations(const ASTNode& decl) {
     StatementArray decls = this->convertVarDeclarations(decl, Variable::Storage::kGlobal);
     for (std::unique_ptr<Statement>& stmt : decls) {
+        const Type* type = &stmt->as<VarDeclaration>().baseType();
+        if (type->isStruct()) {
+            auto [iter, wasInserted] = fDefinedStructs.insert(type);
+            if (wasInserted) {
+                fProgramElements->push_back(
+                        std::make_unique<StructDefinition>(decl.fOffset, *type));
+            }
+        }
         fProgramElements->push_back(std::make_unique<GlobalVarDeclaration>(decl.fOffset,
                                                                            std::move(stmt)));
     }
@@ -1420,8 +1439,7 @@ void IRGenerator::convertEnum(const ASTNode& e) {
     SkASSERT(e.fKind == ASTNode::Kind::kEnum);
     SKSL_INT currentValue = 0;
     Layout layout;
-    ASTNode enumType(e.fNodes, e.fOffset, ASTNode::Kind::kType,
-                     ASTNode::TypeData(e.getString(), /*isStructDeclaration=*/false));
+    ASTNode enumType(e.fNodes, e.fOffset, ASTNode::Kind::kType, e.getString());
     const Type* type = this->convertType(enumType);
     Modifiers modifiers(layout, Modifiers::kConst_Flag);
     std::shared_ptr<SymbolTable> oldTable = fSymbolTable;
@@ -1480,10 +1498,10 @@ bool IRGenerator::typeContainsPrivateFields(const Type& type) {
 }
 
 const Type* IRGenerator::convertType(const ASTNode& type, bool allowVoid) {
-    ASTNode::TypeData td = type.getTypeData();
-    const Symbol* symbol = (*fSymbolTable)[td.fName];
+    StringFragment name = type.getString();
+    const Symbol* symbol = (*fSymbolTable)[name];
     if (!symbol || !symbol->is<Type>()) {
-        this->errorReporter().error(type.fOffset, "unknown type '" + td.fName + "'");
+        this->errorReporter().error(type.fOffset, "unknown type '" + name + "'");
         return nullptr;
     }
     const Type* result = &symbol->as<Type>();
@@ -1491,22 +1509,22 @@ const Type* IRGenerator::convertType(const ASTNode& type, bool allowVoid) {
     if (*result == *fContext.fTypes.fVoid) {
         if (!allowVoid) {
             this->errorReporter().error(type.fOffset,
-                                        "type '" + td.fName + "' not allowed in this context");
+                                        "type '" + name + "' not allowed in this context");
             return nullptr;
         }
         if (isArray) {
             this->errorReporter().error(type.fOffset,
-                                        "type '" + td.fName + "' may not be used in an array");
+                                        "type '" + name + "' may not be used in an array");
             return nullptr;
         }
     }
     if (!fIsBuiltinCode && this->typeContainsPrivateFields(*result)) {
-        this->errorReporter().error(type.fOffset, "type '" + td.fName + "' is private");
+        this->errorReporter().error(type.fOffset, "type '" + name + "' is private");
         return nullptr;
     }
     if (isArray && result->isOpaque()) {
         this->errorReporter().error(type.fOffset,
-                                    "opaque type '" + td.fName + "' may not be used in an array");
+                                    "opaque type '" + name + "' may not be used in an array");
         return nullptr;
     }
     if (isArray) {
@@ -2998,6 +3016,7 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
     fInvocations = -1;
     fRTAdjust = nullptr;
     fRTAdjustInterfaceBlock = nullptr;
+    fDefinedStructs.clear();
 
     AutoSymbolTable table(this);
 

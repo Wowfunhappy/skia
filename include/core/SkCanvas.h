@@ -33,12 +33,9 @@
 #include <memory>
 #include <vector>
 
-// Working on allow this to be undefined
+#ifndef SK_SUPPORT_LEGACY_GETTOTALMATRIX
 #define SK_SUPPORT_LEGACY_GETTOTALMATRIX
-
-#define SK_SUPPORT_LEGACY_DRAWBITMAP
-
-#define SK_SUPPORT_LEGACY_DRAWIMAGE_NOSAMPLING
+#endif
 
 class GrBackendRenderTarget;
 class GrRecordingContext;
