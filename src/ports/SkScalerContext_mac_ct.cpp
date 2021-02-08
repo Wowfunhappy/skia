@@ -103,14 +103,14 @@ static int darwinVersion() {
     static int darwin_version = readVersion();
     return darwin_version;
 }
-static bool isSnowLeopard() {
-    return darwinVersion() == 10;
-}
 static bool isLion() {
     return darwinVersion() == 11;
 }
 static bool isMountainLion() {
     return darwinVersion() == 12;
+}
+static bool isMavericks() {
+    return darwinVersion() == 13;
 }
 
 static void sk_memset_rect32(uint32_t* ptr, uint32_t value,
