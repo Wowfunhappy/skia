@@ -8,6 +8,8 @@
 #include "include/private/SkTArray.h"
 #include "include/private/SkTPin.h"
 #include "src/sksl/SkSLCodeGenerator.h"
+#include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLOperators.h"
 #include "src/sksl/SkSLVMGenerator.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBlock.h"
@@ -527,9 +529,9 @@ Value SkVMGenerator::writeBinaryExpression(const BinaryExpression& b) {
     const Type& rType = right.type();
     bool lVecOrMtx = (lType.isVector() || lType.isMatrix());
     bool rVecOrMtx = (rType.isVector() || rType.isMatrix());
-    bool isAssignment = Compiler::IsAssignment(op);
+    bool isAssignment = Operators::IsAssignment(op);
     if (isAssignment) {
-        op = Compiler::RemoveAssignment(op);
+        op = Operators::RemoveAssignment(op);
     }
     Type::NumberKind nk = base_number_kind(lType);
 
@@ -551,6 +553,11 @@ Value SkVMGenerator::writeBinaryExpression(const BinaryExpression& b) {
             skvm::I32 rVal = i32(this->writeExpression(right));
             return lVal | rVal;
         }
+        case Token::Kind::TK_COMMA:
+            // We write the left side of the expression to preserve its side effects, even though we
+            // immediately discard the result.
+            this->writeExpression(left);
+            return this->writeExpression(right);
         default:
             break;
     }
@@ -1432,7 +1439,9 @@ Value SkVMGenerator::writeExpression(const Expression& e) {
 }
 
 Value SkVMGenerator::writeStore(const Expression& lhs, const Value& rhs) {
-    SkASSERT(rhs.slots() == slot_count(lhs.type()));
+    SkASSERTF(rhs.slots() == slot_count(lhs.type()),
+              "lhs=%s (%s)\nrhs=%d slot",
+              lhs.type().description().c_str(), lhs.description().c_str(), rhs.slots());
 
     // We need to figure out the collection of slots that we're storing into. The l-value (lhs)
     // is always a VariableReference, possibly wrapped by one or more Swizzle, FieldAccess, or
