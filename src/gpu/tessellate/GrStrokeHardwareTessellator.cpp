@@ -12,8 +12,6 @@
 #include "src/gpu/geometry/GrPathUtils.h"
 #include "src/gpu/tessellate/GrWangsFormula.h"
 
-using Patch = GrStrokeTessellateShader::Patch;
-
 static float num_combined_segments(float numParametricSegments, float numRadialSegments) {
     // The first and last edges are shared by both the parametric and radial sets of edges, so
     // the total number of edges is:
@@ -93,6 +91,15 @@ GrStrokeHardwareTessellator::GrStrokeHardwareTessellator(const GrShaderCaps& sha
     fSoloRoundJoinAlwaysFitsInPatch = (numRadialSegments180 <= fMaxTessellationSegments);
 }
 
+static bool conic_has_cusp(const SkPoint p[3]) {
+    SkVector a = p[1] - p[0];
+    SkVector b = p[2] - p[1];
+    // A conic of any class can only have a cusp if it is a degenerate flat line with a 180 degree
+    // turnarund. To detect this, the beginning and ending tangents must be parallel
+    // (a.cross(b) == 0) and pointing in opposite directions (a.dot(b) < 0).
+    return a.cross(b) == 0 && a.dot(b) < 0;
+}
+
 void GrStrokeHardwareTessellator::prepare(GrMeshDrawOp::Target* target, const SkMatrix& viewMatrix,
                                           const GrSTArenaList<SkPath>& pathList, const SkStrokeRec&,
                                           int totalCombinedVerbCnt) {
@@ -108,7 +115,7 @@ void GrStrokeHardwareTessellator::prepare(GrMeshDrawOp::Target* target, const Sk
         fHasLastControlPoint = false;
         SkDEBUGCODE(fHasCurrentPoint = false;)
         SkPathVerb previousVerb = SkPathVerb::kClose;
-        for (auto [verb, pts, w] : SkPathPriv::Iterate(path)) {
+        for (auto [verb, p, w] : SkPathPriv::Iterate(path)) {
             switch (verb) {
                 case SkPathVerb::kMove:
                     // "A subpath ... consisting of a single moveto shall not be stroked."
@@ -116,21 +123,40 @@ void GrStrokeHardwareTessellator::prepare(GrMeshDrawOp::Target* target, const Sk
                     if (previousVerb != SkPathVerb::kMove && previousVerb != SkPathVerb::kClose) {
                         this->cap();
                     }
-                    this->moveTo(pts[0]);
+                    this->moveTo(p[0]);
                     break;
                 case SkPathVerb::kLine:
                     SkASSERT(fHasCurrentPoint);
-                    SkASSERT(pts[0] == fCurrentPoint);
-                    this->lineTo(pts[1]);
+                    SkASSERT(p[0] == fCurrentPoint);
+                    this->lineTo(p[1]);
                     break;
                 case SkPathVerb::kQuad:
-                    this->conicTo(pts, 1);
+                    if (conic_has_cusp(p)) {
+                        SkPoint cusp = SkEvalQuadAt(p, SkFindQuadMidTangent(p));
+                        this->lineTo(cusp);
+                        this->lineTo(p[2], JoinType::kBowtie);
+                    } else {
+                        this->conicTo(p, 1);
+                    }
                     break;
                 case SkPathVerb::kConic:
-                    this->conicTo(pts, *w);
+                    if (conic_has_cusp(p)) {
+                        SkConic conic(p, *w);
+                        SkPoint cusp = conic.evalAt(conic.findMidTangent());
+                        this->lineTo(cusp);
+                        this->lineTo(p[2], JoinType::kBowtie);
+                    } else {
+                        this->conicTo(p, *w);
+                    }
                     break;
                 case SkPathVerb::kCubic:
-                    this->cubicTo(pts);
+                    bool areCusps;
+                    GrPathUtils::findCubicConvex180Chops(p, nullptr, &areCusps);
+                    if (areCusps) {
+                        this->cubicConvex180SegmentsTo(p);
+                    } else {
+                        this->cubicTo(p);
+                    }
                     break;
                 case SkPathVerb::kClose:
                     this->close();
@@ -189,19 +215,6 @@ void GrStrokeHardwareTessellator::conicTo(const SkPoint p[3], float w, JoinType 
     // back on a lineTo and let it make the final check.
     if (p[1] == p[0] || p[1] == p[2] || w == 0) {
         this->lineTo(p[2], prevJoinType);
-        return;
-    }
-
-    // Check for a cusp. A conic of any class can only have a cusp if it is a degenerate flat line
-    // with a 180 degree turnarund. To detect this, the beginning and ending tangents must be
-    // parallel (a.cross(b) == 0) and pointing in opposite directions (a.dot(b) < 0).
-    SkVector a = p[1] - p[0];
-    SkVector b = p[2] - p[1];
-    if ((a.cross(b) == 0 && a.dot(b) < 0)) {
-        SkConic conic(p, w);
-        SkPoint cusp = conic.evalAt(conic.findMidTangent());
-        this->lineTo(cusp, prevJoinType);
-        this->lineTo(p[2], JoinType::kBowtie);
         return;
     }
 
@@ -327,35 +340,8 @@ void GrStrokeHardwareTessellator::cubicTo(const SkPoint p[4], JoinType prevJoinT
 
     // Ensure the curve does not inflect or rotate >180 degrees before we start subdividing and
     // measuring rotation.
-    SkPoint chops[10];
     if (convex180Status == Convex180Status::kUnknown) {
-        float chopT[2];
-        bool areCusps = false;
-        int numChops = GrPathUtils::findCubicConvex180Chops(p, chopT, &areCusps);
-        if (numChops == 0) {
-            // Don't decrement maxDepth since we didn't actually chop the curve.
-            this->cubicTo(p, prevJoinType, Convex180Status::kYes);
-        } else if (numChops == 1) {
-            SkChopCubicAt(p, chops, chopT[0]);
-            if (areCusps) {
-                // When chopping on a perfect cusp, these 3 points will be equal.
-                chops[2] = chops[4] = chops[3];
-            }
-            this->cubicTo(chops, prevJoinType, Convex180Status::kYes, maxDepth - 1);
-            this->cubicTo(chops + 3, JoinType::kBowtie, Convex180Status::kYes, maxDepth - 1);
-        } else {
-            SkASSERT(numChops == 2);
-            SkChopCubicAt(p, chops, chopT[0], chopT[1]);
-            if (areCusps) {
-                this->lineTo(chops[3], prevJoinType);
-                this->lineTo(chops[6], JoinType::kBowtie);
-                this->lineTo(chops[9], JoinType::kBowtie);
-            } else {
-                this->cubicTo(chops, prevJoinType, Convex180Status::kYes, maxDepth - 1);
-                this->cubicTo(chops + 3, JoinType::kBowtie, Convex180Status::kYes, maxDepth - 1);
-                this->cubicTo(chops + 6, JoinType::kBowtie, Convex180Status::kYes, maxDepth - 1);
-            }
-        }
+        this->cubicConvex180SegmentsTo(p, prevJoinType, maxDepth);
         return;
     }
 
@@ -369,6 +355,7 @@ void GrStrokeHardwareTessellator::cubicTo(const SkPoint p[4], JoinType prevJoinT
     float numCombinedSegments = num_combined_segments(numParametricSegments, numRadialSegments);
     if (numCombinedSegments > fMaxTessellationSegments) {
         // The hardware doesn't support enough segments for this curve. Chop and recurse.
+        SkPoint chops[7];
         if (maxDepth < 0) {
             // Decide on an extremely conservative upper bound for when to quit chopping. This
             // is solely to protect us from infinite recursion in instances where FP error
@@ -394,6 +381,39 @@ void GrStrokeHardwareTessellator::cubicTo(const SkPoint p[4], JoinType prevJoinT
         prevJoinType = JoinType::kNone;
     }
     this->emitPatch(prevJoinType, p, p[3]);
+}
+
+void GrStrokeHardwareTessellator::cubicConvex180SegmentsTo(const SkPoint p[4],
+                                                           JoinType prevJoinType, int maxDepth) {
+    SkPoint chops[10];
+    float chopT[2];
+    bool areCusps = false;
+    int numChops = GrPathUtils::findCubicConvex180Chops(p, chopT, &areCusps);
+    if (numChops == 0) {
+        // The curve is already convex and rotates no more than 180 degrees.
+        this->cubicTo(p, prevJoinType, Convex180Status::kYes, maxDepth);
+    } else if (numChops == 1) {
+        SkChopCubicAt(p, chops, chopT[0]);
+        if (areCusps) {
+            // When chopping on a perfect cusp, these 3 points will be equal.
+            chops[2] = chops[4] = chops[3];
+        }
+        this->cubicTo(chops, prevJoinType, Convex180Status::kYes, maxDepth);
+        this->cubicTo(chops + 3, JoinType::kBowtie, Convex180Status::kYes, maxDepth);
+    } else {
+        SkASSERT(numChops == 2);
+        SkChopCubicAt(p, chops, chopT[0], chopT[1]);
+        // Two cusps are only possible on a flat line with two 180-degree turnarounds.
+        if (areCusps) {
+            this->lineTo(chops[3], prevJoinType);
+            this->lineTo(chops[6], JoinType::kBowtie);
+            this->lineTo(chops[9], JoinType::kBowtie);
+            return;
+        }
+        this->cubicTo(chops, prevJoinType, Convex180Status::kYes, maxDepth);
+        this->cubicTo(chops + 3, JoinType::kBowtie, Convex180Status::kYes, maxDepth);
+        this->cubicTo(chops + 6, JoinType::kBowtie, Convex180Status::kYes, maxDepth);
+    }
 }
 
 void GrStrokeHardwareTessellator::joinTo(JoinType joinType, SkPoint nextControlPoint,
@@ -579,11 +599,11 @@ void GrStrokeHardwareTessellator::emitPatch(JoinType prevJoinType, const SkPoint
         SkASSERT((prevJoinType != JoinType::kNone) || fLastControlPoint == c1);
     }
 
-    if (Patch* patch = this->reservePatch()) {
+    if (this->reservePatch()) {
         // Disable the join section of this patch if prevJoinType is kNone by setting the previous
         // control point equal to p0.
-        patch->fPrevControlPoint = (prevJoinType == JoinType::kNone) ? p[0] : fLastControlPoint;
-        patch->fPts = {p[0], p[1], p[2], p[3]};
+        fPatchWriter.write((prevJoinType == JoinType::kNone) ? p[0] : fLastControlPoint);
+        fPatchWriter.writeArray(p, 4);
     }
 
     fLastControlPoint = c2;
@@ -595,48 +615,45 @@ void GrStrokeHardwareTessellator::emitJoinPatch(JoinType joinType, SkPoint nextC
     SkASSERT(fHasLastControlPoint);
     SkASSERT(fHasCurrentPoint);
 
-    if (Patch* joinPatch = this->reservePatch()) {
-        joinPatch->fPrevControlPoint = fLastControlPoint;
-        joinPatch->fPts[0] = fCurrentPoint;
+    if (this->reservePatch()) {
+        fPatchWriter.write(fLastControlPoint, fCurrentPoint);
         if (joinType == JoinType::kFromStroke) {
             // [p0, p3, p3, p3] is a reserved pattern that means this patch is a join only (no cubic
             // sections in the patch).
-            joinPatch->fPts[1] = joinPatch->fPts[2] = nextControlPoint;
+            fPatchWriter.write(nextControlPoint, nextControlPoint);
         } else {
             SkASSERT(joinType == JoinType::kBowtie);
             // [p0, p0, p0, p3] is a reserved pattern that means this patch is a bowtie.
-            joinPatch->fPts[1] = joinPatch->fPts[2] = fCurrentPoint;
+            fPatchWriter.write(fCurrentPoint, fCurrentPoint);
         }
-        joinPatch->fPts[3] = nextControlPoint;
+        fPatchWriter.write(nextControlPoint);
     }
 
     fLastControlPoint = nextControlPoint;
 }
 
-Patch* GrStrokeHardwareTessellator::reservePatch() {
+bool GrStrokeHardwareTessellator::reservePatch() {
     if (fPatchChunks.back().fPatchCount >= fCurrChunkPatchCapacity) {
         // The current chunk is full. Time to allocate a new one. (And no need to put back vertices;
         // the buffer is full.)
         this->allocPatchChunkAtLeast(fCurrChunkMinPatchAllocCount * 2);
     }
-    if (!fCurrChunkPatchData) {
+    if (!fPatchWriter.isValid()) {
         SkDebugf("WARNING: Failed to allocate vertex buffer for tessellated stroke.");
-        return nullptr;
+        return false;
     }
     SkASSERT(fPatchChunks.back().fPatchCount <= fCurrChunkPatchCapacity);
-    Patch* patch = fCurrChunkPatchData + fPatchChunks.back().fPatchCount;
     ++fPatchChunks.back().fPatchCount;
-    return patch;
+    return true;
 }
 
 void GrStrokeHardwareTessellator::allocPatchChunkAtLeast(int minPatchAllocCount) {
     SkASSERT(fTarget);
     PatchChunk* chunk = &fPatchChunks.push_back();
-    fCurrChunkPatchData = (Patch*)fTarget->makeVertexSpaceAtLeast(sizeof(Patch), minPatchAllocCount,
-                                                                  minPatchAllocCount,
-                                                                  &chunk->fPatchBuffer,
-                                                                  &chunk->fBasePatch,
-                                                                  &fCurrChunkPatchCapacity);
+    fPatchWriter = {fTarget->makeVertexSpaceAtLeast(
+            GrStrokeTessellateShader::kTessellationPatchBaseStride, minPatchAllocCount,
+            minPatchAllocCount, &chunk->fPatchBuffer, &chunk->fBasePatch,
+            &fCurrChunkPatchCapacity)};
     fCurrChunkMinPatchAllocCount = minPatchAllocCount;
 }
 

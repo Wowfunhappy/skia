@@ -32,7 +32,7 @@ static sk_sp<GrDirectContext> make_mock_context() {
     return GrDirectContext::MakeMock(&mockOptions, ctxOptions);
 }
 
-static void test_stroke(skiatest::Reporter* r, GrDirectContext* ctx, GrMeshDrawOp::Target* target,
+static void test_stroke(skiatest::Reporter* r, GrDirectContext* ctx, GrMockOpTarget* target,
                         const SkPath& path, SkRandom& rand) {
     SkStrokeRec stroke(SkStrokeRec::kFill_InitStyle);
     stroke.setStrokeStyle(.1f);
@@ -263,7 +263,7 @@ static float test_tolerance(SkPaint::Join joinType) {
 }
 
 void GrStrokeIndirectTessellator::verifyResolveLevels(skiatest::Reporter* r,
-                                                      GrMeshDrawOp::Target* target,
+                                                      GrMockOpTarget* target,
                                                       const SkMatrix& viewMatrix,
                                                       const SkPath& path,
                                                       const SkStrokeRec& stroke) {
@@ -421,19 +421,19 @@ void GrStrokeIndirectTessellator::verifyResolveLevels(skiatest::Reporter* r,
     SkASSERT(nextResolveLevel == fResolveLevels + fResolveLevelArrayCount);
 }
 
-void GrStrokeIndirectTessellator::verifyBuffers(skiatest::Reporter* r,
-                                                GrMeshDrawOp::Target* target,
+void GrStrokeIndirectTessellator::verifyBuffers(skiatest::Reporter* r, GrMockOpTarget* target,
                                                 const SkMatrix& viewMatrix,
                                                 const SkStrokeRec& stroke) {
-    using IndirectInstance = GrStrokeTessellateShader::IndirectInstance;
+    // Make sure the resolve level we assigned to each instance agrees with the actual data.
+    struct IndirectInstance {
+        SkPoint fPts[4];
+        SkPoint fLastControlPoint;
+        float fNumTotalEdges;
+    };
+    auto instance = static_cast<const IndirectInstance*>(target->peekStaticVertexData());
+    auto* indirect = static_cast<const GrDrawIndirectCommand*>(target->peekStaticIndirectData());
     GrStrokeTessellateShader::Tolerances tolerances(viewMatrix.getMaxScale(), stroke.getWidth());
     float tolerance = test_tolerance(stroke.getJoin());
-    // Make sure the resolve level we assign to each instance agrees with the actual data.
-    // GrMockOpTarget returns the same pointers every time.
-    int _;
-    auto instance = (const IndirectInstance*)target->makeVertexSpace(0, 0, nullptr, &_);
-    size_t __;
-    auto indirect = target->makeDrawIndirectSpace(0, nullptr, &__);
     for (int i = 0; i < fDrawIndirectCount; ++i) {
         int numExtraEdgesInJoin = (stroke.getJoin() == SkPaint::kMiter_Join) ? 4 : 3;
         int numStrokeEdges = indirect->fVertexCount/2 - numExtraEdgesInJoin;
@@ -444,7 +444,7 @@ void GrStrokeIndirectTessellator::verifyBuffers(skiatest::Reporter* r,
         REPORTER_ASSERT(r, 1 << resolveLevel == numSegments);
         for (unsigned j = 0; j < indirect->fInstanceCount; ++j) {
             SkASSERT(fabsf(instance->fNumTotalEdges) == indirect->fVertexCount/2);
-            const SkPoint* p = instance->fPts.data();
+            const SkPoint* p = instance->fPts;
             float numParametricSegments = GrWangsFormula::cubic(
                     tolerances.fParametricIntolerance, p);
             float alternateNumParametricSegments = numParametricSegments;

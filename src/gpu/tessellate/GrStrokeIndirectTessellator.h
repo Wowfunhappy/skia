@@ -10,6 +10,7 @@
 
 #include "src/gpu/tessellate/GrStrokeTessellateOp.h"
 
+struct GrVertexWriter;
 struct SkPoint;
 namespace skiatest { class Reporter; }
 
@@ -30,6 +31,10 @@ public:
     void draw(GrOpFlushState*) const override;
 
 private:
+    void writeInstance(GrVertexWriter*, const SkPoint[4], SkPoint lastControlPoint,
+                       int numTotalEdges);
+    void writeCircleInstance(GrVertexWriter*, SkPoint center, int numEdgesForCircles);
+
     int fResolveLevelCounts[kMaxResolveLevel + 1] = {0};  // # of instances at each resolve level.
     int fTotalInstanceCount = 0;  // Total number of stroke instances we will draw.
 
@@ -61,9 +66,9 @@ private:
 
 #if GR_TEST_UTILS
 public:
-    void verifyResolveLevels(skiatest::Reporter*, GrMeshDrawOp::Target*, const SkMatrix&,
+    void verifyResolveLevels(skiatest::Reporter*, class GrMockOpTarget*, const SkMatrix&,
                              const SkPath&, const SkStrokeRec&);
-    void verifyBuffers(skiatest::Reporter*, GrMeshDrawOp::Target*, const SkMatrix&,
+    void verifyBuffers(skiatest::Reporter*, class GrMockOpTarget*, const SkMatrix&,
                        const SkStrokeRec&);
     class Benchmark;
 #endif

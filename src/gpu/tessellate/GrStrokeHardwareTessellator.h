@@ -9,6 +9,7 @@
 #define GrStrokeHardwareTessellator_DEFINED
 
 #include "include/core/SkStrokeRec.h"
+#include "src/gpu/GrVertexWriter.h"
 #include "src/gpu/tessellate/GrStrokeTessellateOp.h"
 #include "src/gpu/tessellate/GrStrokeTessellateShader.h"
 
@@ -44,6 +45,10 @@ private:
                  int maxDepth = -1);
     void cubicTo(const SkPoint[4], JoinType prevJoinType = JoinType::kFromStroke,
                  Convex180Status = Convex180Status::kUnknown, int maxDepth = -1);
+    // Chops the curve into 1-3 convex sections that rotate no more than 180 degrees, then calls
+    // cubicTo() for each section.
+    void cubicConvex180SegmentsTo(const SkPoint[4], JoinType prevJoinType = JoinType::kFromStroke,
+                                  int maxDepth = -1);
     void joinTo(JoinType joinType, const SkPoint nextCubic[]) {
         const SkPoint& nextCtrlPt = (nextCubic[1] == nextCubic[0]) ? nextCubic[2] : nextCubic[1];
         // The caller should have culled out curves where p0==p1==p2 by this point.
@@ -55,7 +60,7 @@ private:
     void cap();
     void emitPatch(JoinType prevJoinType, const SkPoint pts[4], SkPoint endPt);
     void emitJoinPatch(JoinType, SkPoint nextControlPoint);
-    GrStrokeTessellateShader::Patch* reservePatch();
+    bool reservePatch();
     void allocPatchChunkAtLeast(int minPatchAllocCount);
 
     // The maximum number of tessellation segments the hardware can emit for a single patch.
@@ -94,7 +99,7 @@ private:
     // Variables related to the patch chunk that we are currently writing out during prepareBuffers.
     int fCurrChunkPatchCapacity;
     int fCurrChunkMinPatchAllocCount;
-    GrStrokeTessellateShader::Patch* fCurrChunkPatchData;
+    GrVertexWriter fPatchWriter;
 
     // Variables related to the specific contour that we are currently iterating during
     // prepareBuffers.
