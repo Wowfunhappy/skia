@@ -754,6 +754,9 @@ public:
 #define kScaleForSubPixelPositionHinting (4.0f)
 
 bool SkScalerContext_Mac::generatePath(SkGlyphID glyph, SkPath* path) {
+    if(isMavericks())
+      return false;
+
     SkScalar scaleX = SK_Scalar1;
     SkScalar scaleY = SK_Scalar1;
 
