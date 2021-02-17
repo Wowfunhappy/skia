@@ -6,6 +6,8 @@ This file includes a list of high level updates for each milestone release.
 
 Milestone 90
 ------------
+  * GrDirectContext::ComputeImageSize() no longer takes nextPow2 argument.
+    https://review.skia.org/368621
 
   * Remove SkImageFilter::MakeMatrixFilter as it was unused and replaced with
     SkImageFilters::MatrixTransform.
@@ -30,6 +32,7 @@ Milestone 90
   * Updated SkRuntimeEffect::Make() to take an Options struct. It also now returns a Results struct
     instead of a tuple.
     https://review.skia.org/363785
+    https://review.skia.org/367060
 
   * Changed SkRuntimeEffect::Varying to have lower-case member names, with no 'f' prefix.
     https://review.skia.org/365656

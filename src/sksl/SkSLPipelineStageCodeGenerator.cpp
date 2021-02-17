@@ -25,6 +25,7 @@
 #include "src/sksl/ir/SkSLProgramElement.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
 #include "src/sksl/ir/SkSLStatement.h"
+#include "src/sksl/ir/SkSLStructDefinition.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLTernaryExpression.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
@@ -49,7 +50,7 @@ public:
     void generateCode();
 
 private:
-    using Precedence = Operators::Precedence;
+    using Precedence = Operator::Precedence;
 
     void write(const char* s);
     void writeLine(const char* s = nullptr);
@@ -63,8 +64,12 @@ private:
 
     void writeModifiers(const Modifiers& modifiers);
 
+    // Handles arrays correctly, eg: `float x[2]`
+    String typedVariable(const Type& type, StringFragment name);
+
     void writeVarDeclaration(const VarDeclaration& var);
     void writeGlobalVarDeclaration(const GlobalVarDeclaration& g);
+    void writeStructDefinition(const StructDefinition& s);
 
     void writeExpression(const Expression& expr, Precedence parentPrecedence);
     void writeFunctionCall(const FunctionCall& c);
@@ -107,6 +112,7 @@ private:
 
     std::unordered_map<const Variable*, String>            fUniformNames;
     std::unordered_map<const FunctionDeclaration*, String> fFunctionNames;
+    std::unordered_map<const Type*, String>                fStructNames;
 
     StringStream* fBuffer = nullptr;
     bool          fCastReturnsToHalf = false;
@@ -333,6 +339,18 @@ void PipelineStageCodeGenerator::writeGlobalVarDeclaration(const GlobalVarDeclar
     }
 }
 
+void PipelineStageCodeGenerator::writeStructDefinition(const StructDefinition& s) {
+    const Type& type = s.type();
+    String mangledName = fCallbacks->getMangledName(String(type.name()).c_str());
+    String definition = "struct " + mangledName + " {\n";
+    for (const auto& f : type.fields()) {
+        definition += this->typedVariable(*f.fType, f.fName) + ";\n";
+    }
+    definition += "};\n";
+    fStructNames.insert({&type, std::move(mangledName)});
+    fCallbacks->defineStruct(definition.c_str());
+}
+
 void PipelineStageCodeGenerator::writeProgramElement(const ProgramElement& e) {
     switch (e.kind()) {
         case ProgramElement::Kind::kGlobalVar:
@@ -345,10 +363,12 @@ void PipelineStageCodeGenerator::writeProgramElement(const ProgramElement& e) {
             // Runtime effects don't allow calls to undefined functions, so prototypes are never
             // necessary. If we do support them, they should emit calls to emitFunctionPrototype.
             break;
-        // Custom types (enums and structs) are ignored (so they don't yet work in runtime effects).
+        case ProgramElement::Kind::kStructDefinition:
+            this->writeStructDefinition(e.as<StructDefinition>());
+            break;
+        // Enums are ignored (so they don't yet work in runtime effects).
         // We need to emit their declarations (via callback), with name mangling support.
         case ProgramElement::Kind::kEnum:              // skbug.com/11296
-        case ProgramElement::Kind::kStructDefinition:  // skbug.com/10939
 
         case ProgramElement::Kind::kExtension:
         case ProgramElement::Kind::kInterfaceBlock:
@@ -361,7 +381,8 @@ void PipelineStageCodeGenerator::writeProgramElement(const ProgramElement& e) {
 }
 
 String PipelineStageCodeGenerator::typeName(const Type& type) {
-    return type.name();
+    auto it = fStructNames.find(&type);
+    return it != fStructNames.end() ? it->second : type.name();
 }
 
 void PipelineStageCodeGenerator::writeType(const Type& type) {
@@ -455,15 +476,15 @@ void PipelineStageCodeGenerator::writeBinaryExpression(const BinaryExpression& b
                                                        Precedence parentPrecedence) {
     const Expression& left = *b.left();
     const Expression& right = *b.right();
-    Token::Kind op = b.getOperator();
+    Operator op = b.getOperator();
 
-    Precedence precedence = Operators::GetBinaryPrecedence(op);
+    Precedence precedence = op.getBinaryPrecedence();
     if (precedence >= parentPrecedence) {
         this->write("(");
     }
     this->writeExpression(left, precedence);
     this->write(" ");
-    this->write(Operators::OperatorName(op));
+    this->write(op.operatorName());
     this->write(" ");
     this->writeExpression(right, precedence);
     if (precedence >= parentPrecedence) {
@@ -491,7 +512,7 @@ void PipelineStageCodeGenerator::writePrefixExpression(const PrefixExpression& p
     if (Precedence::kPrefix >= parentPrecedence) {
         this->write("(");
     }
-    this->write(Operators::OperatorName(p.getOperator()));
+    this->write(p.getOperator().operatorName());
     this->writeExpression(*p.operand(), Precedence::kPrefix);
     if (Precedence::kPrefix >= parentPrecedence) {
         this->write(")");
@@ -504,7 +525,7 @@ void PipelineStageCodeGenerator::writePostfixExpression(const PostfixExpression&
         this->write("(");
     }
     this->writeExpression(*p.operand(), Precedence::kPostfix);
-    this->write(Operators::OperatorName(p.getOperator()));
+    this->write(p.getOperator().operatorName());
     if (Precedence::kPostfix >= parentPrecedence) {
         this->write(")");
     }
@@ -524,16 +545,19 @@ void PipelineStageCodeGenerator::writeModifiers(const Modifiers& modifiers) {
     }
 }
 
+String PipelineStageCodeGenerator::typedVariable(const Type& type, StringFragment name) {
+    const Type& baseType = type.isArray() ? type.componentType() : type;
+
+    String decl = this->typeName(baseType) + " " + name;
+    if (type.isArray()) {
+        decl += "[" + to_string(type.columns()) + "]";
+    }
+    return decl;
+}
+
 void PipelineStageCodeGenerator::writeVarDeclaration(const VarDeclaration& var) {
     this->writeModifiers(var.var().modifiers());
-    this->writeType(var.baseType());
-    this->write(" ");
-    this->write(var.var().name());
-    if (var.arraySize() > 0) {
-        this->write("[");
-        this->write(to_string(var.arraySize()));
-        this->write("]");
-    }
+    this->write(this->typedVariable(var.var().type(), var.var().name()));
     if (var.value()) {
         this->write(" = ");
         this->writeExpression(*var.value(), Precedence::kTopLevel);

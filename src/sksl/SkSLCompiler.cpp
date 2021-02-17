@@ -10,6 +10,7 @@
 #include <memory>
 #include <unordered_set>
 
+#include "src/core/SkTraceEvent.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLCFGGenerator.h"
 #include "src/sksl/SkSLCPPCodeGenerator.h"
@@ -84,11 +85,10 @@ public:
     const String* fOldSource;
 };
 
-Compiler::Compiler(const ShaderCapsClass* caps, Flags flags)
+Compiler::Compiler(const ShaderCapsClass* caps)
         : fContext(std::make_shared<Context>(/*errors=*/*this))
         , fCaps(caps)
         , fInliner(fContext.get())
-        , fFlags(flags)
         , fErrorCount(0) {
     SkASSERT(fCaps);
     fRootSymbolTable = std::make_shared<SymbolTable>(this, /*builtin=*/true);
@@ -175,14 +175,14 @@ Compiler::~Compiler() {}
 
 const ParsedModule& Compiler::loadGPUModule() {
     if (!fGPUModule.fSymbols) {
-        fGPUModule = this->parseModule(Program::kFragment_Kind, MODULE_DATA(gpu), fPrivateModule);
+        fGPUModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(gpu), fPrivateModule);
     }
     return fGPUModule;
 }
 
 const ParsedModule& Compiler::loadFragmentModule() {
     if (!fFragmentModule.fSymbols) {
-        fFragmentModule = this->parseModule(Program::kFragment_Kind, MODULE_DATA(frag),
+        fFragmentModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(frag),
                                             this->loadGPUModule());
     }
     return fFragmentModule;
@@ -190,7 +190,7 @@ const ParsedModule& Compiler::loadFragmentModule() {
 
 const ParsedModule& Compiler::loadVertexModule() {
     if (!fVertexModule.fSymbols) {
-        fVertexModule = this->parseModule(Program::kVertex_Kind, MODULE_DATA(vert),
+        fVertexModule = this->parseModule(ProgramKind::kVertex, MODULE_DATA(vert),
                                           this->loadGPUModule());
     }
     return fVertexModule;
@@ -198,7 +198,7 @@ const ParsedModule& Compiler::loadVertexModule() {
 
 const ParsedModule& Compiler::loadGeometryModule() {
     if (!fGeometryModule.fSymbols) {
-        fGeometryModule = this->parseModule(Program::kGeometry_Kind, MODULE_DATA(geom),
+        fGeometryModule = this->parseModule(ProgramKind::kGeometry, MODULE_DATA(geom),
                                             this->loadGPUModule());
     }
     return fGeometryModule;
@@ -206,7 +206,7 @@ const ParsedModule& Compiler::loadGeometryModule() {
 
 const ParsedModule& Compiler::loadFPModule() {
     if (!fFPModule.fSymbols) {
-        fFPModule = this->parseModule(Program::kFragmentProcessor_Kind, MODULE_DATA(fp),
+        fFPModule = this->parseModule(ProgramKind::kFragmentProcessor, MODULE_DATA(fp),
                                       this->loadGPUModule());
     }
     return fFPModule;
@@ -214,14 +214,14 @@ const ParsedModule& Compiler::loadFPModule() {
 
 const ParsedModule& Compiler::loadPublicModule() {
     if (!fPublicModule.fSymbols) {
-        fPublicModule = this->parseModule(Program::kGeneric_Kind, MODULE_DATA(public), fRootModule);
+        fPublicModule = this->parseModule(ProgramKind::kGeneric, MODULE_DATA(public), fRootModule);
     }
     return fPublicModule;
 }
 
 const ParsedModule& Compiler::loadRuntimeEffectModule() {
     if (!fRuntimeEffectModule.fSymbols) {
-        fRuntimeEffectModule = this->parseModule(Program::kRuntimeEffect_Kind, MODULE_DATA(runtime),
+        fRuntimeEffectModule = this->parseModule(ProgramKind::kRuntimeEffect, MODULE_DATA(runtime),
                                                  this->loadPublicModule());
 
         // Add some aliases to the runtime effect module so that it's friendlier, and more like GLSL
@@ -242,19 +242,19 @@ const ParsedModule& Compiler::loadRuntimeEffectModule() {
     return fRuntimeEffectModule;
 }
 
-const ParsedModule& Compiler::moduleForProgramKind(Program::Kind kind) {
+const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
     switch (kind) {
-        case Program::kVertex_Kind:            return this->loadVertexModule();        break;
-        case Program::kFragment_Kind:          return this->loadFragmentModule();      break;
-        case Program::kGeometry_Kind:          return this->loadGeometryModule();      break;
-        case Program::kFragmentProcessor_Kind: return this->loadFPModule();            break;
-        case Program::kRuntimeEffect_Kind:     return this->loadRuntimeEffectModule(); break;
-        case Program::kGeneric_Kind:           return this->loadPublicModule();        break;
+        case ProgramKind::kVertex:            return this->loadVertexModule();        break;
+        case ProgramKind::kFragment:          return this->loadFragmentModule();      break;
+        case ProgramKind::kGeometry:          return this->loadGeometryModule();      break;
+        case ProgramKind::kFragmentProcessor: return this->loadFPModule();            break;
+        case ProgramKind::kRuntimeEffect:     return this->loadRuntimeEffectModule(); break;
+        case ProgramKind::kGeneric:           return this->loadPublicModule();        break;
     }
     SkUNREACHABLE;
 }
 
-LoadedModule Compiler::loadModule(Program::Kind kind,
+LoadedModule Compiler::loadModule(ProgramKind kind,
                                   ModuleData data,
                                   std::shared_ptr<SymbolTable> base) {
     if (!base) {
@@ -281,6 +281,8 @@ LoadedModule Compiler::loadModule(Program::Kind kind,
     Program::Settings settings;
     SkASSERT(fIRGenerator->fCanInline);
     fIRGenerator->fCanInline = false;
+    settings.fReplaceSettings = false;
+
     ParsedModule baseModule = {base, /*fIntrinsics=*/nullptr};
     IRGenerator::IRBundle ir =
             fIRGenerator->convertProgram(kind, &settings, baseModule,
@@ -305,7 +307,7 @@ LoadedModule Compiler::loadModule(Program::Kind kind,
     return module;
 }
 
-ParsedModule Compiler::parseModule(Program::Kind kind, ModuleData data, const ParsedModule& base) {
+ParsedModule Compiler::parseModule(ProgramKind kind, ModuleData data, const ParsedModule& base) {
     LoadedModule module = this->loadModule(kind, data, base.fSymbols);
     this->optimize(module);
 
@@ -431,7 +433,7 @@ static bool is_dead(const Expression& lvalue, ProgramUsage* usage) {
  * to a dead target and lack of side effects on the left hand side.
  */
 static bool dead_assignment(const BinaryExpression& b, ProgramUsage* usage) {
-    if (!Operators::IsAssignment(b.getOperator())) {
+    if (!b.getOperator().isAssignment()) {
         return false;
     }
     return is_dead(*b.left(), usage);
@@ -477,7 +479,7 @@ static bool is_matching_expression_tree(const Expression& left, const Expression
 }
 
 static bool self_assignment(const BinaryExpression& b) {
-    return b.getOperator() == Token::Kind::TK_EQ &&
+    return b.getOperator().kind() == Token::Kind::TK_EQ &&
            is_matching_expression_tree(*b.left(), *b.right());
 }
 
@@ -576,7 +578,7 @@ static void delete_left(BasicBlock* b,
     std::unique_ptr<Expression>& rightPointer = bin.right();
     SkASSERT(!left.hasSideEffects());
     bool result;
-    if (bin.getOperator() == Token::Kind::TK_EQ) {
+    if (bin.getOperator().kind() == Token::Kind::TK_EQ) {
         result = b->tryRemoveLValueBefore(iter, &left);
     } else {
         result = b->tryRemoveExpressionBefore(iter, &left);
@@ -764,7 +766,7 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                 (!rightType.isScalar() && !rightType.isVector())) {
                 break;
             }
-            switch (bin->getOperator()) {
+            switch (bin->getOperator().kind()) {
                 case Token::Kind::TK_STAR:
                     if (is_constant(left, 1)) {
                         if (leftType.isVector() && rightType.isScalar()) {
@@ -945,15 +947,14 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                         }
                         currBit <<= 1;
                     }
-                    auto optimized = std::unique_ptr<Expression>(
-                            new Constructor(c.fOffset, &c.type(), std::move(flattened)));
-                    // No fUsage change; no references have been added or removed anywhere.
+                    std::unique_ptr<Expression> replacement(new Constructor(c.fOffset, &c.type(),
+                                                                            std::move(flattened)));
+                    // We're replacing an expression with a cloned version; we'll need a rescan.
+                    // No fUsage change: `float2(float(x), y)` and `float2(x, y)` have equivalent
+                    // reference counts.
+                    try_replace_expression(&b, iter, &replacement);
                     optimizationContext->fUpdated = true;
-                    if (!try_replace_expression(&b, iter, &optimized)) {
-                        optimizationContext->fNeedsRescan = true;
-                        return;
-                    }
-                    SkASSERT((*iter)->isExpression());
+                    optimizationContext->fNeedsRescan = true;
                     break;
                 }
             }
@@ -1172,14 +1173,14 @@ static bool contains_conditional_break(Statement& stmt) {
         bool visitStatement(const Statement& stmt) override {
             switch (stmt.kind()) {
                 case Statement::Kind::kBlock:
-                    return this->INHERITED::visitStatement(stmt);
+                    return INHERITED::visitStatement(stmt);
 
                 case Statement::Kind::kBreak:
                     return fInConditional > 0;
 
                 case Statement::Kind::kIf: {
                     ++fInConditional;
-                    bool result = this->INHERITED::visitStatement(stmt);
+                    bool result = INHERITED::visitStatement(stmt);
                     --fInConditional;
                     return result;
                 }
@@ -1204,7 +1205,7 @@ static bool contains_unconditional_break(Statement& stmt) {
         bool visitStatement(const Statement& stmt) override {
             switch (stmt.kind()) {
                 case Statement::Kind::kBlock:
-                    return this->INHERITED::visitStatement(stmt);
+                    return INHERITED::visitStatement(stmt);
 
                 case Statement::Kind::kBreak:
                     return true;
@@ -1411,12 +1412,13 @@ void Compiler::simplifyStatement(DefinitionMap& definitions,
                             found = true;
                             break;
                         } else {
-                            if (s.isStatic() && !(fFlags & kPermitInvalidStaticTests_Flag) &&
-                                optimizationContext->fSilences.find(&s) ==
-                                optimizationContext->fSilences.end()) {
-                                this->error(s.fOffset,
-                                            "static switch contains non-static conditional break");
-                                optimizationContext->fSilences.insert(&s);
+                            if (s.isStatic() &&
+                                !fIRGenerator->fSettings->fPermitInvalidStaticTests) {
+                                auto [iter, didInsert] = optimizationContext->fSilences.insert(&s);
+                                if (didInsert) {
+                                    this->error(s.fOffset, "static switch contains non-static "
+                                                           "conditional break");
+                                }
                             }
                             return; // can't simplify
                         }
@@ -1429,12 +1431,13 @@ void Compiler::simplifyStatement(DefinitionMap& definitions,
                         if (newBlock) {
                             (*iter)->setStatement(std::move(newBlock), usage);
                         } else {
-                            if (s.isStatic() && !(fFlags & kPermitInvalidStaticTests_Flag) &&
-                                optimizationContext->fSilences.find(&s) ==
-                                optimizationContext->fSilences.end()) {
-                                this->error(s.fOffset,
-                                            "static switch contains non-static conditional break");
-                                optimizationContext->fSilences.insert(&s);
+                            if (s.isStatic() &&
+                                !fIRGenerator->fSettings->fPermitInvalidStaticTests) {
+                                auto [iter, didInsert] = optimizationContext->fSilences.insert(&s);
+                                if (didInsert) {
+                                    this->error(s.fOffset, "static switch contains non-static "
+                                                           "conditional break");
+                                }
                             }
                             return; // can't simplify
                         }
@@ -1551,39 +1554,6 @@ bool Compiler::scanCFG(FunctionDefinition& f, ProgramUsage* usage) {
     } while (optimizationContext.fUpdated);
     SkASSERT(!optimizationContext.fNeedsRescan);
 
-    // verify static ifs & switches, clean up dead variable decls
-    for (BasicBlock& b : cfg.fBlocks) {
-        for (auto iter = b.fNodes.begin(); iter != b.fNodes.end() &&
-             !optimizationContext.fNeedsRescan;) {
-            if (iter->isStatement()) {
-                const Statement& s = **iter->statement();
-                switch (s.kind()) {
-                    case Statement::Kind::kIf:
-                        if (s.as<IfStatement>().isStatic() &&
-                            !(fFlags & kPermitInvalidStaticTests_Flag)) {
-                            this->error(s.fOffset, "static if has non-static test");
-                        }
-                        ++iter;
-                        break;
-                    case Statement::Kind::kSwitch:
-                        if (s.as<SwitchStatement>().isStatic() &&
-                            !(fFlags & kPermitInvalidStaticTests_Flag) &&
-                            optimizationContext.fSilences.find(&s) ==
-                            optimizationContext.fSilences.end()) {
-                            this->error(s.fOffset, "static switch has non-static test");
-                        }
-                        ++iter;
-                        break;
-                    default:
-                        ++iter;
-                        break;
-                }
-            } else {
-                ++iter;
-            }
-        }
-    }
-
     // check for missing return
     if (f.declaration().returnType() != *fContext->fTypes.fVoid) {
         if (cfg.fBlocks[cfg.fExit].fIsReachable) {
@@ -1596,11 +1566,13 @@ bool Compiler::scanCFG(FunctionDefinition& f, ProgramUsage* usage) {
 }
 
 std::unique_ptr<Program> Compiler::convertProgram(
-        Program::Kind kind,
+        ProgramKind kind,
         String text,
         const Program::Settings& settings,
         const std::vector<std::unique_ptr<ExternalFunction>>* externalFunctions) {
-    SkASSERT(!externalFunctions || (kind == Program::kGeneric_Kind));
+    ATRACE_ANDROID_FRAMEWORK("SkSL::Compiler::convertProgram");
+
+    SkASSERT(!externalFunctions || (kind == ProgramKind::kGeneric));
 
     // Loading and optimizing our base module might reset the inliner, so do that first,
     // *then* configure the inliner with the settings for this program.
@@ -1649,6 +1621,57 @@ std::unique_ptr<Program> Compiler::convertProgram(
         program->fPool->detachFromThread();
     }
     return success ? std::move(program) : nullptr;
+}
+
+void Compiler::verifyStaticTests(const Program& program) {
+    class StaticTestVerifier : public ProgramVisitor {
+    public:
+        StaticTestVerifier(ErrorReporter* r) : fReporter(r) {}
+
+        using ProgramVisitor::visitProgramElement;
+
+        bool visitStatement(const Statement& stmt) override {
+            switch (stmt.kind()) {
+                case Statement::Kind::kIf:
+                    if (stmt.as<IfStatement>().isStatic()) {
+                        fReporter->error(stmt.fOffset, "static if has non-static test");
+                    }
+                    break;
+
+                case Statement::Kind::kSwitch:
+                    if (stmt.as<SwitchStatement>().isStatic()) {
+                        fReporter->error(stmt.fOffset, "static switch has non-static test");
+                    }
+                    break;
+
+                default:
+                    break;
+            }
+            return INHERITED::visitStatement(stmt);
+        }
+
+        bool visitExpression(const Expression&) override {
+            // We aren't looking for anything inside an Expression, so skip them entirely.
+            return false;
+        }
+
+    private:
+        using INHERITED = ProgramVisitor;
+        ErrorReporter* fReporter;
+    };
+
+    // If invalid static tests are permitted, we don't need to check anything.
+    if (fIRGenerator->fSettings->fPermitInvalidStaticTests) {
+        return;
+    }
+
+    // Check all of the program's owned elements. (Built-in elements are assumed to be valid.)
+    StaticTestVerifier visitor{this};
+    for (const std::unique_ptr<ProgramElement>& element : program.ownedElements()) {
+        if (element->is<FunctionDefinition>()) {
+            visitor.visitProgramElement(*element);
+        }
+    }
 }
 
 bool Compiler::optimize(LoadedModule& module) {
@@ -1726,7 +1749,7 @@ bool Compiler::optimize(Program& program) {
                     program.fSharedElements.end());
         }
 
-        if (program.fKind != Program::kFragmentProcessor_Kind) {
+        if (program.fKind != ProgramKind::kFragmentProcessor) {
             // Remove declarations of dead global variables
             auto isDeadVariable = [&](const ProgramElement* element) {
                 if (!element->is<GlobalVarDeclaration>()) {
@@ -1756,6 +1779,11 @@ bool Compiler::optimize(Program& program) {
             break;
         }
     }
+
+    if (fErrorCount == 0) {
+        this->verifyStaticTests(program);
+    }
+
     return fErrorCount == 0;
 }
 
@@ -1815,6 +1843,7 @@ bool Compiler::toSPIRV(Program& program, String* out) {
 }
 
 bool Compiler::toGLSL(Program& program, OutputStream& out) {
+    ATRACE_ANDROID_FRAMEWORK("SkSL::Compiler::toGLSL");
     AutoSource as(this, program.fSource.get());
     GLSLCodeGenerator cg(fContext.get(), &program, this, &out);
     bool result = cg.generateCode();

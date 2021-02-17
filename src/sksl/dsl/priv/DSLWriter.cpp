@@ -25,7 +25,7 @@ namespace dsl {
 
 DSLWriter::DSLWriter(SkSL::Compiler* compiler)
     : fCompiler(compiler) {
-    SkSL::ParsedModule module = fCompiler->moduleForProgramKind(SkSL::Program::kFragment_Kind);
+    SkSL::ParsedModule module = fCompiler->moduleForProgramKind(SkSL::ProgramKind::kFragment);
     SkSL::IRGenerator& ir = *fCompiler->fIRGenerator;
     ir.fSymbolTable = module.fSymbols;
     ir.fSettings = &fSettings;
@@ -71,6 +71,10 @@ void DSLWriter::EndFragmentProcessor() {
     instance.fStack.pop();
     IRGenerator().popSymbolTable();
 }
+
+GrGLSLUniformHandler::UniformHandle DSLWriter::VarUniformHandle(const DSLVar& var) {
+    return var.uniformHandle();
+}
 #endif // !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
 
 std::unique_ptr<SkSL::Expression> DSLWriter::Check(std::unique_ptr<SkSL::Expression> expr) {
@@ -100,23 +104,26 @@ DSLExpression DSLWriter::Construct(const SkSL::Type& type, std::vector<DSLExpres
                                          std::move(args)));
 }
 
-DSLExpression DSLWriter::ConvertBinary(std::unique_ptr<Expression> left, Token::Kind op,
+DSLExpression DSLWriter::ConvertBinary(std::unique_ptr<Expression> left, Operator op,
                                        std::unique_ptr<Expression> right) {
-    return DSLExpression(Check(IRGenerator().convertBinaryExpression(std::move(left), op,
-                                                                     std::move(right))));
+    return IRGenerator().convertBinaryExpression(std::move(left), op, std::move(right));
+}
+
+DSLExpression DSLWriter::ConvertField(std::unique_ptr<Expression> base, const char* name) {
+    return IRGenerator().convertField(std::move(base), name);
 }
 
 DSLExpression DSLWriter::ConvertIndex(std::unique_ptr<Expression> base,
                                       std::unique_ptr<Expression> index) {
-    return DSLExpression(Check(IRGenerator().convertIndex(std::move(base), std::move(index))));
+    return IRGenerator().convertIndex(std::move(base), std::move(index));
 }
 
-DSLExpression DSLWriter::ConvertPostfix(std::unique_ptr<Expression> expr, Token::Kind op) {
-    return DSLExpression(Check(IRGenerator().convertPostfixExpression(std::move(expr), op)));
+DSLExpression DSLWriter::ConvertPostfix(std::unique_ptr<Expression> expr, Operator op) {
+    return IRGenerator().convertPostfixExpression(std::move(expr), op);
 }
 
-DSLExpression DSLWriter::ConvertPrefix(Token::Kind op, std::unique_ptr<Expression> expr) {
-    return DSLExpression(Check(IRGenerator().convertPrefixExpression(op, std::move(expr))));
+DSLExpression DSLWriter::ConvertPrefix(Operator op, std::unique_ptr<Expression> expr) {
+    return IRGenerator().convertPrefixExpression(op, std::move(expr));
 }
 
 DSLStatement DSLWriter::ConvertSwitch(std::unique_ptr<Expression> value,

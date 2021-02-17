@@ -137,7 +137,7 @@ SkRuntimeEffect::Result SkRuntimeEffect::Make(SkString sksl, const Options& opti
     SkSL::Program::Settings settings;
     settings.fInlineThreshold = options.inlineThreshold;
     settings.fAllowNarrowingConversions = true;
-    auto program = compiler->convertProgram(SkSL::Program::kRuntimeEffect_Kind,
+    auto program = compiler->convertProgram(SkSL::ProgramKind::kRuntimeEffect,
                                             SkSL::String(sksl.c_str(), sksl.size()),
                                             settings);
     // TODO: Many errors aren't caught until we process the generated Program here. Catching those
@@ -488,7 +488,7 @@ sk_sp<SkFlattenable> SkRuntimeColorFilter::CreateProc(SkReadBuffer& buffer) {
     buffer.readString(&sksl);
     sk_sp<SkData> uniforms = buffer.readByteArrayAsData();
 
-    auto effect = std::get<0>(SkRuntimeEffect::Make(std::move(sksl)));
+    auto effect = SkRuntimeEffect::Make(std::move(sksl)).effect;
     if (!buffer.validate(effect != nullptr)) {
         return nullptr;
     }
@@ -539,8 +539,20 @@ public:
             fp->addChild(std::move(childFP));
         }
         std::unique_ptr<GrFragmentProcessor> result = std::move(fp);
+        // If the shader was created with isOpaque = true, we *force* that result here.
+        // CPU does the same thing (in SkShaderBase::program).
+        if (fIsOpaque) {
+            result = GrFragmentProcessor::SwizzleOutput(std::move(result), GrSwizzle::RGB1());
+        }
         result = GrMatrixEffect::Make(matrix, std::move(result));
-        if (GrColorTypeClampType(args.fDstColorInfo->colorType()) != GrClampType::kNone) {
+        // Three cases of GrClampType to think about:
+        //   kAuto   - Normalized fixed-point. If fIsOpaque, then A is 1 (above), and the format's
+        //             range ensures RGB must be no larger. If !fIsOpaque, we clamp here.
+        //   kManual - Normalized floating point. Whether or not we set A above, the format's range
+        //             means we need to clamp RGB.
+        //   kNone   - Unclamped floating point. No clamping is done, ever.
+        GrClampType clampType = GrColorTypeClampType(args.fDstColorInfo->colorType());
+        if (clampType == GrClampType::kManual || (clampType == GrClampType::kAuto && !fIsOpaque)) {
             return GrFragmentProcessor::ClampPremulOutput(std::move(result));
         } else {
             return result;
@@ -647,7 +659,7 @@ sk_sp<SkFlattenable> SkRTShader::CreateProc(SkReadBuffer& buffer) {
         localMPtr = &localM;
     }
 
-    auto effect = std::get<0>(SkRuntimeEffect::Make(std::move(sksl)));
+    auto effect = SkRuntimeEffect::Make(std::move(sksl)).effect;
     if (!buffer.validate(effect != nullptr)) {
         return nullptr;
     }
