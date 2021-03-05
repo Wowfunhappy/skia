@@ -7,6 +7,7 @@
 
 #include "src/gpu/dawn/GrDawnProgramBuilder.h"
 
+#include "src/gpu/GrAutoLocaleSetter.h"
 #include "src/gpu/GrRenderTarget.h"
 #include "src/gpu/GrShaderUtils.h"
 #include "src/gpu/GrStencilSettings.h"
@@ -263,6 +264,8 @@ sk_sp<GrDawnProgram> GrDawnProgramBuilder::Build(GrDawnGpu* gpu,
                                                  bool hasDepthStencil,
                                                  wgpu::TextureFormat depthStencilFormat,
                                                  GrProgramDesc* desc) {
+    GrAutoLocaleSetter als("C");
+
     GrDawnProgramBuilder builder(gpu, renderTarget, programInfo, desc);
     if (!builder.emitAndInstallProcs()) {
         return nullptr;
@@ -286,7 +289,7 @@ sk_sp<GrDawnProgram> GrDawnProgramBuilder::Build(GrDawnGpu* gpu,
     sk_sp<GrDawnProgram> result(new GrDawnProgram(uniforms, uniformBufferSize));
     result->fGeometryProcessor = std::move(builder.fGeometryProcessor);
     result->fXferProcessor = std::move(builder.fXferProcessor);
-    result->fFragmentProcessors = std::move(builder.fFragmentProcessors);
+    result->fFPImpls = std::move(builder.fFPImpls);
     std::vector<wgpu::BindGroupLayoutEntry> uniformLayoutEntries;
     if (0 != uniformBufferSize) {
         wgpu::BindGroupLayoutEntry entry;
@@ -499,10 +502,9 @@ wgpu::BindGroup GrDawnProgram::setUniformData(GrDawnGpu* gpu, const GrRenderTarg
     fGeometryProcessor->setData(fDataManager, primProc);
 
     for (int i = 0; i < programInfo.pipeline().numFragmentProcessors(); ++i) {
-        auto& pipelineFP = programInfo.pipeline().getFragmentProcessor(i);
-        auto& baseGLSLFP = *fFragmentProcessors[i];
-        for (auto [fp, glslFP] : GrGLSLFragmentProcessor::ParallelRange(pipelineFP, baseGLSLFP)) {
-            glslFP.setData(fDataManager, fp);
+        auto& fp = programInfo.pipeline().getFragmentProcessor(i);
+        for (auto [fp, impl] : GrGLSLFragmentProcessor::ParallelRange(fp, *fFPImpls[i])) {
+            impl.setData(fDataManager, fp);
         }
     }
 

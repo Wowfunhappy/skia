@@ -236,7 +236,21 @@ void SPIRVCodeGenerator::writeOpCode(SpvOp_ opCode, int length, OutputStream& ou
         case SpvOpMemberDecorate:
             break;
         default:
-            SkASSERT(fCurrentBlock);
+            if (fProgram.fConfig->fSettings.fOptimize &&
+                fProgram.fConfig->fSettings.fControlFlowAnalysis &&
+                fProgram.fConfig->fSettings.fDeadCodeElimination) {
+                // When dead-code elimination is enabled, all code should be reachable and an
+                // associated block should already exist.
+                SkASSERT(fCurrentBlock);
+            } else {
+                // When dead-code elimination is disabled, we may find ourselves with instructions
+                // that don't have an associated block. This should be a rare event, but if it
+                // happens, synthesize a label; this is necessary to satisfy the validator.
+                if (fCurrentBlock == 0) {
+                    this->writeLabel(this->nextId(), out);
+                }
+            }
+            break;
     }
     this->writeWord((length << 16) | opCode, out);
 }
@@ -896,7 +910,7 @@ SpvId SPIRVCodeGenerator::writeSpecialIntrinsic(const FunctionCall& c, SpecialIn
             args.reserve_back(2);
             args.push_back(std::make_unique<IntLiteral>(fContext, /*offset=*/-1, /*value=*/0));
             args.push_back(std::make_unique<IntLiteral>(fContext, /*offset=*/-1, /*value=*/0));
-            Constructor ctor(-1, fContext.fTypes.fInt2.get(), std::move(args));
+            Constructor ctor(/*offset=*/-1, *fContext.fTypes.fInt2, std::move(args));
             SpvId coords = this->writeConstantVector(ctor);
             if (arguments.size() == 1) {
                 this->writeInstruction(SpvOpImageRead,
@@ -1985,10 +1999,10 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                         Modifiers(Layout(/*flags=*/0, /*location=*/-1,
                                          fProgram.fConfig->fSettings.fRTHeightOffset,
                                          /*binding=*/-1, /*index=*/-1, /*set=*/-1, /*builtin=*/-1,
-                                         /*inputAttachmentIndex=*/-1, Layout::Format::kUnspecified,
+                                         /*inputAttachmentIndex=*/-1,
                                          Layout::kUnspecified_Primitive, /*maxVertices=*/1,
                                          /*invocations=*/-1, /*marker=*/"", /*when=*/"",
-                                         Layout::kNo_Key, Layout::CType::kDefault),
+                                         Layout::CType::kDefault),
                                   /*flags=*/0),
                         SKSL_RTHEIGHT_NAME, fContext.fTypes.fFloat.get());
                 StringFragment name("sksl_synthetic_uniforms");
@@ -2007,9 +2021,9 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                 Modifiers modifiers(
                         Layout(flags, /*location=*/-1, /*offset=*/-1, binding, /*index=*/-1,
                                set, /*builtin=*/-1, /*inputAttachmentIndex=*/-1,
-                               Layout::Format::kUnspecified, Layout::kUnspecified_Primitive,
+                               Layout::kUnspecified_Primitive,
                                /*maxVertices=*/-1, /*invocations=*/-1, /*marker=*/"", /*when=*/"",
-                               Layout::kNo_Key, Layout::CType::kDefault),
+                               Layout::CType::kDefault),
                         Modifiers::kUniform_Flag);
                 const Variable* intfVar = fSynthetics.takeOwnershipOfSymbol(
                         std::make_unique<Variable>(/*offset=*/-1,
@@ -2776,9 +2790,8 @@ void SPIRVCodeGenerator::writeLayout(const Layout& layout, SpvId target, int mem
 }
 
 MemoryLayout SPIRVCodeGenerator::memoryLayoutForVariable(const Variable& v) const {
-    bool isBuffer     = ((v.modifiers().fFlags & Modifiers::kBuffer_Flag) != 0);
     bool pushConstant = ((v.modifiers().fLayout.fFlags & Layout::kPushConstant_Flag) != 0);
-    return (pushConstant || isBuffer) ? MemoryLayout(MemoryLayout::k430_Standard) : fDefaultLayout;
+    return pushConstant ? MemoryLayout(MemoryLayout::k430_Standard) : fDefaultLayout;
 }
 
 static void update_sk_in_count(const Modifiers& m, int* outSkInCount) {
@@ -2840,9 +2853,7 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
     } else {
         typeId = this->getType(*type, memoryLayout);
     }
-    if (intfModifiers.fFlags & Modifiers::kBuffer_Flag) {
-        this->writeInstruction(SpvOpDecorate, typeId, SpvDecorationBufferBlock, fDecorationBuffer);
-    } else if (intfModifiers.fLayout.fBuiltin == -1) {
+    if (intfModifiers.fLayout.fBuiltin == -1) {
         this->writeInstruction(SpvOpDecorate, typeId, SpvDecorationBlock, fDecorationBuffer);
     }
     SpvId ptrType = this->nextId();
@@ -2877,8 +2888,7 @@ static bool is_dead(const Variable& var, const ProgramUsage* usage) {
     // *not* to elide sk_SampleMask when it's not being used.
     if (!(var.modifiers().fFlags & (Modifiers::kIn_Flag |
                                     Modifiers::kOut_Flag |
-                                    Modifiers::kUniform_Flag |
-                                    Modifiers::kBuffer_Flag))) {
+                                    Modifiers::kUniform_Flag))) {
         return true;
     }
     return var.modifiers().fLayout.fBuiltin == SK_SAMPLEMASK_BUILTIN;
@@ -2886,13 +2896,6 @@ static bool is_dead(const Variable& var, const ProgramUsage* usage) {
 
 void SPIRVCodeGenerator::writeGlobalVar(ProgramKind kind, const VarDeclaration& varDecl) {
     const Variable& var = varDecl.var();
-    // These haven't been implemented in our SPIR-V generator yet and we only currently use them
-    // in the OpenGL backend.
-    SkASSERT(!(var.modifiers().fFlags & (Modifiers::kReadOnly_Flag |
-                                         Modifiers::kWriteOnly_Flag |
-                                         Modifiers::kCoherent_Flag |
-                                         Modifiers::kVolatile_Flag |
-                                         Modifiers::kRestrict_Flag)));
     // 9999 is a sentinel value used in our built-in modules that causes us to ignore these
     // declarations, beyond adding them to the symbol table.
     constexpr int kBuiltinIgnore = 9999;
@@ -2950,13 +2953,6 @@ void SPIRVCodeGenerator::writeGlobalVar(ProgramKind kind, const VarDeclaration& 
 
 void SPIRVCodeGenerator::writeVarDeclaration(const VarDeclaration& varDecl, OutputStream& out) {
     const Variable& var = varDecl.var();
-    // These haven't been implemented in our SPIR-V generator yet and we only currently use them
-    // in the OpenGL backend.
-    SkASSERT(!(var.modifiers().fFlags & (Modifiers::kReadOnly_Flag |
-                                         Modifiers::kWriteOnly_Flag |
-                                         Modifiers::kCoherent_Flag |
-                                         Modifiers::kVolatile_Flag |
-                                         Modifiers::kRestrict_Flag)));
     SpvId id = this->nextId();
     fVariableMap[&var] = id;
     SpvId type = this->getPointerType(var.type(), SpvStorageClassFunction);

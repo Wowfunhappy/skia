@@ -630,9 +630,10 @@ sk_sp<GrD3DPipelineState> GrD3DPipelineStateBuilder::finalize() {
             }
             sk_sp<SkData> key =
                     SkData::MakeWithoutCopy(this->desc().asKey(), this->desc().initialKeyLength());
+            const SkString& description = this->desc().description();
             sk_sp<SkData> data = GrPersistentCacheUtils::PackCachedShaders(
                     cacheSkSL ? kSKSL_Tag : kHLSL_Tag, hlsl, inputs, kGrShaderTypeCount);
-            persistentCache->store(*key, *data);
+            persistentCache->store(*key, *data, description);
         }
     }
 
@@ -656,7 +657,7 @@ sk_sp<GrD3DPipelineState> GrD3DPipelineStateBuilder::finalize() {
                                                             fUniformHandler.fSamplers.count(),
                                                             std::move(fGeometryProcessor),
                                                             std::move(fXferProcessor),
-                                                            std::move(fFragmentProcessors),
+                                                            std::move(fFPImpls),
                                                             primProc.vertexStride(),
                                                             primProc.instanceStride()));
 }
