@@ -1390,13 +1390,13 @@ GrFence SK_WARN_UNUSED_RESULT GrMtlGpu::insertFence() {
         dispatch_semaphore_signal(semaphore);
     });
 
-    const void* cfFence = (__bridge_retained const void*) semaphore;
+    const void* cfFence = (const void*) semaphore;
     return (GrFence) cfFence;
 }
 
 bool GrMtlGpu::waitFence(GrFence fence) {
     const void* cfFence = (const void*) fence;
-    dispatch_semaphore_t semaphore = (__bridge dispatch_semaphore_t)cfFence;
+    dispatch_semaphore_t semaphore = (dispatch_semaphore_t)cfFence;
 
     long result = dispatch_semaphore_wait(semaphore, 0);
 
