@@ -72,6 +72,9 @@
 
 namespace SkSL {
 
+// TODO(skia:11319): Set to `false` to disable control-flow analysis unilaterally.
+bool gSkSLControlFlowAnalysis = true;
+
 using RefKind = VariableReference::RefKind;
 
 class AutoSource {
@@ -707,7 +710,8 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
         case Expression::Kind::kVariableReference: {
             const VariableReference& ref = expr->as<VariableReference>();
             const Variable* var = ref.variable();
-            if (fContext->fConfig->fSettings.fDeadCodeElimination &&
+            if (gSkSLControlFlowAnalysis &&
+                fContext->fConfig->fSettings.fDeadCodeElimination &&
                 ref.refKind() != VariableReference::RefKind::kWrite &&
                 ref.refKind() != VariableReference::RefKind::kPointer &&
                 var->storage() == Variable::Storage::kLocal && !definitions.get(var) &&
@@ -719,6 +723,9 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
             break;
         }
         case Expression::Kind::kTernary: {
+            // TODO(skia:11319): this optimization logic is redundant with the optimization code
+            // found in SkSLTernaryExpression.cpp.
+
             TernaryExpression* t = &expr->as<TernaryExpression>();
             if (t->test()->is<BoolLiteral>()) {
                 // ternary has a constant test, replace it with either the true or
@@ -892,6 +899,9 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
             break;
         }
         case Expression::Kind::kConstructor: {
+            // TODO(skia:11319): this optimization logic is redundant with the optimization code
+            // found in SkSLConstructor.cpp.
+
             // Find constructors embedded inside constructors and flatten them out where possible.
             //   -  float4(float2(1, 2), 3, 4)                -->  float4(1, 2, 3, 4)
             //   -  float4(w, float3(sin(x), cos(y), tan(z))) -->  float4(w, sin(x), cos(y), tan(z))
@@ -943,6 +953,9 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
             break;
         }
         case Expression::Kind::kSwizzle: {
+            // TODO(skia:11319): this optimization logic is redundant with the optimization code
+            // found in SkSLSwizzle.cpp.
+
             Swizzle& s = expr->as<Swizzle>();
             // Detect identity swizzles like `foo.rgba`.
             if ((int) s.components().size() == s.base()->type().columns()) {
@@ -1305,7 +1318,7 @@ bool Compiler::scanCFG(FunctionDefinition& f, ProgramUsage* usage) {
     CFG cfg = CFGGenerator().getCFG(f);
     this->computeDataFlow(&cfg);
 
-    if (fContext->fConfig->fSettings.fDeadCodeElimination) {
+    if (gSkSLControlFlowAnalysis && fContext->fConfig->fSettings.fDeadCodeElimination) {
         // Check for unreachable code.
         for (size_t i = 0; i < cfg.fBlocks.size(); i++) {
             const BasicBlock& block = cfg.fBlocks[i];
@@ -1344,7 +1357,7 @@ bool Compiler::scanCFG(FunctionDefinition& f, ProgramUsage* usage) {
             }
 
             BasicBlock& b = cfg.fBlocks[blockId];
-            if (fContext->fConfig->fSettings.fDeadCodeElimination) {
+            if (gSkSLControlFlowAnalysis && fContext->fConfig->fSettings.fDeadCodeElimination) {
                 if (blockId > 0 && !b.fIsReachable) {
                     // Block was reachable before optimization, but has since become unreachable. In
                     // addition to being dead code, it's broken - since control flow can't reach it,
@@ -1388,14 +1401,6 @@ bool Compiler::scanCFG(FunctionDefinition& f, ProgramUsage* usage) {
         madeChanges |= optimizationContext.fUpdated;
     } while (optimizationContext.fUpdated);
     SkASSERT(!optimizationContext.fNeedsRescan);
-
-    // check for missing return
-    if (f.declaration().returnType() != *fContext->fTypes.fVoid) {
-        if (cfg.fBlocks[cfg.fExit].fIsReachable) {
-            this->error(f.fOffset, String("function '" + String(f.declaration().name()) +
-                                          "' can exit without returning a value"));
-        }
-    }
 
     return madeChanges;
 }
@@ -1528,7 +1533,7 @@ bool Compiler::optimize(LoadedModule& module) {
         bool madeChanges = false;
 
         // Scan and optimize based on the control-flow graph for each function.
-        if (config.fSettings.fControlFlowAnalysis) {
+        if (gSkSLControlFlowAnalysis && config.fSettings.fControlFlowAnalysis) {
             for (const auto& element : module.fElements) {
                 if (element->is<FunctionDefinition>()) {
                     madeChanges |= this->scanCFG(element->as<FunctionDefinition>(), usage.get());
@@ -1554,7 +1559,7 @@ bool Compiler::optimize(Program& program) {
         bool madeChanges = false;
 
         // Scan and optimize based on the control-flow graph for each function.
-        if (program.fConfig->fSettings.fControlFlowAnalysis) {
+        if (gSkSLControlFlowAnalysis && program.fConfig->fSettings.fControlFlowAnalysis) {
             for (const auto& element : program.ownedElements()) {
                 if (element->is<FunctionDefinition>()) {
                     madeChanges |= this->scanCFG(element->as<FunctionDefinition>(), usage);
