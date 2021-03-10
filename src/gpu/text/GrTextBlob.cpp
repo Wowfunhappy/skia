@@ -1380,7 +1380,10 @@ void* GrTextBlob::operator new(size_t, void* p) { return p; }
 
 GrTextBlob::~GrTextBlob() = default;
 
-sk_sp<GrTextBlob> GrTextBlob::Make(const SkGlyphRunList& glyphRunList, const SkMatrix& drawMatrix) {
+sk_sp<GrTextBlob> GrTextBlob::Make(const SkGlyphRunList& glyphRunList,
+                                   const SkMatrix& drawMatrix,
+                                   const GrSDFTControl& control,
+                                   SkGlyphRunListPainter* painter) {
     // The difference in alignment from the per-glyph data to the SubRun;
     constexpr size_t alignDiff =
             alignof(DirectMaskSubRun) - alignof(DirectMaskSubRun::DevicePosition);
@@ -1402,11 +1405,16 @@ sk_sp<GrTextBlob> GrTextBlob::Make(const SkGlyphRunList& glyphRunList, const SkM
     sk_sp<GrTextBlob> blob{new (allocation)
                             GrTextBlob(bytesNeededForSubRun, drawMatrix, initialLuminance)};
 
+    for (auto& glyphRun : glyphRunList) {
+        painter->processGlyphRun(glyphRun,
+                                 drawMatrix,
+                                 glyphRunList.paint(),
+                                 control,
+                                 blob.get());
+    }
+
     return blob;
 }
-
-const GrTextBlob::Key& GrTextBlob::GetKey(const GrTextBlob& blob) { return blob.fKey; }
-uint32_t GrTextBlob::Hash(const GrTextBlob::Key& key) { return SkOpts::hash(&key, sizeof(Key)); }
 
 void GrTextBlob::addKey(const Key& key) {
     fKey = key;
@@ -1482,20 +1490,6 @@ GrTextBlob::GrTextBlob(int allocSize,
         , fSize{allocSize}
         , fInitialMatrix{drawMatrix}
         , fInitialLuminance{initialLuminance} { }
-
-void GrTextBlob::makeSubRuns(SkGlyphRunListPainter* painter,
-                             const SkGlyphRunList& glyphRunList,
-                             const SkMatrix& drawMatrix,
-                             const SkPaint& runPaint,
-                             const GrSDFTControl& control) {
-    for (auto& glyphRun : glyphRunList) {
-        painter->processGlyphRun(glyphRun,
-                                 drawMatrix,
-                                 runPaint,
-                                 control,
-                                 this);
-    }
-}
 
 void GrTextBlob::processDeviceMasks(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                                     const SkStrikeSpec& strikeSpec) {
