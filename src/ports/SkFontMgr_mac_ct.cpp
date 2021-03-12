@@ -35,10 +35,48 @@
 #include "include/private/SkTo.h"
 #include "src/core/SkFontDescriptor.h"
 #include "src/ports/SkTypeface_mac_ct.h"
+#include "src/utils/mac/SkCTFont.h"
 #include "src/utils/SkUTF.h"
 
 #include <string.h>
 #include <memory>
+
+#include <sys/utsname.h>
+// See Source/WebKit/chromium/base/mac/mac_util.mm DarwinMajorVersionInternal for original source.
+static int readVersion() {
+    struct utsname info;
+    if (uname(&info) != 0) {
+        SkDebugf("uname failed\n");
+        return 0;
+    }
+    if (strcmp(info.sysname, "Darwin") != 0) {
+        SkDebugf("unexpected uname sysname %s\n", info.sysname);
+        return 0;
+    }
+    char* dot = strchr(info.release, '.');
+    if (!dot) {
+        SkDebugf("expected dot in uname release %s\n", info.release);
+        return 0;
+    }
+    int version = atoi(info.release);
+    if (version == 0) {
+        SkDebugf("could not parse uname release %s\n", info.release);
+    }
+    return version;
+}
+static int darwinVersion() {
+    static int darwin_version = readVersion();
+    return darwin_version;
+}
+static bool isLion() {
+    return darwinVersion() == 11;
+}
+static bool isMountainLion() {
+    return darwinVersion() == 12;
+}
+static bool isMavericks() {
+    return darwinVersion() == 13;
+}
 
 static SkUniqueCFRef<CFStringRef> make_CFString(const char s[]) {
     return SkUniqueCFRef<CFStringRef>(CFStringCreateWithCString(nullptr, s, kCFStringEncodingUTF8));
@@ -463,6 +501,201 @@ SkUniqueCFRef<CFArrayRef> SkCTFontManagerCopyAvailableFontFamilyNames() {
 
 } // namespace
 
+static void unref_proc(void* info, const void* addr, size_t size) {
+    SkASSERT(info);
+    ((SkRefCnt*)info)->unref();
+}
+static void delete_stream_proc(void* info, const void* addr, size_t size) {
+    SkASSERT(info);
+    SkStream* stream = (SkStream*)info;
+    SkASSERT(stream->getMemoryBase() == addr);
+    SkASSERT(stream->getLength() == size);
+    delete stream;
+}
+// These are used by CGDataProviderSequentialCallbacks
+static size_t get_bytes_proc(void* info, void* buffer, size_t bytes) {
+    SkASSERT(info);
+    return ((SkStream*)info)->read(buffer, bytes);
+}
+static off_t skip_forward_proc(void* info, off_t bytes) {
+    return ((SkStream*)info)->skip((size_t) bytes);
+}
+static void rewind_proc(void* info) {
+    SkASSERT(info);
+    ((SkStream*)info)->rewind();
+}
+// Used when info is an SkStream.
+static void release_info_proc(void* info) {
+    SkASSERT(info);
+    delete (SkStream*)info;
+}
+CGDataProviderRef SkCreateDataProviderFromStream(std::unique_ptr<SkStreamRewindable> stream) {
+    // TODO: Replace with SkStream::getData() when that is added. Then we only
+    // have one version of CGDataProviderCreateWithData (i.e. same release proc)
+    const void* addr = stream->getMemoryBase();
+    if (addr) {
+        // special-case when the stream is just a block of ram
+        size_t size = stream->getLength();
+        return CGDataProviderCreateWithData(stream.release(), addr, size, delete_stream_proc);
+    }
+    CGDataProviderSequentialCallbacks rec;
+    sk_bzero(&rec, sizeof(rec));
+    rec.version = 0;
+    rec.getBytes = get_bytes_proc;
+    rec.skipForward = skip_forward_proc;
+    rec.rewind = rewind_proc;
+    rec.releaseInfo = release_info_proc;
+    return CGDataProviderCreateSequential(stream.release(), &rec);
+}
+static bool find_dict_CGFloat(CFDictionaryRef dict, CFStringRef name, CGFloat* value) {
+    CFNumberRef num;
+    return CFDictionaryGetValueIfPresent(dict, name, (const void**)&num)
+        && CFNumberIsFloatType(num)
+        && CFNumberGetValue(num, kCFNumberCGFloatType, value);
+}
+template <typename S, typename D, typename C> struct LinearInterpolater {
+    struct Mapping {
+        S src_val;
+        D dst_val;
+    };
+    constexpr LinearInterpolater(Mapping const mapping[], int mappingCount)
+        : fMapping(mapping), fMappingCount(mappingCount) {}
+
+    static D map(S value, S src_min, S src_max, D dst_min, D dst_max) {
+        SkASSERT(src_min < src_max);
+        SkASSERT(dst_min <= dst_max);
+        return C()(dst_min + (((value - src_min) * (dst_max - dst_min)) / (src_max - src_min)));
+    }
+
+    D map(S val) const {
+        // -Inf to [0]
+        if (val < fMapping[0].src_val) {
+            return fMapping[0].dst_val;
+        }
+
+        // Linear from [i] to [i+1]
+        for (int i = 0; i < fMappingCount - 1; ++i) {
+            if (val < fMapping[i+1].src_val) {
+                return map(val, fMapping[i].src_val, fMapping[i+1].src_val,
+                                fMapping[i].dst_val, fMapping[i+1].dst_val);
+            }
+        }
+
+        // From [n] to +Inf
+        // if (fcweight < Inf)
+        return fMapping[fMappingCount - 1].dst_val;
+    }
+
+    Mapping const * fMapping;
+    int fMappingCount;
+};
+struct RoundCGFloatToInt {
+    int operator()(CGFloat s) { return s + 0.5; }
+};
+/** Convert the [-1, 1] CTFontDescriptor width to [0, 10] CSS weight. */
+static int ct_width_to_fontstyle(CGFloat cgWidth) {
+    using Interpolator = LinearInterpolater<CGFloat, int, RoundCGFloatToInt>;
+
+    // Values determined by creating font data with every width, creating a CTFont,
+    // and asking the CTFont for its width. See TypefaceStyle test for basics.
+    static constexpr Interpolator::Mapping widthMappings[] = {
+        { -0.5,  0 },
+        {  0.5, 10 },
+    };
+    static constexpr Interpolator interpolator(widthMappings, SK_ARRAY_COUNT(widthMappings));
+    return interpolator.map(cgWidth);
+}
+/** Convert the [-1, 1] CTFontDescriptor weight to [0, 1000] CSS weight.
+ *
+ *  The -1 to 1 weights reported by CTFontDescriptors have different mappings depending on if the
+ *  CTFont is native or created from a CGDataProvider.
+ */
+static int ct_weight_to_fontstyle(CGFloat cgWeight, bool fromDataProvider) {
+    using Interpolator = LinearInterpolater<CGFloat, int, RoundCGFloatToInt>;
+
+    // Note that Mac supports the old OS2 version A so 0 through 10 are as if multiplied by 100.
+    // However, on this end we can't tell, so this is ignored.
+
+    static Interpolator::Mapping nativeWeightMappings[11];
+    static Interpolator::Mapping dataProviderWeightMappings[11];
+    static SkOnce once;
+    once([&] {
+        const CGFloat(&nsFontWeights)[11] = SkCTFontGetNSFontWeightMapping();
+        const CGFloat(&userFontWeights)[11] = SkCTFontGetDataFontWeightMapping();
+        for (int i = 0; i < 11; ++i) {
+            nativeWeightMappings[i].src_val = nsFontWeights[i];
+            nativeWeightMappings[i].dst_val = i * 100;
+
+            dataProviderWeightMappings[i].src_val = userFontWeights[i];
+            dataProviderWeightMappings[i].dst_val = i * 100;
+        }
+    });
+    static constexpr Interpolator nativeInterpolator(
+            nativeWeightMappings, SK_ARRAY_COUNT(nativeWeightMappings));
+    static constexpr Interpolator dataProviderInterpolator(
+            dataProviderWeightMappings, SK_ARRAY_COUNT(dataProviderWeightMappings));
+
+    return fromDataProvider ? dataProviderInterpolator.map(cgWeight)
+                            : nativeInterpolator.map(cgWeight);
+}
+static SkFontStyle fontstyle_from_descriptor(CTFontDescriptorRef desc, bool fromDataProvider) {
+    SkUniqueCFRef<CFTypeRef> traits(CTFontDescriptorCopyAttribute(desc, kCTFontTraitsAttribute));
+    if (!traits || CFDictionaryGetTypeID() != CFGetTypeID(traits.get())) {
+        return SkFontStyle();
+    }
+    SkUniqueCFRef<CFDictionaryRef> fontTraitsDict(static_cast<CFDictionaryRef>(traits.release()));
+    CGFloat weight, width, slant;
+    if (!find_dict_CGFloat(fontTraitsDict.get(), kCTFontWeightTrait, &weight)) {
+        weight = 0;
+    }
+    if (!find_dict_CGFloat(fontTraitsDict.get(), kCTFontWidthTrait, &width)) {
+        width = 0;
+    }
+    if (!find_dict_CGFloat(fontTraitsDict.get(), kCTFontSlantTrait, &slant)) {
+        slant = 0;
+    }
+    return SkFontStyle(ct_weight_to_fontstyle(weight, fromDataProvider),
+                       ct_width_to_fontstyle(width),
+                       slant ? SkFontStyle::kItalic_Slant
+                             : SkFontStyle::kUpright_Slant);
+}
+/** Creates a typeface, searching the cache if isLocalStream is false. */
+static sk_sp<SkTypeface> create_from_CTFontRef(SkUniqueCFRef<CTFontRef> font,
+                                               SkUniqueCFRef<CFTypeRef> resource,
+                                               OpszVariation opszVariation,
+                                               std::unique_ptr<SkStreamAsset> providedData) {
+    SkASSERT(font);
+    const bool isFromStream(providedData);
+    SkUniqueCFRef<CTFontDescriptorRef> desc(CTFontCopyFontDescriptor(font.get()));
+    SkFontStyle style = fontstyle_from_descriptor(desc.get(), isFromStream);
+    CTFontSymbolicTraits traits = CTFontGetSymbolicTraits(font.get());
+    bool isFixedPitch = SkToBool(traits & kCTFontMonoSpaceTrait);
+    sk_sp<SkTypeface> face(SkTypeface_Mac::Make(std::move(font),
+                                              opszVariation,
+                                              std::move(providedData)));
+
+    return face;
+}
+///////////////////////////////////////////////////////////////////////////////
+// Returns nullptr on failure
+static sk_sp<SkTypeface> create_from_dataProvider(SkUniqueCFRef<CGDataProviderRef> provider,
+                                                  std::unique_ptr<SkStreamAsset> providedData,
+                                                  int ttcIndex) {
+    if (ttcIndex != 0) {
+        return nullptr;
+    }
+    SkUniqueCFRef<CGFontRef> cg(CGFontCreateWithDataProvider(provider.get()));
+    if (!cg) {
+        return nullptr;
+    }
+    SkUniqueCFRef<CTFontRef> ct(CTFontCreateWithGraphicsFont(cg.get(), 0, nullptr, nullptr));
+    if (!ct) {
+        return nullptr;
+    }
+    return create_from_CTFontRef(std::move(ct), nullptr, OpszVariation(), std::move(providedData));
+}
+
+
 class SkFontMgr_Mac : public SkFontMgr {
     SkUniqueCFRef<CFArrayRef> fNames;
     int fCount;
@@ -581,17 +814,25 @@ protected:
         if (ttcIndex != 0) {
             return nullptr;
         }
+        
+        if(isMavericks()){
+          SkUniqueCFRef<CGDataProviderRef> pr(SkCreateDataProviderFromStream(stream->duplicate()));
+          if (!pr) {
+              return nullptr;
+          }
+          return create_from_dataProvider(std::move(pr), std::move(stream), ttcIndex);
 
-        sk_sp<SkData> data = skdata_from_skstreamasset(stream->duplicate());
-        if (!data) {
-            return nullptr;
+        } else {
+          sk_sp<SkData> data = skdata_from_skstreamasset(stream->duplicate());
+          if (!data) {
+              return nullptr;
+          }
+          SkUniqueCFRef<CTFontRef> ct = ctfont_from_skdata(std::move(data), ttcIndex);
+          if (!ct) {
+              return nullptr;
+          }
+          return SkTypeface_Mac::Make(std::move(ct), OpszVariation(), std::move(stream));
         }
-        SkUniqueCFRef<CTFontRef> ct = ctfont_from_skdata(std::move(data), ttcIndex);
-        if (!ct) {
-            return nullptr;
-        }
-
-        return SkTypeface_Mac::Make(std::move(ct), OpszVariation(), std::move(stream));
     }
 
     sk_sp<SkTypeface> onMakeFromStreamArgs(std::unique_ptr<SkStreamAsset> stream,

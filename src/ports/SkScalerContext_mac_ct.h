@@ -39,11 +39,21 @@ struct SkFontMetrics;
 
 typedef uint32_t CGRGBPixel;
 
+///////////////////////////////////////////////////////////////////////////////
+/** GlyphRect is in FUnits (em space, y up). */
+struct GlyphRect {
+    int16_t fMinX;
+    int16_t fMinY;
+    int16_t fMaxX;
+    int16_t fMaxY;
+};
+
 class SkScalerContext_Mac : public SkScalerContext {
 public:
     SkScalerContext_Mac(sk_sp<SkTypeface_Mac>, const SkScalerContextEffects&, const SkDescriptor*);
 
 protected:
+    unsigned generateGlyphCount();
     bool generateAdvance(SkGlyph* glyph) override;
     void generateMetrics(SkGlyph* glyph) override;
     void generateImage(const SkGlyph& glyph) override;
@@ -78,6 +88,34 @@ private:
         bool fDoAA;
         bool fDoLCD;
     };
+    /** Initializes and returns the value of fFBoundingBoxesGlyphOffset.
+     *
+     *  For use with (and must be called before) generateBBoxes.
+     */
+    uint16_t getFBoundingBoxesGlyphOffset();
+    /** Initializes fFBoundingBoxes and returns true on success.
+     *
+     *  On Lion and Mountain Lion, CTFontGetBoundingRectsForGlyphs has a bug which causes it to
+     *  return a bad value in bounds.origin.x for SFNT fonts whose hhea::numberOfHMetrics is
+     *  less than its maxp::numGlyphs. When this is the case we try to read the bounds from the
+     *  font directly.
+     *
+     *  This routine initializes fFBoundingBoxes to an array of
+     *  fGlyphCount - fFBoundingBoxesGlyphOffset GlyphRects which contain the bounds in FUnits
+     *  (em space, y up) of glyphs with ids in the range [fFBoundingBoxesGlyphOffset, fGlyphCount).
+     *
+     *  Returns true if fFBoundingBoxes is properly initialized. The table can only be properly
+     *  initialized for a TrueType font with 'head', 'loca', and 'glyf' tables.
+     *
+     *  TODO: A future optimization will compute fFBoundingBoxes once per fCTFont.
+     */
+    bool generateBBoxes();
+    /** Converts from FUnits (em space, y up) to SkGlyph units (pixels, y down).
+     *
+     *  Used on Snow Leopard to correct CTFontGetVerticalTranslationsForGlyphs.
+     *  Used on Lion to correct CTFontGetBoundingRectsForGlyphs.
+     */
+    SkMatrix fFUnitMatrix;
     Offscreen fOffscreen;
 
     /** Unrotated variant of fCTFont.
@@ -105,6 +143,10 @@ private:
     CGAffineTransform fInvTransform;
 
     SkUniqueCFRef<CGFontRef> fCGFont;
+	SkAutoTMalloc<GlyphRect> fFBoundingBoxes;
+    uint16_t fFBoundingBoxesGlyphOffset;
+    uint16_t fGlyphCount;
+    bool fGeneratedFBoundingBoxes;
     const bool fDoSubPosition;
 
     friend class Offscreen;

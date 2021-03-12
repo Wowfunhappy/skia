@@ -49,6 +49,11 @@
 #include "src/utils/mac/SkCTFont.h"
 #include "src/utils/mac/SkUniqueCFRef.h"
 
+#include "src/sfnt/SkOTTable_glyf.h"
+#include "src/sfnt/SkOTTable_head.h"
+#include "src/sfnt/SkOTTable_hhea.h"
+#include "src/sfnt/SkOTTable_loca.h"
+
 #include <algorithm>
 
 class SkDescriptor;
@@ -56,6 +61,57 @@ class SkDescriptor;
 
 // Set to make glyph bounding boxes visible.
 #define SK_SHOW_TEXT_BLIT_COVERAGE 0
+
+template<typename T> class AutoCGTable : SkNoncopyable {
+public:
+    AutoCGTable(CGFontRef font)
+    //Undocumented: the tag parameter in this call is expected in machine order and not BE order.
+    : fCFData(CGFontCopyTableForTag(font, SkSetFourByteTag(T::TAG0, T::TAG1, T::TAG2, T::TAG3)))
+    , fData(fCFData ? reinterpret_cast<const T*>(CFDataGetBytePtr(fCFData.get())) : nullptr)
+    { }
+    const T* operator->() const { return fData; }
+private:
+    SkUniqueCFRef<CFDataRef> fCFData;
+public:
+    const T* fData;
+};
+
+#include <sys/utsname.h>
+// See Source/WebKit/chromium/base/mac/mac_util.mm DarwinMajorVersionInternal for original source.
+static int readVersion() {
+    struct utsname info;
+    if (uname(&info) != 0) {
+        SkDebugf("uname failed\n");
+        return 0;
+    }
+    if (strcmp(info.sysname, "Darwin") != 0) {
+        SkDebugf("unexpected uname sysname %s\n", info.sysname);
+        return 0;
+    }
+    char* dot = strchr(info.release, '.');
+    if (!dot) {
+        SkDebugf("expected dot in uname release %s\n", info.release);
+        return 0;
+    }
+    int version = atoi(info.release);
+    if (version == 0) {
+        SkDebugf("could not parse uname release %s\n", info.release);
+    }
+    return version;
+}
+static int darwinVersion() {
+    static int darwin_version = readVersion();
+    return darwin_version;
+}
+static bool isLion() {
+    return darwinVersion() == 11;
+}
+static bool isMountainLion() {
+    return darwinVersion() == 12;
+}
+static bool isMavericks() {
+    return darwinVersion() == 13;
+}
 
 static void sk_memset_rect32(uint32_t* ptr, uint32_t value,
                              int width, int height, size_t rowBytes) {
@@ -118,17 +174,23 @@ SkScalerContext_Mac::SkScalerContext_Mac(sk_sp<SkTypeface_Mac> typeface,
                                          const SkScalerContextEffects& effects,
                                          const SkDescriptor* desc)
         : INHERITED(std::move(typeface), effects, desc)
+        , fFBoundingBoxes()
+        , fFBoundingBoxesGlyphOffset(0)
+        , fGeneratedFBoundingBoxes(false)
         , fDoSubPosition(SkToBool(fRec.fFlags & kSubpixelPositioning_Flag))
 
 {
     CTFontRef ctFont = (CTFontRef)this->getTypeface()->internal_private_getCTFontRef();
+    CFIndex numGlyphs = CTFontGetGlyphCount(ctFont);
+    SkASSERT(numGlyphs >= 1 && numGlyphs <= 0xFFFF);
+    fGlyphCount = SkToU16(numGlyphs);
 
     // CT on (at least) 10.9 will size color glyphs down from the requested size, but not up.
     // As a result, it is necessary to know the actual device size and request that.
     SkVector scale;
     SkMatrix skTransform;
     bool invertible = fRec.computeMatrices(SkScalerContextRec::kVertical_PreMatrixScale,
-                                           &scale, &skTransform, nullptr, nullptr, nullptr);
+                                           &scale, &skTransform, nullptr, nullptr, &fFUnitMatrix);
     fTransform = MatrixToCGAffineTransform(skTransform);
     // CGAffineTransformInvert documents that if the transform is non-invertible it will return the
     // passed transform unchanged. It does so, but then also prints a message to stdout. Avoid this.
@@ -144,6 +206,9 @@ SkScalerContext_Mac::SkScalerContext_Mac(sk_sp<SkTypeface_Mac> typeface,
     fCTFont = SkCTFontCreateExactCopy(ctFont, textSize,
                                       ((SkTypeface_Mac*)this->getTypeface())->fOpszVariation);
     fCGFont.reset(CTFontCopyGraphicsFont(fCTFont.get(), nullptr));
+
+	SkScalar emPerFUnit = SkScalarInvert(SkIntToScalar(CGFontGetUnitsPerEm(fCGFont.get())));
+    fFUnitMatrix.preScale(emPerFUnit, -emPerFUnit);
 }
 
 static int RoundSize(int dimension) {
@@ -265,6 +330,55 @@ CGRGBPixel* SkScalerContext_Mac::Offscreen::getCG(const SkScalerContext_Mac& con
     return image;
 }
 
+uint16_t SkScalerContext_Mac::getFBoundingBoxesGlyphOffset() {
+    if (fFBoundingBoxesGlyphOffset) {
+        return fFBoundingBoxesGlyphOffset;
+    }
+    fFBoundingBoxesGlyphOffset = fGlyphCount; // fallback for all fonts
+    AutoCGTable<SkOTTableHorizontalHeader> hheaTable(fCGFont.get());
+    if (hheaTable.fData) {
+        fFBoundingBoxesGlyphOffset = SkEndian_SwapBE16(hheaTable->numberOfHMetrics);
+    }
+    return fFBoundingBoxesGlyphOffset;
+}
+
+bool SkScalerContext_Mac::generateBBoxes() {
+    if (fGeneratedFBoundingBoxes) {
+        return SkToBool(fFBoundingBoxes.get());
+    }
+    fGeneratedFBoundingBoxes = true;
+    AutoCGTable<SkOTTableHead> headTable(fCGFont.get());
+    if (!headTable.fData) {
+        return false;
+    }
+    AutoCGTable<SkOTTableIndexToLocation> locaTable(fCGFont.get());
+    if (!locaTable.fData) {
+        return false;
+    }
+    AutoCGTable<SkOTTableGlyph> glyfTable(fCGFont.get());
+    if (!glyfTable.fData) {
+        return false;
+    }
+    uint16_t entries = fGlyphCount - fFBoundingBoxesGlyphOffset;
+    fFBoundingBoxes.reset(entries);
+    SkOTTableHead::IndexToLocFormat locaFormat = headTable->indexToLocFormat;
+    SkOTTableGlyph::Iterator glyphDataIter(*glyfTable.fData, *locaTable.fData, locaFormat);
+    glyphDataIter.advance(fFBoundingBoxesGlyphOffset);
+    for (uint16_t boundingBoxesIndex = 0; boundingBoxesIndex < entries; ++boundingBoxesIndex) {
+        const SkOTTableGlyphData* glyphData = glyphDataIter.next();
+        GlyphRect& rect = fFBoundingBoxes[boundingBoxesIndex];
+        rect.fMinX = SkEndian_SwapBE16(glyphData->xMin);
+        rect.fMinY = SkEndian_SwapBE16(glyphData->yMin);
+        rect.fMaxX = SkEndian_SwapBE16(glyphData->xMax);
+        rect.fMaxY = SkEndian_SwapBE16(glyphData->yMax);
+    }
+    return true;
+}
+
+unsigned SkScalerContext_Mac::generateGlyphCount(void) {
+    return fGlyphCount;
+}
+
 bool SkScalerContext_Mac::generateAdvance(SkGlyph* glyph) {
     return false;
 }
@@ -287,12 +401,42 @@ void SkScalerContext_Mac::generateMetrics(SkGlyph* glyph) {
     // or returns early if skBounds would be empty.
     SkRect skBounds;
 
+    // On Mountain Lion, CTFontGetBoundingRectsForGlyphs with kCTFontVerticalOrientation and
+    // CTFontGetVerticalTranslationsForGlyphs do not agree when using OTF CFF fonts.
+    // For TTF fonts these two do agree and we can use CTFontGetBoundingRectsForGlyphs to get
+    // the bounding box and CTFontGetVerticalTranslationsForGlyphs to then draw the glyph
+    // inside that bounding box. However, with OTF CFF fonts this does not work. It appears that
+    // CTFontGetBoundingRectsForGlyphs with kCTFontVerticalOrientation on OTF CFF fonts tries
+    // to center the glyph along the vertical baseline and also perform some mysterious shift
+    // along the baseline. CTFontGetVerticalTranslationsForGlyphs does not appear to perform
+    // these steps.
+    //
+    // It is not known which is correct (or if either is correct). However, we must always draw
+    // from the horizontal origin and must use CTFontGetVerticalTranslationsForGlyphs to draw.
+    // As a result, we do not call CTFontGetBoundingRectsForGlyphs for vertical glyphs.
+    // On Snow Leopard, CTFontGetBoundingRectsForGlyphs ignores kCTFontVerticalOrientation and
+    // returns horizontal bounds.
+    // On Lion and Mountain Lion, CTFontGetBoundingRectsForGlyphs has a bug which causes it to
+    // return a bad value in cgBounds.origin.x for SFNT fonts whose hhea::numberOfHMetrics is
+    // less than its maxp::numGlyphs. When this is the case we try to read the bounds from the
+    // font directly.
+    if ((isLion() || isMountainLion()) &&
+        (cgGlyph < fGlyphCount && cgGlyph >= getFBoundingBoxesGlyphOffset() && generateBBoxes()))
+    {
+        const GlyphRect& gRect = fFBoundingBoxes[cgGlyph - fFBoundingBoxesGlyphOffset];
+        if (gRect.fMinX >= gRect.fMaxX || gRect.fMinY >= gRect.fMaxY) {
+            return;
+        }
+        skBounds = SkRect::MakeLTRB(gRect.fMinX, gRect.fMinY, gRect.fMaxX, gRect.fMaxY);
+        // From FUnits (em space, y up) to SkGlyph units (pixels, y down).
+        fFUnitMatrix.mapRect(&skBounds);
+    } else {
     // Glyphs are always drawn from the horizontal origin. The caller must manually use the result
     // of CTFontGetVerticalTranslationsForGlyphs to calculate where to draw the glyph for vertical
     // glyphs. As a result, always get the horizontal bounds of a glyph and translate it if the
     // glyph is vertical. This avoids any diagreement between the various means of retrieving
     // vertical metrics.
-    {
+
         // CTFontGetBoundingRectsForGlyphs produces cgBounds in CG units (pixels, y up).
         CGRect cgBounds;
         CTFontGetBoundingRectsForGlyphs(fCTFont.get(), kCTFontOrientationHorizontal,
@@ -304,7 +448,7 @@ void SkScalerContext_Mac::generateMetrics(SkGlyph* glyph) {
         // it should be empty. So, if we see a zero-advance, we check if it has an
         // empty path or not, and if so, we jam the bounds to 0. Hopefully a zero-advance
         // is rare, so we won't incur a big performance cost for this extra check.
-        if (0 == cgAdvance.width && 0 == cgAdvance.height) {
+        if (0 == cgAdvance.width && 0 == cgAdvance.height && !isMavericks()) {
             SkUniqueCFRef<CGPathRef> path(CTFontCreatePathForGlyph(fCTFont.get(), cgGlyph,nullptr));
             if (!path || CGPathIsEmpty(path.get())) {
                 return;
@@ -610,6 +754,9 @@ public:
 #define kScaleForSubPixelPositionHinting (4.0f)
 
 bool SkScalerContext_Mac::generatePath(SkGlyphID glyph, SkPath* path) {
+    if(isMavericks())
+      return false;
+
     SkScalar scaleX = SK_Scalar1;
     SkScalar scaleY = SK_Scalar1;
 
