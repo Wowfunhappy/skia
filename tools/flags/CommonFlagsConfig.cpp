@@ -490,7 +490,7 @@ SkCommandLineConfigGpu::SkCommandLineConfigGpu(const SkString&           tag,
         , fContextOverrides(ContextOverrides::kNone)
         , fSurfaceFlags(surfaceFlags)
         , fSamples(samples)
-        , fUseDMSAA(samples)
+        , fUseDMSAA(useDMSAA)
         , fColorType(colorType)
         , fAlphaType(alphaType)
         , fColorSpace(std::move(colorSpace))
