@@ -225,6 +225,7 @@ SKSL_TEST(SkSLTernaryExpression,               "shared/TernaryExpression.sksl")
 SKSL_TEST(SkSLUnaryPositiveNegative,           "shared/UnaryPositiveNegative.sksl")
 SKSL_TEST(SkSLUnusedVariables,                 "shared/UnusedVariables.sksl")
 SKSL_TEST(SkSLVectorConstructors,              "shared/VectorConstructors.sksl")
+SKSL_TEST(SkSLVectorScalarMath,                "shared/VectorScalarMath.sksl")
 
 /*
 // Incompatible with Runtime Effects because calling a function before its definition is disallowed.
