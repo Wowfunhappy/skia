@@ -815,13 +815,12 @@ protected:
             return nullptr;
         }
         
-        if(isMavericks()){
+        if(isMavericks()) {
           SkUniqueCFRef<CGDataProviderRef> pr(SkCreateDataProviderFromStream(stream->duplicate()));
           if (!pr) {
               return nullptr;
           }
           return create_from_dataProvider(std::move(pr), std::move(stream), ttcIndex);
-
         } else {
           sk_sp<SkData> data = skdata_from_skstreamasset(stream->duplicate());
           if (!data) {
@@ -844,13 +843,29 @@ protected:
             return nullptr;
         }
 
-        sk_sp<SkData> data = skdata_from_skstreamasset(stream->duplicate());
-        if (!data) {
-            return nullptr;
-        }
-        SkUniqueCFRef<CTFontRef> ct = ctfont_from_skdata(std::move(data), ttcIndex);
+        SkUniqueCFRef<CTFontRef> ct;
+        if(isMavericks()) {
+          SkUniqueCFRef<CGDataProviderRef> pr(SkCreateDataProviderFromStream(stream->duplicate()));
+          if (!pr) {
+              return nullptr;
+          }
+          SkUniqueCFRef<CGFontRef> cg(CGFontCreateWithDataProvider(pr.get()));
+          if (nullptr == cg) {
+              return nullptr;
+          }
+          SkUniqueCFRef<CTFontRef> ctbuf(CTFontCreateWithGraphicsFont(cg.get(), 0, nullptr, nullptr));
+          ct = std::move(ctbuf);
+				} else {
+          sk_sp<SkData> data = skdata_from_skstreamasset(stream->duplicate());
+          if (!data) {
+              return nullptr;
+          }
+          SkUniqueCFRef<CTFontRef> ctbuf(ctfont_from_skdata(std::move(data), ttcIndex));
+          ct = std::move(ctbuf);
+				}
+
         if (!ct) {
-            return nullptr;
+					return nullptr;
         }
 
         CTFontVariation ctVariation = SkCTVariationFromSkFontArguments(ct.get(), args);
