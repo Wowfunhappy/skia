@@ -800,11 +800,24 @@ protected:
             return nullptr;
         }
 
-        SkUniqueCFRef<CTFontRef> ct = ctfont_from_skdata(data, ttcIndex);
-        if (!ct) {
-            return nullptr;
+        SkUniqueCFRef<CTFontRef> ct;
+        if(isMavericks()) {
+          SkUniqueCFRef<CFDataRef> cfData(cfdata_from_skdata(std::move(data)));
+          SkUniqueCFRef<CGDataProviderRef> pr(CGDataProviderCreateWithCFData(cfData.get()));
+          SkUniqueCFRef<CGFontRef> cg(CGFontCreateWithDataProvider(pr.get()));
+          if (nullptr == cg) {
+              return nullptr;
+          }
+          SkUniqueCFRef<CTFontRef> ctbuf(CTFontCreateWithGraphicsFont(cg.get(), 0, nullptr, nullptr));
+          ct = std::move(ctbuf);
+        } else {
+          SkUniqueCFRef<CTFontRef> ctbuf(ctfont_from_skdata(data, ttcIndex));
+          ct = std::move(ctbuf);
         }
 
+        if (!ct) {
+          return nullptr;
+        }
         return SkTypeface_Mac::Make(std::move(ct), OpszVariation(),
                                     SkMemoryStream::Make(std::move(data)));
     }
