@@ -51,6 +51,8 @@ public:
         kBuiltinLayout_Command,
         // Type type, uint8 argCount, Expression[] arguments
         kConstructor_Command,
+        // Type type, uint8 argCount, Expression[] arguments
+        kConstructorArray_Command,
         // Type type, Expression argument
         kConstructorDiagonalMatrix_Command,
         kContinue_Command,
@@ -217,6 +219,8 @@ private:
     std::unique_ptr<Statement> statement();
 
     std::unique_ptr<Expression> expression();
+
+    ExpressionArray expressionArray();
 
     const Type* type();
 
