@@ -23,6 +23,7 @@
 #include "src/sksl/ir/SkSLBoolLiteral.h"
 #include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLConstructorArray.h"
+#include "src/sksl/ir/SkSLConstructorScalarCast.h"
 #include "src/sksl/ir/SkSLDoStatement.h"
 #include "src/sksl/ir/SkSLExtension.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
@@ -230,10 +231,15 @@ protected:
 
     void writeConstructor(const Constructor& c, Precedence parentPrecedence);
 
-    void writeConstructorArray(const ConstructorArray& c, Precedence parentPrecedence);
+    void writeAnyConstructor(const AnyConstructor& c,
+                             const char* leftBracket,
+                             const char* rightBracket,
+                             Precedence parentPrecedence);
 
-    void writeSingleArgumentConstructor(const SingleArgumentConstructor& c,
-                                        Precedence parentPrecedence);
+    void writeCastConstructor(const AnyConstructor& c,
+                              const char* leftBracket,
+                              const char* rightBracket,
+                              Precedence parentPrecedence);
 
     void writeFieldAccess(const FieldAccess& f);
 

@@ -13,6 +13,7 @@
 #include "src/sksl/ir/SkSLConstructorArray.h"
 #include "src/sksl/ir/SkSLConstructorDiagonalMatrix.h"
 #include "src/sksl/ir/SkSLConstructorSplat.h"
+#include "src/sksl/ir/SkSLConstructorVectorCast.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
 #include "src/sksl/ir/SkSLExtension.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
@@ -175,14 +176,15 @@ void MetalCodeGenerator::writeExpression(const Expression& expr, Precedence pare
             this->writeConstructor(expr.as<Constructor>(), parentPrecedence);
             break;
         case Expression::Kind::kConstructorArray:
-            this->writeConstructorArray(expr.as<ConstructorArray>(), parentPrecedence);
+            this->writeAnyConstructor(expr.asAnyConstructor(), "{", "}", parentPrecedence);
             break;
         case Expression::Kind::kConstructorDiagonalMatrix:
-            this->writeSingleArgumentConstructor(expr.as<ConstructorDiagonalMatrix>(),
-                                                 parentPrecedence);
-            break;
         case Expression::Kind::kConstructorSplat:
-            this->writeSingleArgumentConstructor(expr.as<ConstructorSplat>(), parentPrecedence);
+            this->writeAnyConstructor(expr.asAnyConstructor(), "(", ")", parentPrecedence);
+            break;
+        case Expression::Kind::kConstructorScalarCast:
+        case Expression::Kind::kConstructorVectorCast:
+            this->writeCastConstructor(expr.asAnyConstructor(), "(", ")", parentPrecedence);
             break;
         case Expression::Kind::kIntLiteral:
             this->writeIntLiteral(expr.as<IntLiteral>());
@@ -556,14 +558,14 @@ void MetalCodeGenerator::writeIntrinsicCall(const FunctionCall& c, IntrinsicKind
             this->write(SAMPLER_SUFFIX);
             this->write(", ");
             const Type& arg1Type = arguments[1]->type();
-            if (arg1Type == *fContext.fTypes.fFloat3) {
+            if (arg1Type.columns() == 3) {
                 // have to store the vector in a temp variable to avoid double evaluating it
                 String tmpVar = this->getTempVariable(arg1Type);
                 this->write("(" + tmpVar + " = ");
                 this->writeExpression(*arguments[1], Precedence::kSequence);
                 this->write(", " + tmpVar + ".xy / " + tmpVar + ".z))");
             } else {
-                SkASSERT(arg1Type == *fContext.fTypes.fFloat2);
+                SkASSERT(arg1Type.columns() == 2);
                 this->writeExpression(*arguments[1], Precedence::kSequence);
                 this->write(")");
             }
@@ -1052,31 +1054,6 @@ void MetalCodeGenerator::writeConstructor(const Constructor& c, Precedence paren
     const Type& constructorType = c.type();
     SkASSERT(!constructorType.isArray());
 
-    // Handle special cases for single-argument constructors.
-    if (c.arguments().size() == 1) {
-        // If the type is coercible, emit it directly.
-        const Expression& arg = *c.arguments().front();
-        const Type& argType = arg.type();
-        if (this->canCoerce(constructorType, argType)) {
-            this->writeExpression(arg, parentPrecedence);
-            return;
-        }
-
-        // Metal supports creating matrices with a scalar on the diagonal via the single-argument
-        // matrix constructor.
-        if (constructorType.isMatrix() && argType.isNumber()) {
-            const Type& matrix = constructorType;
-            this->write("float");
-            this->write(to_string(matrix.columns()));
-            this->write("x");
-            this->write(to_string(matrix.rows()));
-            this->write("(");
-            this->writeExpression(arg, parentPrecedence);
-            this->write(")");
-            return;
-        }
-    }
-
     // Emit and invoke a matrix-constructor helper method if one is necessary.
     if (this->matrixConstructHelperIsNeeded(c)) {
         this->write(this->getMatrixConstructHelper(c));
@@ -1119,25 +1096,35 @@ void MetalCodeGenerator::writeConstructor(const Constructor& c, Precedence paren
     this->write(")");
 }
 
-void MetalCodeGenerator::writeSingleArgumentConstructor(const SingleArgumentConstructor& c,
-                                                        Precedence parentPrecedence) {
+void MetalCodeGenerator::writeAnyConstructor(const AnyConstructor& c,
+                                             const char* leftBracket,
+                                             const char* rightBracket,
+                                             Precedence parentPrecedence) {
     this->writeType(c.type());
-    this->write("(");
-    this->writeExpression(*c.argument(), Precedence::kSequence);
-    this->write(")");
-}
-
-void MetalCodeGenerator::writeConstructorArray(const ConstructorArray& c,
-                                               Precedence parentPrecedence) {
-    this->writeType(c.type());
-    this->write("{");
+    this->write(leftBracket);
     const char* separator = "";
-    for (const std::unique_ptr<Expression>& arg : c.arguments()) {
+    for (const std::unique_ptr<Expression>& arg : c.argumentSpan()) {
         this->write(separator);
         separator = ", ";
         this->writeExpression(*arg, Precedence::kSequence);
     }
-    this->write("}");
+    this->write(rightBracket);
+}
+
+void MetalCodeGenerator::writeCastConstructor(const AnyConstructor& c,
+                                              const char* leftBracket,
+                                              const char* rightBracket,
+                                              Precedence parentPrecedence) {
+    // If the type is coercible, emit it directly without the cast.
+    auto args = c.argumentSpan();
+    if (args.size() == 1) {
+        if (this->canCoerce(c.type(), args.front()->type())) {
+            this->writeExpression(*args.front(), parentPrecedence);
+            return;
+        }
+    }
+
+    return this->writeAnyConstructor(c, leftBracket, rightBracket, parentPrecedence);
 }
 
 void MetalCodeGenerator::writeFragCoord() {
@@ -2265,7 +2252,9 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Expressi
         case Expression::Kind::kConstructor:
         case Expression::Kind::kConstructorArray:
         case Expression::Kind::kConstructorDiagonalMatrix:
-        case Expression::Kind::kConstructorSplat: {
+        case Expression::Kind::kConstructorScalarCast:
+        case Expression::Kind::kConstructorSplat:
+        case Expression::Kind::kConstructorVectorCast: {
             const AnyConstructor& c = e->asAnyConstructor();
             Requirements result = kNo_Requirements;
             for (const auto& arg : c.argumentSpan()) {

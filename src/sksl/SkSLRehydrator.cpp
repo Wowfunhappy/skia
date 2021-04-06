@@ -18,7 +18,9 @@
 #include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLConstructorArray.h"
 #include "src/sksl/ir/SkSLConstructorDiagonalMatrix.h"
+#include "src/sksl/ir/SkSLConstructorScalarCast.h"
 #include "src/sksl/ir/SkSLConstructorSplat.h"
+#include "src/sksl/ir/SkSLConstructorVectorCast.h"
 #include "src/sksl/ir/SkSLContinueStatement.h"
 #include "src/sksl/ir/SkSLDiscardStatement.h"
 #include "src/sksl/ir/SkSLDoStatement.h"
@@ -471,11 +473,23 @@ std::unique_ptr<Expression> Rehydrator::expression() {
             return ConstructorDiagonalMatrix::Make(fContext, /*offset=*/-1, *type,
                                                    std::move(args[0]));
         }
+        case Rehydrator::kConstructorScalarCast_Command: {
+            const Type* type = this->type();
+            ExpressionArray args = this->expressionArray();
+            SkASSERT(args.size() == 1);
+            return ConstructorScalarCast::Make(fContext, /*offset=*/-1, *type, std::move(args[0]));
+        }
         case Rehydrator::kConstructorSplat_Command: {
             const Type* type = this->type();
             ExpressionArray args = this->expressionArray();
             SkASSERT(args.size() == 1);
             return ConstructorSplat::Make(fContext, /*offset=*/-1, *type, std::move(args[0]));
+        }
+        case Rehydrator::kConstructorVectorCast_Command: {
+            const Type* type = this->type();
+            ExpressionArray args = this->expressionArray();
+            SkASSERT(args.size() == 1);
+            return ConstructorVectorCast::Make(fContext, /*offset=*/-1, *type, std::move(args[0]));
         }
         case Rehydrator::kFieldAccess_Command: {
             std::unique_ptr<Expression> base = this->expression();
