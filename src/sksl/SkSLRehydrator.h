@@ -50,14 +50,14 @@ public:
         // int16 builtin
         kBuiltinLayout_Command,
         // (All constructors) Type type, uint8 argCount, Expression[] arguments
-        kConstructor_Command,
         kConstructorArray_Command,
+        kConstructorCompound_Command,
+        kConstructorCompoundCast_Command,
         kConstructorDiagonalMatrix_Command,
         kConstructorMatrixResize_Command,
         kConstructorScalarCast_Command,
         kConstructorSplat_Command,
-        kConstructorVector_Command,
-        kConstructorVectorCast_Command,
+        kConstructorReserved3_Command,
         kConstructorReserved4_Command,
         kConstructorReserved5_Command,
         kContinue_Command,
