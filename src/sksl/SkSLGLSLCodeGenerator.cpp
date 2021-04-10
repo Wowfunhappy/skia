@@ -201,6 +201,7 @@ void GLSLCodeGenerator::writeExpression(const Expression& expr, Precedence paren
         case Expression::Kind::kConstructorDiagonalMatrix:
         case Expression::Kind::kConstructorMatrixResize:
         case Expression::Kind::kConstructorSplat:
+        case Expression::Kind::kConstructorStruct:
             this->writeAnyConstructor(expr.asAnyConstructor(), parentPrecedence);
             break;
         case Expression::Kind::kConstructorScalarCast:
@@ -810,12 +811,6 @@ void GLSLCodeGenerator::writeVariableReference(const VariableReference& ref) {
             break;
         case SK_FRAGCOORD_BUILTIN:
             this->writeFragCoord();
-            break;
-        case SK_WIDTH_BUILTIN:
-            this->write("u_skRTWidth");
-            break;
-        case SK_HEIGHT_BUILTIN:
-            this->write("u_skRTHeight");
             break;
         case SK_CLOCKWISE_BUILTIN:
             this->write(fProgram.fConfig->fSettings.fFlipY ? "(!gl_FrontFacing)" : "gl_FrontFacing");

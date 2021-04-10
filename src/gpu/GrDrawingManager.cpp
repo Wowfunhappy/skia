@@ -117,18 +117,18 @@ bool GrDrawingManager::flush(
         }
     }
 
-    auto direct = fContext->asDirectContext();
-    SkASSERT(direct);
-    direct->priv().clientMappedBufferManager()->process();
+    auto dContext = fContext->asDirectContext();
+    SkASSERT(dContext);
+    dContext->priv().clientMappedBufferManager()->process();
 
-    GrGpu* gpu = direct->priv().getGpu();
+    GrGpu* gpu = dContext->priv().getGpu();
     // We have a non abandoned and direct GrContext. It must have a GrGpu.
     SkASSERT(gpu);
 
     fFlushing = true;
 
-    auto resourceProvider = direct->priv().resourceProvider();
-    auto resourceCache = direct->priv().getResourceCache();
+    auto resourceProvider = dContext->priv().resourceProvider();
+    auto resourceCache = dContext->priv().getResourceCache();
 
     // Semi-usually the GrRenderTasks are already closed at this point, but sometimes Ganesh needs
     // to flush mid-draw. In that case, the SkGpuDevice's opsTasks won't be closed but need to be
@@ -205,13 +205,14 @@ bool GrDrawingManager::flush(
     bool flushed = false;
 
     {
-        GrResourceAllocator alloc(resourceProvider SkDEBUGCODE(, fDAG.count()));
+        GrResourceAllocator alloc(dContext SkDEBUGCODE(, fDAG.count()));
         for (const auto& task : fDAG) {
             SkASSERT(task);
             task->gatherProxyIntervals(&alloc);
         }
 
-        flushed = alloc.assign() && this->executeRenderTasks(&flushState);
+        // TODO: Call makeBudgetHeadroom before proceeding with reordered DAG.
+        flushed = alloc.planAssignment() && alloc.assign() && this->executeRenderTasks(&flushState);
     }
     this->removeRenderTasks();
 
