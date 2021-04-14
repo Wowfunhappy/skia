@@ -14,10 +14,10 @@
 #include "src/sksl/SkSLDehydrator.h"
 #include "src/sksl/SkSLFileOutputStream.h"
 #include "src/sksl/SkSLIRGenerator.h"
-#include "src/sksl/SkSLPipelineStageCodeGenerator.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/SkSLUtil.h"
-#include "src/sksl/SkSLVMGenerator.h"
+#include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
+#include "src/sksl/codegen/SkSLVMCodeGenerator.h"
 #include "src/sksl/ir/SkSLEnum.h"
 #include "src/sksl/ir/SkSLUnresolvedFunction.h"
 
@@ -379,6 +379,14 @@ ResultCode processCommand(std::vector<SkSL::String>& args) {
                 [&](SkSL::Compiler& compiler, SkSL::Program& program, SkSL::OutputStream& out) {
                     return compiler.toH(program, base_name(inputPath.c_str(), "Gr", ".fp"), out);
                 });
+    } else if (outputPath.endsWith("_dsl.cpp")) {
+        settings.fReplaceSettings = false;
+        settings.fPermitInvalidStaticTests = true;
+        return compileProgram(
+                [&](SkSL::Compiler& compiler, SkSL::Program& program, SkSL::OutputStream& out) {
+                    return compiler.toDSLCPP(program, base_name(inputPath.c_str(), "Gr", ".fp"),
+                                             out);
+                });
     } else if (outputPath.endsWith(".cpp")) {
         settings.fReplaceSettings = false;
         settings.fPermitInvalidStaticTests = true;
@@ -444,7 +452,7 @@ ResultCode processCommand(std::vector<SkSL::String>& args) {
                         String              fOutput;
                     };
                     Callbacks callbacks;
-                    SkSL::PipelineStage::ConvertProgram(program, "_coords", &callbacks);
+                    SkSL::PipelineStage::ConvertProgram(program, "_coords", "_inColor", &callbacks);
                     out.writeString(GrShaderUtils::PrettyPrint(callbacks.fOutput));
                     return true;
                 });

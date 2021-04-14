@@ -13,17 +13,18 @@
 #include "src/core/SkScopeExit.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/sksl/SkSLAnalysis.h"
-#include "src/sksl/SkSLCPPCodeGenerator.h"
 #include "src/sksl/SkSLConstantFolder.h"
-#include "src/sksl/SkSLGLSLCodeGenerator.h"
-#include "src/sksl/SkSLHCodeGenerator.h"
 #include "src/sksl/SkSLIRGenerator.h"
-#include "src/sksl/SkSLMetalCodeGenerator.h"
 #include "src/sksl/SkSLOperators.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLRehydrator.h"
-#include "src/sksl/SkSLSPIRVCodeGenerator.h"
-#include "src/sksl/SkSLSPIRVtoHLSL.h"
+#include "src/sksl/codegen/SkSLCPPCodeGenerator.h"
+#include "src/sksl/codegen/SkSLDSLCPPCodeGenerator.h"
+#include "src/sksl/codegen/SkSLGLSLCodeGenerator.h"
+#include "src/sksl/codegen/SkSLHCodeGenerator.h"
+#include "src/sksl/codegen/SkSLMetalCodeGenerator.h"
+#include "src/sksl/codegen/SkSLSPIRVCodeGenerator.h"
+#include "src/sksl/codegen/SkSLSPIRVtoHLSL.h"
 #include "src/sksl/ir/SkSLEnum.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
@@ -830,6 +831,13 @@ bool Compiler::toMetal(Program& program, String* out) {
 bool Compiler::toCPP(Program& program, String name, OutputStream& out) {
     AutoSource as(this, program.fSource.get());
     CPPCodeGenerator cg(fContext.get(), &program, this, name, &out);
+    bool result = cg.generateCode();
+    return result;
+}
+
+bool Compiler::toDSLCPP(Program& program, String name, OutputStream& out) {
+    AutoSource as(this, program.fSource.get());
+    DSLCPPCodeGenerator cg(fContext.get(), &program, this, name, &out);
     bool result = cg.generateCode();
     return result;
 }
