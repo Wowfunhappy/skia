@@ -50,7 +50,6 @@ static int parse_modifier_token(Token::Kind token) {
         case Token::Kind::TK_FLAT:           return Modifiers::kFlat_Flag;
         case Token::Kind::TK_NOPERSPECTIVE:  return Modifiers::kNoPerspective_Flag;
         case Token::Kind::TK_HASSIDEEFFECTS: return Modifiers::kHasSideEffects_Flag;
-        case Token::Kind::TK_VARYING:        return Modifiers::kVarying_Flag;
         case Token::Kind::TK_INLINE:         return Modifiers::kInline_Flag;
         case Token::Kind::TK_NOINLINE:       return Modifiers::kNoInline_Flag;
         default:                             return 0;
@@ -108,7 +107,6 @@ void Parser::InitLayoutMap() {
     TOKEN(TRIANGLES_ADJACENCY,          "triangles_adjacency");
     TOKEN(MAX_VERTICES,                 "max_vertices");
     TOKEN(INVOCATIONS,                  "invocations");
-    TOKEN(MARKER,                       "marker");
     TOKEN(WHEN,                         "when");
     TOKEN(KEY,                          "key");
     TOKEN(TRACKED,                      "tracked");
@@ -882,14 +880,12 @@ Layout Parser::layout() {
     Layout::Primitive primitive = Layout::kUnspecified_Primitive;
     int maxVertices = -1;
     int invocations = -1;
-    StringFragment marker;
     StringFragment when;
     Layout::CType ctype = Layout::CType::kDefault;
     if (this->checkNext(Token::Kind::TK_LAYOUT)) {
         if (!this->expect(Token::Kind::TK_LPAREN, "'('")) {
             return Layout(flags, location, offset, binding, index, set, builtin,
-                          inputAttachmentIndex, primitive, maxVertices, invocations, marker, when,
-                          ctype);
+                          inputAttachmentIndex, primitive, maxVertices, invocations, when, ctype);
         }
         for (;;) {
             Token t = this->nextToken();
@@ -992,10 +988,6 @@ Layout Parser::layout() {
                         setFlag(Layout::kInvocations_Flag);
                         invocations = this->layoutInt();
                         break;
-                    case LayoutToken::MARKER:
-                        setFlag(Layout::kMarker_Flag);
-                        marker = this->layoutCode();
-                        break;
                     case LayoutToken::WHEN:
                         setFlag(Layout::kWhen_Flag);
                         when = this->layoutCode();
@@ -1020,11 +1012,10 @@ Layout Parser::layout() {
         }
     }
     return Layout(flags, location, offset, binding, index, set, builtin, inputAttachmentIndex,
-                  primitive, maxVertices, invocations, marker, when, ctype);
+                  primitive, maxVertices, invocations, when, ctype);
 }
 
-/* layout? (UNIFORM | CONST | IN | OUT | INOUT | LOWP | MEDIUMP | HIGHP | FLAT | NOPERSPECTIVE |
-            VARYING | INLINE)* */
+/* layout? (UNIFORM | CONST | IN | OUT | INOUT | FLAT | NOPERSPECTIVE | INLINE)* */
 Modifiers Parser::modifiers() {
     Layout layout = this->layout();
     int flags = 0;
