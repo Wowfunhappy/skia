@@ -886,7 +886,8 @@ void SkCanvas::DrawDeviceWithFilter(SkBaseDevice* src, const SkImageFilter* filt
 
         // The snapped backdrop content needs to be transformed by fromRoot into the layer space,
         // and stored in a temporary surface, which is then used as the input to the actual filter.
-        auto tmpSurface = special->makeSurface(colorType, colorSpace, layerInputBounds.size());
+        auto tmpSurface = special->makeSurface(colorType, colorSpace, layerInputBounds.size(),
+                                               kPremul_SkAlphaType, dst->surfaceProps());
         if (!tmpSurface) {
             return;
         }
@@ -1801,8 +1802,7 @@ void SkCanvas::drawVertices(const SkVertices* vertices, SkBlendMode mode, const 
 
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
     // Preserve legacy behavior for Android: ignore the SkShader if there are no texCoords present
-    if (paint.getShader() &&
-        !(vertices->priv().hasTexCoords() || vertices->priv().hasCustomData())) {
+    if (paint.getShader() && !vertices->priv().hasTexCoords()) {
         SkPaint noShaderPaint(paint);
         noShaderPaint.setShader(nullptr);
         this->onDrawVerticesObject(vertices, mode, noShaderPaint);
