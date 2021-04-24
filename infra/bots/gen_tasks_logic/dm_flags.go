@@ -308,12 +308,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			}
 		}
 
-		if b.model("Pixelbook") {
-			// skbug.com/10232
-			skip("_ test _ ProcessorCloneTest")
-
-		}
-
 		if b.model("AndroidOne", "GalaxyS6", "Nexus5", "Nexus7") {
 			// skbug.com/9019
 			skip("_ test _ ProcessorCloneTest")
@@ -840,7 +834,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		}
 	}
 
-	if b.matchGpu("Adreno[56][0-9][0-9]") { // skia:11308, skia:11891 - disable on Adreno 5xx/6xx
+	if b.matchGpu("Adreno[456][0-9][0-9]") { // skia:11308, skia:11891 - disable on Adreno 4/5/6xx
 		skip("_", "tests", "_", "SkSLMatrixEquality_GPU")
 		skip("_", "tests", "_", "DSLFPTest_SwitchStatement")
 	}
