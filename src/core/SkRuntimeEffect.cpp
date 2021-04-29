@@ -133,6 +133,9 @@ SkRuntimeEffect::Result SkRuntimeEffect::Make(SkString sksl, const Options& opti
         SkSL::Program::Settings settings;
         settings.fInlineThreshold = 0;
         settings.fForceNoInline = options.forceNoInline;
+#if GR_TEST_UTILS
+        settings.fEnforceES2Restrictions = options.enforceES2Restrictions;
+#endif
         settings.fAllowNarrowingConversions = true;
         program = compiler->convertProgram(kind, SkSL::String(sksl.c_str(), sksl.size()), settings);
 
@@ -292,7 +295,8 @@ SkRuntimeEffect::Result SkRuntimeEffect::MakeForShader(std::unique_ptr<SkSL::Pro
     return result;
 }
 
-sk_sp<SkRuntimeEffect> SkMakeCachedRuntimeEffect(SkString sksl) {
+sk_sp<SkRuntimeEffect> SkMakeCachedRuntimeEffect(SkRuntimeEffect::Result (*make)(SkString sksl),
+                                                 SkString sksl) {
     SK_BEGIN_REQUIRE_DENSE
     struct Key {
         uint32_t skslHashA;
@@ -320,7 +324,7 @@ sk_sp<SkRuntimeEffect> SkMakeCachedRuntimeEffect(SkString sksl) {
         }
     }
 
-    auto [effect, err] = SkRuntimeEffect::Make(std::move(sksl));
+    auto [effect, err] = make(std::move(sksl));
     if (!effect) {
         return nullptr;
     }
@@ -379,9 +383,12 @@ SkRuntimeEffect::SkRuntimeEffect(SkString sksl,
     // be accounted for in `fHash`. If you've added a new field to Options and caused the static-
     // assert below to trigger, please incorporate your field into `fHash` and update KnownOptions
     // to match the layout of Options.
-    struct KnownOptions { bool b; };
+    struct KnownOptions { bool a, b; };
     static_assert(sizeof(Options) == sizeof(KnownOptions));
-    fHash = SkOpts::hash_fn(&options.forceNoInline, sizeof(options.forceNoInline), fHash);
+    fHash = SkOpts::hash_fn(&options.forceNoInline,
+                      sizeof(options.forceNoInline), fHash);
+    fHash = SkOpts::hash_fn(&options.enforceES2Restrictions,
+                      sizeof(options.enforceES2Restrictions), fHash);
 }
 
 SkRuntimeEffect::~SkRuntimeEffect() = default;
@@ -561,10 +568,8 @@ public:
         sk_sp<SkData> inputs = get_xformed_uniforms(fEffect.get(), fUniforms, dstCS);
         SkASSERT(inputs);
 
-        // The color filter code might use sample-with-matrix (even though the matrix/coords are
-        // ignored by the child). There should be no way for the color filter to use device coords.
-        // Regardless, just to be extra-safe, we pass something valid (0, 0) as both coords, so
-        // the builder isn't trying to do math on invalid values.
+        // There should be no way for the color filter to use device coords, but we need to supply
+        // something. (Uninitialized values can trigger asserts in skvm::Builder).
         skvm::Coord zeroCoord = { p->splat(0.0f), p->splat(0.0f) };
 
         auto sampleChild = [&](int ix, skvm::Coord /*coord*/) {
@@ -641,7 +646,7 @@ sk_sp<SkFlattenable> SkRuntimeColorFilter::CreateProc(SkReadBuffer& buffer) {
     buffer.readString(&sksl);
     sk_sp<SkData> uniforms = buffer.readByteArrayAsData();
 
-    auto effect = SkMakeCachedRuntimeEffect(std::move(sksl));
+    auto effect = SkMakeCachedRuntimeEffect(SkRuntimeEffect::MakeForColorFilter, std::move(sksl));
     if (!buffer.validate(effect != nullptr)) {
         return nullptr;
     }
@@ -808,7 +813,7 @@ sk_sp<SkFlattenable> SkRTShader::CreateProc(SkReadBuffer& buffer) {
         localMPtr = &localM;
     }
 
-    auto effect = SkMakeCachedRuntimeEffect(std::move(sksl));
+    auto effect = SkMakeCachedRuntimeEffect(SkRuntimeEffect::MakeForShader, std::move(sksl));
     if (!buffer.validate(effect != nullptr)) {
         return nullptr;
     }
