@@ -39,9 +39,12 @@ sk_sp<SkImageFilter> SkSVGFeLighting::onMakeImageFilter(const SkSVGRenderContext
                                                         const SkSVGFilterContext& fctx) const {
     for (const auto& child : fChildren) {
         switch (child->tag()) {
+            case SkSVGTag::kFeDistantLight:
+                return this->makeDistantLight(
+                        ctx, fctx, static_cast<const SkSVGFeDistantLight*>(child.get()));
             case SkSVGTag::kFePointLight:
-                return this->makePointLight(ctx, fctx,
-                                            static_cast<const SkSVGFePointLight*>(child.get()));
+                return this->makePointLight(
+                        ctx, fctx, static_cast<const SkSVGFePointLight*>(child.get()));
             default:
                 // Ignore unknown children, such as <desc> elements
                 break;
@@ -88,6 +91,21 @@ bool SkSVGFeSpecularLighting::parseAndSetAttribute(const char* n, const char* v)
                    SkSVGAttributeParser::parse<SkSVGNumberType>("specularExponent", n, v));
 }
 
+sk_sp<SkImageFilter> SkSVGFeSpecularLighting::makeDistantLight(
+        const SkSVGRenderContext& ctx,
+        const SkSVGFilterContext& fctx,
+        const SkSVGFeDistantLight* light) const {
+    const SkPoint3 dir = light->computeDirection();
+    return SkImageFilters::DistantLitSpecular(
+            this->resolveXYZ(ctx, fctx, dir.fX, dir.fY, dir.fZ),
+            this->resolveLightingColor(ctx),
+            this->getSurfaceScale(),
+            fSpecularConstant,
+            fSpecularExponent,
+            fctx.resolveInput(ctx, this->getIn(), this->resolveColorspace(ctx, fctx)),
+            this->resolveFilterSubregion(ctx, fctx));
+}
+
 sk_sp<SkImageFilter> SkSVGFeSpecularLighting::makePointLight(const SkSVGRenderContext& ctx,
                                                              const SkSVGFilterContext& fctx,
                                                              const SkSVGFePointLight* light) const {
@@ -97,6 +115,38 @@ sk_sp<SkImageFilter> SkSVGFeSpecularLighting::makePointLight(const SkSVGRenderCo
             this->getSurfaceScale(),
             fSpecularConstant,
             fSpecularExponent,
+            fctx.resolveInput(ctx, this->getIn(), this->resolveColorspace(ctx, fctx)),
+            this->resolveFilterSubregion(ctx, fctx));
+}
+
+bool SkSVGFeDiffuseLighting::parseAndSetAttribute(const char* n, const char* v) {
+    return INHERITED::parseAndSetAttribute(n, v) ||
+           this->setDiffuseConstant(
+                   SkSVGAttributeParser::parse<SkSVGNumberType>("diffuseConstant", n, v));
+}
+
+sk_sp<SkImageFilter> SkSVGFeDiffuseLighting::makeDistantLight(
+        const SkSVGRenderContext& ctx,
+        const SkSVGFilterContext& fctx,
+        const SkSVGFeDistantLight* light) const {
+    const SkPoint3 dir = light->computeDirection();
+    return SkImageFilters::DistantLitDiffuse(
+            this->resolveXYZ(ctx, fctx, dir.fX, dir.fY, dir.fZ),
+            this->resolveLightingColor(ctx),
+            this->getSurfaceScale(),
+            this->getDiffuseConstant(),
+            fctx.resolveInput(ctx, this->getIn(), this->resolveColorspace(ctx, fctx)),
+            this->resolveFilterSubregion(ctx, fctx));
+}
+
+sk_sp<SkImageFilter> SkSVGFeDiffuseLighting::makePointLight(const SkSVGRenderContext& ctx,
+                                                            const SkSVGFilterContext& fctx,
+                                                            const SkSVGFePointLight* light) const {
+    return SkImageFilters::PointLitDiffuse(
+            this->resolveXYZ(ctx, fctx, light->getX(), light->getY(), light->getZ()),
+            this->resolveLightingColor(ctx),
+            this->getSurfaceScale(),
+            this->getDiffuseConstant(),
             fctx.resolveInput(ctx, this->getIn(), this->resolveColorspace(ctx, fctx)),
             this->resolveFilterSubregion(ctx, fctx));
 }
