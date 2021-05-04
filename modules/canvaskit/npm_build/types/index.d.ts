@@ -650,8 +650,13 @@ export interface LineMetrics {
     lineNumber: number;
 }
 
+export interface Range {
+    first: number;
+    last:  number;
+}
+
 /**
- * Information for a run of shaped text. See Paragraph.getShapedRuns()
+ * Information for a run of shaped text. See Paragraph.getShapedLines()
  *
  * Notes:
  * positions is documented as Float32, but it holds twice as many as you expect, and they
@@ -665,6 +670,17 @@ export interface GlyphRun {
     positions: Float32Array;    // alternating x0, y0, x1, y1, ...
     offsets: Uint32Array;
     flags: number;              // see GlyphRunFlags
+}
+
+/**
+ * Information for a paragraph of text. See Paragraph.getShapedLines()
+ */
+ export interface ShapedLine {
+    textRange: Range;   // first and last character offsets for the line (derived from runs[])
+    top: number;        // top y-coordinate for the line
+    bottom: number;     // bottom y-coordinate for the line
+    baseline: number;   // baseline y-coordinate for the line
+    runs: GlyphRun[];   // array of GlyphRun objects for the line
 }
 
 /**
@@ -824,7 +840,10 @@ export interface Paragraph extends EmbindObject<Paragraph> {
      */
     getWordBoundary(offset: number): URange;
 
-    getShapedRuns(): GlyphRun[];
+    /**
+     * Returns an array of ShapedLine objects, describing the paragraph.
+     */
+    getShapedLines(): ShapedLine[];
 
     /**
      * Lays out the text in the paragraph so it is wrapped to the given width.
