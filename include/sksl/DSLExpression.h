@@ -53,6 +53,11 @@ public:
     DSLExpression(int value);
 
     /**
+     * Creates an expression representing a literal uint.
+     */
+    DSLExpression(unsigned int value);
+
+    /**
      * Creates an expression representing a literal bool.
      */
     DSLExpression(bool value);
@@ -107,6 +112,8 @@ public:
 private:
     DSLExpression(std::unique_ptr<SkSL::Expression> expression);
 
+    void swap(DSLExpression& other);
+
     /**
      * Invalidates this object and returns the SkSL expression it represents coerced to the
      * specified type. If the expression cannot be coerced, reports an error and returns null.
@@ -122,6 +129,7 @@ private:
     friend class DSLPossibleExpression;
     friend class DSLVar;
     friend class DSLWriter;
+    template<typename T> friend class DSLWrapper;
 };
 
 DSLPossibleExpression operator+(DSLExpression left, DSLExpression right);

@@ -319,12 +319,18 @@ public:
 
         SkRuntimeEffectBuilder*       fOwner;
         const SkRuntimeEffect::Child* fChild;  // nullptr if the child was not found
+
+        // DEPRECATED - Left temporarily for Android
+        int                           fIndex;  // -1 if the child was not found
     };
 
     const SkRuntimeEffect* effect() const { return fEffect.get(); }
 
     BuilderUniform uniform(const char* name) { return { this, fEffect->findUniform(name) }; }
-    BuilderChild child(const char* name) { return { this, fEffect->findChild(name) }; }
+    BuilderChild child(const char* name) {
+        const SkRuntimeEffect::Child* child = fEffect->findChild(name);
+        return { this, child, child ? child->index : -1 };
+    }
 
 protected:
     SkRuntimeEffectBuilder() = delete;

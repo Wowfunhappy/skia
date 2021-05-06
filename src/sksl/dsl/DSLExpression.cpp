@@ -54,9 +54,14 @@ DSLExpression::DSLExpression(float value)
 }
 
 DSLExpression::DSLExpression(int value)
-        : fExpression(SkSL::IntLiteral::Make(DSLWriter::Context(),
-                                             /*offset=*/-1,
-                                             value)) {}
+    : fExpression(SkSL::IntLiteral::Make(DSLWriter::Context(),
+                                         /*offset=*/-1,
+                                         value)) {}
+
+DSLExpression::DSLExpression(unsigned int value)
+    : fExpression(SkSL::IntLiteral::Make(DSLWriter::Context(),
+                                         /*offset=*/-1,
+                                         value)) {}
 
 DSLExpression::DSLExpression(bool value)
     : fExpression(SkSL::BoolLiteral::Make(DSLWriter::Context(),
@@ -93,6 +98,10 @@ DSLExpression::~DSLExpression() {
 #endif
     SkASSERTF(fExpression == nullptr,
               "Expression destroyed without being incorporated into program");
+}
+
+void DSLExpression::swap(DSLExpression& other) {
+    std::swap(fExpression, other.fExpression);
 }
 
 std::unique_ptr<SkSL::Expression> DSLExpression::release() {
