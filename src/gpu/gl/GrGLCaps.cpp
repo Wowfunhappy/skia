@@ -43,12 +43,9 @@ GrGLCaps::GrGLCaps(const GrContextOptions& contextOptions,
     fIsCoreProfile = false;
     fBindFragDataLocationSupport = false;
     fRectangleTextureSupport = false;
-    fRGBA8888PixelsOpsAreSlow = false;
-    fPartialFBOReadIsSlow = false;
     fBindUniformLocationSupport = false;
     fMipmapLevelControlSupport = false;
     fMipmapLodControlSupport = false;
-    fRGBAToBGRAReadbackConversionsAreSlow = false;
     fUseBufferDataNullHint = false;
     fDoManualMipmapping = false;
     fClearToBoundaryValuesIsBroken = false;
@@ -73,7 +70,18 @@ GrGLCaps::GrGLCaps(const GrContextOptions& contextOptions,
 
     fShaderCaps.reset(new GrShaderCaps(contextOptions));
 
-    this->init(contextOptions, ctxInfo, glInterface);
+    // All of Skia's automated testing of ANGLE and all related tuning of performance and driver
+    // workarounds is oriented around the D3D backends of ANGLE. Chrome has started using Skia
+    // on top of ANGLE's GL backend. In this case ANGLE is still interfacing the same underlying
+    // GL driver that our performance and correctness tuning was performed on. To avoid losing
+    // that we strip the ANGLE info and for the rest of caps setup pretend we're directly on top of
+    // the GL driver. Note that this means that some driver workarounds are likely implemented at
+    // two levels of the stack (Skia and ANGLE) but we haven't determined which.
+    if (ctxInfo.angleBackend() == GrGLANGLEBackend::kOpenGL) {
+        this->init(contextOptions, ctxInfo.makeNonAngle(), glInterface);
+    } else {
+        this->init(contextOptions, ctxInfo, glInterface);
+    }
 }
 
 void GrGLCaps::init(const GrContextOptions& contextOptions,
@@ -283,27 +291,6 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
             fMipmapLodControlSupport = true;
         }
     } // no WebGL support
-
-#ifdef SK_BUILD_FOR_WIN
-    // We're assuming that on Windows Chromium we're using ANGLE.
-    bool isANGLE = ctxInfo.angleBackend() != GrGLANGLEBackend::kUnknown ||
-                   ctxInfo.driver()       == GrGLDriver::kChromium;
-    // Angle has slow read/write pixel paths for 32bit RGBA (but fast for BGRA).
-    fRGBA8888PixelsOpsAreSlow = isANGLE;
-    // On DX9 ANGLE reading a partial FBO is slow. TODO: Check whether this is still true and
-    // check DX11 ANGLE.
-    fPartialFBOReadIsSlow = isANGLE;
-#endif
-
-    bool isMESA = ctxInfo.driver() == GrGLDriver::kMesa;
-    bool isMAC = false;
-#ifdef SK_BUILD_FOR_MAC
-    isMAC = true;
-#endif
-
-    // Both mesa and mac have reduced performance if reading back an RGBA framebuffer as BGRA or
-    // vis-versa.
-    fRGBAToBGRAReadbackConversionsAreSlow = isMESA || isMAC;
 
     // Chrome's command buffer will zero out a buffer if null is passed to glBufferData to
     // avoid letting an application see uninitialized memory.
@@ -588,6 +575,9 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
     }
 
 #ifdef SK_BUILD_FOR_WIN
+    // We're assuming that on Windows Chromium we're using ANGLE.
+    bool isANGLE = ctxInfo.angleBackend() != GrGLANGLEBackend::kUnknown ||
+                   ctxInfo.driver()       == GrGLDriver::kChromium;
     // On ANGLE deferring flushes can lead to GPU starvation
     fPreferVRAMUseOverFlushes = !isANGLE;
 #endif
@@ -887,7 +877,7 @@ void GrGLCaps::initGLSL(const GrGLContextInfo& ctxInfo, const GrGLInterface* gli
     // Is this only true on ANGLE's D3D backends or also on the GL backend?
     shaderCaps->fPreferFlatInterpolation = shaderCaps->fFlatInterpolationSupport &&
                                            ctxInfo.vendor() != GrGLVendor::kQualcomm &&
-                                           ctxInfo.angleBackend() != GrGLANGLEBackend::kUnknown;
+                                           ctxInfo.angleBackend() == GrGLANGLEBackend::kUnknown;
     if (GR_IS_GR_GL(standard)) {
         shaderCaps->fNoPerspectiveInterpolationSupport =
             ctxInfo.glslGeneration() >= k130_GrGLSLGeneration;
@@ -1175,14 +1165,10 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
     writer->appendBool("ES2 compatibility support", fES2CompatibilitySupport);
     writer->appendBool("drawRangeElements support", fDrawRangeElementsSupport);
     writer->appendBool("Base (vertex base) instance support", fBaseVertexBaseInstanceSupport);
-    writer->appendBool("RGBA 8888 pixel ops are slow", fRGBA8888PixelsOpsAreSlow);
-    writer->appendBool("Partial FBO read is slow", fPartialFBOReadIsSlow);
     writer->appendBool("Bind uniform location support", fBindUniformLocationSupport);
     writer->appendBool("Rectangle texture support", fRectangleTextureSupport);
     writer->appendBool("Mipmap LOD control support", fMipmapLodControlSupport);
     writer->appendBool("Mipmap level control support", fMipmapLevelControlSupport);
-    writer->appendBool("BGRA to RGBA readback conversions are slow",
-                       fRGBAToBGRAReadbackConversionsAreSlow);
     writer->appendBool("Use buffer data null hint", fUseBufferDataNullHint);
     writer->appendBool("Clear texture support", fClearTextureSupport);
     writer->appendBool("Program binary support", fProgramBinarySupport);
@@ -3596,7 +3582,7 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     // bugs seems to involve clearing too much and not skipping the clear.
     // See crbug.com/768134. This is also needed for full clears and was seen on an nVidia K620
     // but only for D3D11 ANGLE.
-    if (GrGLANGLEBackend::kD3D11 == ctxInfo.angleBackend()) {
+    if (ctxInfo.angleBackend() == GrGLANGLEBackend::kD3D11) {
         fPerformColorClearsAsDraws = true;
     }
 
@@ -3715,8 +3701,8 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     }
 
     // http://anglebug.com/4536
-    if (ctxInfo.angleBackend() != GrGLANGLEBackend::kD3D9 ||
-        ctxInfo.angleBackend() != GrGLANGLEBackend::kD3D11) {
+    if (ctxInfo.angleBackend() == GrGLANGLEBackend::kD3D9 ||
+        ctxInfo.angleBackend() == GrGLANGLEBackend::kD3D11) {
         fBaseVertexBaseInstanceSupport = false;
         fNativeDrawIndirectSupport = false;
         fMultiDrawType = MultiDrawType::kNone;
