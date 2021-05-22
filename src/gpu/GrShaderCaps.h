@@ -176,6 +176,9 @@ public:
         return fRewriteMatrixVectorMultiply;
     }
 
+    // Rewrites matrix equality comparisons to avoid an Adreno driver bug. (skia:11308)
+    bool rewriteMatrixComparisons() const { return fRewriteMatrixComparisons; }
+
     // ANGLE disallows do loops altogether, and we're seeing crashes on Tegra3 with do loops in at
     // least some cases.
     bool canUseDoLoops() const { return fCanUseDoLoops; }
@@ -320,6 +323,7 @@ private:
     bool fMustWriteToFragColor                        : 1;
     bool fNoDefaultPrecisionForExternalSamplers       : 1;
     bool fRewriteMatrixVectorMultiply                 : 1;
+    bool fRewriteMatrixComparisons                    : 1;
     bool fColorSpaceMathNeedsFloat                    : 1;
     bool fCanUseDoLoops                               : 1;
     bool fCanUseFastMath                              : 1;
