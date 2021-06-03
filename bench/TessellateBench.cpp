@@ -14,10 +14,11 @@
 #include "src/gpu/geometry/GrWangsFormula.h"
 #include "src/gpu/mock/GrMockOpTarget.h"
 #include "src/gpu/tessellate/GrMiddleOutPolygonTriangulator.h"
-#include "src/gpu/tessellate/GrPathTessellator.h"
+#include "src/gpu/tessellate/GrPathCurveTessellator.h"
+#include "src/gpu/tessellate/GrPathIndirectTessellator.h"
+#include "src/gpu/tessellate/GrPathWedgeTessellator.h"
 #include "src/gpu/tessellate/GrStrokeFixedCountTessellator.h"
 #include "src/gpu/tessellate/GrStrokeHardwareTessellator.h"
-#include "src/gpu/tessellate/GrStrokeIndirectTessellator.h"
 #include "tools/ToolUtils.h"
 #include <vector>
 
@@ -120,8 +121,8 @@ DEF_PATH_TESS_BENCH(GrPathIndirectTessellator, make_cubic_path(18), SkMatrix::I(
 
 DEF_PATH_TESS_BENCH(GrPathOuterCurveTessellator, make_cubic_path(8), SkMatrix::I()) {
     SkArenaAlloc arena(1024);
-    auto tess = GrPathOuterCurveTessellator::Make(&arena, fMatrix, SK_PMColor4fTRANSPARENT,
-                                                  GrPathTessellator::DrawInnerFan::kNo);
+    auto tess = GrPathCurveTessellator::Make(&arena, fMatrix, SK_PMColor4fTRANSPARENT,
+                                             GrPathTessellator::DrawInnerFan::kNo);
     tess->prepare(fTarget.get(), SkRectPriv::MakeLargest(), fPath, nullptr);
 }
 
@@ -160,13 +161,11 @@ DEF_PATH_TESS_BENCH(wangs_formula_cubic_log2_affine, make_cubic_path(18),
 }
 
 static void benchmark_wangs_formula_conic(const SkMatrix& matrix, const SkPath& path) {
-    // Conic version expects tolerance, not "precision"
-    constexpr float kTolerance = 4;
     int sum = 0;
     GrVectorXform xform(matrix);
     for (auto [verb, pts, w] : SkPathPriv::Iterate(path)) {
         if (verb == SkPathVerb::kConic) {
-            sum += GrWangsFormula::conic(kTolerance, pts, *w, xform);
+            sum += GrWangsFormula::conic(4, pts, *w, xform);
         }
     }
     // Don't let the compiler optimize away GrWangsFormula::conic.
@@ -176,13 +175,11 @@ static void benchmark_wangs_formula_conic(const SkMatrix& matrix, const SkPath& 
 }
 
 static void benchmark_wangs_formula_conic_log2(const SkMatrix& matrix, const SkPath& path) {
-    // Conic version expects tolerance, not "precision"
-    constexpr float kTolerance = 4;
     int sum = 0;
     GrVectorXform xform(matrix);
     for (auto [verb, pts, w] : SkPathPriv::Iterate(path)) {
         if (verb == SkPathVerb::kConic) {
-            sum += GrWangsFormula::conic_log2(kTolerance, pts, *w, xform);
+            sum += GrWangsFormula::conic_log2(4, pts, *w, xform);
         }
     }
     // Don't let the compiler optimize away GrWangsFormula::conic.
@@ -384,134 +381,3 @@ DEF_BENCH(return new TessPrepareBench(
         make_motionmark_paths, make_fixed_count_tessellator, ShaderFlags::kDynamicStroke, 1,
         "GrStrokeFixedCountTessellator_motionmark");
 )
-
-class GrStrokeIndirectTessellator::Benchmark : public ::Benchmark {
-protected:
-    Benchmark(const char* nameSuffix, SkPaint::Join join) : fJoin(join) {
-        fName.printf("tessellate_GrStrokeIndirectTessellator%s", nameSuffix);
-    }
-
-    const SkPaint::Join fJoin;
-
-private:
-    const char* onGetName() final { return fName.c_str(); }
-    bool isSuitableFor(Backend backend) final { return backend == kNonRendering_Backend; }
-    void onDelayedSetup() final {
-        fTarget = std::make_unique<GrMockOpTarget>(make_mock_context());
-        fStrokeRec.setStrokeStyle(8);
-        fStrokeRec.setStrokeParams(SkPaint::kButt_Cap, fJoin, 4);
-        this->setupPaths(&fPaths);
-    }
-    void onDraw(int loops, SkCanvas*) final {
-        if (!fTarget->mockContext()) {
-            SkDebugf("ERROR: could not create mock context.");
-            return;
-        }
-        for (int i = 0; i < loops; ++i) {
-            for (const SkPath& path : fPaths) {
-                GrStrokeTessellator::PathStrokeList pathStroke(path, fStrokeRec, SK_PMColor4fWHITE);
-                GrStrokeIndirectTessellator tessellator(ShaderFlags::kNone, SkMatrix::I(),
-                                                        &pathStroke, {1, 1}, {0, 0, 0, 0},
-                                                        path.countVerbs(), fTarget->allocator());
-                tessellator.prepare(fTarget.get(), path.countVerbs());
-            }
-            fTarget->resetAllocator();
-        }
-    }
-    virtual void setupPaths(SkTArray<SkPath>*) = 0;
-
-    SkString fName;
-    std::unique_ptr<GrMockOpTarget> fTarget;
-    SkTArray<SkPath> fPaths;
-    SkStrokeRec fStrokeRec{SkStrokeRec::kHairline_InitStyle};
-};
-
-class StrokeIndirectBenchmark : public GrStrokeIndirectTessellator::Benchmark {
-public:
-    StrokeIndirectBenchmark(const char* nameSuffix, SkPaint::Join join, std::vector<SkPoint> pts)
-            : Benchmark(nameSuffix, join), fPts(std::move(pts)) {}
-
-private:
-    void setupPaths(SkTArray<SkPath>* paths) final {
-        SkPath& path = paths->push_back();
-        if (fJoin == SkPaint::kRound_Join) {
-            path.reset().moveTo(fPts.back());
-            for (size_t i = 0; i < kNumCubicsInChalkboard/fPts.size(); ++i) {
-                for (size_t j = 0; j < fPts.size(); ++j) {
-                    path.lineTo(fPts[j]);
-                }
-            }
-        } else {
-            path.reset().moveTo(fPts[0]);
-            for (int i = 0; i < kNumCubicsInChalkboard/2; ++i) {
-                if (fPts.size() == 4) {
-                    path.cubicTo(fPts[1], fPts[2], fPts[3]);
-                    path.cubicTo(fPts[2], fPts[1], fPts[0]);
-                } else {
-                    SkASSERT(fPts.size() == 3);
-                    path.quadTo(fPts[1], fPts[2]);
-                    path.quadTo(fPts[2], fPts[1]);
-                }
-            }
-        }
-    }
-
-    const std::vector<SkPoint> fPts;
-};
-
-DEF_BENCH( return new StrokeIndirectBenchmark(
-        "_inflect1", SkPaint::kBevel_Join, {{0,0}, {100,0}, {0,100}, {100,100}}); )
-
-DEF_BENCH( return new StrokeIndirectBenchmark(
-        "_inflect2", SkPaint::kBevel_Join, {{37,162}, {412,160}, {249,65}, {112,360}}); )
-
-DEF_BENCH( return new StrokeIndirectBenchmark(
-        "_loop", SkPaint::kBevel_Join, {{0,0}, {100,0}, {0,100}, {0,0}}); )
-
-DEF_BENCH( return new StrokeIndirectBenchmark(
-        "_nochop", SkPaint::kBevel_Join, {{0,0}, {50,0}, {100,50}, {100,100}}); )
-
-DEF_BENCH( return new StrokeIndirectBenchmark(
-        "_quad", SkPaint::kBevel_Join, {{0,0}, {50,100}, {100,0}}); )
-
-DEF_BENCH( return new StrokeIndirectBenchmark(
-        "_roundjoin", SkPaint::kRound_Join, {{0,0}, {50,100}, {100,0}}); )
-
-class SingleVerbStrokeIndirectBenchmark : public GrStrokeIndirectTessellator::Benchmark {
-public:
-    SingleVerbStrokeIndirectBenchmark(const char* nameSuffix, SkPathVerb verb)
-            : Benchmark(nameSuffix, SkPaint::kBevel_Join), fVerb(verb) {}
-
-private:
-    void setupPaths(SkTArray<SkPath>* paths) override {
-        SkRandom rand;
-        for (int i = 0; i < kNumCubicsInChalkboard; ++i)   {
-            switch (fVerb) {
-                case SkPathVerb::kQuad:
-                    paths->push_back().quadTo(rand.nextF(), rand.nextF(), rand.nextF(),
-                                              rand.nextF());
-                    break;
-                case SkPathVerb::kCubic:
-                    switch (i % 3) {
-                        case 0:
-                            paths->push_back().cubicTo(100, 0, 0, 100, 100, 100);  // 1 inflection.
-                            break;
-                        case 1:
-                            paths->push_back().cubicTo(100, 0, 0, 100, 0, 0);  // loop.
-                            break;
-                        case 2:
-                            paths->push_back().cubicTo(50, 0, 100, 50, 100, 100);  // no chop.
-                            break;
-                    }
-                    break;
-                default:
-                    SkUNREACHABLE;
-            }
-        }
-    }
-
-    const SkPathVerb fVerb;
-};
-
-DEF_BENCH( return new SingleVerbStrokeIndirectBenchmark("_singlequads", SkPathVerb::kQuad); )
-DEF_BENCH( return new SingleVerbStrokeIndirectBenchmark("_singlecubics", SkPathVerb::kCubic); )
