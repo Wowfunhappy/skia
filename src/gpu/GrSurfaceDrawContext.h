@@ -28,6 +28,7 @@ class GrClip;
 class GrColorSpaceXform;
 class GrCoverageCountingPathRenderer;
 class GrDrawOp;
+class GrDstProxyView;
 class GrOp;
 class GrRenderTarget;
 class GrStyledShape;
@@ -594,7 +595,7 @@ public:
     SkGlyphRunListPainter* glyphRunPainter() { return &fGlyphPainter; }
 
     /*
-     * This unique ID will not change for a given RenderTargetContext. However, it is _NOT_
+     * This unique ID will not change for a given SurfaceDrawContext. However, it is _NOT_
      * guaranteed to match the uniqueID of the underlying GrRenderTarget - beware!
      */
     GrSurfaceProxy::UniqueID uniqueID() const { return this->asSurfaceProxy()->uniqueID(); }
@@ -638,7 +639,7 @@ public:
     // instantiated.
     GrRenderTarget* accessRenderTarget() { return this->asSurfaceProxy()->peekRenderTarget(); }
 
-    GrSurfaceDrawContext* asRenderTargetContext() override { return this; }
+    GrSurfaceDrawContext* asSurfaceDrawContext() override { return this; }
 
 #if GR_TEST_UTILS
     void testingOnly_SetPreserveOpsOnFullClear() { fPreserveOpsOnFullClear_TestingOnly = true; }

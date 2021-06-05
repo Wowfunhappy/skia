@@ -21,6 +21,7 @@
 #include "src/core/SkStringUtils.h"
 #include "src/core/SkTLazy.h"
 #include "src/gpu/GrAppliedClip.h"
+#include "src/gpu/GrDstProxyView.h"
 #include "src/gpu/GrGeometryProcessor.h"
 #include "src/gpu/GrRenderTask.h"
 #include "src/gpu/ops/GrDrawOp.h"
@@ -129,7 +130,7 @@ private:
     //
     // When requesting kClear: Tilers will load the stencil buffer with a "clear" op; non-tilers
     // will clear the stencil on first load, and then preserve it on subsequent loads. (Preserving
-    // works because renderTargetContexts are required to leave the user bits in a cleared state
+    // works because SurfaceDrawContexts are required to leave the user bits in a cleared state
     // once finished.)
     //
     // NOTE: initialContent must not be kClear if caps.performStencilClearsAsDraws() is true.
