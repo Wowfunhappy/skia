@@ -3757,6 +3757,15 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         shaderCaps->fMustForceNegatedAtanParamToFloat = true;
     }
 
+#if defined(SK_BUILD_FOR_MAC)
+    if (ctxInfo.vendor() == GrGLVendor::kATI) {
+        // The Radeon GLSL compiler on Mac gets confused by ldexp(..., -x).
+        // Convert to ldexp(..., x * -1).
+        // http://skbug.com/12076
+        shaderCaps->fMustForceNegatedLdexpParamToMultiply = true;
+    }
+#endif
+
     // On some Intel GPUs there is an issue where the driver outputs bogus values in the shader
     // when floor and abs are called on the same line. Thus we must execute an Op between them to
     // make sure the compiler doesn't re-inline them even if we break the calls apart.
@@ -4125,6 +4134,11 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     // http://skbug.com/11965
     if (ctxInfo.renderer() == GrGLRenderer::kGoogleSwiftShader) {
         fShaderCaps->fVertexIDSupport = false;
+    }
+
+    // http://crbug.com/1197152
+    if (ctxInfo.renderer() == GrGLRenderer::kPowerVRRogue) {
+        fShaderCaps->fShaderDerivativeSupport = false;
     }
 }
 
