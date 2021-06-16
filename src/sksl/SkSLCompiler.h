@@ -44,6 +44,7 @@ class SkSLCompileBench;
 namespace SkSL {
 
 namespace dsl {
+    class DSLCore;
     class DSLWriter;
 }
 
@@ -207,7 +208,7 @@ private:
     const ParsedModule& loadPublicModule();
     const ParsedModule& loadRuntimeColorFilterModule();
     const ParsedModule& loadRuntimeShaderModule();
-    const ParsedModule& loadRuntimeBlendModule();
+    const ParsedModule& loadRuntimeBlendFilterModule();
 
     /** Verifies that @if and @switch statements were actually optimized away. */
     void verifyStaticTests(const Program& program);
@@ -247,7 +248,7 @@ private:
     ParsedModule fPublicModule;              // [Root] + Public features
     ParsedModule fRuntimeColorFilterModule;  // [Public] + Runtime shader decls
     ParsedModule fRuntimeShaderModule;       // [Public] + Runtime color filter decls
-    ParsedModule fRuntimeBlendModule;        // [Public] + Runtime blend decls
+    ParsedModule fRuntimeBlendFilterModule;  // [Public] + Runtime blend filter decls
 
     // holds ModifiersPools belonging to the core includes for lifetime purposes
     ModifiersPool fCoreModifiers;
@@ -265,6 +266,7 @@ private:
 
     friend class AutoSource;
     friend class ::SkSLCompileBench;
+    friend class dsl::DSLCore;
     friend class dsl::DSLWriter;
 };
 

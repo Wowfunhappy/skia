@@ -131,8 +131,7 @@ protected:
     void onDraw(int loops, SkCanvas*) override {
         for (int i = 0; i < loops; i++) {
             fCompiler.irGenerator().pushSymbolTable();
-            SkSL::Parser parser(fSrc.c_str(), fSrc.length(), *fCompiler.irGenerator().symbolTable(),
-                                fCompiler);
+            SkSL::Parser parser(fSrc, *fCompiler.irGenerator().symbolTable(), fCompiler);
             parser.compilationUnit();
             fCompiler.irGenerator().popSymbolTable();
             if (fCompiler.errorCount()) {
@@ -587,7 +586,7 @@ void RunSkSLMemoryBenchmarks(NanoJSONResultsWriter* log) {
         SkSL::Compiler compiler(&caps);
         compiler.moduleForProgramKind(SkSL::ProgramKind::kRuntimeColorFilter);
         compiler.moduleForProgramKind(SkSL::ProgramKind::kRuntimeShader);
-        compiler.moduleForProgramKind(SkSL::ProgramKind::kRuntimeBlend);
+        compiler.moduleForProgramKind(SkSL::ProgramKind::kRuntimeBlendFilter);
         int after = heap_bytes_used();
         bench("sksl_compiler_runtimeeffect", after - before);
     }

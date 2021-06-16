@@ -298,13 +298,13 @@ const ParsedModule& Compiler::loadRuntimeShaderModule() {
     return fRuntimeShaderModule;
 }
 
-const ParsedModule& Compiler::loadRuntimeBlendModule() {
-    if (!fRuntimeBlendModule.fSymbols) {
-        fRuntimeBlendModule = this->parseModule(
-                ProgramKind::kRuntimeBlend, MODULE_DATA(rt_blend), this->loadPublicModule());
-        add_glsl_type_aliases(fRuntimeBlendModule.fSymbols.get(), fContext->fTypes);
+const ParsedModule& Compiler::loadRuntimeBlendFilterModule() {
+    if (!fRuntimeBlendFilterModule.fSymbols) {
+        fRuntimeBlendFilterModule = this->parseModule(
+                ProgramKind::kRuntimeBlendFilter, MODULE_DATA(rt_blend), this->loadPublicModule());
+        add_glsl_type_aliases(fRuntimeBlendFilterModule.fSymbols.get(), fContext->fTypes);
     }
-    return fRuntimeBlendModule;
+    return fRuntimeBlendFilterModule;
 }
 
 const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
@@ -315,7 +315,7 @@ const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
         case ProgramKind::kFragmentProcessor:  return this->loadFPModule();                 break;
         case ProgramKind::kRuntimeColorFilter: return this->loadRuntimeColorFilterModule(); break;
         case ProgramKind::kRuntimeShader:      return this->loadRuntimeShaderModule();      break;
-        case ProgramKind::kRuntimeBlend:       return this->loadRuntimeBlendModule();       break;
+        case ProgramKind::kRuntimeBlendFilter: return this->loadRuntimeBlendFilterModule(); break;
         case ProgramKind::kGeneric:            return this->loadPublicModule();             break;
     }
     SkUNREACHABLE;
@@ -359,7 +359,7 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
     dsl::StartModule(this, kind, settings, baseModule);
     AutoSource as(this, source);
     IRGenerator::IRBundle ir = fIRGenerator->convertProgram(baseModule, /*isBuiltinCode=*/true,
-                                                            source->c_str(), source->length());
+                                                            *source);
     SkASSERT(ir.fSharedElements.empty());
     LoadedModule module = { kind, std::move(ir.fSymbolTable), std::move(ir.fElements) };
     dsl::End();
@@ -486,9 +486,9 @@ std::unique_ptr<Program> Compiler::convertProgram(
 
     dsl::Start(this, kind, settings);
     IRGenerator::IRBundle ir = fIRGenerator->convertProgram(baseModule, /*isBuiltinCode=*/false,
-                                                            textPtr->c_str(), textPtr->size());
-    // Ideally, we would just use DSLWriter::ReleaseProgram and not have to do any manual mucking
-    // about with the memory pool, but we've got some impedance mismatches to solve first
+                                                            *textPtr);
+    // Ideally, we would just use dsl::ReleaseProgram and not have to do any manual mucking about
+    // with the memory pool, but we've got some impedance mismatches to solve first
     Pool* memoryPool = dsl::DSLWriter::MemoryPool().get();
     auto program = std::make_unique<Program>(std::move(textPtr),
                                              std::move(dsl::DSLWriter::GetProgramConfig()),

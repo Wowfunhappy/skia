@@ -187,7 +187,7 @@ SkRuntimeEffect::Result SkRuntimeEffect::Make(SkString sksl,
     switch (kind) {
         case SkSL::ProgramKind::kRuntimeColorFilter: flags |= kAllowColorFilter_Flag; break;
         case SkSL::ProgramKind::kRuntimeShader:      flags |= kAllowShader_Flag;      break;
-        case SkSL::ProgramKind::kRuntimeBlend:       flags |= kAllowBlend_Flag;       break;
+        case SkSL::ProgramKind::kRuntimeBlendFilter: flags |= kAllowBlendFilter_Flag; break;
         default: SkUNREACHABLE;
     }
 
@@ -754,11 +754,7 @@ public:
 
     void flatten(SkWriteBuffer& buffer) const override {
         buffer.writeString(fEffect->source().c_str());
-        if (fUniforms) {
-            buffer.writeDataAsByteArray(fUniforms.get());
-        } else {
-            buffer.writeByteArray(nullptr, 0);
-        }
+        buffer.writeDataAsByteArray(fUniforms.get());
         buffer.write32(fChildren.size());
         for (const auto& child : fChildren) {
             buffer.writeFlattenable(child.shader ? (const SkFlattenable*)child.shader.get()
@@ -918,11 +914,7 @@ public:
         }
 
         buffer.writeString(fEffect->source().c_str());
-        if (fUniforms) {
-            buffer.writeDataAsByteArray(fUniforms.get());
-        } else {
-            buffer.writeByteArray(nullptr, 0);
-        }
+        buffer.writeDataAsByteArray(fUniforms.get());
         buffer.write32(flags);
         if (flags & kHasLocalMatrix_Flag) {
             buffer.writeMatrix(this->getLocalMatrix());
