@@ -12,7 +12,6 @@
 
 #include "include/private/SkSLSampleUsage.h"
 #include "src/gpu/GrProcessor.h"
-#include "src/gpu/ops/GrOp.h"
 
 class GrGLSLFragmentProcessor;
 class GrPaint;
@@ -95,6 +94,12 @@ public:
      */
     static std::unique_ptr<GrFragmentProcessor> SwizzleOutput(std::unique_ptr<GrFragmentProcessor>,
                                                               const GrSwizzle&);
+
+    /**
+     *  Returns a fragment processor that calls the passed in fragment processor, and then clamps
+     *  the output to [0, 1].
+     */
+    static std::unique_ptr<GrFragmentProcessor> ClampOutput(std::unique_ptr<GrFragmentProcessor>);
 
     /**
      *  Returns a fragment processor that calls the passed in fragment processor, and then ensures
@@ -258,7 +263,7 @@ public:
      */
     bool isEqual(const GrFragmentProcessor& that) const;
 
-    void visitProxies(const GrOp::VisitProxyFunc& func) const;
+    void visitProxies(const GrVisitProxyFunc&) const;
 
     void visitTextureEffects(const std::function<void(const GrTextureEffect&)>&) const;
 

@@ -133,7 +133,7 @@ void GrAtlasTextOp::Geometry::fillVertexData(void *dst, int offset, int count) c
             dst, offset, count, fColor.toBytes_RGBA(), positionMatrix, fClipRect);
 }
 
-void GrAtlasTextOp::visitProxies(const VisitProxyFunc& func) const {
+void GrAtlasTextOp::visitProxies(const GrVisitProxyFunc& func) const {
     fProcessors.visitProxies(func);
 }
 
@@ -195,7 +195,7 @@ GrProcessorSet::Analysis GrAtlasTextOp::finalize(const GrCaps& caps, const GrApp
     return analysis;
 }
 
-void GrAtlasTextOp::onPrepareDraws(Target* target) {
+void GrAtlasTextOp::onPrepareDraws(GrMeshDrawTarget* target) {
     auto resourceProvider = target->resourceProvider();
 
     // If we need local coordinates, compute an inverse view matrix. If this is solid color, the
@@ -334,7 +334,7 @@ void GrAtlasTextOp::onExecute(GrOpFlushState* flushState, const SkRect& chainBou
 }
 
 void GrAtlasTextOp::createDrawForGeneratedGlyphs(
-        GrMeshDrawOp::Target* target, FlushInfo* flushInfo) const {
+        GrMeshDrawTarget* target, FlushInfo* flushInfo) const {
     if (!flushInfo->fGlyphsToFlush) {
         return;
     }

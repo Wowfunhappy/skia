@@ -45,15 +45,15 @@ public:
     GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*, GrClampType) final;
     CombineResult onCombineIfPossible(GrOp*, SkArenaAlloc*, const GrCaps&) final;
 
-    void visitProxies(const VisitProxyFunc& fn) const override {
+    void visitProxies(const GrVisitProxyFunc& func) const override {
         if (fProgramInfo) {
-            fProgramInfo->visitFPProxies(fn);
+            fProgramInfo->visitFPProxies(func);
         } else {
-            fHelper.visitProxies(fn);
+            fHelper.visitProxies(func);
         }
     }
 
-    void onPrepareDraws(Target*) final;
+    void onPrepareDraws(GrMeshDrawTarget*) final;
 
     void onExecute(GrOpFlushState*, const SkRect& chainBounds) final;
 
@@ -457,7 +457,7 @@ static constexpr uint16_t kIndexData[] = {
 
 GR_DECLARE_STATIC_UNIQUE_KEY(gIndexBufferKey);
 
-void FillRRectOp::onPrepareDraws(Target* target) {
+void FillRRectOp::onPrepareDraws(GrMeshDrawTarget* target) {
     // We request no multisample, but some platforms don't support disabling it on MSAA targets.
     if (target->usesMSAASurface() && !target->caps().multisampleDisableSupport()) {
         fProcessorFlags |= ProcessorFlags::kMSAAEnabled;

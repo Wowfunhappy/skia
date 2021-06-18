@@ -68,7 +68,7 @@ namespace {
 class PathGeoBuilder {
 public:
     PathGeoBuilder(GrPrimitiveType primitiveType,
-                   GrMeshDrawOp::Target* target,
+                   GrMeshDrawTarget* target,
                    SkTDArray<GrSimpleMesh*>* meshes)
             : fPrimitiveType(primitiveType)
             , fTarget(target)
@@ -334,7 +334,7 @@ private:
     }
 
     GrPrimitiveType fPrimitiveType;
-    GrMeshDrawOp::Target* fTarget;
+    GrMeshDrawTarget* fTarget;
     size_t fVertexStride;
 
     sk_sp<const GrBuffer> fVertexBuffer;
@@ -378,7 +378,7 @@ public:
 
     const char* name() const override { return "DefaultPathOp"; }
 
-    void visitProxies(const VisitProxyFunc& func) const override {
+    void visitProxies(const GrVisitProxyFunc& func) const override {
         if (fProgramInfo) {
             fProgramInfo->visitFPProxies(func);
         } else {
@@ -461,7 +461,7 @@ private:
 
     }
 
-    void onPrepareDraws(Target* target) override {
+    void onPrepareDraws(GrMeshDrawTarget* target) override {
         PathGeoBuilder pathGeoBuilder(this->primType(), target, &fMeshes);
 
         // fill buffers

@@ -9,7 +9,7 @@
 #define GrStrokeTessellateOp_DEFINED
 
 #include "include/core/SkStrokeRec.h"
-#include "src/gpu/ops/GrMeshDrawOp.h"
+#include "src/gpu/ops/GrDrawOp.h"
 #include "src/gpu/tessellate/GrStrokeTessellator.h"
 #include "src/gpu/tessellate/shaders/GrTessellationShader.h"
 
@@ -42,7 +42,7 @@ private:
     }
 
     const char* name() const override { return "GrStrokeTessellateOp"; }
-    void visitProxies(const VisitProxyFunc& fn) const override;
+    void visitProxies(const GrVisitProxyFunc&) const override;
     bool usesMSAA() const override { return fAAType == GrAAType::kMSAA; }
     GrProcessorSet::Analysis finalize(const GrCaps&, const GrAppliedClip*, GrClampType) override;
     bool usesStencil() const override {

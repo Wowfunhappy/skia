@@ -37,7 +37,7 @@ public:
 
     const char* name() const override { return "TestOp"; }
 
-    void visitProxies(const VisitProxyFunc& func) const override {
+    void visitProxies(const GrVisitProxyFunc& func) const override {
         fProcessors.visitProxies(func);
     }
 
@@ -74,7 +74,7 @@ private:
                            const GrDstProxyView&,
                            GrXferBarrierFlags renderPassXferBarriers,
                            GrLoadOp colorLoadOp) override {}
-    void onPrepareDraws(Target* target) override { return; }
+    void onPrepareDraws(GrMeshDrawTarget*) override { return; }
     void onExecute(GrOpFlushState*, const SkRect&) override { return; }
 
     GrProcessorSet fProcessors;
