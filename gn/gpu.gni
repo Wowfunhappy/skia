@@ -316,8 +316,6 @@ skia_gpu_sources = [
   "$_src/gpu/effects/generated/GrCircleBlurFragmentProcessor.h",
   "$_src/gpu/effects/generated/GrCircleEffect.cpp",
   "$_src/gpu/effects/generated/GrCircleEffect.h",
-  "$_src/gpu/effects/generated/GrColorMatrixFragmentProcessor.cpp",
-  "$_src/gpu/effects/generated/GrColorMatrixFragmentProcessor.h",
   "$_src/gpu/effects/generated/GrConfigConversionEffect.cpp",
   "$_src/gpu/effects/generated/GrConfigConversionEffect.h",
   "$_src/gpu/effects/generated/GrDeviceSpaceEffect.cpp",
@@ -326,12 +324,8 @@ skia_gpu_sources = [
   "$_src/gpu/effects/generated/GrDitherEffect.h",
   "$_src/gpu/effects/generated/GrEllipseEffect.cpp",
   "$_src/gpu/effects/generated/GrEllipseEffect.h",
-  "$_src/gpu/effects/generated/GrHSLToRGBFilterEffect.cpp",
-  "$_src/gpu/effects/generated/GrHSLToRGBFilterEffect.h",
   "$_src/gpu/effects/generated/GrOverrideInputFragmentProcessor.cpp",
   "$_src/gpu/effects/generated/GrOverrideInputFragmentProcessor.h",
-  "$_src/gpu/effects/generated/GrRGBToHSLFilterEffect.cpp",
-  "$_src/gpu/effects/generated/GrRGBToHSLFilterEffect.h",
   "$_src/gpu/effects/generated/GrRRectBlurEffect.cpp",
   "$_src/gpu/effects/generated/GrRRectBlurEffect.h",
   "$_src/gpu/effects/generated/GrRectBlurEffect.cpp",
@@ -587,23 +581,6 @@ skia_gl_gpu_sources = [
   "$_src/gpu/gl/builders/GrGLShaderStringBuilder.cpp",
   "$_src/gpu/gl/builders/GrGLShaderStringBuilder.h",
 ]
-
-skia_ccpr_sources = [
-  # coverage counting path renderer
-  "$_src/gpu/ccpr/GrCCAtlas.cpp",
-  "$_src/gpu/ccpr/GrCCAtlas.h",
-  "$_src/gpu/ccpr/GrCCClipPath.cpp",
-  "$_src/gpu/ccpr/GrCCClipPath.h",
-  "$_src/gpu/ccpr/GrCCClipProcessor.cpp",
-  "$_src/gpu/ccpr/GrCCClipProcessor.h",
-  "$_src/gpu/ccpr/GrCCPerFlushResources.cpp",
-  "$_src/gpu/ccpr/GrCCPerFlushResources.h",
-  "$_src/gpu/ccpr/GrCCPerOpsTaskPaths.h",
-  "$_src/gpu/ccpr/GrCoverageCountingPathRenderer.cpp",
-  "$_src/gpu/ccpr/GrCoverageCountingPathRenderer.h",
-]
-
-skia_gpu_sources += skia_ccpr_sources
 
 skia_null_gpu_sources = [ "$_src/gpu/gl/GrGLMakeNativeInterface_none.cpp" ]
 
