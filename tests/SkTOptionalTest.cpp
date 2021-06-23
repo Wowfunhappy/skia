@@ -16,6 +16,12 @@ DEF_TEST(SkTOptionalEmpty, r) {
     REPORTER_ASSERT(r, !o.has_value());
 }
 
+DEF_TEST(SkTOptionalNulloptCtor, r) {
+    skstd::optional<int> o(skstd::nullopt);
+    REPORTER_ASSERT(r, !o);
+    REPORTER_ASSERT(r, !o.has_value());
+}
+
 DEF_TEST(SkTOptionalValue, r) {
     skstd::optional<const char*> o("test");
     REPORTER_ASSERT(r, o);
@@ -25,6 +31,101 @@ DEF_TEST(SkTOptionalValue, r) {
     o.reset();
     REPORTER_ASSERT(r, !o);
     REPORTER_ASSERT(r, !o.has_value());
+}
+
+DEF_TEST(SkTOptionalNulloptAssignment, r) {
+    skstd::optional<const char*> o("test");
+    REPORTER_ASSERT(r, o);
+    REPORTER_ASSERT(r, o.has_value());
+    o = skstd::nullopt;
+    REPORTER_ASSERT(r, !o);
+    REPORTER_ASSERT(r, !o.has_value());
+}
+
+DEF_TEST(SkTOptionalNulloptReturn, r) {
+    auto fn = []() -> skstd::optional<float> { return skstd::nullopt; };
+
+    skstd::optional<float> o = fn();
+    REPORTER_ASSERT(r, !o);
+    REPORTER_ASSERT(r, !o.has_value());
+}
+
+DEF_TEST(SkTOptionalComparisons, r) {
+    int v[] = { 1, 2, 3, 4, 5 };
+    skstd::optional<int> o[] = {1, 2, skstd::nullopt, 4, 5};
+    skstd::optional<int> five = 5;
+    skstd::optional<int> six = 6;
+
+    for (int index = 0; index < (int)SK_ARRAY_COUNT(v); ++index) {
+        REPORTER_ASSERT(r, v[index] < six);
+        REPORTER_ASSERT(r, o[index] < six);
+        REPORTER_ASSERT(r, six > v[index]);
+        REPORTER_ASSERT(r, six > o[index]);
+
+        REPORTER_ASSERT(r, v[index] < 6);
+        REPORTER_ASSERT(r, o[index] < 6);
+        REPORTER_ASSERT(r, 6 > v[index]);
+        REPORTER_ASSERT(r, 6 > o[index]);
+
+        REPORTER_ASSERT(r, !(six < v[index]));
+        REPORTER_ASSERT(r, !(six < o[index]));
+        REPORTER_ASSERT(r, !(v[index] > six));
+        REPORTER_ASSERT(r, !(o[index] > six));
+
+        REPORTER_ASSERT(r, !(6 < v[index]));
+        REPORTER_ASSERT(r, !(6 < o[index]));
+        REPORTER_ASSERT(r, !(v[index] > 6));
+        REPORTER_ASSERT(r, !(o[index] > 6));
+
+        REPORTER_ASSERT(r, v[index] <= five);
+        REPORTER_ASSERT(r, o[index] <= five);
+        REPORTER_ASSERT(r, five >= v[index]);
+        REPORTER_ASSERT(r, five >= o[index]);
+
+        REPORTER_ASSERT(r, v[index] <= 5);
+        REPORTER_ASSERT(r, o[index] <= 5);
+        REPORTER_ASSERT(r, 5 >= v[index]);
+        REPORTER_ASSERT(r, 5 >= o[index]);
+
+        REPORTER_ASSERT(r, skstd::nullopt <= o[index]);
+        REPORTER_ASSERT(r, !(skstd::nullopt > o[index]));
+        REPORTER_ASSERT(r, o[index] >= skstd::nullopt);
+        REPORTER_ASSERT(r, !(o[index] < skstd::nullopt));
+
+        if (o[index].has_value()) {
+            REPORTER_ASSERT(r, o[index] != skstd::nullopt);
+            REPORTER_ASSERT(r, skstd::nullopt != o[index]);
+
+            REPORTER_ASSERT(r, o[index] == o[index]);
+            REPORTER_ASSERT(r, o[index] != six);
+            REPORTER_ASSERT(r, o[index] == v[index]);
+            REPORTER_ASSERT(r, v[index] == o[index]);
+            REPORTER_ASSERT(r, o[index] > 0);
+            REPORTER_ASSERT(r, o[index] >= 1);
+            REPORTER_ASSERT(r, o[index] <= 5);
+            REPORTER_ASSERT(r, o[index] < 6);
+            REPORTER_ASSERT(r, 0 < o[index]);
+            REPORTER_ASSERT(r, 1 <= o[index]);
+            REPORTER_ASSERT(r, 5 >= o[index]);
+            REPORTER_ASSERT(r, 6 > o[index]);
+        } else {
+            REPORTER_ASSERT(r, o[index] == skstd::nullopt);
+            REPORTER_ASSERT(r, skstd::nullopt == o[index]);
+
+            REPORTER_ASSERT(r, o[index] == o[index]);
+            REPORTER_ASSERT(r, o[index] != five);
+            REPORTER_ASSERT(r, o[index] != v[index]);
+            REPORTER_ASSERT(r, v[index] != o[index]);
+            REPORTER_ASSERT(r, o[index] < 0);
+            REPORTER_ASSERT(r, o[index] <= 0);
+            REPORTER_ASSERT(r, 0 > o[index]);
+            REPORTER_ASSERT(r, 0 >= o[index]);
+            REPORTER_ASSERT(r, !(o[index] > 0));
+            REPORTER_ASSERT(r, !(o[index] >= 0));
+            REPORTER_ASSERT(r, !(0 < o[index]));
+            REPORTER_ASSERT(r, !(0 <= o[index]));
+        }
+    }
 }
 
 class SkTOptionalTestPayload {
