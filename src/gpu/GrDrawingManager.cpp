@@ -373,14 +373,14 @@ void GrDrawingManager::sortTasks() {
 
 #ifdef SK_DEBUG
     // This block checks for any unnecessary splits in the opsTasks. If two sequential opsTasks
-    // share the same backing GrSurfaceProxy it means the opsTask was artificially split.
+    // could have merged it means the opsTask was artificially split.
     if (!fDAG.empty()) {
         GrOpsTask* prevOpsTask = fDAG[0]->asOpsTask();
         for (int i = 1; i < fDAG.count(); ++i) {
             GrOpsTask* curOpsTask = fDAG[i]->asOpsTask();
 
             if (prevOpsTask && curOpsTask) {
-                SkASSERT(prevOpsTask->target(0) != curOpsTask->target(0));
+                SkASSERT(!prevOpsTask->canMerge(curOpsTask));
             }
 
             prevOpsTask = curOpsTask;
@@ -452,9 +452,11 @@ void GrDrawingManager::closeAllTasks() {
 }
 
 GrRenderTask* GrDrawingManager::insertTaskBeforeLast(sk_sp<GrRenderTask> task) {
-    SkASSERT(!fDAG.empty());
     if (!task) {
         return nullptr;
+    }
+    if (fDAG.empty()) {
+        return fDAG.push_back(std::move(task)).get();
     }
     // Release 'fDAG.back()' and grab the raw pointer, in case the SkTArray grows
     // and reallocates during emplace_back.
@@ -662,8 +664,18 @@ void GrDrawingManager::validate() const {
         }
     }
 
-    if (!fDAG.empty() && !fDAG.back()->isClosed()) {
-        SkASSERT(fActiveOpsTask == fDAG.back().get());
+    // The active opsTask, if any, should always be at the back of the DAG.
+    if (!fDAG.empty()) {
+        if (fDAG.back()->isSetFlag(GrRenderTask::kAtlas_Flag)) {
+            SkASSERT(fActiveOpsTask == nullptr);
+            SkASSERT(!fDAG.back()->isClosed());
+        } else if (fDAG.back()->isClosed()) {
+            SkASSERT(fActiveOpsTask == nullptr);
+        } else {
+            SkASSERT(fActiveOpsTask == fDAG.back().get());
+        }
+    } else {
+        SkASSERT(fActiveOpsTask == nullptr);
     }
 }
 #endif
