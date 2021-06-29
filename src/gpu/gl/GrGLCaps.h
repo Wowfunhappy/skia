@@ -476,6 +476,8 @@ private:
         bool fDisallowBGRA8ReadPixels = false;
         bool fDisallowR8ForPowerVRSGX54x = false;
         bool fDisallowUnorm16Transfers = false;
+        bool fDisallowTextureUnorm16 = false;
+        bool fDisallowETC2Compression = false;
     };
 
     void applyDriverCorrectnessWorkarounds(const GrGLContextInfo&, const GrContextOptions&,
@@ -506,9 +508,7 @@ private:
 
     GrDstSampleFlags onGetDstSampleFlagsForProxy(const GrRenderTargetProxy*) const override;
 
-    bool onSupportsDynamicMSAA(const GrRenderTargetProxy*) const override {
-        return !fDisallowDynamicMSAA;
-    }
+    bool onSupportsDynamicMSAA(const GrRenderTargetProxy*) const override;
 
     GrGLStandard fStandard = kNone_GrGLStandard;
 
