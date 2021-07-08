@@ -27,6 +27,7 @@ class SkShader;
 
 // Move to clients when they are ready -- aid in deprecating the enum
 #define SK_SUPPORT_LEGACY_SETFILTERQUALITY
+#define SK_SUPPORT_LEGACY_GETBLENDMODE
 
 /** \class SkPaint
     SkPaint controls options applied when drawing. SkPaint collects all
@@ -478,20 +479,30 @@ public:
     */
     void setColorFilter(sk_sp<SkColorFilter> colorFilter);
 
-    /** DEPRECATED
-     *  Use asBlendMode() instead.
-     *
-     *  This attempts to inspect the current blender, and if it claims to be equivalent to
-     *  one of the predefiend SkBlendMode enums, returns that mode. If the blender does not,
-     *  this returns kSrcOver.
-     */
-    SkBlendMode getBlendMode() const;
-
     /** If the current blender can be represented as a SkBlendMode enum, this returns that
      *  enum in the optional's value(). If it cannot, then the returned optional does not
      *  contain a value.
      */
     skstd::optional<SkBlendMode> asBlendMode() const;
+
+    /**
+     *  Queries the blender, and if it can be represented as a SkBendMode, return that mode,
+     *  else return the defaultMode provided.
+     */
+    SkBlendMode getBlendMode_or(SkBlendMode defaultMode) const;
+
+#ifndef SK_SUPPORT_LEGACY_GETBLENDMODE
+private:
+#endif
+    /** DEPRECATED
+     *  Use asBlendMode() or getBlendMode_or() instead.
+     *
+     *  This attempts to inspect the current blender, and if it claims to be equivalent to
+     *  one of the predefiend SkBlendMode enums, returns that mode. If the blender does not,
+     *  this returns kSrcOver.
+     */
+    SkBlendMode getBlendMode() const { return this->getBlendMode_or(SkBlendMode::kSrcOver); }
+public:
 
     /** Returns true iff the current blender claims to be equivalent to SkBlendMode::kSrcOver.
      *
