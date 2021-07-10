@@ -14,6 +14,7 @@
 
 #include "include/private/SkSLLayout.h"
 #include "include/private/SkTArray.h"
+#include "include/private/SkTOptional.h"
 #include "include/sksl/DSLCore.h"
 #include "src/core/SkScopeExit.h"
 #include "src/sksl/SkSLAnalysis.h"
@@ -29,7 +30,6 @@
 #include "src/sksl/ir/SkSLContinueStatement.h"
 #include "src/sksl/ir/SkSLDiscardStatement.h"
 #include "src/sksl/ir/SkSLDoStatement.h"
-#include "src/sksl/ir/SkSLEnum.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
 #include "src/sksl/ir/SkSLExternalFunctionCall.h"
 #include "src/sksl/ir/SkSLExternalFunctionReference.h"
@@ -1095,57 +1095,6 @@ void IRGenerator::convertGlobalVarDeclarations(const ASTNode& decl) {
     }
 }
 
-void IRGenerator::convertEnum(const ASTNode& e) {
-    if (this->strictES2Mode()) {
-        this->errorReporter().error(e.fOffset, "enum is not allowed here");
-        return;
-    }
-
-    SkASSERT(e.fKind == ASTNode::Kind::kEnum);
-    SKSL_INT currentValue = 0;
-    Layout layout;
-    ASTNode enumType(e.fNodes, e.fOffset, ASTNode::Kind::kType, e.getStringView());
-    const Type* type = this->convertType(enumType);
-    Modifiers modifiers(layout, Modifiers::kConst_Flag);
-    std::shared_ptr<SymbolTable> oldTable = fSymbolTable;
-    fSymbolTable = std::make_shared<SymbolTable>(fSymbolTable, fIsBuiltinCode);
-    for (auto iter = e.begin(); iter != e.end(); ++iter) {
-        const ASTNode& child = *iter;
-        SkASSERT(child.fKind == ASTNode::Kind::kEnumCase);
-        std::unique_ptr<Expression> value;
-        if (child.begin() != child.end()) {
-            value = this->convertExpression(*child.begin());
-            if (!value) {
-                fSymbolTable = oldTable;
-                return;
-            }
-            if (!ConstantFolder::GetConstantInt(*value, &currentValue)) {
-                this->errorReporter().error(value->fOffset,
-                                            "enum value must be a constant integer");
-                fSymbolTable = oldTable;
-                return;
-            }
-        }
-        value = IntLiteral::Make(fContext, e.fOffset, currentValue);
-        ++currentValue;
-        auto var = std::make_unique<Variable>(e.fOffset, this->modifiersPool().add(modifiers),
-                                              child.getStringView(), type, fIsBuiltinCode,
-                                              Variable::Storage::kGlobal);
-        // enum variables aren't really 'declared', but we have to create a declaration to store
-        // the value
-        auto declaration = VarDeclaration::Make(fContext, var.get(), &var->type(), /*arraySize=*/0,
-                                                std::move(value));
-        fSymbolTable->add(std::move(var));
-        fSymbolTable->takeOwnershipOfIRNode(std::move(declaration));
-    }
-    // Now we orphanize the Enum's symbol table, so that future lookups in it are strict
-    fSymbolTable->fParent = nullptr;
-    fProgramElements->push_back(std::make_unique<Enum>(e.fOffset, e.getStringView(), fSymbolTable,
-                                                       /*isSharedWithCpp=*/fIsBuiltinCode,
-                                                       /*isBuiltin=*/fIsBuiltinCode));
-    fSymbolTable = oldTable;
-}
-
 bool IRGenerator::typeContainsPrivateFields(const Type& type) {
     // Checks for usage of private types, including fields inside a struct.
     if (type.isPrivate()) {
@@ -1212,8 +1161,6 @@ std::unique_ptr<Expression> IRGenerator::convertExpression(const ASTNode& expr) 
             return this->convertPostfixExpression(expr);
         case ASTNode::Kind::kPrefix:
             return this->convertPrefixExpression(expr);
-        case ASTNode::Kind::kScope:
-            return this->convertScopeExpression(expr);
         case ASTNode::Kind::kTernary:
             return this->convertTernaryExpression(expr);
         default:
@@ -1461,6 +1408,60 @@ std::unique_ptr<Expression> IRGenerator::convertPrefixExpression(const ASTNode& 
     return PrefixExpression::Convert(fContext, expression.getOperator(), std::move(base));
 }
 
+static bool validate_swizzle_domain(skstd::string_view fields) {
+    enum SwizzleDomain {
+        kCoordinate,
+        kColor,
+        kUV,
+        kRectangle,
+    };
+
+    skstd::optional<SwizzleDomain> domain;
+
+    for (char field : fields) {
+        SwizzleDomain fieldDomain;
+        switch (field) {
+            case 'x':
+            case 'y':
+            case 'z':
+            case 'w':
+                fieldDomain = kCoordinate;
+                break;
+            case 'r':
+            case 'g':
+            case 'b':
+            case 'a':
+                fieldDomain = kColor;
+                break;
+            case 's':
+            case 't':
+            case 'p':
+            case 'q':
+                fieldDomain = kUV;
+                break;
+            case 'L':
+            case 'T':
+            case 'R':
+            case 'B':
+                fieldDomain = kRectangle;
+                break;
+            case '0':
+            case '1':
+                continue;
+            default:
+                return false;
+        }
+
+        if (!domain.has_value()) {
+            domain = fieldDomain;
+        } else if (domain != fieldDomain) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 // Swizzles are complicated due to constant components. The most difficult case is a mask like
 // '.x1w0'. A naive approach might turn that into 'float4(base.x, 1, base.w, 0)', but that evaluates
 // 'base' twice. We instead group the swizzle mask ('xw') and constants ('1, 0') together and use a
@@ -1478,6 +1479,11 @@ std::unique_ptr<Expression> IRGenerator::convertSwizzle(std::unique_ptr<Expressi
 
     if (fields.length() > 4) {
         this->errorReporter().error(offset, "too many components in swizzle mask '" + fields + "'");
+        return nullptr;
+    }
+
+    if (!validate_swizzle_domain(fields)) {
+        this->errorReporter().error(offset, "invalid swizzle mask '" + fields + "'");
         return nullptr;
     }
 
@@ -1527,10 +1533,12 @@ std::unique_ptr<Expression> IRGenerator::convertSwizzle(std::unique_ptr<Expressi
                     foundXYZW = true;
                     break;
                 }
-                [[fallthrough]];
-            default:
+                // The swizzle component references a field that doesn't exist in the base type.
                 this->errorReporter().error(
                         offset, String::printf("invalid swizzle component '%c'", field));
+                return nullptr;
+            default:
+                SkDEBUGFAIL("unexpected swizzle component");
                 return nullptr;
         }
     }
@@ -1541,55 +1549,6 @@ std::unique_ptr<Expression> IRGenerator::convertSwizzle(std::unique_ptr<Expressi
     }
 
     return Swizzle::Convert(fContext, std::move(base), components);
-}
-
-std::unique_ptr<Expression> IRGenerator::convertTypeField(int offset, const Type& type,
-                                                          skstd::string_view field) {
-    const ProgramElement* enumElement = nullptr;
-    // Find the Enum element that this type refers to, start by searching our elements
-    for (const std::unique_ptr<ProgramElement>& e : *fProgramElements) {
-        if (e->is<Enum>() && type.name() == e->as<Enum>().typeName()) {
-            enumElement = e.get();
-            break;
-        }
-    }
-    // ... if that fails, look in our shared elements
-    if (!enumElement) {
-        for (const ProgramElement* e : *fSharedElements) {
-            if (e->is<Enum>() && type.name() == e->as<Enum>().typeName()) {
-                enumElement = e;
-                break;
-            }
-        }
-    }
-    // ... and if that fails, check the intrinsics, add it to our shared elements
-    if (!enumElement && !fIsBuiltinCode && fIntrinsics) {
-        if (const ProgramElement* found = fIntrinsics->findAndInclude(String(type.name()))) {
-            fSharedElements->push_back(found);
-            enumElement = found;
-        }
-    }
-    if (!enumElement) {
-        this->errorReporter().error(offset,
-                                    "type '" + type.displayName() + "' is not a known enum");
-        return nullptr;
-    }
-
-    // We found the Enum element. Look for 'field' as a member.
-    std::shared_ptr<SymbolTable> old = fSymbolTable;
-    fSymbolTable = enumElement->as<Enum>().symbols();
-    std::unique_ptr<Expression> result =
-            convertIdentifier(ASTNode(&fFile->fNodes, offset, ASTNode::Kind::kIdentifier, field));
-    if (result) {
-        const Variable& v = *result->as<VariableReference>().variable();
-        SkASSERT(v.initialValue());
-        result = IntLiteral::Make(offset, v.initialValue()->as<IntLiteral>().value(), &type);
-    } else {
-        this->errorReporter().error(
-                offset, "type '" + type.name() + "' does not contain enumerator '" + field + "'");
-    }
-    fSymbolTable = old;
-    return result;
 }
 
 std::unique_ptr<Expression> IRGenerator::convertIndexExpression(const ASTNode& index) {
@@ -1654,19 +1613,6 @@ std::unique_ptr<Expression> IRGenerator::convertFieldExpression(const ASTNode& f
         return FieldAccess::Convert(fContext, std::move(base), field);
     }
     return this->convertSwizzle(std::move(base), field);
-}
-
-std::unique_ptr<Expression> IRGenerator::convertScopeExpression(const ASTNode& scopeNode) {
-    std::unique_ptr<Expression> base = this->convertExpression(*scopeNode.begin());
-    if (!base) {
-        return nullptr;
-    }
-    if (!base->is<TypeReference>()) {
-        this->errorReporter().error(scopeNode.fOffset, "'::' must follow a type name");
-        return nullptr;
-    }
-    const skstd::string_view& member = scopeNode.getStringView();
-    return this->convertTypeField(base->fOffset, base->as<TypeReference>().value(), member);
 }
 
 std::unique_ptr<Expression> IRGenerator::convertPostfixExpression(const ASTNode& expression) {
@@ -1901,10 +1847,6 @@ IRGenerator::IRBundle IRGenerator::convertProgram(
             switch (decl.fKind) {
                 case ASTNode::Kind::kVarDeclarations:
                     this->convertGlobalVarDeclarations(decl);
-                    break;
-
-                case ASTNode::Kind::kEnum:
-                    this->convertEnum(decl);
                     break;
 
                 case ASTNode::Kind::kFunction:

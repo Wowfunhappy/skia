@@ -225,11 +225,9 @@ std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::MulChildByInputAlpha(
     if (!fp) {
         return nullptr;
     }
-    return GrBlendFragmentProcessor::Make(
-            /*src=*/nullptr,
-            OverrideInput(std::move(fp), SK_PMColor4fWHITE),
-            SkBlendMode::kDstIn,
-            GrBlendFragmentProcessor::BlendBehavior::kComposeOneBehavior);
+    return GrBlendFragmentProcessor::Make(/*src=*/nullptr,
+                                          OverrideInput(std::move(fp), SK_PMColor4fWHITE),
+                                          SkBlendMode::kDstIn);
 }
 
 std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::MulInputByChildAlpha(
@@ -237,31 +235,25 @@ std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::MulInputByChildAlpha(
     if (!fp) {
         return nullptr;
     }
-    return GrBlendFragmentProcessor::Make(
-            /*src=*/nullptr,
-            OverrideInput(std::move(fp), SK_PMColor4fWHITE),
-            SkBlendMode::kSrcIn,
-            GrBlendFragmentProcessor::BlendBehavior::kComposeOneBehavior);
+    return GrBlendFragmentProcessor::Make(/*src=*/nullptr,
+                                          OverrideInput(std::move(fp), SK_PMColor4fWHITE),
+                                          SkBlendMode::kSrcIn);
 }
 
 std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::ModulateAlpha(
         std::unique_ptr<GrFragmentProcessor> inputFP, const SkPMColor4f& color) {
     auto colorFP = MakeColor(color);
-    return GrBlendFragmentProcessor::Make(
-            std::move(colorFP),
-            std::move(inputFP),
-            SkBlendMode::kSrcIn,
-            GrBlendFragmentProcessor::BlendBehavior::kComposeOneBehavior);
+    return GrBlendFragmentProcessor::Make(std::move(colorFP),
+                                          std::move(inputFP),
+                                          SkBlendMode::kSrcIn);
 }
 
 std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::ModulateRGBA(
         std::unique_ptr<GrFragmentProcessor> inputFP, const SkPMColor4f& color) {
     auto colorFP = MakeColor(color);
-    return GrBlendFragmentProcessor::Make(
-            std::move(colorFP),
-            std::move(inputFP),
-            SkBlendMode::kModulate,
-            GrBlendFragmentProcessor::BlendBehavior::kComposeOneBehavior);
+    return GrBlendFragmentProcessor::Make(std::move(colorFP),
+                                          std::move(inputFP),
+                                          SkBlendMode::kModulate);
 }
 
 std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::ClampOutput(
@@ -703,7 +695,7 @@ std::unique_ptr<GrFragmentProcessor> GrFragmentProcessor::Rect(
     SkASSERT(rect.isSorted());
     // The AA math in the shader evaluates to 0 at the uploaded coordinates, so outset by 0.5
     // to interpolate from 0 at a half pixel inset and 1 at a half pixel outset of rect.
-    SkRect rectUniform = GrProcessorEdgeTypeIsAA(edgeType) ? rect.makeOutset(.5f, .5f) : rect;
+    SkRect rectUniform = GrClipEdgeTypeIsAA(edgeType) ? rect.makeOutset(.5f, .5f) : rect;
 
     return GrSkSLFP::Make(effect, "Rect", std::move(inputFP),
                           GrSkSLFP::OptFlags::kCompatibleWithCoverageAsAlpha,
@@ -717,7 +709,7 @@ GrFPResult GrFragmentProcessor::Circle(std::unique_ptr<GrFragmentProcessor> inpu
                                        float radius) {
     // A radius below half causes the implicit insetting done by this processor to become
     // inverted. We could handle this case by making the processor code more complicated.
-    if (radius < .5f && GrProcessorEdgeTypeIsInverseFill(edgeType)) {
+    if (radius < .5f && GrClipEdgeTypeIsInverseFill(edgeType)) {
         return GrFPFailure(std::move(inputFP));
     }
 
@@ -746,7 +738,7 @@ GrFPResult GrFragmentProcessor::Circle(std::unique_ptr<GrFragmentProcessor> inpu
     )");
 
     SkScalar effectiveRadius = radius;
-    if (GrProcessorEdgeTypeIsInverseFill(edgeType)) {
+    if (GrClipEdgeTypeIsInverseFill(edgeType)) {
         effectiveRadius -= 0.5f;
         // When the radius is 0.5 effectiveRadius is 0 which causes an inf * 0 in the shader.
         effectiveRadius = std::max(0.001f, effectiveRadius);
