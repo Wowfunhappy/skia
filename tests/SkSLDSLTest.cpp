@@ -126,7 +126,8 @@ static SkSL::String stringize(DSLPossibleStatement& stmt)  { return stmt.release
 static SkSL::String stringize(DSLExpression& expr)         { return expr.release()->description(); }
 static SkSL::String stringize(DSLPossibleExpression& expr) { return expr.release()->description(); }
 static SkSL::String stringize(DSLBlock& blck)              { return blck.release()->description(); }
-static SkSL::String stringize(SkSL::IRNode& node)  { return node.description(); }
+static SkSL::String stringize(SkSL::IRNode& node)          { return node.description(); }
+static SkSL::String stringize(SkSL::Program& program)      { return program.description(); }
 
 template <typename T>
 static void expect_equal(skiatest::Reporter* r, int lineNumber, T& input, const char* expected) {
@@ -218,8 +219,8 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLFloat, r, ctxInfo) {
     }
 
     {
-        ExpectError error(r, "error: invalid arguments to 'float2' constructor (expected 2 scalars,"
-                             " but found 4)\n");
+        ExpectError error(r, "error: 'float4' is not a valid parameter to 'float2' constructor; "
+                             "use '.xy' instead\n");
         Float2(Float4(1)).release();
     }
 
@@ -270,8 +271,8 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLHalf, r, ctxInfo) {
     }
 
     {
-        ExpectError error(r, "error: invalid arguments to 'half2' constructor (expected 2 scalars,"
-                             " but found 4)\n");
+        ExpectError error(r, "error: 'half4' is not a valid parameter to 'half2' constructor; use "
+                             "'.xy' instead\n");
         Half2(Half4(1)).release();
     }
 
@@ -307,8 +308,8 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLInt, r, ctxInfo) {
                 "int4(0, 1, 2, 3)");
 
     {
-        ExpectError error(r, "error: invalid arguments to 'int2' constructor (expected 2 scalars,"
-                             " but found 4)\n");
+        ExpectError error(r, "error: 'int4' is not a valid parameter to 'int2' constructor; use "
+                             "'.xy' instead\n");
         Int2(Int4(1)).release();
     }
 
@@ -344,8 +345,8 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLUInt, r, ctxInfo) {
                 "uint4(0, 1, 2, 3)");
 
     {
-        ExpectError error(r, "error: invalid arguments to 'uint2' constructor (expected 2 scalars,"
-                             " but found 4)\n");
+        ExpectError error(r, "error: 'uint4' is not a valid parameter to 'uint2' constructor; use "
+                             "'.xy' instead\n");
         UInt2(UInt4(1)).release();
     }
 
@@ -381,8 +382,8 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLShort, r, ctxInfo) {
                 "short4(0, 1, 2, 3)");
 
     {
-        ExpectError error(r, "error: invalid arguments to 'short2' constructor (expected 2 scalars,"
-                             " but found 4)\n");
+        ExpectError error(r, "error: 'short4' is not a valid parameter to 'short2' constructor; "
+                             "use '.xy' instead\n");
         Short2(Short4(1)).release();
     }
 
@@ -418,8 +419,8 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLUShort, r, ctxInfo) {
                 "ushort4(0, 1, 2, 3)");
 
     {
-        ExpectError error(r, "error: invalid arguments to 'ushort2' constructor (expected 2 "
-                             "scalars, but found 4)\n");
+        ExpectError error(r, "error: 'ushort4' is not a valid parameter to 'ushort2' constructor; "
+                             "use '.xy' instead\n");
         UShort2(UShort4(1)).release();
     }
 
@@ -453,8 +454,8 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLBool, r, ctxInfo) {
                 "bool4(false, true, false, true)");
 
     {
-        ExpectError error(r, "error: invalid arguments to 'bool2' constructor (expected 2 scalars,"
-                             " but found 4)\n");
+        ExpectError error(r, "error: 'bool4' is not a valid parameter to 'bool2' constructor; use "
+                             "'.xy' instead\n");
         Bool2(Bool4(true)).release();
     }
 
@@ -1977,4 +1978,25 @@ DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLRTAdjust, r, ctxInfo) {
         "(sk_PerVertex.sk_Position = float4(((sk_PerVertex.sk_Position.xy * sk_RTAdjust.xz) + "
         "(sk_PerVertex.sk_Position.ww * sk_RTAdjust.yw)), 0.0, sk_PerVertex.sk_Position.w));"
         "}");
+}
+
+DEF_GPUTEST_FOR_MOCK_CONTEXT(DSLInlining, r, ctxInfo) {
+    AutoDSLContext context(ctxInfo.directContext()->priv().getGpu(), no_mark_vars_declared());
+    DSLVar x(kFloat_Type, "x");
+    DSLFunction sqr(kFloat_Type, "sqr", x);
+    sqr.define(
+        Return(x * x)
+    );
+    DSLFunction(kVoid_Type, "main").define(
+        sk_FragColor() = (sqr(2), Half4(sqr(3)))
+    );
+    std::unique_ptr<SkSL::Program> program = ReleaseProgram();
+    EXPECT_EQUAL(*program,
+                 "layout(location = 0, index = 0, builtin = 10001) out half4 sk_FragColor;"
+                 "layout(builtin = 17)in bool sk_Clockwise;"
+                 "void main() {"
+                 "/* inlined: sqr */;"
+                 "/* inlined: sqr */;"
+                 "(sk_FragColor = (4.0 , half4(half(9.0))));"
+                 "}");
 }

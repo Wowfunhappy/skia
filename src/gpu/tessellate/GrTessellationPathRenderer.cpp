@@ -39,10 +39,7 @@ constexpr static int kAtlasMaxPathHeight = 128;
 bool GrTessellationPathRenderer::IsSupported(const GrCaps& caps) {
     return !caps.avoidStencilBuffers() &&
            caps.drawInstancedSupport() &&
-#ifdef GR_DISABLE_TESSELLATION_ON_ES2
-           caps.shaderCaps()->integerSupport() &&
-#endif
-           GrTessellationShader::SupportsPortableInfinity(*caps.shaderCaps()) &&
+           caps.shaderCaps()->infinitySupport() &&
            !caps.disableTessellationPathRenderer();
 }
 
@@ -403,7 +400,7 @@ bool GrTessellationPathRenderer::tryAddPathToAtlas(GrRecordingContext* rContext,
                 kAtlasAlpha8Type, GrDynamicAtlas::InternalMultisample::kYes,
                 SkISize{fAtlasInitialSize, fAtlasInitialSize}, fAtlasMaxSize,
                 *rContext->priv().caps(), kAtlasAlgorithm);
-        auto newAtlasTask = sk_make_sp<GrAtlasRenderTask>(rContext, rContext->priv().auditTrail(),
+        auto newAtlasTask = sk_make_sp<GrAtlasRenderTask>(rContext,
                                                           sk_make_sp<GrArenas>(),
                                                           std::move(dynamicAtlas));
         rContext->priv().drawingManager()->addAtlasTask(newAtlasTask, currentAtlasTask);
