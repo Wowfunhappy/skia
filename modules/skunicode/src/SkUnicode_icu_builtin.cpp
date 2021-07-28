@@ -9,19 +9,28 @@
 
 #define SKICU_FUNC(funcname) funcname,
 
+// ubrk_clone added as draft in ICU69 and Android API 31 (first ICU NDK).
+// ubrk_safeClone deprecated in ICU69 and not exposed by Android.
+template<typename...> using void_t = void;
+template<typename T, typename = void>
+struct SkUbrkClone {
+    static UBreakIterator* clone(T bi, UErrorCode* status) {
+        return ubrk_safeClone(bi, nullptr, nullptr, status);
+    }
+};
+template<typename T>
+struct SkUbrkClone<T, void_t<decltype(ubrk_clone(std::declval<T>(), nullptr))>> {
+    static UBreakIterator* clone(T bi, UErrorCode* status) {
+        return ubrk_clone(bi, status);
+    }
+};
+
 std::unique_ptr<SkICULib> SkLoadICULib() {
 
     return std::make_unique<SkICULib>(SkICULib{
         SKICU_EMIT_FUNCS
 
-        // ubrk_clone added as draft in ICU69 and Android API 31 (first ICU NDK).
-        // ubrk_safeClone deprecated in ICU69 and not exposed by Android.
-#if U_ICU_VERSION_MAJOR_NUM >= 69
-        ubrk_clone,
+        &SkUbrkClone<const UBreakIterator*>::clone,
         nullptr,
-#else
-        nullptr,
-        ubrk_safeClone,
-#endif
     });
 }

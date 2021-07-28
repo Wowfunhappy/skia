@@ -142,7 +142,7 @@ public:
             if (pos16 == 0) {
                 currentLevel = level;
             } else if (level != currentLevel) {
-                auto end = start8 - utf8;
+                auto end = SkTo<Position>(start8 - utf8);
                 bidiRegions.emplace_back(pos8, end, currentLevel);
                 currentLevel = level;
                 pos8 = end;

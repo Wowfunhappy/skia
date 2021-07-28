@@ -44,7 +44,7 @@ if (skia_enable_skshaper) {
     if (skia_use_icu && skia_use_harfbuzz) {
       sources += skia_shaper_harfbuzz_sources
       deps += [
-        "//modules/skunicode",
+        "../skunicode",
         "//third_party/harfbuzz",
       ]
     }
