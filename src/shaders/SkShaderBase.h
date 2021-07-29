@@ -266,7 +266,12 @@ private:
 
 class SkUpdatableShader : public SkShaderBase {
 public:
-    virtual bool update(const SkMatrix& ctm, skvm::Uniforms* u) const = 0;
+    virtual bool update(const SkMatrix& ctm) const = 0;
+
+private:
+    // For serialization.  This will never be called.
+    Factory getFactory() const override { return nullptr; }
+    const char* getTypeName() const override { return nullptr; }
 };
 
 inline SkShaderBase* as_SB(SkShader* shader) {

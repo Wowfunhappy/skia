@@ -50,7 +50,7 @@ public:
     // 128^2 total pixels if the surfaceDrawContext supports MSAA or DMSAA.)
     //
     // Also returns GrFPFailure() if the view matrix has perspective.
-    GrFPResult makeAtlasClipEffect(const GrSurfaceDrawContext*,
+    GrFPResult makeAtlasClipEffect(const skgpu::v1::SurfaceDrawContext*,
                                    const GrOp* opBeingClipped,
                                    std::unique_ptr<GrFragmentProcessor> inputFP,
                                    const SkIRect& drawBounds,
@@ -90,6 +90,7 @@ private:
     void preFlush(GrOnFlushResourceProvider*, SkSpan<const uint32_t> taskIDs) override;
 
     float fAtlasMaxSize = 0;
+    float fAtlasMaxPathWidth = 0;
     int fAtlasInitialSize = 0;
 
     // A collection of all atlases we've created and used since the last flush. We instantiate these

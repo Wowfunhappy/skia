@@ -11,7 +11,6 @@
 #include "src/core/SkIPoint16.h"
 #include "src/gpu/GrClip.h"
 #include "src/gpu/GrDirectContextPriv.h"
-#include "src/gpu/GrSurfaceDrawContext.h"
 #include "src/gpu/GrVx.h"
 #include "src/gpu/effects/GrModulateAtlasCoverageEffect.h"
 #include "src/gpu/geometry/GrStyledShape.h"
@@ -19,6 +18,7 @@
 #include "src/gpu/tessellate/GrAtlasRenderTask.h"
 #include "src/gpu/tessellate/GrTessellationPathRenderer.h"
 #include "src/gpu/tessellate/shaders/GrTessellationShader.h"
+#include "src/gpu/v1/SurfaceDrawContext_v1.h"
 
 using grvx::float2;
 using grvx::int2;
@@ -37,6 +37,11 @@ constexpr static int kAtlasMaxPathHeight = 256;
 // If we have MSAA to fall back on, paths are already fast enough that we really only benefit from
 // atlasing when they are very small.
 constexpr static int kAtlasMaxPathHeightWithMSAAFallback = 128;
+
+// http://skbug.com/12291 -- The way GrDynamicAtlas works, a single 2048x1 path is given an entire
+// 2048x2048 atlas with draw bounds of 2048x1025. Limit the max width to 1024 to avoid this landmine
+// until it's resolved.
+constexpr static int kAtlasMaxPathWidth = 1024;
 
 bool GrAtlasPathRenderer::IsSupported(GrRecordingContext* rContext) {
     const GrCaps& caps = *rContext->priv().caps();
@@ -63,6 +68,7 @@ GrAtlasPathRenderer::GrAtlasPathRenderer(GrDirectContext* dContext) {
     fAtlasMaxSize = 2048;
 #endif
     fAtlasMaxSize = SkPrevPow2(std::min(fAtlasMaxSize, (float)caps.maxPreferredRenderTargetSize()));
+    fAtlasMaxPathWidth = std::min((float)kAtlasMaxPathWidth, fAtlasMaxSize);
     fAtlasInitialSize = SkNextPow2(std::min(kAtlasInitialSize, (int)fAtlasMaxSize));
 }
 
@@ -81,7 +87,7 @@ bool GrAtlasPathRenderer::pathFitsInAtlas(const SkRect& pathDevBounds,
     auto [topLeftFloor, botRightCeil] = round_out(pathDevBounds);
     float2 size = botRightCeil - topLeftFloor;
     return // Ensure the path's largest dimension fits in the atlas.
-           skvx::all(size <= fAtlasMaxSize) &&
+           skvx::all(size <= fAtlasMaxPathWidth) &&
            // Since we will transpose tall skinny paths, limiting to atlasMaxPathHeight^2 pixels
            // guarantees heightInAtlas <= atlasMaxPathHeight, while also allowing paths that are
            // very wide and short.
@@ -140,7 +146,7 @@ bool GrAtlasPathRenderer::addPathToAtlas(GrRecordingContext* rContext,
         std::swap(heightInAtlas, widthInAtlas);
     }
     // pathFitsInAtlas() should have guaranteed these constraints on the path size.
-    SkASSERT(widthInAtlas <= (int)fAtlasMaxSize);
+    SkASSERT(widthInAtlas <= (int)fAtlasMaxPathWidth);
     SkASSERT(heightInAtlas <= kAtlasMaxPathHeight);
 
     // Check if this path is already in the atlas. This is mainly for clip paths.
@@ -214,9 +220,13 @@ GrPathRenderer::CanDrawPath GrAtlasPathRenderer::onCanDrawPath(const CanDrawPath
     SkASSERT(!args.fHasUserStencilSettings);  // See onGetStencilSupport().
 #endif
     bool canDrawPath = args.fShape->style().isSimpleFill() &&
+#ifdef SK_DISABLE_ATLAS_PATH_RENDERER_WITH_COVERAGE_AA
                        // The MSAA requirement is a temporary limitation in order to preserve
                        // functionality for refactoring. TODO: Allow kCoverage AA types.
                        args.fAAType == GrAAType::kMSAA &&
+#else
+                       args.fAAType != GrAAType::kNone &&
+#endif
                        !args.fShape->style().hasPathEffect() &&
                        !args.fViewMatrix->hasPerspective() &&
                        this->pathFitsInAtlas(args.fViewMatrix->mapRect(args.fShape->bounds()),
@@ -278,7 +288,7 @@ bool GrAtlasPathRenderer::onDrawPath(const DrawPathArgs& args) {
     return true;
 }
 
-GrFPResult GrAtlasPathRenderer::makeAtlasClipEffect(const GrSurfaceDrawContext* sdc,
+GrFPResult GrAtlasPathRenderer::makeAtlasClipEffect(const skgpu::v1::SurfaceDrawContext* sdc,
                                                     const GrOp* opBeingClipped,
                                                     std::unique_ptr<GrFragmentProcessor> inputFP,
                                                     const SkIRect& drawBounds,

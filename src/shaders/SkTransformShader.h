@@ -32,14 +32,10 @@ public:
             skvm::Uniforms* uniforms) const;
 
     // Change the values represented by the uniforms in fMatrix.
-    bool update(const SkMatrix& ctm, skvm::Uniforms* u) const override;
+    bool update(const SkMatrix& ctm) const override;
     bool onAppendStages(const SkStageRec& rec) const override;
 
 private:
-    // For serialization.  This will never be called.
-    Factory getFactory() const override { return nullptr; }
-    const char* getTypeName() const override { return nullptr; }
-
     const SkShaderBase& fShader;
     mutable SkScalar fMatrixStorage[9];
     mutable skvm::Uniform fMatrix;
