@@ -36,7 +36,8 @@
 #include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrFPArgs.h"
 #include "src/gpu/GrImageInfo.h"
-#include "src/gpu/GrSurfaceFillContext.h"
+#include "src/gpu/GrRecordingContextPriv.h"
+#include "src/gpu/SurfaceFillContext.h"
 #include "src/gpu/effects/GrMatrixEffect.h"
 #include "src/gpu/effects/GrSkSLFP.h"
 #include "src/image/SkImage_Gpu.h"
@@ -657,8 +658,7 @@ std::unique_ptr<SkFilterColorProgram> SkFilterColorProgram::Make(const SkRuntime
                                              /*sampleBlender=*/nullptr);
 
     // Then store the result to the *third* arg ptr
-    p.store({skvm::PixelFormat::FLOAT, 32, 32, 32, 32, 0, 32, 64, 96},
-            p.varying<skvm::F32>(), result);
+    p.store({skvm::PixelFormat::FLOAT, 32, 32, 32, 32, 0, 32, 64, 96}, p.arg(16), result);
 
     if (!allSampleCallsSupported) {
         return nullptr;
