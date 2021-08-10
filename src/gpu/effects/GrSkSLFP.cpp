@@ -23,7 +23,7 @@
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramBuilder.h"
 
-class GrGLSLSkSLFP : public GrGLSLFragmentProcessor {
+class GrGLSLSkSLFP : public GrFragmentProcessor::ProgramImpl {
 public:
     void emitCode(EmitArgs& args) override {
         const GrSkSLFP& fp            = args.fFp.cast<GrSkSLFP>();
@@ -305,7 +305,7 @@ GrSkSLFP::GrSkSLFP(sk_sp<SkRuntimeEffect> effect, const char* name, OptFlags opt
 }
 
 GrSkSLFP::GrSkSLFP(const GrSkSLFP& other)
-        : INHERITED(kGrSkSLFP_ClassID, other.optimizationFlags())
+        : INHERITED(other)
         , fEffect(other.fEffect)
         , fName(other.fName)
         , fUniformSize(other.fUniformSize)
@@ -314,15 +314,6 @@ GrSkSLFP::GrSkSLFP(const GrSkSLFP& other)
                       other.uniformFlags(),
                       fEffect->uniforms().count() * sizeof(UniformFlags));
     sk_careful_memcpy(this->uniformData(), other.uniformData(), fUniformSize);
-
-    if (fEffect->usesSampleCoords()) {
-        this->setUsesSampleCoordsDirectly();
-    }
-    if (fEffect->allowBlender()) {
-        this->setIsBlendFunction();
-    }
-
-    this->cloneAndRegisterAllChildProcessors(other);
 }
 
 void GrSkSLFP::addChild(std::unique_ptr<GrFragmentProcessor> child, bool mergeOptFlags) {
@@ -353,11 +344,11 @@ void GrSkSLFP::setDestColorFP(std::unique_ptr<GrFragmentProcessor> destColorFP) 
     this->registerChild(std::move(destColorFP), SkSL::SampleUsage::PassThrough());
 }
 
-std::unique_ptr<GrGLSLFragmentProcessor> GrSkSLFP::onMakeProgramImpl() const {
+std::unique_ptr<GrFragmentProcessor::ProgramImpl> GrSkSLFP::onMakeProgramImpl() const {
     return std::make_unique<GrGLSLSkSLFP>();
 }
 
-void GrSkSLFP::onGetGLSLProcessorKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
+void GrSkSLFP::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
     // In the unlikely event of a hash collision, we also include the uniform size in the key.
     // That ensures that we will (at worst) use the wrong program, but one that expects the same
     // amount of uniform data.

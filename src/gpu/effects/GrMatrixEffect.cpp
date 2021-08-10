@@ -14,7 +14,7 @@
 #include "src/gpu/glsl/GrGLSLProgramBuilder.h"
 #include "src/sksl/SkSLUtil.h"
 
-class GrGLSLMatrixEffect : public GrGLSLFragmentProcessor {
+class GrGLSLMatrixEffect : public GrFragmentProcessor::ProgramImpl {
 public:
     GrGLSLMatrixEffect() {}
 
@@ -57,12 +57,11 @@ std::unique_ptr<GrFragmentProcessor> GrMatrixEffect::Make(
     return std::unique_ptr<GrFragmentProcessor>(new GrMatrixEffect(matrix, std::move(child)));
 }
 
-std::unique_ptr<GrGLSLFragmentProcessor> GrMatrixEffect::onMakeProgramImpl() const {
+std::unique_ptr<GrFragmentProcessor::ProgramImpl> GrMatrixEffect::onMakeProgramImpl() const {
     return std::make_unique<GrGLSLMatrixEffect>();
 }
 
-void GrMatrixEffect::onGetGLSLProcessorKey(const GrShaderCaps& caps,
-                                           GrProcessorKeyBuilder* b) const {}
+void GrMatrixEffect::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {}
 
 bool GrMatrixEffect::onIsEqual(const GrFragmentProcessor& other) const {
     const GrMatrixEffect& that = other.cast<GrMatrixEffect>();
@@ -71,10 +70,8 @@ bool GrMatrixEffect::onIsEqual(const GrFragmentProcessor& other) const {
 }
 
 GrMatrixEffect::GrMatrixEffect(const GrMatrixEffect& src)
-        : INHERITED(kGrMatrixEffect_ClassID, src.optimizationFlags())
-        , fMatrix(src.fMatrix) {
-    this->cloneAndRegisterAllChildProcessors(src);
-}
+        : INHERITED(src)
+        , fMatrix(src.fMatrix) {}
 
 std::unique_ptr<GrFragmentProcessor> GrMatrixEffect::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrMatrixEffect(*this));

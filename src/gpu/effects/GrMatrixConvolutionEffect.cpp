@@ -20,7 +20,7 @@
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
 #include "src/gpu/glsl/GrGLSLUniformHandler.h"
 
-class GrGLMatrixConvolutionEffect : public GrGLSLFragmentProcessor {
+class GrGLMatrixConvolutionEffect : public GrFragmentProcessor::ProgramImpl {
 public:
     void emitCode(EmitArgs&) override;
 
@@ -40,7 +40,7 @@ private:
     UniformHandle               fBiasUni;
     UniformHandle               fKernelBiasUni;
 
-    using INHERITED = GrGLSLFragmentProcessor;
+    using INHERITED = ProgramImpl;
 };
 
 GrMatrixConvolutionEffect::KernelWrapper::MakeResult
@@ -302,26 +302,24 @@ GrMatrixConvolutionEffect::GrMatrixConvolutionEffect(std::unique_ptr<GrFragmentP
 }
 
 GrMatrixConvolutionEffect::GrMatrixConvolutionEffect(const GrMatrixConvolutionEffect& that)
-        : INHERITED(kGrMatrixConvolutionEffect_ClassID, kNone_OptimizationFlags)
+        : INHERITED(that)
         , fKernel(that.fKernel)
         , fGain(that.fGain)
         , fBias(that.fBias)
         , fKernelOffset(that.fKernelOffset)
-        , fConvolveAlpha(that.fConvolveAlpha) {
-    this->cloneAndRegisterAllChildProcessors(that);
-    this->setUsesSampleCoordsDirectly();
-}
+        , fConvolveAlpha(that.fConvolveAlpha) {}
 
 std::unique_ptr<GrFragmentProcessor> GrMatrixConvolutionEffect::clone() const {
     return std::unique_ptr<GrFragmentProcessor>(new GrMatrixConvolutionEffect(*this));
 }
 
-void GrMatrixConvolutionEffect::onGetGLSLProcessorKey(const GrShaderCaps& caps,
-                                                      GrProcessorKeyBuilder* b) const {
+void GrMatrixConvolutionEffect::onAddToKey(const GrShaderCaps& caps,
+                                           GrProcessorKeyBuilder* b) const {
     GrGLMatrixConvolutionEffect::GenKey(*this, caps, b);
 }
 
-std::unique_ptr<GrGLSLFragmentProcessor> GrMatrixConvolutionEffect::onMakeProgramImpl() const {
+std::unique_ptr<GrFragmentProcessor::ProgramImpl>
+GrMatrixConvolutionEffect::onMakeProgramImpl() const {
     return std::make_unique<GrGLMatrixConvolutionEffect>();
 }
 

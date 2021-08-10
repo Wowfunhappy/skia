@@ -28,15 +28,13 @@ GrModulateAtlasCoverageEffect::GrModulateAtlasCoverageEffect(
 
 GrModulateAtlasCoverageEffect::GrModulateAtlasCoverageEffect(
         const GrModulateAtlasCoverageEffect& that)
-        : GrFragmentProcessor(kTessellate_GrModulateAtlasCoverageEffect_ClassID,
-                              kCompatibleWithCoverageAsAlpha_OptimizationFlag)
+        : GrFragmentProcessor(that)
         , fFlags(that.fFlags)
-        , fBounds(that.fBounds) {
-    this->cloneAndRegisterAllChildProcessors(that);
-}
+        , fBounds(that.fBounds) {}
 
-std::unique_ptr<GrGLSLFragmentProcessor> GrModulateAtlasCoverageEffect::onMakeProgramImpl() const {
-    class Impl : public GrGLSLFragmentProcessor {
+std::unique_ptr<GrFragmentProcessor::ProgramImpl>
+GrModulateAtlasCoverageEffect::onMakeProgramImpl() const {
+    class Impl : public ProgramImpl {
         void emitCode(EmitArgs& args) override {
             auto fp = args.fFp.cast<GrModulateAtlasCoverageEffect>();
             auto f = args.fFragBuilder;

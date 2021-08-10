@@ -238,8 +238,8 @@ SkString GrYUVtoRGBEffect::onDumpInfo() const {
 }
 #endif
 
-std::unique_ptr<GrGLSLFragmentProcessor> GrYUVtoRGBEffect::onMakeProgramImpl() const {
-    class GrGLSLYUVtoRGBEffect : public GrGLSLFragmentProcessor {
+std::unique_ptr<GrFragmentProcessor::ProgramImpl> GrYUVtoRGBEffect::onMakeProgramImpl() const {
+    class GrGLSLYUVtoRGBEffect : public ProgramImpl {
     public:
         GrGLSLYUVtoRGBEffect() {}
 
@@ -338,8 +338,7 @@ std::unique_ptr<GrGLSLFragmentProcessor> GrYUVtoRGBEffect::onMakeProgramImpl() c
 
     return std::make_unique<GrGLSLYUVtoRGBEffect>();
 }
-void GrYUVtoRGBEffect::onGetGLSLProcessorKey(const GrShaderCaps& caps,
-                                             GrProcessorKeyBuilder* b) const {
+void GrYUVtoRGBEffect::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
     uint32_t packed = 0;
     int i = 0;
     for (auto [plane, channel] : fLocations) {
@@ -374,14 +373,9 @@ bool GrYUVtoRGBEffect::onIsEqual(const GrFragmentProcessor& other) const {
 }
 
 GrYUVtoRGBEffect::GrYUVtoRGBEffect(const GrYUVtoRGBEffect& src)
-        : GrFragmentProcessor(kGrYUVtoRGBEffect_ClassID, src.optimizationFlags())
+        : GrFragmentProcessor(src)
         , fLocations((src.fLocations))
         , fYUVColorSpace(src.fYUVColorSpace) {
-    this->cloneAndRegisterAllChildProcessors(src);
-    if (src.fSnap[0] || src.fSnap[1]) {
-        this->setUsesSampleCoordsDirectly();
-    }
-
     std::copy_n(src.fSnap, 2, fSnap);
 }
 

@@ -129,9 +129,9 @@ public:
     static constexpr int kInputFPIndex = 1;
 
 private:
-    std::unique_ptr<GrGLSLFragmentProcessor> onMakeProgramImpl() const override;
+    std::unique_ptr<ProgramImpl> onMakeProgramImpl() const override;
 
-    void onGetGLSLProcessorKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override {}
+    void onAddToKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override {}
 
     bool onIsEqual(const GrFragmentProcessor&) const override { return true; }
 
@@ -154,12 +154,10 @@ ColorTableEffect::ColorTableEffect(std::unique_ptr<GrFragmentProcessor> inputFP,
 }
 
 ColorTableEffect::ColorTableEffect(const ColorTableEffect& that)
-        : INHERITED(kColorTableEffect_ClassID, that.optimizationFlags()) {
-    this->cloneAndRegisterAllChildProcessors(that);
-}
+        : INHERITED(that) {}
 
-std::unique_ptr<GrGLSLFragmentProcessor> ColorTableEffect::onMakeProgramImpl() const {
-    class Impl : public GrGLSLFragmentProcessor {
+std::unique_ptr<GrFragmentProcessor::ProgramImpl> ColorTableEffect::onMakeProgramImpl() const {
+    class Impl : public ProgramImpl {
     public:
         void emitCode(EmitArgs& args) override {
             GrGLSLFPFragmentBuilder* fragBuilder = args.fFragBuilder;

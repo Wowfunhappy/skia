@@ -15,7 +15,7 @@
 
 //////////////////////////////////////////////////////////////////////////////
 
-class GrGLConvexPolyEffect : public GrGLSLFragmentProcessor {
+class GrGLConvexPolyEffect : public GrFragmentProcessor::ProgramImpl {
 public:
     GrGLConvexPolyEffect() {
         for (size_t i = 0; i < SK_ARRAY_COUNT(fPrevEdges); ++i) {
@@ -33,7 +33,7 @@ protected:
 private:
     GrGLSLProgramDataManager::UniformHandle fEdgeUniform;
     SkScalar                                fPrevEdges[3 * GrConvexPolyEffect::kMaxEdges];
-    using INHERITED = GrGLSLFragmentProcessor;
+    using INHERITED = ProgramImpl;
 };
 
 void GrGLConvexPolyEffect::emitCode(EmitArgs& args) {
@@ -157,12 +157,11 @@ GrFPResult GrConvexPolyEffect::Make(std::unique_ptr<GrFragmentProcessor> inputFP
 
 GrConvexPolyEffect::~GrConvexPolyEffect() {}
 
-void GrConvexPolyEffect::onGetGLSLProcessorKey(const GrShaderCaps& caps,
-                                               GrProcessorKeyBuilder* b) const {
+void GrConvexPolyEffect::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
     GrGLConvexPolyEffect::GenKey(*this, caps, b);
 }
 
-std::unique_ptr<GrGLSLFragmentProcessor> GrConvexPolyEffect::onMakeProgramImpl() const {
+std::unique_ptr<GrFragmentProcessor::ProgramImpl> GrConvexPolyEffect::onMakeProgramImpl() const {
     return std::make_unique<GrGLConvexPolyEffect>();
 }
 
@@ -188,10 +187,9 @@ GrConvexPolyEffect::GrConvexPolyEffect(std::unique_ptr<GrFragmentProcessor> inpu
 }
 
 GrConvexPolyEffect::GrConvexPolyEffect(const GrConvexPolyEffect& that)
-        : INHERITED(kGrConvexPolyEffect_ClassID, that.optimizationFlags())
+        : INHERITED(that)
         , fEdgeType(that.fEdgeType)
         , fEdgeCount(that.fEdgeCount) {
-    this->cloneAndRegisterAllChildProcessors(that);
     memcpy(fEdges, that.fEdges, 3 * that.fEdgeCount * sizeof(SkScalar));
 }
 
