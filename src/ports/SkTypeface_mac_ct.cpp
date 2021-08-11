@@ -184,9 +184,9 @@ SkUniqueCFRef<CTFontRef> SkCTFontCreateExactCopy(CTFontRef baseFont, CGFloat tex
                               &kCFTypeDictionaryKeyCallBacks,
                               &kCFTypeDictionaryValueCallBacks));
 
-#if !defined(SK_IGNORE_MAC_OPSZ_FORCE)
     if (opszVariation.isSet) {
         add_opsz_attr(attr.get(), opszVariation.value);
+#if !defined(SK_IGNORE_MAC_OPSZ_FORCE)
     } else {
         // On (at least) 10.10 though 10.14 the default system font was SFNSText/SFNSDisplay.
         // The CTFont is backed by both; optical size < 20 means SFNSText else SFNSDisplay.
