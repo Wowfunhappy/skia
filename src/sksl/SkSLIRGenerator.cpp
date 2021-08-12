@@ -748,7 +748,7 @@ void IRGenerator::CheckModifiers(const Context& context,
     for (const auto& f : kModifierFlags) {
         if (modifierFlags & f.flag) {
             if (!(permittedModifierFlags & f.flag)) {
-                context.fErrors.error(offset, "'" + String(f.name) + "' is not permitted here");
+                context.errors().error(offset, "'" + String(f.name) + "' is not permitted here");
             }
             modifierFlags &= ~f.flag;
         }
@@ -776,7 +776,7 @@ void IRGenerator::CheckModifiers(const Context& context,
     for (const auto& lf : kLayoutFlags) {
         if (layoutFlags & lf.flag) {
             if (!(permittedLayoutFlags & lf.flag)) {
-                context.fErrors.error(
+                context.errors().error(
                         offset, "layout qualifier '" + String(lf.name) + "' is not permitted here");
             }
             layoutFlags &= ~lf.flag;
@@ -1659,6 +1659,16 @@ void IRGenerator::start(const ParsedModule& base,
         fSymbolTable->addAlias("uint2", fContext.fTypes.fUInt2.get());
         fSymbolTable->addAlias("uint3", fContext.fTypes.fUInt3.get());
         fSymbolTable->addAlias("uint4", fContext.fTypes.fUInt4.get());
+
+        fSymbolTable->addAlias("short", fContext.fTypes.fShort.get());
+        fSymbolTable->addAlias("short2", fContext.fTypes.fShort2.get());
+        fSymbolTable->addAlias("short3", fContext.fTypes.fShort3.get());
+        fSymbolTable->addAlias("short4", fContext.fTypes.fShort4.get());
+
+        fSymbolTable->addAlias("ushort", fContext.fTypes.fUShort.get());
+        fSymbolTable->addAlias("ushort2", fContext.fTypes.fUShort2.get());
+        fSymbolTable->addAlias("ushort3", fContext.fTypes.fUShort3.get());
+        fSymbolTable->addAlias("ushort4", fContext.fTypes.fUShort4.get());
     }
 }
 

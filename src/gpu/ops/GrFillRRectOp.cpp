@@ -10,6 +10,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "src/core/SkRRectPriv.h"
 #include "src/gpu/GrCaps.h"
+#include "src/gpu/GrGeometryProcessor.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrOpsRenderPass.h"
@@ -20,7 +21,6 @@
 #include "src/gpu/GrVx.h"
 #include "src/gpu/geometry/GrShape.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
-#include "src/gpu/glsl/GrGLSLGeometryProcessor.h"
 #include "src/gpu/glsl/GrGLSLVarying.h"
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
@@ -344,6 +344,8 @@ public:
     std::unique_ptr<ProgramImpl> makeProgramImpl(const GrShaderCaps&) const final;
 
 private:
+    class Impl;
+
     Processor(GrAAType aaType, ProcessorFlags flags)
             : INHERITED(kGrFillRRectOp_Processor_ClassID)
             , fFlags(flags) {
@@ -374,8 +376,6 @@ private:
     constexpr static int kMaxInstanceAttribs = 6;
     SkSTArray<kMaxInstanceAttribs, Attribute> fInstanceAttribs;
     const Attribute* fColorAttrib;
-
-    class Impl;
 
     using INHERITED = GrGeometryProcessor;
 };
@@ -567,6 +567,12 @@ void FillRRectOp::onPrepareDraws(GrMeshDrawTarget* target) {
 }
 
 class FillRRectOp::Processor::Impl : public ProgramImpl {
+public:
+    void setData(const GrGLSLProgramDataManager&,
+                 const GrShaderCaps&,
+                 const GrGeometryProcessor&) override {}
+
+private:
     void onEmitCode(EmitArgs& args, GrGPArgs* gpArgs) override {
         GrGLSLVertexBuilder* v = args.fVertBuilder;
         GrGLSLFPFragmentBuilder* f = args.fFragBuilder;
@@ -579,7 +585,8 @@ class FillRRectOp::Processor::Impl : public ProgramImpl {
         GrGLSLVaryingHandler* varyings = args.fVaryingHandler;
         varyings->emitAttributes(proc);
         f->codeAppendf("half4 %s;", args.fOutputColor);
-        varyings->addPassThroughAttribute(*proc.fColorAttrib, args.fOutputColor,
+        varyings->addPassThroughAttribute(proc.fColorAttrib->asShaderVar(),
+                                          args.fOutputColor,
                                           GrGLSLVaryingHandler::Interpolation::kCanBeFlat);
 
         // Emit the vertex shader.
@@ -751,10 +758,6 @@ class FillRRectOp::Processor::Impl : public ProgramImpl {
         }
         f->codeAppendf("half4 %s = half4(coverage);", args.fOutputCoverage);
     }
-
-    void setData(const GrGLSLProgramDataManager&,
-                 const GrShaderCaps&,
-                 const GrGeometryProcessor&) override {}
 };
 
 std::unique_ptr<GrGeometryProcessor::ProgramImpl> FillRRectOp::Processor::makeProgramImpl(
