@@ -182,6 +182,7 @@ sksl_spirv_tests = [
   "/sksl/spirv/LayoutMultipleOf4.sksl",
   "/sksl/spirv/LayoutOutOfOrder.sksl",
   "/sksl/spirv/OpaqueTypeInArray.sksl",
+  "/sksl/spirv/Ossfuzz35916.sksl",
   "/sksl/workarounds/RewriteMatrixVectorMultiply.sksl",
   "/sksl/errors/Ossfuzz36850.sksl",
   "/sksl/errors/UndefinedFunction.sksl",
@@ -535,6 +536,7 @@ sksl_rte_tests = [
 
 sksl_rte_error_tests = [
   "/sksl/runtime_errors/DerivativesES2.rts",
+  "/sksl/runtime_errors/ES3Types.rts",
   "/sksl/runtime_errors/FirstClassArrays.rts",
   "/sksl/runtime_errors/IllegalArrayOps.rts",
   "/sksl/runtime_errors/IllegalIndexing.rts",

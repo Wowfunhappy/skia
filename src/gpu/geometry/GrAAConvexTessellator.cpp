@@ -5,13 +5,14 @@
  * found in the LICENSE file.
  */
 
+#include "src/gpu/geometry/GrAAConvexTessellator.h"
+
 #include "include/core/SkCanvas.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkString.h"
 #include "include/private/SkTPin.h"
 #include "src/gpu/geometry/GrPathUtils.h"
-#include "src/gpu/ops/GrAAConvexTessellator.h"
 
 // Next steps:
 //  add an interactive sample app slide
@@ -622,7 +623,7 @@ void GrAAConvexTessellator::createOuterRing(const Ring& previousRing, SkScalar o
                         this->addTri(originalIdx, perp1Idx, perp2Idx);
                         break;
                     default:
-                        // kRound_Join is unsupported for now. GrAALinearizingConvexPathRenderer is
+                        // kRound_Join is unsupported for now. AALinearizingConvexPathRenderer is
                         // only willing to draw mitered or beveled, so we should never get here.
                         SkASSERT(false);
                 }
