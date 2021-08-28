@@ -13,6 +13,7 @@
 #include "src/sksl/ir/SkSLConstructorArrayCast.h"
 #include "src/sksl/ir/SkSLConstructorCompoundCast.h"
 #include "src/sksl/ir/SkSLConstructorScalarCast.h"
+#include "src/sksl/ir/SkSLExternalFunctionReference.h"
 #include "src/sksl/ir/SkSLFunctionReference.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 #include "src/sksl/ir/SkSLType.h"
@@ -28,8 +29,8 @@ public:
         : INHERITED(name, abbrev, kTypeKind)
         , fComponentType(componentType)
         , fCount(count) {
-        // Allow either explicitly-sized or unsized arrays.
-        SkASSERT(count > 0 || count == kUnsizedArray);
+        // Only allow explicitly-sized arrays.
+        SkASSERT(count > 0);
         // Disallow multi-dimensional arrays.
         SkASSERT(!componentType.is<ArrayType>());
     }
@@ -375,9 +376,7 @@ private:
 
 String Type::getArrayName(int arraySize) const {
     skstd::string_view name = this->name();
-    return (arraySize != kUnsizedArray)
-                   ? String::printf("%.*s[%d]", (int)name.size(), name.data(), arraySize)
-                   : String::printf("%.*s[]", (int)name.size(), name.data());
+    return String::printf("%.*s[%d]", (int)name.size(), name.data(), arraySize);
 }
 
 std::unique_ptr<Type> Type::MakeArrayType(skstd::string_view name, const Type& componentType,
@@ -705,7 +704,7 @@ std::unique_ptr<Expression> Type::coerceExpression(std::unique_ptr<Expression> e
         return nullptr;
     }
     const int offset = expr->fOffset;
-    if (expr->is<FunctionReference>()) {
+    if (expr->is<FunctionReference>() || expr->is<ExternalFunctionReference>()) {
         context.fErrors->error(offset, "expected '(' to begin function call");
         return nullptr;
     }

@@ -288,6 +288,7 @@ private:
 // If a caller doesn't care about errors, we can use this trivial reporter that just counts up.
 class TrivialErrorReporter : public ErrorReporter {
 public:
+    ~TrivialErrorReporter() override { this->reportPendingErrors({}); }
     void handleError(const char*, PositionInfo) override {}
 };
 
@@ -808,36 +809,18 @@ bool Analysis::IsAssignable(Expression& expr, AssignmentInfo* info, ErrorReporte
     return IsAssignableVisitor{errors ? errors : &trivialErrors}.visit(expr, info);
 }
 
-void Analysis::UpdateRefKind(Expression* expr, VariableRefKind refKind) {
-    class RefKindWriter : public ProgramWriter {
-    public:
-        RefKindWriter(VariableReference::RefKind refKind) : fRefKind(refKind) {}
-
-        bool visitExpression(Expression& expr) override {
-            if (expr.is<VariableReference>()) {
-                expr.as<VariableReference>().setRefKind(fRefKind);
-            }
-            return INHERITED::visitExpression(expr);
-        }
-
-    private:
-        VariableReference::RefKind fRefKind;
-
-        using INHERITED = ProgramWriter;
-    };
-
-    RefKindWriter{refKind}.visitExpression(*expr);
-}
-
-bool Analysis::MakeAssignmentExpr(Expression* expr,
-                                  VariableReference::RefKind kind,
-                                  ErrorReporter* errors) {
+bool Analysis::UpdateVariableRefKind(Expression* expr,
+                                     VariableReference::RefKind kind,
+                                     ErrorReporter* errors) {
     Analysis::AssignmentInfo info;
     if (!Analysis::IsAssignable(*expr, &info, errors)) {
         return false;
     }
     if (!info.fAssignedVar) {
-        errors->error(expr->fOffset, "can't assign to expression '" + expr->description() + "'");
+        if (errors) {
+            errors->error(expr->fOffset, "can't assign to expression '" +
+                                          expr->description() + "'");
+        }
         return false;
     }
     info.fAssignedVar->setRefKind(kind);
@@ -1180,21 +1163,23 @@ public:
             case Expression::Kind::kTernary:
                 return INHERITED::visitExpression(e);
 
-            // These are completely disallowed in SkSL constant-(index)-expressions. GLSL allows
-            // calls to built-in functions where the arguments are all constant-expressions, but
-            // we don't guarantee that behavior. (skbug.com/10835)
-            case Expression::Kind::kChildCall:
-            case Expression::Kind::kExternalFunctionCall:
+            // Function calls are completely disallowed in SkSL constant-(index)-expressions.
+            // GLSL does mandate that calling a built-in function where the arguments are all
+            // constant-expressions should result in a constant-expression. SkSL handles this by
+            // optimizing fully-constant function calls into literals in FunctionCall::Make.
             case Expression::Kind::kFunctionCall:
-                return true;
+            case Expression::Kind::kExternalFunctionCall:
+            case Expression::Kind::kChildCall:
 
+            // These shouldn't appear in a valid program at all, and definitely aren't
+            // constant-index-expressions.
             case Expression::Kind::kPoison:
+            case Expression::Kind::kFunctionReference:
+            case Expression::Kind::kExternalFunctionReference:
+            case Expression::Kind::kTypeReference:
+            case Expression::Kind::kCodeString:
                 return true;
 
-            // These should never appear in final IR
-            case Expression::Kind::kExternalFunctionReference:
-            case Expression::Kind::kFunctionReference:
-            case Expression::Kind::kTypeReference:
             default:
                 SkDEBUGFAIL("Unexpected expression type");
                 return true;
