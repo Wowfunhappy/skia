@@ -225,6 +225,7 @@ std::unique_ptr<Program> DSLParser::program() {
             case Token::Kind::TK_INVALID: {
                 this->nextToken();
                 this->error(this->peek(), String("invalid token"));
+                done = true;
                 break;
             }
             default:
@@ -335,6 +336,10 @@ static skstd::optional<DSLStatement> declaration_statements(SkTArray<DSLVar> var
     return Declare(vars);
 }
 
+static bool is_valid(const skstd::optional<DSLWrapper<DSLExpression>>& expr) {
+    return expr && expr->get().isValid();
+}
+
 SKSL_INT DSLParser::arraySize() {
     Token next = this->peek();
     if (next.fKind == Token::Kind::TK_INT_LITERAL) {
@@ -356,8 +361,10 @@ SKSL_INT DSLParser::arraySize() {
         this->error(next, "array size must be positive");
         return 1;
     } else {
-        this->expression();
-        this->error(next, "expected int literal");
+        skstd::optional<DSLWrapper<DSLExpression>> expr = this->expression();
+        if (is_valid(expr)) {
+            this->error(next, "expected int literal");
+        }
         return 1;
     }
 }
@@ -524,7 +531,8 @@ skstd::optional<DSLType> DSLParser::structDeclaration() {
                     return skstd::nullopt;
                 }
             }
-            fields.push_back(DSLField(modifiers, std::move(actualType), this->text(memberName)));
+            fields.push_back(DSLField(modifiers, std::move(actualType), this->text(memberName),
+                    this->position(memberName)));
         } while (this->checkNext(Token::Kind::TK_COMMA));
         if (!this->expect(Token::Kind::TK_SEMICOLON, "';'")) {
             return skstd::nullopt;
@@ -533,7 +541,6 @@ skstd::optional<DSLType> DSLParser::structDeclaration() {
     if (fields.empty()) {
         this->error(name.fOffset,
                     "struct '" + this->text(name) + "' must contain at least one field");
-        return skstd::nullopt;
     }
     return dsl::Struct(this->text(name), SkMakeSpan(fields), this->position(name));
 }
@@ -628,37 +635,37 @@ DSLLayout DSLParser::layout() {
             if (found != layoutTokens->end()) {
                 switch (found->second) {
                     case LayoutToken::ORIGIN_UPPER_LEFT:
-                        result.originUpperLeft();
+                        result.originUpperLeft(this->position(t));
                         break;
                     case LayoutToken::PUSH_CONSTANT:
-                        result.pushConstant();
+                        result.pushConstant(this->position(t));
                         break;
                     case LayoutToken::BLEND_SUPPORT_ALL_EQUATIONS:
-                        result.blendSupportAllEquations();
+                        result.blendSupportAllEquations(this->position(t));
                         break;
                     case LayoutToken::SRGB_UNPREMUL:
-                        result.srgbUnpremul();
+                        result.srgbUnpremul(this->position(t));
                         break;
                     case LayoutToken::LOCATION:
-                        result.location(this->layoutInt());
+                        result.location(this->layoutInt(), this->position(t));
                         break;
                     case LayoutToken::OFFSET:
-                        result.offset(this->layoutInt());
+                        result.offset(this->layoutInt(), this->position(t));
                         break;
                     case LayoutToken::BINDING:
-                        result.binding(this->layoutInt());
+                        result.binding(this->layoutInt(), this->position(t));
                         break;
                     case LayoutToken::INDEX:
-                        result.index(this->layoutInt());
+                        result.index(this->layoutInt(), this->position(t));
                         break;
                     case LayoutToken::SET:
-                        result.set(this->layoutInt());
+                        result.set(this->layoutInt(), this->position(t));
                         break;
                     case LayoutToken::BUILTIN:
-                        result.builtin(this->layoutInt());
+                        result.builtin(this->layoutInt(), this->position(t));
                         break;
                     case LayoutToken::INPUT_ATTACHMENT_INDEX:
-                        result.inputAttachmentIndex(this->layoutInt());
+                        result.inputAttachmentIndex(this->layoutInt(), this->position(t));
                         break;
                     default:
                         this->error(t, "'" + text + "' is not a valid layout qualifier");
@@ -815,14 +822,14 @@ bool DSLParser::interfaceBlock(const dsl::DSLModifiers& modifiers) {
             if (!this->expect(Token::Kind::TK_SEMICOLON, "';'")) {
                 return false;
             }
-            fields.push_back(dsl::Field(modifiers, std::move(actualType), this->text(fieldName)));
+            fields.push_back(dsl::Field(fieldModifiers, std::move(actualType),
+                    this->text(fieldName), this->position(fieldName)));
         }
         while (this->checkNext(Token::Kind::TK_COMMA));
     }
     if (fields.empty()) {
         this->error(typeName, "interface block '" + this->text(typeName) +
                           "' must contain at least one member");
-        return false;
     }
     skstd::string_view instanceName;
     Token instanceNameToken;
@@ -834,9 +841,7 @@ bool DSLParser::interfaceBlock(const dsl::DSLModifiers& modifiers) {
             this->expect(Token::Kind::TK_RBRACKET, "']'");
         }
     }
-    if (!this->expect(Token::Kind::TK_SEMICOLON, "';'")) {
-        return false;
-    }
+    this->expect(Token::Kind::TK_SEMICOLON, "';'");
     dsl::InterfaceBlock(modifiers, this->text(typeName), std::move(fields), instanceName,
                         arraySize);
     return true;
@@ -1498,12 +1503,12 @@ skstd::optional<DSLWrapper<DSLExpression>> DSLParser::swizzle(int offset, DSLExp
         return base.field(swizzleMask, this->position(offset));
     }
     int length = swizzleMask.length();
-    if (length > 4) {
-        this->error(offset, "too many components in swizzle mask");
-        return skstd::nullopt;
-    }
     SkSL::SwizzleComponent::Type components[4];
     for (int i = 0; i < length; ++i) {
+        if (i >= 4) {
+            this->error(offset, "too many components in swizzle mask");
+            return {{DSLExpression::Poison()}};
+        }
         switch (swizzleMask[i]) {
             case '0': components[i] = SwizzleComponent::ZERO; break;
             case '1': components[i] = SwizzleComponent::ONE;  break;
@@ -1526,7 +1531,7 @@ skstd::optional<DSLWrapper<DSLExpression>> DSLParser::swizzle(int offset, DSLExp
             default:
                 this->error(offset,
                         String::printf("invalid swizzle component '%c'", swizzleMask[i]).c_str());
-                return skstd::nullopt;
+                return {{DSLExpression::Poison()}};
         }
     }
     switch (length) {
