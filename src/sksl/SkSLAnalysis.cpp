@@ -722,6 +722,38 @@ bool Analysis::DetectStaticRecursion(SkSpan<std::unique_ptr<ProgramElement>> pro
     return false;
 }
 
+bool Analysis::DetectVarDeclarationWithoutScope(const Statement& stmt, ErrorReporter* errors) {
+    // A variable declaration can create either a lone VarDeclaration or an unscoped Block
+    // containing multiple VarDeclaration statements. We need to detect either case.
+    const Variable* var;
+    if (stmt.is<VarDeclaration>()) {
+        // The single-variable case. No blocks at all.
+        var = &stmt.as<VarDeclaration>().var();
+    } else if (stmt.is<Block>()) {
+        // The multiple-variable case: an unscoped, non-empty block...
+        const Block& block = stmt.as<Block>();
+        if (block.isScope() || block.children().empty()) {
+            return false;
+        }
+        // ... holding a variable declaration.
+        const Statement& innerStmt = *block.children().front();
+        if (!innerStmt.is<VarDeclaration>()) {
+            return false;
+        }
+        var = &innerStmt.as<VarDeclaration>().var();
+    } else {
+        // This statement wasn't a variable declaration. No problem.
+        return false;
+    }
+
+    // Report an error.
+    SkASSERT(var);
+    if (errors) {
+        errors->error(stmt.fOffset, "variable '" + var->name() + "' must be created in a scope");
+    }
+    return true;
+}
+
 int Analysis::NodeCountUpToLimit(const FunctionDefinition& function, int limit) {
     return NodeCountVisitor{limit}.visit(*function.body());
 }
@@ -1249,6 +1281,73 @@ bool Analysis::CanExitWithoutReturningValue(const FunctionDeclaration& funcDecl,
     ReturnsOnAllPathsVisitor visitor;
     visitor.visitStatement(body);
     return !visitor.fFoundReturn;
+}
+
+void Analysis::VerifyStaticTestsAndExpressions(const Program& program) {
+    class TestsAndExpressions : public ProgramVisitor {
+    public:
+        TestsAndExpressions(const Context& ctx) : fContext(ctx) {}
+
+        using ProgramVisitor::visitProgramElement;
+
+        bool visitStatement(const Statement& stmt) override {
+            if (!fContext.fConfig->fSettings.fPermitInvalidStaticTests) {
+                switch (stmt.kind()) {
+                    case Statement::Kind::kIf:
+                        if (stmt.as<IfStatement>().isStatic()) {
+                            fContext.fErrors->error(stmt.fOffset, "static if has non-static test");
+                        }
+                        break;
+
+                    case Statement::Kind::kSwitch:
+                        if (stmt.as<SwitchStatement>().isStatic()) {
+                            fContext.fErrors->error(stmt.fOffset,
+                                                    "static switch has non-static test");
+                        }
+                        break;
+
+                    default:
+                        break;
+                }
+            }
+            return INHERITED::visitStatement(stmt);
+        }
+
+        bool visitExpression(const Expression& expr) override {
+            switch (expr.kind()) {
+                case Expression::Kind::kFunctionCall: {
+                    const FunctionDeclaration& decl = expr.as<FunctionCall>().function();
+                    if (!decl.isBuiltin() && !decl.definition()) {
+                        fContext.fErrors->error(expr.fOffset, "function '" + decl.description() +
+                                                              "' is not defined");
+                    }
+                    break;
+                }
+                case Expression::Kind::kExternalFunctionReference:
+                case Expression::Kind::kFunctionReference:
+                case Expression::Kind::kTypeReference:
+                    SkDEBUGFAIL("invalid reference-expr, should have been reported by coerce()");
+                    fContext.fErrors->error(expr.fOffset, "invalid expression");
+                    break;
+                default:
+                    if (expr.type() == *fContext.fTypes.fInvalid) {
+                        fContext.fErrors->error(expr.fOffset, "invalid expression");
+                    }
+                    break;
+            }
+            return INHERITED::visitExpression(expr);
+        }
+
+    private:
+        using INHERITED = ProgramVisitor;
+        const Context& fContext;
+    };
+
+    // Check all of the program's owned elements. (Built-in elements are assumed to be valid.)
+    TestsAndExpressions visitor{*program.fContext};
+    for (const std::unique_ptr<ProgramElement>& element : program.ownedElements()) {
+        visitor.visitProgramElement(*element);
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

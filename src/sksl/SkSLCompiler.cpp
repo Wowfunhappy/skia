@@ -473,7 +473,7 @@ std::unique_ptr<Program> Compiler::convertProgram(
                                              ir.fInputs);
     this->errorReporter().reportPendingErrors(PositionInfo());
     bool success = false;
-    if (this->errorCount()) {
+    if (!this->finalize(*program)) {
         // Do not return programs that failed to compile.
     } else if (!this->optimize(*program)) {
         // Do not return programs that failed to optimize.
@@ -487,57 +487,6 @@ std::unique_ptr<Program> Compiler::convertProgram(
     }
     return success ? std::move(program) : nullptr;
 #endif // SKSL_DSL_PARSER
-}
-
-void Compiler::verifyStaticTests(const Program& program) {
-    class StaticTestVerifier : public ProgramVisitor {
-    public:
-        StaticTestVerifier(ErrorReporter* r) : fReporter(r) {}
-
-        using ProgramVisitor::visitProgramElement;
-
-        bool visitStatement(const Statement& stmt) override {
-            switch (stmt.kind()) {
-                case Statement::Kind::kIf:
-                    if (stmt.as<IfStatement>().isStatic()) {
-                        fReporter->error(stmt.fOffset, "static if has non-static test");
-                    }
-                    break;
-
-                case Statement::Kind::kSwitch:
-                    if (stmt.as<SwitchStatement>().isStatic()) {
-                        fReporter->error(stmt.fOffset, "static switch has non-static test");
-                    }
-                    break;
-
-                default:
-                    break;
-            }
-            return INHERITED::visitStatement(stmt);
-        }
-
-        bool visitExpression(const Expression&) override {
-            // We aren't looking for anything inside an Expression, so skip them entirely.
-            return false;
-        }
-
-    private:
-        using INHERITED = ProgramVisitor;
-        ErrorReporter* fReporter;
-    };
-
-    // If invalid static tests are permitted, we don't need to check anything.
-    if (fContext->fConfig->fSettings.fPermitInvalidStaticTests) {
-        return;
-    }
-
-    // Check all of the program's owned elements. (Built-in elements are assumed to be valid.)
-    StaticTestVerifier visitor{&this->errorReporter()};
-    for (const std::unique_ptr<ProgramElement>& element : program.ownedElements()) {
-        if (element->is<FunctionDefinition>()) {
-            visitor.visitProgramElement(*element);
-        }
-    }
 }
 
 bool Compiler::optimize(LoadedModule& module) {
@@ -855,8 +804,25 @@ bool Compiler::optimize(Program& program) {
         this->removeDeadGlobalVariables(program, usage);
     }
 
-    if (this->errorCount() == 0) {
-        this->verifyStaticTests(program);
+    return this->errorCount() == 0;
+}
+
+bool Compiler::finalize(Program& program) {
+    // Do a pass looking for @if/@switch statements that didn't optimize away, or dangling
+    // FunctionReference or TypeReference expressions. Report these as errors.
+    Analysis::VerifyStaticTestsAndExpressions(program);
+
+    // If we're in ES2 mode (runtime effects), do a pass to enforce Appendix A, Section 5 of the
+    // GLSL ES 1.00 spec -- Indexing. Don't bother if we've already found errors - this logic
+    // assumes that all loops meet the criteria of Section 4, and if they don't, could crash.
+    if (fContext->fConfig->strictES2Mode() && this->errorCount() == 0) {
+        for (const auto& pe : program.ownedElements()) {
+            Analysis::ValidateIndexingForES2(*pe, this->errorReporter());
+        }
+    }
+
+    if (fContext->fConfig->strictES2Mode()) {
+        Analysis::DetectStaticRecursion(SkMakeSpan(program.ownedElements()), this->errorReporter());
     }
 
     return this->errorCount() == 0;

@@ -60,6 +60,13 @@ struct Analysis {
     static bool DetectStaticRecursion(SkSpan<std::unique_ptr<ProgramElement>> programElements,
                                       ErrorReporter& errors);
 
+    /**
+     * Detect an orphaned variable declaration outside of a scope, e.g. if (true) int a;. Returns
+     * true if an error was reported.
+     */
+    static bool DetectVarDeclarationWithoutScope(const Statement& stmt,
+                                                 ErrorReporter* errors = nullptr);
+
     static int NodeCountUpToLimit(const FunctionDefinition& function, int limit);
 
     /**
@@ -150,6 +157,10 @@ struct Analysis {
     // Detects functions that fail to return a value on at least one path.
     static bool CanExitWithoutReturningValue(const FunctionDeclaration& funcDecl,
                                              const Statement& body);
+
+    // Searches for @if/@switch statements that didn't optimize away, or dangling
+    // FunctionReference or TypeReference expressions, and reports them as errors.
+    static void VerifyStaticTestsAndExpressions(const Program& program);
 };
 
 /**
