@@ -19,7 +19,6 @@ using namespace SkSL::dsl;
 namespace SkSL {
 
 static constexpr int kMaxParseDepth = 50;
-static constexpr int kMaxStructDepth = 8;
 
 static int parse_modifier_token(Token::Kind token) {
     switch (token) {
@@ -412,20 +411,18 @@ SkTArray<T> DSLParser::varDeclarationEnd(PositionInfo pos, const dsl::DSLModifie
         type = baseType;
         Token identifierName;
         if (!this->expectIdentifier(&identifierName)) {
-            return {};
+            return result;
         }
         if (!parseArrayDimensions(&type)) {
-            return {};
+            return result;
         }
         if (!parseInitializer(&initializer)) {
-            return {};
+            return result;
         }
         result.push_back(T(mods, type, this->text(identifierName), std::move(initializer)));
         AddToSymbolTable(result.back());
     }
-    if (!this->expect(Token::Kind::TK_SEMICOLON, "';'")) {
-        return {};
-    }
+    this->expect(Token::Kind::TK_SEMICOLON, "';'");
     return result;
 }
 
@@ -502,10 +499,6 @@ skstd::optional<DSLType> DSLParser::structDeclaration() {
     if (!this->expectIdentifier(&name)) {
         return skstd::nullopt;
     }
-    if (fDepth > kMaxStructDepth) {
-        this->error(name.fOffset, "struct '" + this->text(name) + "' is too deeply nested");
-        return skstd::nullopt;
-    }
     if (!this->expect(Token::Kind::TK_LBRACE, "'{'")) {
         return skstd::nullopt;
     }
@@ -547,15 +540,14 @@ skstd::optional<DSLType> DSLParser::structDeclaration() {
 
 /* structDeclaration ((IDENTIFIER varDeclarationEnd) | SEMICOLON) */
 SkTArray<dsl::DSLGlobalVar> DSLParser::structVarDeclaration(const DSLModifiers& modifiers) {
-    PositionInfo pos = this->position(this->peek());
     skstd::optional<DSLType> type = this->structDeclaration();
     if (!type) {
         return {};
     }
     Token name;
     if (this->checkNext(Token::Kind::TK_IDENTIFIER, &name)) {
-        return this->varDeclarationEnd<DSLGlobalVar>(pos, modifiers, std::move(*type),
-                                                     this->text(name));
+        return this->varDeclarationEnd<DSLGlobalVar>(this->position(name), modifiers,
+                std::move(*type), this->text(name));
     }
     this->expect(Token::Kind::TK_SEMICOLON, "';'");
     return {};
@@ -768,7 +760,7 @@ skstd::optional<DSLType> DSLParser::type(const DSLModifiers& modifiers) {
         this->error(type, ("no type named '" + this->text(type) + "'").c_str());
         return skstd::nullopt;
     }
-    DSLType result(this->text(type), modifiers);
+    DSLType result(this->text(type), modifiers, this->position(type));
     while (this->checkNext(Token::Kind::TK_LBRACKET)) {
         if (this->peek().fKind != Token::Kind::TK_RBRACKET) {
             result = Array(result, this->arraySize(), this->position(type));
