@@ -6,7 +6,7 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling different
   # dependencies without interference from each other.
-  'sk_tool_revision': 'git_revision:a2c45e4997e0c5eabe6519f52501de1ea2e98dd6',
+  'sk_tool_revision': 'git_revision:f9e7723e5a27fbb7806a7b93434013beb55b4aac',
 }
 
 deps = {
@@ -45,7 +45,7 @@ deps = {
   "third_party/externals/zlib"            : "https://chromium.googlesource.com/chromium/src/third_party/zlib@c876c8f87101c5a75f6014b0f832499afeb65b73",
 
   "../src": {
-    "url": "https://chromium.googlesource.com/chromium/src.git@aa692f23db429726339eacfc55de2838056ca05a",
+    "url": "https://chromium.googlesource.com/chromium/src.git@a2b0fa8ea08111655f2f8465530220d892b9cf08",
     "condition": "checkout_chromium",
   },
 
