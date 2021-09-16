@@ -479,8 +479,7 @@ public:
         SkASSERT(!U_FAILURE(icu_err));
 
         // ... and back to utf8 'cause that's what we want.
-        auto upper8 = convertUtf16ToUtf8(str16);
-        return upper8;
+        return convertUtf16ToUtf8((char16_t*)upper16.get(), upper16.size());
     }
 
     bool getBidiRegions(const char utf8[],

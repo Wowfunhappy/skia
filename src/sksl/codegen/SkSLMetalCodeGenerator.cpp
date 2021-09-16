@@ -464,12 +464,11 @@ String MetalCodeGenerator::getInversePolyfill(const ExpressionArray& arguments) 
 void MetalCodeGenerator::writeMatrixCompMult() {
     static constexpr char kMatrixCompMult[] = R"(
 template <int C, int R>
-matrix<float, C, R> matrixCompMult(matrix<float, C, R> a, matrix<float, C, R> b) {
-    matrix<float, C, R> result;
+matrix<float, C, R> matrixCompMult(matrix<float, C, R> a, const matrix<float, C, R> b) {
     for (int c = 0; c < C; ++c) {
-        result[c] = a[c] * b[c];
+        a[c] *= b[c];
     }
-    return result;
+    return a;
 }
 )";
 
@@ -948,13 +947,14 @@ void MetalCodeGenerator::assembleMatrixFromExpressions(const AnyConstructor& cto
     int argPosition = 0;
     auto args = ctor.argumentSpan();
 
+    static constexpr char kSwizzle[] = "xyzw";
     const char* separator = "";
     for (int c = 0; c < columns; ++c) {
         fExtraFunctions.printf("%s%s%d(", separator, matrixType.c_str(), rows);
         separator = "), ";
 
         const char* columnSeparator = "";
-        for (int r = 0; r < rows; ++r) {
+        for (int r = 0; r < rows;) {
             fExtraFunctions.writeText(columnSeparator);
             columnSeparator = ", ";
 
@@ -963,16 +963,26 @@ void MetalCodeGenerator::assembleMatrixFromExpressions(const AnyConstructor& cto
                 switch (argType.typeKind()) {
                     case Type::TypeKind::kScalar: {
                         fExtraFunctions.printf("x%zu", argIndex);
+                        ++r;
+                        ++argPosition;
                         break;
                     }
                     case Type::TypeKind::kVector: {
-                        fExtraFunctions.printf("x%zu[%d]", argIndex, argPosition);
+                        fExtraFunctions.printf("x%zu.", argIndex);
+                        do {
+                            fExtraFunctions.write8(kSwizzle[argPosition]);
+                            ++r;
+                            ++argPosition;
+                        } while (r < rows && argPosition < argType.columns());
                         break;
                     }
                     case Type::TypeKind::kMatrix: {
-                        fExtraFunctions.printf("x%zu[%d][%d]", argIndex,
-                                               argPosition / argType.rows(),
-                                               argPosition % argType.rows());
+                        fExtraFunctions.printf("x%zu[%d].", argIndex, argPosition / argType.rows());
+                        do {
+                            fExtraFunctions.write8(kSwizzle[argPosition]);
+                            ++r;
+                            ++argPosition;
+                        } while (r < rows && (argPosition % argType.rows()) != 0);
                         break;
                     }
                     default: {
@@ -982,7 +992,6 @@ void MetalCodeGenerator::assembleMatrixFromExpressions(const AnyConstructor& cto
                     }
                 }
 
-                ++argPosition;
                 if (argPosition >= argType.columns() * argType.rows()) {
                     ++argIndex;
                     argPosition = 0;
