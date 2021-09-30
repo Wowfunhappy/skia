@@ -23689,7 +23689,7 @@
         "gpu:RadeonVega3",
         "os:ChromeOS",
         "pool:Skia",
-        "release_version:13729.56.0"
+        "release_version:14233.0.0"
       ],
       "env_prefixes": {
         "PATH": [
@@ -39122,7 +39122,7 @@
         "gpu:RadeonVega3",
         "os:ChromeOS",
         "pool:Skia",
-        "release_version:13729.56.0"
+        "release_version:14233.0.0"
       ],
       "env_prefixes": {
         "PATH": [
@@ -39217,7 +39217,7 @@
         "gpu:RadeonVega3",
         "os:ChromeOS",
         "pool:Skia",
-        "release_version:13729.56.0"
+        "release_version:14233.0.0"
       ],
       "env_prefixes": {
         "PATH": [
@@ -82817,7 +82817,6 @@
     "Housekeeper-PerCommit-RunGnToBp": {},
     "Perf-Ubuntu18-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-ASAN": {},
     "Test-Android-Clang-GalaxyS20-GPU-MaliG77-arm64-Release-All-Android_Vulkan": {},
-    "Test-Android-Clang-GalaxyS7_G930FD-GPU-MaliT880-arm64-Release-All-Android": {},
     "Test-Debian10-Clang-GCE-CPU-AVX2-x86_64-Debug-All": {},
     "Test-Debian10-Clang-GCE-CPU-AVX2-x86_64-Debug-All-BonusConfigs": {},
     "Test-Debian10-Clang-NUC7i5BNK-GPU-IntelIris640-x86_64-Debug-All": {},
