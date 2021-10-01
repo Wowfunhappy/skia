@@ -11,6 +11,7 @@
 #include "include/core/SkData.h"
 #include "include/core/SkTypes.h"
 #include "src/core/SkUtils.h"  // unaligned_{load,store}
+#include <cstdint>
 
 // Every function in this file should be marked static and inline using SI.
 #if defined(__clang__)
@@ -3226,13 +3227,19 @@ SI I16 scaled_mult(I16 a, I16 b) {
 // This sum is to support lerp where the result will always be a positive number. In general,
 // a sum like this would require an additional bit, but because we know the range of the result
 // we know that the extra bit will always be zero.
-SI I16 constrained_add(I16 a, U16 b) {
-    for (size_t i = 0; i < N; i++) {
-        // Ensure that a + b is on the interval [0, UINT16_MAX]
-        SkASSERT(-b[i] <= a[i] && a[i] <= UINT16_MAX - b[i]);
-    }
-    U16 answer = (U16)a + b;
-    return (I16)answer;
+SI U16 constrained_add(I16 a, U16 b) {
+    #if defined(SK_DEBUG)
+        for (size_t i = 0; i < N; i++) {
+            // Ensure that a + b is on the interval [0, UINT16_MAX]
+            int ia = a[i],
+                ib = b[i];
+            // Use 65535 here because fuchsia's compiler evaluates UINT16_MAX - ib, which is
+            // 65536U - ib, as an uint32_t instead of an int32_t. This was forcing ia to be
+            // interpreted as an uint32_t.
+            SkASSERT(-ib <= ia && ia <= 65535 - ib);
+        }
+    #endif
+    return b + a;
 }
 
 SI F fract(F x) { return x - floor_(x); }
@@ -3550,10 +3557,6 @@ SI void from_8888(U32 rgba, U16* r, U16* g, U16* b, U16* a) {
     *g = cast_U16(rgba & 65535) >>  8;
     *b = cast_U16(rgba >>   16) & 255;
     *a = cast_U16(rgba >>   16) >>  8;
-}
-
-SI void from_8888(U32 rgba, I16* r, I16* g, I16* b, I16* a) {
-    from_8888(rgba, (U16*)r, (U16*)g, (U16*)b, (U16*)a);
 }
 
 SI void load_8888_(const uint32_t* ptr, size_t tail, U16* r, U16* g, U16* b, U16* a) {
@@ -4052,13 +4055,6 @@ STAGE_GP(evenly_spaced_2_stop_gradient, const SkRasterPipeline_EvenlySpaced2Stop
 }
 
 SI F   cast  (U32 v) { return      __builtin_convertvector((I32)v,   F); }
-SI void from_8888(U32 _8888, F* r, F* g, F* b, F* a) {
-    *r = cast((_8888      ) & 0xff) * (1/255.0f);
-    *g = cast((_8888 >>  8) & 0xff) * (1/255.0f);
-    *b = cast((_8888 >> 16) & 0xff) * (1/255.0f);
-    *a = cast((_8888 >> 24)       ) * (1/255.0f);
-}
-
 #if !defined(SK_SUPPORT_LEGACY_BILERP_HIGHP)
 STAGE_GP(bilerp_clamp_8888, const SkRasterPipeline_GatherCtx* ctx) {
     // Quantize sample point and transform into lerp coordinates converting them to 16.16 fixed
@@ -4097,9 +4093,9 @@ STAGE_GP(bilerp_clamp_8888, const SkRasterPipeline_GatherCtx* ctx) {
     //     2^-9 * 2 * v = tx*(R - L)*2^-9 + (R + L)*2^-9
     //         2^-8 * v = 2^-9 * (tx*(R - L) + (R + L))
     //                v = 1/2 * (tx*(R - L) + (R + L))
-    auto lerpX = [&](I16 left, I16 right) -> I16 {
-        U16 middle = (U16)(right + left) << 7;
-        I16 width  = (right - left) << 7,
+    auto lerpX = [&](U16 left, U16 right) -> U16 {
+        I16 width  = (I16)(right - left) << 7;
+        U16 middle = (right + left) << 7;
         // The constrained_add is the most subtle part of lerp. The first term is on the interval
         // [-1, 1), and the second term is on the interval is on the interval [0, 1) because
         // both terms are too high by a factor of 2 which will be handled below. (Both R and L are
@@ -4107,23 +4103,23 @@ STAGE_GP(bilerp_clamp_8888, const SkRasterPipeline_GatherCtx* ctx) {
         // should overflow, but because we know that sum produces an output on the
         // interval [0, 1) we know that the extra bit that would be needed will always be 0. So
         // we need to be careful to treat this sum as an unsigned positive number in the divide
-        // by 2 below.
-            v2  = constrained_add(scaled_mult(tx, width), middle);
+        // by 2 below. Add +1 for rounding.
+        U16 v2  = constrained_add(scaled_mult(tx, width), middle) + 1;
         // Divide by 2 to calculate v and at the same time bring the intermediate value onto the
         // interval [0, 1/2] to set up for the lerpY.
-        return (I16)(((U16)(v2 + 1)) >> 1);
+        return v2 >> 1;
     };
 
     const uint32_t* ptr;
     U32 ix = ix_and_ptr(&ptr, ctx, sx, sy);
-    I16 leftR, leftG, leftB, leftA;
+    U16 leftR, leftG, leftB, leftA;
     from_8888(gather<U32>(ptr, ix), &leftR,&leftG,&leftB,&leftA);
 
     ix = ix_and_ptr(&ptr, ctx, sx+1, sy);
-    I16 rightR, rightG, rightB, rightA;
+    U16 rightR, rightG, rightB, rightA;
     from_8888(gather<U32>(ptr, ix), &rightR,&rightG,&rightB,&rightA);
 
-    I16 topR = lerpX(leftR, rightR),
+    U16 topR = lerpX(leftR, rightR),
         topG = lerpX(leftG, rightG),
         topB = lerpX(leftB, rightB),
         topA = lerpX(leftA, rightA);
@@ -4134,19 +4130,20 @@ STAGE_GP(bilerp_clamp_8888, const SkRasterPipeline_GatherCtx* ctx) {
     ix = ix_and_ptr(&ptr, ctx, sx+1, sy+1);
     from_8888(gather<U32>(ptr, ix), &rightR,&rightG,&rightB,&rightA);
 
-    I16 bottomR = lerpX(leftR, rightR),
+    U16 bottomR = lerpX(leftR, rightR),
         bottomG = lerpX(leftG, rightG),
         bottomB = lerpX(leftB, rightB),
         bottomA = lerpX(leftA, rightA);
 
     // lerpY plays the same mathematical tricks as lerpX, but the final divide is by 256 resulting
     // in a value on [0, 255].
-    auto lerpY = [&](I16 top, I16 bottom) -> U16 {
-        I16 width  = bottom - top,
-            middle = bottom + top,
-            blend  = scaled_mult(ty, width) + middle;
+    auto lerpY = [&](U16 top, U16 bottom) -> U16 {
+        I16 width  = (I16)bottom - top;
+        U16 middle = bottom + top;
+        // Add + 0x80 for rounding.
+        U16 blend  = constrained_add(scaled_mult(ty, width), middle) + 0x80;
 
-        return ((U16)(blend + 0x80)) >> 8;
+        return blend >> 8;
     };
 
     r = lerpY(topR, bottomR);
