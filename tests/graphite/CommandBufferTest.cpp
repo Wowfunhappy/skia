@@ -46,6 +46,8 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(CommandBufferTest, reporter, context) {
         2,      // MTLStorageModePrivate
     };
     TextureInfo textureInfo(mtlTextureInfo);
+#else
+    TextureInfo textureInfo;
 #endif
 
     sk_sp<Texture> texture = gpu->resourceProvider()->findOrCreateTexture(textureSize,
