@@ -10,6 +10,7 @@
 #include "include/core/SkStrokeRec.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkRRectPriv.h"
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrDrawOpTest.h"
 #include "src/gpu/GrGeometryProcessor.h"
@@ -19,7 +20,6 @@
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrStyle.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
 #include "src/gpu/glsl/GrGLSLUniformHandler.h"
@@ -1281,7 +1281,7 @@ private:
         int firstVertex;
         VertexWriter vertices{target->makeVertexSpace(fProgramInfo->geomProc().vertexStride(),
                                                       fVertCount, &vertexBuffer, &firstVertex)};
-        if (!vertices.fPtr) {
+        if (!vertices) {
             SkDebugf("Could not allocate vertices\n");
             return;
         }
@@ -1653,7 +1653,7 @@ private:
         int firstVertex;
         VertexWriter vertices{target->makeVertexSpace(fProgramInfo->geomProc().vertexStride(),
                                                       fVertCount, &vertexBuffer, &firstVertex)};
-        if (!vertices.fPtr) {
+        if (!vertices) {
             SkDebugf("Could not allocate vertices\n");
             return;
         }
@@ -1987,7 +1987,7 @@ private:
 
         QuadHelper helper(target, fProgramInfo->geomProc().vertexStride(), fEllipses.count());
         VertexWriter verts{helper.vertices()};
-        if (!verts.fPtr) {
+        if (!verts) {
             SkDebugf("Could not allocate vertices\n");
             return;
         }
@@ -2263,7 +2263,7 @@ private:
 
         QuadHelper helper(target, fProgramInfo->geomProc().vertexStride(), fEllipses.count());
         VertexWriter verts{helper.vertices()};
-        if (!verts.fPtr) {
+        if (!verts) {
             return;
         }
 
@@ -2684,7 +2684,7 @@ private:
 
         VertexWriter verts{target->makeVertexSpace(fProgramInfo->geomProc().vertexStride(),
                                                      fVertCount, &vertexBuffer, &firstVertex)};
-        if (!verts.fPtr) {
+        if (!verts) {
             SkDebugf("Could not allocate vertices\n");
             return;
         }
@@ -3014,7 +3014,7 @@ private:
                              std::move(indexBuffer), kVertsPerStandardRRect, indicesPerInstance,
                              fRRects.count(), kNumRRectsInIndexBuffer);
         VertexWriter verts{helper.vertices()};
-        if (!verts.fPtr) {
+        if (!verts) {
             SkDebugf("Could not allocate vertices\n");
             return;
         }

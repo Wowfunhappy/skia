@@ -13,11 +13,11 @@
 #include "src/core/SkDevice.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkVerticesPriv.h"
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrGeometryProcessor.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/SkGr.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/glsl/GrGLSLColorSpaceXformHelper.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLVarying.h"
@@ -405,7 +405,7 @@ void DrawVerticesOpImpl::onPrepareDraws(GrMeshDrawTarget* target) {
     int firstVertex = 0;
     VertexWriter verts{
             target->makeVertexSpace(vertexStride, fVertexCount, &vertexBuffer, &firstVertex)};
-    if (!verts.fPtr) {
+    if (!verts) {
         SkDebugf("Could not allocate vertices\n");
         return;
     }
@@ -446,7 +446,7 @@ void DrawVerticesOpImpl::onPrepareDraws(GrMeshDrawTarget* target) {
         // TODO4F: Preserve float colors
         GrColor meshColor = mesh.fColor.toBytes_RGBA();
 
-        SkPoint* posBase = (SkPoint*)verts.fPtr;
+        SkPoint* posBase = (SkPoint*)verts.ptr();
 
         for (int i = 0; i < vertexCount; ++i) {
             verts << positions[i];

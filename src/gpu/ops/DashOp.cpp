@@ -10,6 +10,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPointPriv.h"
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrAppliedClip.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrDefaultGeoProcFactory.h"
@@ -21,7 +22,6 @@
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrStyle.h"
 #include "src/gpu/SkGr.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/geometry/GrQuad.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramDataManager.h"
@@ -564,7 +564,7 @@ private:
 
         QuadHelper helper(target, fProgramInfo->geomProc().vertexStride(), totalRectCount);
         VertexWriter vertices{ helper.vertices() };
-        if (!vertices.fPtr) {
+        if (!vertices) {
             return;
         }
 

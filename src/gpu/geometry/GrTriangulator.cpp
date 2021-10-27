@@ -7,8 +7,8 @@
 
 #include "src/gpu/geometry/GrTriangulator.h"
 
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrEagerVertexAllocator.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/geometry/GrPathUtils.h"
 
 #include "src/core/SkGeometry.h"
@@ -88,7 +88,7 @@ static inline void* emit_vertex(Vertex* v, bool emitCoverage, void* data) {
         verts << GrNormalizeByteToFloat(v->fAlpha);
     }
 
-    return verts.fPtr;
+    return verts.ptr();
 }
 
 static void* emit_triangle(Vertex* v0, Vertex* v1, Vertex* v2, bool emitCoverage, void* data) {

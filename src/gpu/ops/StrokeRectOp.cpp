@@ -11,6 +11,7 @@
 #include "include/private/GrResourceKey.h"
 #include "include/utils/SkRandom.h"
 #include "src/core/SkMatrixPriv.h"
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrColor.h"
 #include "src/gpu/GrDefaultGeoProcFactory.h"
@@ -18,7 +19,6 @@
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrResourceProvider.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/geometry/GrQuad.h"
 #include "src/gpu/ops/FillRectOp.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
@@ -642,7 +642,7 @@ void AAStrokeRectOp::onPrepareDraws(GrMeshDrawTarget* target) {
                          fProgramInfo->geomProc().vertexStride(), std::move(indexBuffer),
                          verticesPerInstance, indicesPerInstance, instanceCount, maxQuads);
     VertexWriter vertices{ helper.vertices() };
-    if (!vertices.fPtr) {
+    if (!vertices) {
         SkDebugf("Could not allocate vertices\n");
         return;
     }

@@ -9,12 +9,12 @@
 
 #include "include/core/SkRegion.h"
 #include "src/core/SkMatrixPriv.h"
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrDefaultGeoProcFactory.h"
 #include "src/gpu/GrOpFlushState.h"
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrResourceProvider.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/ops/GrMeshDrawOp.h"
 #include "src/gpu/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
 
@@ -125,7 +125,7 @@ private:
         QuadHelper helper(target, fProgramInfo->geomProc().vertexStride(), numRects);
 
         VertexWriter vertices{helper.vertices()};
-        if (!vertices.fPtr) {
+        if (!vertices) {
             SkDebugf("Could not allocate vertices\n");
             return;
         }

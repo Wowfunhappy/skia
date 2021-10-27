@@ -16,12 +16,12 @@
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkPointPriv.h"
 #include "src/core/SkRasterClip.h"
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrBuffer.h"
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrDistanceFieldGenFromVector.h"
 #include "src/gpu/GrDrawOpTest.h"
 #include "src/gpu/GrResourceProvider.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/effects/GrBitmapTextGeoProc.h"
 #include "src/gpu/effects/GrDistanceFieldGeoProc.h"
 #include "src/gpu/geometry/GrQuad.h"
@@ -216,7 +216,7 @@ private:
             &flushInfo.fVertexBuffer, &flushInfo.fVertexOffset)};
 
         flushInfo.fIndexBuffer = target->resourceProvider()->refNonAAQuadIndexBuffer();
-        if (!vertices.fPtr || !flushInfo.fIndexBuffer) {
+        if (!vertices || !flushInfo.fIndexBuffer) {
             SkDebugf("Could not allocate vertices\n");
             return;
         }

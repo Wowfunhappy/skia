@@ -11,10 +11,10 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkPoint3.h"
 #include "include/private/GrTypesPriv.h"
+#include "src/gpu/BufferWriter.h"
 #include "src/gpu/GrColor.h"
 #include "src/gpu/GrGeometryProcessor.h"
 #include "src/gpu/GrSamplerState.h"
-#include "src/gpu/VertexWriter.h"
 #include "src/gpu/geometry/GrQuad.h"
 #include "src/gpu/geometry/GrQuadUtils.h"
 #include "src/gpu/ops/TextureOp.h"
@@ -146,7 +146,7 @@ namespace skgpu::v1::QuadPerEdgeAA {
         void append(GrQuad* deviceQuad, GrQuad* localQuad,
                     const SkPMColor4f& color, const SkRect& uvSubset, GrQuadAAFlags aaFlags);
 
-        SkDEBUGCODE(char* vertices() const { return (char*) fVertexWriter.fPtr; })
+        SkDEBUGCODE(char* vertices() const { return (char*) fVertexWriter.ptr(); })
 
     private:
         // VertexSpec defines many unique ways to write vertex attributes, which can be handled
