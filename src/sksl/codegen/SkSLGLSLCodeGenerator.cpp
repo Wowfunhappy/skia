@@ -441,6 +441,7 @@ void GLSLCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     const ExpressionArray& arguments = c.arguments();
     bool isTextureFunctionWithBias = false;
     bool nameWritten = false;
+    const char* closingParen = ")";
     switch (c.function().intrinsicKind()) {
         case k_abs_IntrinsicKind: {
             if (!this->caps().emulateAbsIntFunction())
@@ -495,10 +496,10 @@ void GLSLCodeGenerator::writeFunctionCall(const FunctionCall& c) {
             break;
         case k_dFdy_IntrinsicKind:
             // Flipping Y also negates the Y derivatives.
-            this->write("(" SKSL_RTFLIP_NAME ".y * dFdy(");
-            this->writeExpression(*arguments[0], Precedence::kSequence);
-            this->write("))");
-            return;
+            closingParen = "))";
+            this->write("(" SKSL_RTFLIP_NAME ".y * dFdy");
+            nameWritten = true;
+            [[fallthrough]];
         case k_dFdx_IntrinsicKind:
         case k_fwidth_IntrinsicKind:
             if (!fFoundDerivatives &&
@@ -684,7 +685,7 @@ void GLSLCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     if (fProgram.fConfig->fSettings.fSharpenTextures && isTextureFunctionWithBias) {
         this->write(", -0.5");
     }
-    this->write(")");
+    this->write(closingParen);
 }
 
 void GLSLCodeGenerator::writeConstructorDiagonalMatrix(const ConstructorDiagonalMatrix& c,
