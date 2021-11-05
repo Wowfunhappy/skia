@@ -54,9 +54,6 @@
   {"name": "Build-Debian10-Clang-x86_64-Debug-Tidy",
    "cq_config": {}
    },
-  {"name": "Build-Debian10-Clang-x86_64-Debug-V1only"},
-  {"name": "Build-Debian10-Clang-x86_64-Debug-V1andV2"},
-  {"name": "Build-Debian10-Clang-x86_64-Debug-V2only"},
   {"name": "Build-Debian10-Clang-x86_64-Debug-Vulkan"},
   {"name": "Build-Debian10-Clang-x86_64-Debug-Wuffs",
    "cq_config": {"location_regexes": ["DEPS", "src/codec/SkWuffs.*"]}
@@ -269,6 +266,7 @@
   {"name": "Perf-Android-Clang-Pixel5-GPU-Adreno620-arm64-Release-All-Android"},
   {"name": "Perf-Android-Clang-Pixel5-GPU-Adreno620-arm64-Release-All-Android_Vulkan"},
   {"name": "Perf-Android-Clang-Wembley-GPU-PowerVRGE8320-arm-Release-All-Android"},
+  {"name": "Perf-ChromeOS-Clang-Kevin-GPU-MaliT860-arm-Release-All"},
   {"name": "Perf-ChromeOS-Clang-Sparky360-GPU-IntelUHDGraphics605-x86_64-Release-All"},
   {"name": "Perf-ChromeOS-Clang-Spin513-GPU-Adreno618-arm-Release-All"},
   {"name": "Perf-ChromeOS-Clang-Spin514-GPU-RadeonVega3-x86_64-Release-All"},
@@ -433,6 +431,8 @@
   {"name": "Test-Android-Clang-Pixel5-GPU-Adreno620-arm64-Release-All-Android_Vulkan"},
   {"name": "Test-Android-Clang-Wembley-GPU-PowerVRGE8320-arm-Debug-All-Android"},
   {"name": "Test-Android-Clang-Wembley-GPU-PowerVRGE8320-arm-Release-All-Android"},
+  {"name": "Test-ChromeOS-Clang-Kevin-GPU-MaliT860-arm-Debug-All"},
+  {"name": "Test-ChromeOS-Clang-Kevin-GPU-MaliT860-arm-Release-All"},
   {"name": "Test-ChromeOS-Clang-Sparky360-GPU-IntelUHDGraphics605-x86_64-Debug-All"},
   {"name": "Test-ChromeOS-Clang-Sparky360-GPU-IntelUHDGraphics605-x86_64-Release-All"},
   {"name": "Test-ChromeOS-Clang-Spin513-GPU-Adreno618-arm-Release-All"},
