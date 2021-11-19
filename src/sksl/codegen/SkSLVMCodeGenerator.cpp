@@ -268,7 +268,8 @@ private:
     const SampleBlenderFn fSampleBlender;
 
     struct Slot {
-        skvm::Val         val;
+        skvm::Val  val;
+        bool       writtenTo = false;
     };
     std::vector<Slot> fSlots;
 
@@ -469,6 +470,7 @@ void SkVMGenerator::writeFunction(const FunctionDefinition& function,
                nslots    = p->type().slotCount();
 
         for (size_t i = 0; i < nslots; ++i) {
+            fSlots[paramSlot + i].writtenTo = false;
             this->writeToSlot(paramSlot + i, arguments[argIdx + i]);
         }
         argIdx += nslots;
@@ -500,7 +502,7 @@ void SkVMGenerator::writeFunction(const FunctionDefinition& function,
 }
 
 void SkVMGenerator::writeToSlot(int slot, skvm::Val value) {
-    if (fDebugInfo && fSlots[slot].val != value) {
+    if (fDebugInfo && (!fSlots[slot].writtenTo || fSlots[slot].val != value)) {
         if (fDebugInfo->fSlotInfo[slot].numberKind == Type::NumberKind::kFloat) {
             fBuilder->trace_var(this->traceMask(), slot, f32(value));
         } else if (fDebugInfo->fSlotInfo[slot].numberKind == Type::NumberKind::kBoolean) {
@@ -508,6 +510,7 @@ void SkVMGenerator::writeToSlot(int slot, skvm::Val value) {
         } else {
             fBuilder->trace_var(this->traceMask(), slot, i32(value));
         }
+        fSlots[slot].writtenTo = true;
     }
 
     fSlots[slot].val = value;
@@ -1764,6 +1767,7 @@ void SkVMGenerator::writeVarDeclaration(const VarDeclaration& decl) {
 
     Value val = decl.value() ? this->writeExpression(*decl.value()) : Value{};
     for (size_t i = 0; i < nslots; ++i) {
+        fSlots[slot + i].writtenTo = false;
         this->writeToSlot(slot + i, val ? val[i] : fBuilder->splat(0.0f).id);
     }
 }
@@ -1920,11 +1924,14 @@ bool ProgramToSkVM(const Program& program,
         return skvm::Color{};
     };
 
-    skvm::F32 zero = b->splat(0.0f);
-    skvm::Coord zeroCoord = {zero, zero};
+    // Set up device coordinates so that the rightmost evaluated pixel will be centered on (0, 0).
+    // (If the coordinates aren't used, dead-code elimination will optimize this away.)
+    skvm::F32 pixelCenter = b->splat(0.5f);
+    skvm::Coord device = {pixelCenter, pixelCenter};
+    device.x += to_F32(b->splat(1) - b->index());
+
     SkVMGenerator generator(program, b, debugInfo, sampleShader, sampleColorFilter, sampleBlender);
-    generator.writeProgram(uniforms, /*device=*/zeroCoord,
-                           function, SkMakeSpan(argVals), SkMakeSpan(returnVals));
+    generator.writeProgram(uniforms, device, function, SkMakeSpan(argVals), SkMakeSpan(returnVals));
 
     // If the SkSL tried to use any shader, colorFilter, or blender objects - we don't have a
     // mechanism (yet) for binding to those.

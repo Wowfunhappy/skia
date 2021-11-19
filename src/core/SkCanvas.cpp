@@ -471,7 +471,7 @@ SkCanvas::SkCanvas(const SkBitmap& bitmap, ColorBehavior)
 
     SkBitmap tmp(bitmap);
     *const_cast<SkImageInfo*>(&tmp.info()) = tmp.info().makeColorSpace(nullptr);
-    sk_sp<SkBaseDevice> device(new SkBitmapDevice(tmp, fProps, nullptr, nullptr));
+    sk_sp<SkBaseDevice> device(new SkBitmapDevice(tmp, fProps));
     this->init(device);
 }
 #endif
