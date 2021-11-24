@@ -19,19 +19,32 @@
 #include <utility>
 
 #include <ft2build.h>
-#include FT_FREETYPE_H
-#include FT_BITMAP_H
+#include <freetype/freetype.h>
+#include <freetype/ftbitmap.h>
 #ifdef FT_COLOR_H
-#   include FT_COLOR_H
+#   include <freetype/ftcolor.h>
 #endif
-#include FT_IMAGE_H
-#include FT_OUTLINE_H
-#include FT_SIZES_H
+#include <freetype/ftimage.h>
+#include <freetype/ftoutln.h>
+#include <freetype/ftsizes.h>
 // In the past, FT_GlyphSlot_Own_Bitmap was defined in this header file.
-#include FT_SYNTHESIS_H
+#include <freetype/ftsynth.h>
 
 #ifdef TT_SUPPORT_COLRV1
-#include "src/core/SkScopeExit.h"
+// FT_ClipBox and FT_Get_Color_Glyph_ClipBox introduced VER-2-11-0-18-g47cf8ebf4
+// FT_COLR_COMPOSITE_PLUS and renumbering introduced VER-2-11-0-21-ge40ae7569
+// FT_SIZEOF_LONG_LONG introduced VER-2-11-0-31-gffdac8d67
+// FT_PaintRadialGradient changed size and layout at VER-2-11-0-147-gd3d3ff76d
+// FT_STATIC_CAST introduced VER-2-11-0-172-g9079c5d91
+// So undefine TT_SUPPORT_COLRV1 before 2.11.1 but not if FT_STATIC_CAST is defined.
+#if (((FREETYPE_MAJOR)  < 2) || \
+     ((FREETYPE_MAJOR) == 2 && (FREETYPE_MINOR)  < 11) || \
+     ((FREETYPE_MAJOR) == 2 && (FREETYPE_MINOR) == 11 && (FREETYPE_PATCH) < 1)) && \
+    !defined(FT_STATIC_CAST)
+#    undef TT_SUPPORT_COLRV1
+#else
+#    include "src/core/SkScopeExit.h"
+#endif
 #endif
 
 // FT_LOAD_COLOR and the corresponding FT_Pixel_Mode::FT_PIXEL_MODE_BGRA
