@@ -25,7 +25,7 @@
 #include "include/private/chromium/GrSlug.h"
 #include "tools/ToolUtils.h"
 
-#if SK_SUPPORT_GPU
+#if SK_SUPPORT_GPU && defined(SK_EXPERIMENTAL_ADD_ATLAS_PADDING)
 class SlugGM : public skiagm::GM {
 public:
     SlugGM(const char* txt)
@@ -55,6 +55,7 @@ protected:
         sk_sp<SkTextBlob> blob(this->makeBlob());
         SkPaint p;
         p.setAntiAlias(true);
+        canvas->clipIRect(SkIRect::MakeSize(this->getISize()));
         canvas->scale(1.3f, 1.3f);
         sk_sp<GrSlug> slug = GrSlug::ConvertBlob(canvas, *blob, {10, 10}, p);
         if (slug == nullptr) {
