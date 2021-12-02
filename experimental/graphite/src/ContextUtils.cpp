@@ -40,7 +40,7 @@ static constexpr Uniform kSolidUniforms[kNumSolidUniforms] {
         {"color",  SLType::kFloat4 }
 };
 
-static const char* kLinearGradientMSL =
+static const char* kGradientMSL =
         // TODO: This should use local coords
         "float2 pos = interpolated.position.xy;\n"
         "float2 delta = uniforms.point1 - uniforms.point0;\n"
@@ -64,7 +64,7 @@ static const char* kSolidColorMSL = "out.color = float4(uniforms.color);\n";
 // that only defines a [[depth]] attribute but no color calculation.
 static const char* kNoneMSL = "out.color float4(0.0, 0.0, 1.0, 1.0);\n";
 
-sk_sp<UniformData> make_gradient_uniform_data_common(void* srcs[kNumGradientUniforms]) {
+sk_sp<UniformData> make_gradient_uniform_data_common(const void* srcs[kNumGradientUniforms]) {
     UniformManager mgr(Layout::kMetal);
 
     // TODO: Given that, for the sprint, we always know the uniforms we could cache 'dataSize'
@@ -87,7 +87,7 @@ sk_sp<UniformData> make_linear_gradient_uniform_data(SkPoint startPoint,
                                                      SkColor4f colors[kMaxStops],
                                                      float offsets[kMaxStops]) {
     float unusedRadii[2] = { 0.0f, 0.0f };
-    void* srcs[kNumGradientUniforms] = {
+    const void* srcs[kNumGradientUniforms] = {
             colors,
             offsets,
             &startPoint,
@@ -106,7 +106,7 @@ sk_sp<UniformData> make_radial_gradient_uniform_data(SkPoint point,
     SkPoint unusedPoint = {0.0f, 0.0f};
     float unusedRadius = 0.0f;
 
-    void* srcs[kNumGradientUniforms] = {
+    const void* srcs[kNumGradientUniforms] = {
             colors,
             offsets,
             &point,
@@ -124,7 +124,7 @@ sk_sp<UniformData> make_sweep_gradient_uniform_data(SkPoint point,
     SkPoint unusedPoint = {0.0f, 0.0f};
     float unusedRadii[2] = {0.0f, 0.0f};
 
-    void* srcs[kNumGradientUniforms] = {
+    const void* srcs[kNumGradientUniforms] = {
             colors,
             offsets,
             &point,
@@ -143,7 +143,7 @@ sk_sp<UniformData> make_conical_gradient_uniform_data(SkPoint point0,
                                                       SkColor4f colors[kMaxStops],
                                                       float offsets[kMaxStops]) {
 
-    void* srcs[kNumGradientUniforms] = {
+    const void* srcs[kNumGradientUniforms] = {
             colors,
             offsets,
             &point0,
@@ -183,7 +183,7 @@ sk_sp<UniformData> make_solid_uniform_data(SkColor4f color) {
 
     sk_sp<UniformData> result = UniformData::Make(kNumSolidUniforms, kSolidUniforms, dataSize);
 
-    void* srcs[kNumSolidUniforms] = { &color };
+    const void* srcs[kNumSolidUniforms] = { &color };
 
     mgr.writeUniforms(SkSpan<const Uniform>(kSolidUniforms, kNumSolidUniforms),
                       srcs, result->offsets(), result->data());
@@ -220,6 +220,8 @@ std::tuple<Combination, sk_sp<UniformData>> ExtractCombo(const PaintParams& p) {
         if (gradInfo.fColorCount > kMaxStops) {
             type = SkShader::GradientType::kNone_GradientType;
         }
+        // TODO(robertphillips): Remove once gradient MSL compiles
+        type = SkShader::GradientType::kNone_GradientType;
 
         switch (type) {
             case SkShader::kLinear_GradientType: {
@@ -272,6 +274,8 @@ std::tuple<Combination, sk_sp<UniformData>> ExtractCombo(const PaintParams& p) {
                                                               offsets);
                 break;
             case SkShader::GradientType::kColor_GradientType:
+                // TODO: The solid color gradient type should use its color, not
+                // the paint color
             case SkShader::GradientType::kNone_GradientType:
             default:
                 result.fShaderType = ShaderCombo::ShaderType::kSolidColor;
@@ -298,10 +302,11 @@ SkSpan<const Uniform> GetUniforms(ShaderCombo::ShaderType shaderType) {
         case ShaderCombo::ShaderType::kRadialGradient:
         case ShaderCombo::ShaderType::kSweepGradient:
         case ShaderCombo::ShaderType::kConicalGradient:
-            return SkMakeSpan(kGradientUniforms, kNumGradientUniforms);
+            // TODO(robertphillips): return gradient uniforms when MSL is ready
+            // return SkMakeSpan(kGradientUniforms, kNumGradientUniforms);
+            return SkMakeSpan(kSolidUniforms, kNumSolidUniforms);
         case ShaderCombo::ShaderType::kNone:
             return {nullptr, 0};
-        case ShaderCombo::ShaderType::kSolidColor:
         default:
             return SkMakeSpan(kSolidUniforms, kNumSolidUniforms);
     }
@@ -310,12 +315,14 @@ SkSpan<const Uniform> GetUniforms(ShaderCombo::ShaderType shaderType) {
 const char* GetShaderMSL(ShaderCombo::ShaderType shaderType) {
     switch (shaderType) {
         case ShaderCombo::ShaderType::kLinearGradient:
-            return kLinearGradientMSL;
-        case ShaderCombo::ShaderType::kNone:
-            return kNoneMSL;
         case ShaderCombo::ShaderType::kRadialGradient:
         case ShaderCombo::ShaderType::kSweepGradient:
         case ShaderCombo::ShaderType::kConicalGradient:
+            // TODO(robertphillips): return gradient MSL when ready
+            (void) kGradientMSL;
+            return kSolidColorMSL;
+        case ShaderCombo::ShaderType::kNone:
+            return kNoneMSL;
         case ShaderCombo::ShaderType::kSolidColor:
         default:
             return kSolidColorMSL;
