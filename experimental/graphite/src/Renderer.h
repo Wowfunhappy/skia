@@ -61,16 +61,14 @@ public:
     // although we could go as far as allowing RenderStep to handle composing the final SkSL if
     // given the paint combination's SkSL.
 
-    // Returns the body of a vertex function, which must include writing to a float4 "out.position".
-    // It has access to a "vtx" variable equivalent to the struct defined by
-    // vertexAttributes() and instanceAttributes() joined together, and a "uniforms" instance
-    // equivalent to the struct defined by uniforms(). If these structs would be empty, the
-    // variables are unavailable. Additionally "vertexID" and "instanceID" are always available.
+    // Returns the body of a vertex function, which must define a float4 devPosition variable.
+    // It has access to the variables declared by vertexAttributes(), instanceAttributes(),
+    // and uniforms().
     //
-    // NOTE: The above contract is mainly so that the entire MSL program can be created by just str
-    // concatenating struct definitions generated from the RenderStep and paint Combination, some
-    // hardcoded MSL prefixes and suffices, and then including the function bodies returned here.
-    virtual const char* vertexMSL() const = 0;
+    // NOTE: The above contract is mainly so that the entire SkSL program can be created by just str
+    // concatenating struct definitions generated from the RenderStep and paint Combination
+    // and then including the function bodies returned here.
+    virtual const char* vertexSkSL() const = 0;
 
     bool          requiresStencil() const { return fDepthStencilSettings.fStencilTestEnabled; }
     bool          requiresDepth()   const { return fDepthStencilSettings.fDepthTestEnabled ||
@@ -116,10 +114,12 @@ protected:
     RenderStep(Mask<Flags> flags,
                std::initializer_list<Uniform> uniforms,
                PrimitiveType primitiveType,
+               DepthStencilSettings depthStencilSettings,
                std::initializer_list<Attribute> vertexAttrs,
                std::initializer_list<Attribute> instanceAttrs)
             : fFlags(flags)
             , fPrimitiveType(primitiveType)
+            , fDepthStencilSettings(depthStencilSettings)
             , fUniforms(uniforms)
             , fVertexAttrs(vertexAttrs)
             , fInstanceAttrs(instanceAttrs)
@@ -194,6 +194,7 @@ public:
     const char* name()            const { return fName.c_str();    }
     int         numRenderSteps()  const { return fStepCount;       }
     bool        requiresStencil() const { return fRequiresStencil; }
+    bool        requiresDepth()   const { return fRequiresDepth; }
     bool        requiresMSAA()    const { return fRequiresMSAA;    }
 
 private:
@@ -216,12 +217,14 @@ private:
             : fName(name)
             , fStepCount(SkTo<int>(N))
             , fRequiresStencil(false)
+            , fRequiresDepth(false)
             , fRequiresMSAA(false) {
         static_assert(N <= kMaxRenderSteps);
         SkDEBUGCODE(bool performsShading = false;)
         for (int i = 0 ; i < fStepCount; ++i) {
             fSteps[i] = steps[i];
             fRequiresStencil |= fSteps[i]->requiresStencil();
+            fRequiresDepth |= fSteps[i]->requiresDepth();
             fRequiresMSAA |= fSteps[i]->requiresMSAA();
             SkDEBUGCODE(performsShading |= fSteps[i]->performsShading());
         }
@@ -237,6 +240,7 @@ private:
     SkString fName;
     int      fStepCount;
     bool     fRequiresStencil;
+    bool     fRequiresDepth;
     bool     fRequiresMSAA;
 };
 
