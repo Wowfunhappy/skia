@@ -19,9 +19,18 @@ void SkVMDebugTracePlayer::reset(sk_sp<SkVMDebugTrace> debugTrace) {
     fStack.push_back({/*fFunction=*/-1,
                       /*fLine=*/-1,
                       /*fDisplayMask=*/SkBitSet(nslots)});
+    fDirtyMask.emplace(nslots);
+    fReturnValues.emplace(nslots);
+
+    for (size_t slotIdx = 0; slotIdx < nslots; ++slotIdx) {
+        if (fDebugTrace->fSlotInfo[slotIdx].fnReturnValue >= 0) {
+            fReturnValues->set(slotIdx);
+        }
+    }
 }
 
 void SkVMDebugTracePlayer::step() {
+    this->tidy();
     while (!this->traceHasCompleted()) {
         if (this->execute(fCursor++)) {
             break;
@@ -30,6 +39,7 @@ void SkVMDebugTracePlayer::step() {
 }
 
 void SkVMDebugTracePlayer::stepOver() {
+    this->tidy();
     size_t initialStackDepth = fStack.size();
     while (!this->traceHasCompleted()) {
         bool canEscapeFromThisStackDepth = (fStack.size() <= initialStackDepth);
@@ -37,6 +47,26 @@ void SkVMDebugTracePlayer::stepOver() {
             break;
         }
     }
+}
+
+void SkVMDebugTracePlayer::stepOut() {
+    this->tidy();
+    size_t initialStackDepth = fStack.size();
+    while (!this->traceHasCompleted()) {
+        if (this->execute(fCursor++) && (fStack.size() < initialStackDepth)) {
+            break;
+        }
+    }
+}
+
+void SkVMDebugTracePlayer::tidy() {
+    fDirtyMask->reset();
+
+    // Conceptually this is `fStack.back().fDisplayMask &= ~fReturnValues`, but SkBitSet doesn't
+    // support masking one set of bits against another.
+    fReturnValues->forEachSetIndex([&](int slot) {
+        fStack.back().fDisplayMask.reset(slot);
+    });
 }
 
 bool SkVMDebugTracePlayer::traceHasCompleted() const {
@@ -69,7 +99,7 @@ std::vector<SkVMDebugTracePlayer::VariableData> SkVMDebugTracePlayer::getVariabl
 
     std::vector<VariableData> vars;
     bits.forEachSetIndex([&](int slot) {
-        vars.push_back({slot, fSlots[slot]});
+        vars.push_back({slot, fDirtyMask->test(slot), fSlots[slot]});
     });
     return vars;
 }
@@ -125,6 +155,7 @@ bool SkVMDebugTracePlayer::execute(size_t position) {
                 SkASSERT(fStack.size() > 1);
                 fStack.rbegin()[1].fDisplayMask.set(slot);
             }
+            fDirtyMask->set(slot);
             break;
         }
         case SkVMTraceInfo::Op::kEnter: { // data: function index, (unused)

@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/private/SkTOptional.h"
 #include "src/sksl/tracing/SkVMDebugTrace.h"
 #include "src/utils/SkBitSet.h"
 
@@ -24,6 +25,9 @@ public:
     /** Advances the simulation to the next Line op, skipping past matched Enter/Exit pairs. */
     void stepOver();
 
+    /** Advances the simulation until we exit from the current stack frame. */
+    void stepOut();
+
     /** Returns true if we have reached the end of the trace. */
     bool traceHasCompleted() const;
 
@@ -42,6 +46,7 @@ public:
     /** Returns variables from a stack frame, or from global scope. */
     struct VariableData {
         int      fSlotIndex;
+        bool     fDirty;  // has this slot been written-to since the last step call?
         int32_t  fValue;  // caller must type-pun bits to float/bool based on slot type
     };
     std::vector<VariableData> getLocalVariables(int stackFrameIndex) const;
@@ -53,6 +58,11 @@ private:
      * or exit trace op, which indicate a stopping point.
      */
     bool execute(size_t position);
+
+    /**
+     * Cleans up temporary state between steps, such as the dirty mask and function return values.
+     */
+    void tidy();
 
     /** Returns a vector of the indices and values of each slot that is enabled in `bits`. */
     std::vector<VariableData> getVariablesForDisplayMask(const SkBitSet& bits) const;
@@ -66,6 +76,9 @@ private:
     size_t                      fCursor = 0;   // position of the read head
     std::vector<int32_t>        fSlots;        // values in each slot
     std::vector<StackFrame>     fStack;        // the execution stack
+    skstd::optional<SkBitSet>   fDirtyMask;    // variable slots touched during the most-recently
+                                               // executed step
+    skstd::optional<SkBitSet>   fReturnValues; // variable slots containing return values
 };
 
 }  // namespace SkSL
