@@ -886,6 +886,7 @@ DEF_TEST(SkVM_trace_line, r) {
         void var(int, int32_t) override { fBuffer.push_back(-9999999); }
         void enter(int) override        { fBuffer.push_back(-9999999); }
         void exit(int) override         { fBuffer.push_back(-9999999); }
+        void scope(int) override        { fBuffer.push_back(-9999999); }
         void line(int lineNum) override { fBuffer.push_back(lineNum); }
 
         std::vector<int> fBuffer;
@@ -911,6 +912,7 @@ DEF_TEST(SkVM_trace_var, r) {
         void line(int) override                  { fBuffer.push_back(-9999999); }
         void enter(int) override                 { fBuffer.push_back(-9999999); }
         void exit(int) override                  { fBuffer.push_back(-9999999); }
+        void scope(int) override                 { fBuffer.push_back(-9999999); }
         void var(int slot, int32_t val) override {
             fBuffer.push_back(slot);
             fBuffer.push_back(val);
@@ -938,6 +940,7 @@ DEF_TEST(SkVM_trace_enter_exit, r) {
     public:
         void line(int) override                   { fBuffer.push_back(-9999999); }
         void var(int, int32_t) override           { fBuffer.push_back(-9999999); }
+        void scope(int) override                  { fBuffer.push_back(-9999999); }
         void enter(int fnIdx) override {
             fBuffer.push_back(fnIdx);
             fBuffer.push_back(1);
@@ -965,12 +968,39 @@ DEF_TEST(SkVM_trace_enter_exit, r) {
     REPORTER_ASSERT(r, (testTrace.fBuffer == std::vector<int>{12, 1, 56, 0}));
 }
 
+DEF_TEST(SkVM_trace_scope, r) {
+    class TestTraceHook : public skvm::TraceHook {
+    public:
+        void var(int, int32_t) override { fBuffer.push_back(-9999999); }
+        void enter(int) override        { fBuffer.push_back(-9999999); }
+        void exit(int) override         { fBuffer.push_back(-9999999); }
+        void line(int) override         { fBuffer.push_back(-9999999); }
+        void scope(int delta) override  { fBuffer.push_back(delta); }
+
+        std::vector<int> fBuffer;
+    };
+
+    skvm::Builder b;
+    TestTraceHook testTrace;
+    int traceHookID = b.attachTraceHook(&testTrace);
+    b.trace_scope(traceHookID, b.splat(0xFFFFFFFF), b.splat(0xFFFFFFFF), 1);
+    b.trace_scope(traceHookID, b.splat(0xFFFFFFFF), b.splat(0x00000000), -2);
+    b.trace_scope(traceHookID, b.splat(0x00000000), b.splat(0x00000000), 3);
+    b.trace_scope(traceHookID, b.splat(0x00000000), b.splat(0xFFFFFFFF), 4);
+    b.trace_scope(traceHookID, b.splat(0xFFFFFFFF), b.splat(0xFFFFFFFF), -5);
+    skvm::Program p = b.done();
+    p.eval(1);
+
+    REPORTER_ASSERT(r, (testTrace.fBuffer == std::vector<int>{1, -5}));
+}
+
 DEF_TEST(SkVM_trace_multiple_hooks, r) {
     class TestTraceHook : public skvm::TraceHook {
     public:
         void var(int, int32_t) override { fBuffer.push_back(-9999999); }
         void enter(int) override        { fBuffer.push_back(-9999999); }
         void exit(int) override         { fBuffer.push_back(-9999999); }
+        void scope(int) override        { fBuffer.push_back(-9999999); }
         void line(int lineNum) override { fBuffer.push_back(lineNum); }
 
         std::vector<int> fBuffer;
@@ -2713,4 +2743,53 @@ DEF_TEST(SkVM_fast_mul, r) {
             }
         }
     });
+}
+
+DEF_TEST(SkVM_duplicates, reporter) {
+    {
+        skvm::Builder p(true);
+        auto rptr = p.varying<int>();
+
+        skvm::F32 r = p.loadF(rptr),
+                  g = p.splat(0.0f),
+                  b = p.splat(0.0f),
+                  a = p.splat(1.0f);
+
+        p.unpremul(&r, &g, &b, a);
+        p.storeF(rptr, r);
+
+        std::vector<skvm::Instruction> program = b->program();
+
+        auto withDuplicates = skvm::finalize(program);
+        int duplicates = 0;
+        for (const auto& instr : withDuplicates) {
+            if (instr.op == skvm::Op::duplicate) {
+                ++duplicates;
+            }
+        }
+        REPORTER_ASSERT(reporter, duplicates > 0);
+
+        auto eliminatedAsDeadCode = skvm::eliminate_dead_code(program);
+        for (const auto& instr : eliminatedAsDeadCode) {
+            REPORTER_ASSERT(reporter, instr.op != skvm::Op::duplicate);
+        }
+    }
+
+    {
+        skvm::Builder p(false);
+        auto rptr = p.varying<int>();
+
+        skvm::F32 r = p.loadF(rptr),
+                  g = p.splat(0.0f),
+                  b = p.splat(0.0f),
+                  a = p.splat(1.0f);
+
+        p.unpremul(&r, &g, &b, a);
+        p.storeF(rptr, r);
+
+        auto withoutDuplicates = p.done().instructions();
+        for (const auto& instr : withoutDuplicates) {
+            REPORTER_ASSERT(reporter, instr.op != skvm::Op::duplicate);
+        }
+    }
 }

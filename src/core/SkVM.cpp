@@ -154,8 +154,10 @@ namespace skvm {
         return { fma, fp16 };
     }
 
-    Builder::Builder()                  : fFeatures(detect_features()) {}
-    Builder::Builder(Features features) : fFeatures(features         ) {}
+    Builder::Builder(bool createDuplicates)
+        : fFeatures(detect_features()), fCreateDuplicates(createDuplicates) {}
+    Builder::Builder(Features features, bool createDuplicates)
+        : fFeatures(features         ), fCreateDuplicates(createDuplicates) {}
 
 
     struct Program::Impl {
@@ -274,6 +276,7 @@ namespace skvm {
                                                                   VarSlot{immB}, "=", V{z}); break;
             case Op::trace_enter: write(o, op, TraceHookID{immA}, V{x}, V{y}, FnIdx{immB}); break;
             case Op::trace_exit:  write(o, op, TraceHookID{immA}, V{x}, V{y}, FnIdx{immB}); break;
+            case Op::trace_scope: write(o, op, TraceHookID{immA}, V{x}, V{y}, Shift{immB}); break;
 
             case Op::store8:   write(o, op, Ptr{immA}, V{x}               ); break;
             case Op::store16:  write(o, op, Ptr{immA}, V{x}               ); break;
@@ -343,6 +346,8 @@ namespace skvm {
             case Op::from_fp16: write(o, V{id}, "=", op, V{x}); break;
             case Op::trunc:     write(o, V{id}, "=", op, V{x}); break;
             case Op::round:     write(o, V{id}, "=", op, V{x}); break;
+
+            case Op::duplicate: write(o, V{id}, "=", op, Hex{immA}); break;
         }
 
         write(o, "\n");
@@ -398,6 +403,8 @@ namespace skvm {
                                                    R{x}, R{y}, FnIdx{immB}); break;
                 case Op::trace_exit:  write(o, op, TraceHookID{immA},
                                                    R{x}, R{y}, FnIdx{immB}); break;
+                case Op::trace_scope: write(o, op, TraceHookID{immA},
+                                                   R{x}, R{y}, Shift{immB}); break;
 
                 case Op::store8:   write(o, op, Ptr{immA}, R{x}                  ); break;
                 case Op::store16:  write(o, op, Ptr{immA}, R{x}                  ); break;
@@ -465,6 +472,8 @@ namespace skvm {
                 case Op::from_fp16: write(o, R{d}, "=", op, R{x}); break;
                 case Op::trunc:     write(o, R{d}, "=", op, R{x}); break;
                 case Op::round:     write(o, R{d}, "=", op, R{x}); break;
+
+                case Op::duplicate: write(o, R{d}, "=", op, Hex{immA}); break;
             }
             write(o, "\n");
         }
@@ -608,9 +617,15 @@ namespace skvm {
         // and index is varying but doesn't touch memory, so it's fine to dedup too.
         if (!touches_varying_memory(inst.op) && !is_trace(inst.op)) {
             if (Val* id = fIndex.find(inst)) {
+                if (fCreateDuplicates) {
+                    inst.op = Op::duplicate;
+                    inst.immA = *id;
+                    fProgram.push_back(inst);
+                }
                 return *id;
             }
         }
+
         Val id = static_cast<Val>(fProgram.size());
         fProgram.push_back(inst);
         fIndex.set(inst, id);
@@ -637,41 +652,43 @@ namespace skvm {
         return traceHookID;
     }
 
+    bool Builder::mergeMasks(I32& mask, I32& traceMask) {
+        if (this->isImm(mask.id,      0)) { return false; }
+        if (this->isImm(traceMask.id, 0)) { return false; }
+        if (this->isImm(mask.id,     ~0)) { mask = traceMask; }
+        if (this->isImm(traceMask.id,~0)) { traceMask = mask; }
+        return true;
+    }
+
     void Builder::trace_line(int traceHookID, I32 mask, I32 traceMask, int line) {
         SkASSERT(traceHookID >= 0);
         SkASSERT(traceHookID < (int)fTraceHooks.size());
-        if (this->isImm(mask.id,      0)) { return; }
-        if (this->isImm(traceMask.id, 0)) { return; }
-        if (this->isImm(mask.id,     ~0)) { mask = traceMask; }
-        if (this->isImm(traceMask.id,~0)) { traceMask = mask; }
+        if (!this->mergeMasks(mask, traceMask)) { return; }
         (void)push(Op::trace_line, mask.id,traceMask.id,NA,NA, traceHookID, line);
     }
     void Builder::trace_var(int traceHookID, I32 mask, I32 traceMask, int slot, I32 val) {
         SkASSERT(traceHookID >= 0);
         SkASSERT(traceHookID < (int)fTraceHooks.size());
-        if (this->isImm(mask.id,      0)) { return; }
-        if (this->isImm(traceMask.id, 0)) { return; }
-        if (this->isImm(mask.id,     ~0)) { mask = traceMask; }
-        if (this->isImm(traceMask.id,~0)) { traceMask = mask; }
+        if (!this->mergeMasks(mask, traceMask)) { return; }
         (void)push(Op::trace_var, mask.id,traceMask.id,val.id,NA, traceHookID, slot);
     }
     void Builder::trace_enter(int traceHookID, I32 mask, I32 traceMask, int fnIdx) {
         SkASSERT(traceHookID >= 0);
         SkASSERT(traceHookID < (int)fTraceHooks.size());
-        if (this->isImm(mask.id,      0)) { return; }
-        if (this->isImm(traceMask.id, 0)) { return; }
-        if (this->isImm(mask.id,     ~0)) { mask = traceMask; }
-        if (this->isImm(traceMask.id,~0)) { traceMask = mask; }
+        if (!this->mergeMasks(mask, traceMask)) { return; }
         (void)push(Op::trace_enter, mask.id,traceMask.id,NA,NA, traceHookID, fnIdx);
     }
     void Builder::trace_exit(int traceHookID, I32 mask, I32 traceMask, int fnIdx) {
         SkASSERT(traceHookID >= 0);
         SkASSERT(traceHookID < (int)fTraceHooks.size());
-        if (this->isImm(mask.id,      0)) { return; }
-        if (this->isImm(traceMask.id, 0)) { return; }
-        if (this->isImm(mask.id,     ~0)) { mask = traceMask; }
-        if (this->isImm(traceMask.id,~0)) { traceMask = mask; }
+        if (!this->mergeMasks(mask, traceMask)) { return; }
         (void)push(Op::trace_exit, mask.id,traceMask.id,NA,NA, traceHookID, fnIdx);
+    }
+    void Builder::trace_scope(int traceHookID, I32 mask, I32 traceMask, int delta) {
+        SkASSERT(traceHookID >= 0);
+        SkASSERT(traceHookID < (int)fTraceHooks.size());
+        if (!this->mergeMasks(mask, traceMask)) { return; }
+        (void)push(Op::trace_scope, mask.id,traceMask.id,NA,NA, traceHookID, delta);
     }
 
     void Builder::store8 (Ptr ptr, I32 val) { (void)push(Op::store8 , val.id,NA,NA,NA, ptr.ix); }
@@ -2661,6 +2678,7 @@ namespace skvm {
                 case Op::trace_var:
                 case Op::trace_enter:
                 case Op::trace_exit:
+                case Op::trace_scope:
                     /* Force this program to run in the interpreter. */
                     return false;
 
@@ -3599,6 +3617,7 @@ namespace skvm {
                 case Op::trace_var:
                 case Op::trace_enter:
                 case Op::trace_exit:
+                case Op::trace_scope:
                     /* Force this program to run in the interpreter. */
                     return false;
 
@@ -3956,6 +3975,8 @@ namespace skvm {
                     a->vcvtph2ps(dst(), dst());        // f16 xmm -> f32 ymm
                     break;
 
+                case Op::duplicate: break;
+
             #elif defined(__aarch64__)
                 case Op::assert_true: {
                     a->uminv4s(dst(), r(x));   // uminv acts like an all() across the vector.
@@ -3970,6 +3991,7 @@ namespace skvm {
                 case Op::trace_var:
                 case Op::trace_enter:
                 case Op::trace_exit:
+                case Op::trace_scope:
                     /* Force this program to run in the interpreter. */
                     return false;
 
@@ -4216,6 +4238,8 @@ namespace skvm {
                     a->xtns2h(dst(x), r(x));     // pack even 16-bit lanes into bottom four lanes
                     a->fcvtl (dst(), dst());     // 4x f16 -> 4x f32
                     break;
+
+                case Op::duplicate: break;
             #endif
             }
 
