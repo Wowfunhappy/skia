@@ -19,6 +19,7 @@
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/GrResourceProvider.h"
 #include "src/gpu/GrVx.h"
+#include "src/gpu/KeyBuilder.h"
 #include "src/gpu/geometry/GrShape.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLVarying.h"
@@ -341,7 +342,7 @@ public:
 
     const char* name() const override { return "FillRRectOp::Processor"; }
 
-    void addToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override {
+    void addToKey(const GrShaderCaps& caps, KeyBuilder* b) const override {
         b->addBits(kNumProcessorFlags, (uint32_t)fFlags,  "flags");
     }
 
@@ -353,7 +354,8 @@ private:
     Processor(GrAAType aaType, ProcessorFlags flags)
             : GrGeometryProcessor(kGrFillRRectOp_Processor_ClassID)
             , fFlags(flags) {
-        this->setVertexAttributes(kVertexAttribs, SK_ARRAY_COUNT(kVertexAttribs));
+        this->setVertexAttributesWithImplicitOffsets(kVertexAttribs,
+                                                     SK_ARRAY_COUNT(kVertexAttribs));
 
         fInstanceAttribs.emplace_back("skew", kFloat4_GrVertexAttribType, kFloat4_GrSLType);
         fInstanceAttribs.emplace_back("translate", kFloat2_GrVertexAttribType, kFloat2_GrSLType);
@@ -366,7 +368,8 @@ private:
                     "local_rect", kFloat4_GrVertexAttribType, kFloat4_GrSLType);
         }
         SkASSERT(fInstanceAttribs.count() <= kMaxInstanceAttribs);
-        this->setInstanceAttributes(fInstanceAttribs.begin(), fInstanceAttribs.count());
+        this->setInstanceAttributesWithImplicitOffsets(fInstanceAttribs.begin(),
+                                                       fInstanceAttribs.count());
     }
 
     inline static constexpr Attribute kVertexAttribs[] = {

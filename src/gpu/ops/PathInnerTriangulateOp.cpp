@@ -36,13 +36,14 @@ public:
             // each patch that explicitly tells the shader what type of curve it is.
             fInstanceAttribs.emplace_back("curveType", kFloat_GrVertexAttribType, kFloat_GrSLType);
         }
-        this->setInstanceAttributes(fInstanceAttribs.data(), fInstanceAttribs.count());
+        this->setInstanceAttributesWithImplicitOffsets(fInstanceAttribs.data(),
+                                                       fInstanceAttribs.count());
         SkASSERT(fInstanceAttribs.count() <= kMaxInstanceAttribCount);
 
         if (!shaderCaps.vertexIDSupport()) {
             constexpr static Attribute kVertexIdxAttrib("vertexidx", kFloat_GrVertexAttribType,
                                                         kFloat_GrSLType);
-            this->setVertexAttributes(&kVertexIdxAttrib, 1);
+            this->setVertexAttributesWithImplicitOffsets(&kVertexIdxAttrib, 1);
         }
     }
 
@@ -50,7 +51,7 @@ public:
 
 private:
     const char* name() const final { return "tessellate_HullShader"; }
-    void addToKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const final {}
+    void addToKey(const GrShaderCaps&, KeyBuilder*) const final {}
     std::unique_ptr<ProgramImpl> makeProgramImpl(const GrShaderCaps&) const final;
 
     constexpr static int kMaxInstanceAttribCount = 3;

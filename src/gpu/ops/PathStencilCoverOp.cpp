@@ -36,19 +36,20 @@ public:
         if (!shaderCaps.vertexIDSupport()) {
             constexpr static Attribute kUnitCoordAttrib("unitCoord", kFloat2_GrVertexAttribType,
                                                         kFloat2_GrSLType);
-            this->setVertexAttributes(&kUnitCoordAttrib, 1);
+            this->setVertexAttributesWithImplicitOffsets(&kUnitCoordAttrib, 1);
         }
         constexpr static Attribute kInstanceAttribs[] = {
             {"matrix2d", kFloat4_GrVertexAttribType, kFloat4_GrSLType},
             {"translate", kFloat2_GrVertexAttribType, kFloat2_GrSLType},
             {"pathBounds", kFloat4_GrVertexAttribType, kFloat4_GrSLType}
         };
-        this->setInstanceAttributes(kInstanceAttribs, SK_ARRAY_COUNT(kInstanceAttribs));
+        this->setInstanceAttributesWithImplicitOffsets(kInstanceAttribs,
+                                                       SK_ARRAY_COUNT(kInstanceAttribs));
     }
 
 private:
     const char* name() const final { return "tessellate_BoundingBoxShader"; }
-    void addToKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const final {}
+    void addToKey(const GrShaderCaps&, skgpu::KeyBuilder*) const final {}
     std::unique_ptr<ProgramImpl> makeProgramImpl(const GrShaderCaps&) const final;
 
     const SkPMColor4f fColor;

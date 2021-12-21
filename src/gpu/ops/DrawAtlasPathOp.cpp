@@ -13,6 +13,7 @@
 #include "src/gpu/GrOpsRenderPass.h"
 #include "src/gpu/GrProgramInfo.h"
 #include "src/gpu/GrResourceProvider.h"
+#include "src/gpu/KeyBuilder.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLVarying.h"
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
@@ -33,7 +34,7 @@ public:
         if (!shaderCaps.vertexIDSupport()) {
             constexpr static Attribute kUnitCoordAttrib(
                     "unitCoord", kFloat2_GrVertexAttribType, kFloat2_GrSLType);
-            this->setVertexAttributes(&kUnitCoordAttrib, 1);
+            this->setVertexAttributesWithImplicitOffsets(&kUnitCoordAttrib, 1);
         }
         fAttribs.emplace_back("fillBounds", kFloat4_GrVertexAttribType, kFloat4_GrSLType);
         if (fUsesLocalCoords) {
@@ -44,7 +45,7 @@ public:
         fAttribs.emplace_back("color", kFloat4_GrVertexAttribType, kHalf4_GrSLType);
         fAtlasHelper->appendInstanceAttribs(&fAttribs);
         SkASSERT(fAttribs.count() <= kMaxInstanceAttribs);
-        this->setInstanceAttributes(fAttribs.data(), fAttribs.count());
+        this->setInstanceAttributesWithImplicitOffsets(fAttribs.data(), fAttribs.count());
         this->setTextureSamplerCnt(1);
     }
 
@@ -53,7 +54,7 @@ private:
 
     int colorAttribIdx() const { return fUsesLocalCoords ? 3 : 1; }
     const char* name() const override { return "DrawAtlasPathShader"; }
-    void addToKey(const GrShaderCaps&, GrProcessorKeyBuilder* b) const override {
+    void addToKey(const GrShaderCaps&, skgpu::KeyBuilder* b) const override {
         b->addBits(1, fUsesLocalCoords, "localCoords");
         fAtlasHelper->getKeyBits(b);
     }
