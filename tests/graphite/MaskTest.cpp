@@ -5,7 +5,7 @@
  * found in the LICENSE file.
  */
 
-#include "experimental/graphite/include/GraphiteTypes.h"
+#include "experimental/graphite/include/private/GraphiteTypesPriv.h"
 #include "tests/Test.h"
 
 enum class Flags {
@@ -19,7 +19,7 @@ SKGPU_MAKE_MASK_OPS(Flags);
 
 using namespace skgpu;
 
-DEF_TEST(skgpu_Mask, r) {
+DEF_GRAPHITE_TEST(skgpu_Mask, r) {
     Mask<Flags> flags = Flags::kNone;
     REPORTER_ASSERT(r, !flags);
     flags |= Flags::kA;

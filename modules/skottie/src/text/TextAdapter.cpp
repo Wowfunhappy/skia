@@ -67,7 +67,7 @@ struct TextAdapter::PathInfo {
                 fPathPerpendicular = 0,
                 fPathReverse       = 0;
 
-    SkM44 getMatrix(float distance, SkTextUtils::Align alignment) {
+    void updateContourData() {
         const auto reverse = fPathReverse != 0;
 
         if (fPath != fCurrentPath || reverse != fCurrentReversed) {
@@ -88,15 +88,24 @@ struct TextAdapter::PathInfo {
             // AE paths are always single-contour (no moves allowed).
             SkASSERT(!iter.next());
         }
+    }
+
+    float pathLength() const {
+        SkASSERT(fPath == fCurrentPath);
+        SkASSERT((fPathReverse != 0) == fCurrentReversed);
+
+        return fCurrentMeasure ? fCurrentMeasure->length() : 0;
+    }
+
+    SkM44 getMatrix(float distance, SkTextUtils::Align alignment) const {
+        SkASSERT(fPath == fCurrentPath);
+        SkASSERT((fPathReverse != 0) == fCurrentReversed);
 
         if (!fCurrentMeasure) {
             return SkM44();
         }
 
         const auto path_len = fCurrentMeasure->length();
-
-        // Alignment adjustment, relative to path len.
-        distance += path_len * align_factor(alignment);
 
         // First/last margin adjustment also depends on alignment.
         switch (alignment) {
@@ -256,11 +265,15 @@ sk_sp<TextAdapter> TextAdapter::Make(const skjson::ObjectValue& jlayer,
         adapter->bind(*abuilder, (*mask)["pt"], &pinfo->fPath);
         adapter->bind(*abuilder, (*jpath)["f"], &pinfo->fPathFMargin);
         adapter->bind(*abuilder, (*jpath)["l"], &pinfo->fPathLMargin);
+        adapter->bind(*abuilder, (*jpath)["p"], &pinfo->fPathPerpendicular);
+        adapter->bind(*abuilder, (*jpath)["r"], &pinfo->fPathReverse);
 
         // TODO: force align support
-        // TODO: these appear to be animatable in AE, but not in json
-        pinfo->fPathPerpendicular = ParseDefault((*jpath)["p"], 1.0f);
-        pinfo->fPathReverse       = ParseDefault((*jpath)["r"], 0.0f);
+
+        // Historically, these used to be exported as static properties.
+        // Attempt parsing both ways, for backward compat.
+        skottie::Parse((*jpath)["p"], &pinfo->fPathPerpendicular);
+        skottie::Parse((*jpath)["r"], &pinfo->fPathReverse);
 
         // Path positioning requires anchor point info.
         adapter->fRequiresAnchorPoint = true;
@@ -454,13 +467,21 @@ void TextAdapter::reshape() {
     };
     const auto shape_result = Shaper::Shape(fText->fText, text_desc, fText->fBox, fFontMgr);
 
-    if (fLogger && shape_result.fMissingGlyphCount > 0) {
-        const auto msg = SkStringPrintf("Missing %zu glyphs for '%s'.",
-                                        shape_result.fMissingGlyphCount,
-                                        fText->fText.c_str());
-        fLogger->log(Logger::Level::kWarning, msg.c_str());
+    if (fLogger) {
+        if (shape_result.fFragments.empty() && fText->fText.size() > 0) {
+            const auto msg = SkStringPrintf("Text layout failed for '%s'.",
+                                            fText->fText.c_str());
+            fLogger->log(Logger::Level::kError, msg.c_str());
+        }
 
-        // This may trigger repeatedly when the text is animating.
+        if (shape_result.fMissingGlyphCount > 0) {
+            const auto msg = SkStringPrintf("Missing %zu glyphs for '%s'.",
+                                            shape_result.fMissingGlyphCount,
+                                            fText->fText.c_str());
+            fLogger->log(Logger::Level::kWarning, msg.c_str());
+        }
+
+        // These may trigger repeatedly when the text is animating.
         // To avoid spamming, only log once.
         fLogger = nullptr;
     }
@@ -520,6 +541,11 @@ void TextAdapter::onSync() {
 
     if (fFragments.empty()) {
         return;
+    }
+
+    // Update the path contour measure, if needed.
+    if (fPathInfo) {
+        fPathInfo->updateContourData();
     }
 
     // Seed props from the current text value.
@@ -658,10 +684,24 @@ SkM44 TextAdapter::fragmentMatrix(const TextAnimator::ResolvedProps& props,
         return SkM44::Translate(pos.x, pos.y, pos.z);
     }
 
-    // When using a text path, the horizontal component determines the position on path.
-    const auto path_distance = pos.x;
+    // "Align" the paragraph box left/center/right to path start/mid/end, respectively.
+    const auto align_offset =
+            align_factor(fText->fHAlign)*(fPathInfo->pathLength() - fText->fBox.width());
+
+    // Path positioning is based on the fragment position relative to the paragraph box
+    // upper-left corner:
+    //
+    //   - the horizontal component determines the distance on path
+    //
+    //   - the vertical component is post-applied after orienting on path
+    //
+    // Note: in point-text mode, the box adjustments have no effect as fBox is {0,0,0,0}.
+    //
+    const auto rel_pos = SkV2{pos.x, pos.y} - SkV2{fText->fBox.fLeft, fText->fBox.fTop};
+    const auto path_distance = rel_pos.x + align_offset;
+
     return fPathInfo->getMatrix(path_distance, fText->fHAlign)
-         * SkM44::Translate(0, pos.y, pos.z);
+         * SkM44::Translate(0, rel_pos.y, pos.z);
 }
 
 void TextAdapter::pushPropsToFragment(const TextAnimator::ResolvedProps& props,
