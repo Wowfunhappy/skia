@@ -17,8 +17,8 @@
 #include "experimental/graphite/src/Gpu.h"
 #include "experimental/graphite/src/GraphicsPipelineDesc.h"
 #include "experimental/graphite/src/Renderer.h"
-#include "experimental/graphite/src/ShaderCodeDictionary.h"
 #include "include/core/SkPathTypes.h"
+#include "include/private/SkShaderCodeDictionary.h"
 #include "src/core/SkKeyHelpers.h"
 
 #ifdef SK_METAL
@@ -30,7 +30,7 @@ namespace skgpu {
 Context::Context(sk_sp<Gpu> gpu, BackendApi backend)
         : fGpu(std::move(gpu))
         , fBackend(backend)
-        , fShaderCodeDictionary(new ShaderCodeDictionary) {
+        , fShaderCodeDictionary(std::make_unique<SkShaderCodeDictionary>()) {
 }
 Context::~Context() {}
 
@@ -45,8 +45,8 @@ sk_sp<Context> Context::MakeMetal(const mtl::BackendContext& backendContext) {
 }
 #endif
 
-sk_sp<Recorder> Context::createRecorder() {
-    return sk_sp<Recorder>(new Recorder(sk_ref_sp(this)));
+std::unique_ptr<Recorder> Context::makeRecorder() {
+    return std::unique_ptr<Recorder>(new Recorder(sk_ref_sp(this)));
 }
 
 void Context::insertRecording(std::unique_ptr<Recording> recording) {
