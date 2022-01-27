@@ -36,6 +36,7 @@
 #include "src/sksl/ir/SkSLFunctionCall.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
+#include "src/sksl/ir/SkSLFunctionPrototype.h"
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLInlineMarker.h"
@@ -63,7 +64,10 @@ public:
     AutoRehydratorSymbolTable(Rehydrator* rehydrator)
         : fRehydrator(rehydrator)
         , fOldSymbols(fRehydrator->fSymbolTable) {
-        fRehydrator->fSymbolTable = fRehydrator->symbolTable();
+        std::shared_ptr<SymbolTable> symbols = fRehydrator->symbolTable();
+        if (symbols) {
+            fRehydrator->fSymbolTable = std::move(symbols);
+        }
     }
 
     ~AutoRehydratorSymbolTable() {
@@ -104,8 +108,8 @@ Layout Rehydrator::layout() {
         case kLayout_Command: {
             int flags = this->readU32();
             int location = this->readS8();
-            int offset = this->readS8();
-            int binding = this->readS8();
+            int offset = this->readS16();
+            int binding = this->readS16();
             int index = this->readS8();
             int set = this->readS8();
             int builtin = this->readS16();
@@ -274,6 +278,13 @@ std::unique_ptr<ProgramElement> Rehydrator::element() {
                                                       std::move(body), /*builtin=*/true);
             decl->setDefinition(result.get());
             return std::move(result);
+        }
+        case Rehydrator::kFunctionPrototype_Command: {
+            const FunctionDeclaration* decl = this->symbolRef<FunctionDeclaration>(
+                                                                Symbol::Kind::kFunctionDeclaration);
+            // since we skip over builtin prototypes when dehydrating, we know that this
+            // builtin=false
+            return std::make_unique<FunctionPrototype>(/*line=*/-1, decl, /*builtin=*/false);
         }
         case Rehydrator::kInterfaceBlock_Command: {
             const Symbol* var = this->symbol();
@@ -540,18 +551,15 @@ std::unique_ptr<Expression> Rehydrator::expression() {
     }
 }
 
-std::shared_ptr<SymbolTable> Rehydrator::symbolTable(bool inherit) {
+std::shared_ptr<SymbolTable> Rehydrator::symbolTable() {
     int command = this->readU8();
     if (command == kVoid_Command) {
         return nullptr;
     }
     SkASSERT(command == kSymbolTable_Command);
+    bool builtin = this->readU8();
     uint16_t ownedCount = this->readU16();
-    std::shared_ptr<SymbolTable> oldTable = fSymbolTable;
-    std::shared_ptr<SymbolTable> result =
-            inherit ? std::make_shared<SymbolTable>(fSymbolTable, /*builtin=*/true)
-                    : std::make_shared<SymbolTable>(fContext, /*builtin=*/true);
-    fSymbolTable = result;
+    fSymbolTable = std::make_shared<SymbolTable>(std::move(fSymbolTable), builtin);
     std::vector<const Symbol*> ownedSymbols;
     ownedSymbols.reserve(ownedCount);
     for (int i = 0; i < ownedCount; ++i) {
@@ -562,10 +570,20 @@ std::shared_ptr<SymbolTable> Rehydrator::symbolTable(bool inherit) {
     symbols.reserve(symbolCount);
     for (int i = 0; i < symbolCount; ++i) {
         int index = this->readU16();
-        fSymbolTable->addWithoutOwnership(ownedSymbols[index]);
+        if (index != kBuiltinType_Symbol) {
+            fSymbolTable->addWithoutOwnership(ownedSymbols[index]);
+        } else {
+            skstd::string_view name = this->readString();
+            SymbolTable* root = fSymbolTable.get();
+            while (root->fParent) {
+                root = root->fParent.get();
+            }
+            const Symbol* s = (*root)[name];
+            SkASSERT(s);
+            fSymbolTable->addWithoutOwnership(s);
+        }
     }
-    fSymbolTable = oldTable;
-    return result;
+    return fSymbolTable;
 }
 
 }  // namespace SkSL
