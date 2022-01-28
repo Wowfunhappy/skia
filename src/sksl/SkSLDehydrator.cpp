@@ -482,11 +482,11 @@ void Dehydrator::write(const Statement* s) {
             case Statement::Kind::kFor: {
                 const ForStatement& f = s->as<ForStatement>();
                 this->writeCommand(Rehydrator::kFor_Command);
+                AutoDehydratorSymbolTable symbols(this, f.symbols());
                 this->write(f.initializer().get());
                 this->write(f.test().get());
                 this->write(f.next().get());
                 this->write(f.statement().get());
-                this->write(*f.symbols());
                 break;
             }
             case Statement::Kind::kIf: {
@@ -505,7 +505,7 @@ void Dehydrator::write(const Statement* s) {
                 break;
             }
             case Statement::Kind::kNop:
-                SkDEBUGFAIL("unexpected--nop statement in finished code");
+                this->writeCommand(Rehydrator::kNop_Command);
                 break;
             case Statement::Kind::kReturn: {
                 const ReturnStatement& r = s->as<ReturnStatement>();

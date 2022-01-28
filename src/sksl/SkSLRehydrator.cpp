@@ -42,6 +42,7 @@
 #include "src/sksl/ir/SkSLInlineMarker.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
 #include "src/sksl/ir/SkSLLiteral.h"
+#include "src/sksl/ir/SkSLNop.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
@@ -175,7 +176,7 @@ const Symbol* Rehydrator::symbol() {
                             name,
                             std::move(parameters),
                             returnType,
-                            /*builtin=*/true));
+                            fSymbolTable->isBuiltin()));
             this->addSymbol(id, result);
             return result;
         }
@@ -240,7 +241,7 @@ const Symbol* Rehydrator::symbol() {
             const Type* type = this->type();
             Variable::Storage storage = (Variable::Storage) this->readU8();
             const Variable* result = fSymbolTable->takeOwnershipOfSymbol(std::make_unique<Variable>(
-                    /*line=*/-1, m, name, type, /*builtin=*/true, storage));
+                    /*line=*/-1, m, name, type, fSymbolTable->isBuiltin(), storage));
             this->addSymbol(id, result);
             return result;
         }
@@ -275,7 +276,7 @@ std::unique_ptr<ProgramElement> Rehydrator::element() {
                                                                 Symbol::Kind::kFunctionDeclaration);
             std::unique_ptr<Statement> body = this->statement();
             auto result = FunctionDefinition::Convert(fContext, /*line=*/-1, *decl,
-                                                      std::move(body), /*builtin=*/true);
+                                                      std::move(body), fSymbolTable->isBuiltin());
             decl->setDefinition(result.get());
             return std::move(result);
         }
@@ -342,17 +343,17 @@ std::unique_ptr<Statement> Rehydrator::statement() {
             return ExpressionStatement::Make(fContext, std::move(expr));
         }
         case Rehydrator::kFor_Command: {
+            AutoRehydratorSymbolTable symbols(this);
             std::unique_ptr<Statement> initializer = this->statement();
             std::unique_ptr<Expression> test = this->expression();
             std::unique_ptr<Expression> next = this->expression();
             std::unique_ptr<Statement> body = this->statement();
-            std::shared_ptr<SymbolTable> symbols = this->symbolTable();
             std::unique_ptr<LoopUnrollInfo> unrollInfo =
                     Analysis::GetLoopUnrollInfo(/*line=*/-1, initializer.get(), test.get(),
                                                 next.get(), body.get(), /*errors=*/nullptr);
             return ForStatement::Make(fContext, /*line=*/-1, std::move(initializer),
                                       std::move(test), std::move(next), std::move(body),
-                                      std::move(unrollInfo), std::move(symbols));
+                                      std::move(unrollInfo), fSymbolTable);
         }
         case Rehydrator::kIf_Command: {
             bool isStatic = this->readU8();
@@ -367,6 +368,8 @@ std::unique_ptr<Statement> Rehydrator::statement() {
                                                           Symbol::Kind::kFunctionDeclaration);
             return InlineMarker::Make(funcDecl);
         }
+        case Rehydrator::kNop_Command:
+            return std::make_unique<SkSL::Nop>();
         case Rehydrator::kReturn_Command: {
             std::unique_ptr<Expression> expr = this->expression();
             return ReturnStatement::Make(/*line=*/-1, std::move(expr));
