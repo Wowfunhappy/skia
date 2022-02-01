@@ -921,8 +921,9 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 
 	if b.matchGpu("Adreno[3456]") { // disable broken tests on Adreno 3/4/5/6xx
-		skip("_", "tests", "_", "SkSLArrayCast_GPU")       // skia:12332
-		skip("_", "tests", "_", "SkSLArrayComparison_GPU") // skia:12332
+		skip("_", "tests", "_", "SkSLArrayCast_GPU")        // skia:12332
+		skip("_", "tests", "_", "SkSLArrayComparison_GPU")  // skia:12332
+		skip("_", "tests", "_", "SkSLCommaSideEffects_GPU")
 	}
 
 	if b.matchGpu("Adreno[345]") && !b.extraConfig("Vulkan") { // disable broken tests on Adreno 3/4/5xx GLSL
@@ -935,15 +936,21 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip("_", "tests", "_", "SkSLIntrinsicIsInf_GPU") // skia:12377
 	}
 
-	if b.matchGpu("Adreno6") && b.extraConfig("Vulkan") { // disable broken tests on Adreno 6xx Vulkan
-		skip("_", "tests", "_", "SkSLInoutParameters_GPU") // skia:12869
+	if b.matchGpu("Adreno[56]") && b.extraConfig("Vulkan") { // disable broken tests on Adreno 5/6xx Vulkan
+		skip("_", "tests", "_", "SkSLInoutParameters_GPU")   // skia:12869
+		skip("_", "tests", "_", "SkSLOutParams_GPU")         // skia:11919
+		skip("_", "tests", "_", "SkSLOutParamsTricky_GPU")   // skia:11919
+		skip("_", "tests", "_", "SkSLOutParamsNoInline_GPU") // skia:11919
 	}
 
 	if (b.matchGpu("Adreno3") || b.matchGpu("Mali400")) && !b.extraConfig("Vulkan") {
 		skip("_", "tests", "_", "SkSLMatrices") // skia:12456
 	}
 
-	// disable broken tests on Mali400 || Tegra3
+	if b.gpu("QuadroP400") {
+		skip("_", "tests", "_", "SkSLCommaSideEffects")
+	}
+
 	if b.matchGpu("Mali400") || b.matchGpu("Tegra3") {
 		skip("_", "tests", "_", "SkSLMatrixScalarMath") // skia:12681
 	}
@@ -989,6 +996,10 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 	if b.gpu("PowerVRGE8320") || b.gpu("Tegra3") || b.gpu("Adreno308") {
 		skip("_", "tests", "_", "SkSLVectorScalarMath_GPU") // skia:11919
+    }
+
+    if b.gpu("PowerVRGE8320") {
+		skip("_", "tests", "_", "SkSLOutParamsAreDistinct_GPU")
     }
 
 	if !b.extraConfig("Vulkan") && (b.gpu("RadeonR9M470X") || b.gpu("RadeonHD7770")) {
