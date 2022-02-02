@@ -643,7 +643,6 @@ if (skia_compile_sksl_tests) {
       "src/core/SkStream.cpp",
       "src/core/SkString.cpp",
       "src/core/SkStringUtils.cpp",
-      "src/core/SkStringView.cpp",
       "src/core/SkThreadID.cpp",
       "src/core/SkUtils.cpp",
       "src/core/SkVM.cpp",
@@ -3177,7 +3176,7 @@ if (skia_enable_tools) {
       deps = []
     }
 
-    if (skia_use_gl) {
+    if (skia_enable_gpu) {
       libfuzzer_app("api_mock_gpu_canvas") {
         include_dirs = [
           "tools",

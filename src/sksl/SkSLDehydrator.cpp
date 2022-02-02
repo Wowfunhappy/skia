@@ -55,8 +55,6 @@
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
 
-#ifdef SKSL_STANDALONE
-
 namespace SkSL {
 
 static constexpr int HEADER_SIZE = 2;
@@ -116,7 +114,7 @@ void Dehydrator::write(Modifiers m) {
     }
 }
 
-void Dehydrator::write(skstd::string_view s) {
+void Dehydrator::write(std::string_view s) {
     this->write(String(s));
 }
 
@@ -231,11 +229,11 @@ void Dehydrator::write(const SymbolTable& symbols) {
 
     // write symbols
     this->writeU16(symbols.fSymbols.count());
-    std::map<skstd::string_view, const Symbol*> ordered;
-    symbols.foreach([&](skstd::string_view name, const Symbol* symbol) {
+    std::map<std::string_view, const Symbol*> ordered;
+    symbols.foreach([&](std::string_view name, const Symbol* symbol) {
         ordered.insert({name, symbol});
     });
-    for (std::pair<skstd::string_view, const Symbol*> p : ordered) {
+    for (std::pair<std::string_view, const Symbol*> p : ordered) {
         bool found = false;
         for (size_t i = 0; i < symbols.fOwnedSymbols.size(); ++i) {
             if (symbols.fOwnedSymbols[i].get() == p.second) {
@@ -626,6 +624,4 @@ const char* Dehydrator::prefixAtOffset(size_t byte) {
     return "";
 }
 
-} // namespace
-
-#endif
+} // namespace SkSL

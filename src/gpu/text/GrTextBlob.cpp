@@ -1236,11 +1236,11 @@ void TransformedMaskSubRun::fillVertexData(void* vertexDst, int offset, int coun
                                            SkIRect clip) const {
     const SkMatrix positionMatrix = position_matrix(drawMatrix, drawOrigin);
     fVertexFiller.fillVertexData(fGlyphs.glyphs().subspan(offset, count),
-                          fVertexData.subspan(offset, count),
-                          color,
-                          positionMatrix,
-                          clip,
-                          vertexDst);
+                                 fVertexData.subspan(offset, count),
+                                 color,
+                                 positionMatrix,
+                                 clip,
+                                 vertexDst);
 }
 
 size_t TransformedMaskSubRun::vertexStride(const SkMatrix& drawMatrix) const {
@@ -1264,26 +1264,23 @@ const GrAtlasSubRun* TransformedMaskSubRun::testingOnly_atlasSubRun() const {
 // -- SDFTSubRun -----------------------------------------------------------------------------------
 class SDFTSubRun final : public GrSubRun, public GrBlobSubRun, public GrAtlasSubRun {
 public:
-    struct VertexData {
-        const SkPoint pos;
-        // The rectangle of the glyphs in strike space.
-        GrIRect16 rect;
-    };
+    using VertexData = TransformedMaskVertexFiller::PositionAndExtent;
 
-    SDFTSubRun(GrMaskFormat format,
-               GrTextBlob* blob,
+    SDFTSubRun(GrTextReferenceFrame* referenceFrame,
                SkScalar strikeToSource,
                SkRect vertexBounds,
                SkSpan<const VertexData> vertexData,
                GlyphVector&& glyphs,
                bool useLCDText,
-               bool antiAliased);
+               bool antiAliased,
+               const GrSDFTMatrixRange& matrixRange);
 
-    static GrSubRunOwner Make(const SkZip<SkGlyphVariant, SkPoint>& drawables,
+    static GrSubRunOwner Make(GrTextReferenceFrame* referenceFrame,
+                              const SkZip<SkGlyphVariant, SkPoint>& drawables,
                               const SkFont& runFont,
                               sk_sp<SkStrike>&& strike,
                               SkScalar strikeToSourceScale,
-                              GrTextBlob* blob,
+                              const GrSDFTMatrixRange& matrixRange,
                               GrSubRunAllocator* alloc);
 
     void draw(SkCanvas*,
@@ -1323,11 +1320,9 @@ private:
     // The rectangle that surrounds all the glyph bounding boxes in device space.
     SkRect deviceRect(const SkMatrix& drawMatrix, SkPoint drawOrigin) const;
 
-    const GrMaskFormat fMaskFormat;
-    GrTextBlob* fBlob;
+    GrTextReferenceFrame* const fReferenceFrame;
 
-    // The scale factor between the strike size, and the source size.
-    const SkScalar fStrikeToSourceScale;
+    const TransformedMaskVertexFiller fVertexFiller;
 
     // The bounds in source space. The bounds are the joined rectangles of all the glyphs.
     const SkRect fVertexBounds;
@@ -1339,24 +1334,25 @@ private:
 
     const bool fUseLCDText;
     const bool fAntiAliased;
+    const GrSDFTMatrixRange fMatrixRange;
 };
 
-SDFTSubRun::SDFTSubRun(GrMaskFormat format,
-                       GrTextBlob* textBlob,
+SDFTSubRun::SDFTSubRun(GrTextReferenceFrame* referenceFrame,
                        SkScalar strikeToSource,
                        SkRect vertexBounds,
                        SkSpan<const VertexData> vertexData,
                        GlyphVector&& glyphs,
                        bool useLCDText,
-                       bool antiAliased)
-        : fMaskFormat{format}
-        , fBlob{textBlob}
-        , fStrikeToSourceScale{strikeToSource}
+                       bool antiAliased,
+                       const GrSDFTMatrixRange& matrixRange)
+        : fReferenceFrame{referenceFrame}
+        , fVertexFiller{kA8_GrMaskFormat, SK_DistanceFieldInset, strikeToSource}
         , fVertexBounds{vertexBounds}
         , fVertexData{vertexData}
         , fGlyphs{std::move(glyphs)}
         , fUseLCDText{useLCDText}
-        , fAntiAliased{antiAliased} {}
+        , fAntiAliased{antiAliased}
+        , fMatrixRange{matrixRange} {}
 
 bool has_some_antialiasing(const SkFont& font ) {
     SkFont::Edging edging = font.getEdging();
@@ -1364,11 +1360,12 @@ bool has_some_antialiasing(const SkFont& font ) {
            || edging == SkFont::Edging::kSubpixelAntiAlias;
 }
 
-GrSubRunOwner SDFTSubRun::Make(const SkZip<SkGlyphVariant, SkPoint>& drawables,
+GrSubRunOwner SDFTSubRun::Make(GrTextReferenceFrame* referenceFrame,
+                               const SkZip<SkGlyphVariant, SkPoint>& drawables,
                                const SkFont& runFont,
                                sk_sp<SkStrike>&& strike,
                                SkScalar strikeToSourceScale,
-                               GrTextBlob* blob,
+                               const GrSDFTMatrixRange& matrixRange,
                                GrSubRunAllocator* alloc) {
     SkRect bounds = SkRectPriv::MakeLargestInverted();
     auto mapper = [&](const auto& d) {
@@ -1388,14 +1385,14 @@ GrSubRunOwner SDFTSubRun::Make(const SkZip<SkGlyphVariant, SkPoint>& drawables,
     SkSpan<VertexData> vertexData = alloc->makePODArray<VertexData>(drawables, mapper);
 
     return alloc->makeUnique<SDFTSubRun>(
-            kA8_GrMaskFormat,
-            blob,
+            referenceFrame,
             strikeToSourceScale,
             bounds,
             vertexData,
             GlyphVector::Make(std::move(strike), drawables.get<0>(), alloc),
             runFont.getEdging() == SkFont::Edging::kSubpixelAntiAlias,
-            has_some_antialiasing(runFont));
+            has_some_antialiasing(runFont),
+            matrixRange);
 }
 
 void SDFTSubRun::draw(SkCanvas*,
@@ -1452,7 +1449,7 @@ SDFTSubRun::makeAtlasTextOp(const GrClip* clip,
     const SkMatrix& drawMatrix = viewMatrix.localToDevice();
 
     GrPaint grPaint;
-    SkPMColor4f drawingColor = calculate_colors(sdc, paint, viewMatrix, fMaskFormat, &grPaint);
+    SkPMColor4f drawingColor = calculate_colors(sdc, paint, viewMatrix, kA8_GrMaskFormat, &grPaint);
 
     auto [maskType, DFGPFlags, useGammaCorrectDistanceTable] =
         calculate_sdf_parameters(*sdc, drawMatrix, fUseLCDText, fAntiAliased);
@@ -1461,7 +1458,7 @@ SDFTSubRun::makeAtlasTextOp(const GrClip* clip,
                                                        drawMatrix,
                                                        drawOrigin,
                                                        SkIRect::MakeEmpty(),
-                                                       sk_ref_sp<GrTextBlob>(fBlob),
+                                                       sk_ref_sp(fReferenceFrame),
                                                        drawingColor,
                                                        sdc->arenaAlloc());
 
@@ -1481,18 +1478,7 @@ SDFTSubRun::makeAtlasTextOp(const GrClip* clip,
 }
 
 bool SDFTSubRun::canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const {
-    const SkMatrix& initialPositionMatrix = fBlob->initialPositionMatrix();
-
-    // A scale outside of [blob.fMaxMinScale, blob.fMinMaxScale] would result in a different
-    // distance field being generated, so we have to regenerate in those cases
-    SkScalar newMaxScale = positionMatrix.getMaxScale();
-    SkScalar oldMaxScale = initialPositionMatrix.getMaxScale();
-    SkScalar scaleAdjust = newMaxScale / oldMaxScale;
-    auto [maxMinScale, minMaxScale] = fBlob->scaleBounds();
-    if (scaleAdjust < maxMinScale || scaleAdjust > minMaxScale) {
-        return false;
-    }
-    return true;
+    return fMatrixRange.matrixInRange(positionMatrix);
 }
 
 void SDFTSubRun::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCache *cache) const {
@@ -1501,8 +1487,7 @@ void SDFTSubRun::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCache *cache) const 
 
 std::tuple<bool, int> SDFTSubRun::regenerateAtlas(
         int begin, int end, GrMeshDrawTarget *target) const {
-
-    return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, SK_DistanceFieldInset, target);
+    return fGlyphs.regenerateAtlas(begin, end, kA8_GrMaskFormat, SK_DistanceFieldInset, target);
 }
 
 size_t SDFTSubRun::vertexStride(const SkMatrix& drawMatrix) const {
@@ -1516,16 +1501,12 @@ void SDFTSubRun::fillVertexData(
         SkIRect clip) const {
     const SkMatrix positionMatrix = position_matrix(drawMatrix, drawOrigin);
 
-    using Quad = Mask2DVertex[4];
-    SkASSERT(sizeof(Mask2DVertex) == this->vertexStride(positionMatrix));
-    fill_transformed_vertices_2D(
-            SkMakeZip((Quad*)vertexDst,
-                      fGlyphs.glyphs().subspan(offset, count),
-                      fVertexData.subspan(offset, count)),
-            SK_DistanceFieldInset,
-            fStrikeToSourceScale,
-            color,
-            positionMatrix);
+    fVertexFiller.fillVertexData(fGlyphs.glyphs().subspan(offset, count),
+                                 fVertexData.subspan(offset, count),
+                                 color,
+                                 positionMatrix,
+                                 clip,
+                                 vertexDst);
 }
 
 int SDFTSubRun::glyphCount() const {
@@ -1848,13 +1829,10 @@ void GrTextBlob::processSourceSDFT(const SkZip<SkGlyphVariant, SkPoint>& drawabl
                                    sk_sp<SkStrike>&& strike,
                                    SkScalar strikeToSourceScale,
                                    const SkFont& runFont,
-                                   SkScalar minScale,
-                                   SkScalar maxScale) {
-
-    fMaxMinScale = std::max(minScale, fMaxMinScale);
-    fMinMaxScale = std::min(maxScale, fMinMaxScale);
+                                   const GrSDFTMatrixRange& matrixRange) {
     fSubRunList.append(
-        SDFTSubRun::Make(drawables, runFont, std::move(strike), strikeToSourceScale,this, &fAlloc));
+        SDFTSubRun::Make(
+            this, drawables, runFont, std::move(strike), strikeToSourceScale, matrixRange,&fAlloc));
 }
 
 void GrTextBlob::processSourceMasks(const SkZip<SkGlyphVariant, SkPoint>& drawables,
@@ -2560,7 +2538,7 @@ void GrSubRunNoCachePainter::processSourceSDFT(const SkZip<SkGlyphVariant, SkPoi
                                                sk_sp<SkStrike>&& strike,
                                                SkScalar strikeToSourceScale,
                                                const SkFont& runFont,
-                                               SkScalar minScale, SkScalar maxScale) {
+                                               const GrSDFTMatrixRange&) {
     if (drawables.empty()) {
         return;
     }
@@ -2615,8 +2593,8 @@ public:
             SkScalar strikeToSourceScale) override;
     void processSourceSDFT(
             const SkZip<SkGlyphVariant, SkPoint>& drawables, sk_sp<SkStrike>&& strike,
-            SkScalar strikeToSourceScale, const SkFont& runFont, SkScalar minScale,
-            SkScalar maxScale) override;
+            SkScalar strikeToSourceScale, const SkFont& runFont,
+            const GrSDFTMatrixRange& matrixRange) override;
 
     const SkMatrix& initialPositionMatrix() const override { return fInitialPositionMatrix; }
     SkPoint origin() const { return fOrigin; }
@@ -3321,8 +3299,7 @@ void Slug::processSourceSDFT(const SkZip<SkGlyphVariant, SkPoint>& drawables,
                                    sk_sp<SkStrike>&& strike,
                                    SkScalar strikeToSourceScale,
                                    const SkFont& runFont,
-                                   SkScalar minScale,
-                                   SkScalar maxScale) {
+                                   const GrSDFTMatrixRange&) {
 
     fSubRuns.append(SDFTSubRunSlug::Make(
             this, drawables, runFont, std::move(strike), strikeToSourceScale, &fAlloc));
