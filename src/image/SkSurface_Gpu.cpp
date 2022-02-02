@@ -425,6 +425,12 @@ sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* rContext,
     return result;
 }
 
+#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
+#define ANDROIDFRAMEWORK_DEBUGF(...) SkDebugf(__VA_ARGS__)
+#else
+#define ANDROIDFRAMEWORK_DEBUGF(...)
+#endif
+
 static bool validate_backend_texture(const GrCaps* caps, const GrBackendTexture& tex,
                                      int sampleCnt, GrColorType grCT,
                                      bool texturable) {
@@ -434,18 +440,29 @@ static bool validate_backend_texture(const GrCaps* caps, const GrBackendTexture&
 
     GrBackendFormat backendFormat = tex.getBackendFormat();
     if (!backendFormat.isValid()) {
+        ANDROIDFRAMEWORK_DEBUGF("%s failed due to an invalid format", __func__);
         return false;
     }
 
     if (!caps->areColorTypeAndFormatCompatible(grCT, backendFormat)) {
+        ANDROIDFRAMEWORK_DEBUGF("%s failed due to an invalid format and colorType combination",
+                                __func__);
         return false;
     }
 
     if (!caps->isFormatAsColorTypeRenderable(grCT, backendFormat, sampleCnt)) {
+        ANDROIDFRAMEWORK_DEBUGF(
+                "%s failed due to no supported rendering path for the selected "
+                "format and colorType",
+                __func__);
         return false;
     }
 
     if (texturable && !caps->isFormatTexturable(backendFormat, tex.textureType())) {
+        ANDROIDFRAMEWORK_DEBUGF(
+                "%s failed due to no texturing support for the selected format and "
+                "colorType",
+                __func__);
         return false;
     }
 
@@ -488,12 +505,15 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendTexture(GrRecordingContext* rContext,
     auto releaseHelper = GrRefCntedCallback::Make(textureReleaseProc, releaseContext);
 
     if (!rContext) {
+        ANDROIDFRAMEWORK_DEBUGF("%s failed due to a null context ", __func__);
         return nullptr;
     }
     sampleCnt = std::max(1, sampleCnt);
 
     GrColorType grColorType = SkColorTypeToGrColorType(colorType);
     if (grColorType == GrColorType::kUnknown) {
+        ANDROIDFRAMEWORK_DEBUGF(
+                "%s failed due to an unsupported colorType %d", __func__, colorType);
         return nullptr;
     }
 
@@ -505,6 +525,8 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendTexture(GrRecordingContext* rContext,
             tex, sampleCnt, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo,
             std::move(releaseHelper)));
     if (!proxy) {
+        ANDROIDFRAMEWORK_DEBUGF("%s failed to wrap the texture into a renderable target ",
+                                __func__);
         return nullptr;
     }
 
@@ -513,6 +535,7 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendTexture(GrRecordingContext* rContext,
                                                 SkSurfacePropsCopyOrDefault(props),
                                                 skgpu::BaseDevice::InitContents::kUninit);
     if (!device) {
+        ANDROIDFRAMEWORK_DEBUGF("%s failed to wrap the renderTarget into a surface", __func__);
         return nullptr;
     }
 
@@ -640,7 +663,11 @@ sk_sp<SkSurface> SkSurface::MakeFromAHardwareBuffer(GrDirectContext* dContext,
                                                     AHardwareBuffer* hardwareBuffer,
                                                     GrSurfaceOrigin origin,
                                                     sk_sp<SkColorSpace> colorSpace,
-                                                    const SkSurfaceProps* surfaceProps) {
+                                                    const SkSurfaceProps* surfaceProps
+#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
+                                                    , bool fromWindow
+#endif
+                                                    ) {
     AHardwareBuffer_Desc bufferDesc;
     AHardwareBuffer_describe(hardwareBuffer, &bufferDesc);
 
@@ -666,12 +693,23 @@ sk_sp<SkSurface> SkSurface::MakeFromAHardwareBuffer(GrDirectContext* dContext,
         bool isProtectedContent =
                 SkToBool(bufferDesc.usage & AHARDWAREBUFFER_USAGE_PROTECTED_CONTENT);
 
+        bool fromWindowLocal = false;
+#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
+        fromWindowLocal = fromWindow;
+#endif
+
         GrBackendTexture backendTexture =
-                GrAHardwareBufferUtils::MakeBackendTexture(dContext, hardwareBuffer,
-                                                           bufferDesc.width, bufferDesc.height,
-                                                           &deleteImageProc, &updateImageProc,
-                                                           &deleteImageCtx, isProtectedContent,
-                                                           backendFormat, true);
+                GrAHardwareBufferUtils::MakeBackendTexture(dContext,
+                                                           hardwareBuffer,
+                                                           bufferDesc.width,
+                                                           bufferDesc.height,
+                                                           &deleteImageProc,
+                                                           &updateImageProc,
+                                                           &deleteImageCtx,
+                                                           isProtectedContent,
+                                                           backendFormat,
+                                                           true,
+                                                           fromWindowLocal);
         if (!backendTexture.isValid()) {
             return nullptr;
         }

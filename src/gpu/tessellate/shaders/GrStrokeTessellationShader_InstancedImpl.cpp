@@ -9,6 +9,7 @@
 
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLVertexGeoBuilder.h"
+#include "src/gpu/tessellate/StrokeFixedCountTessellator.h"
 #include "src/gpu/tessellate/WangsFormula.h"
 
 using skgpu::VertexWriter;
@@ -85,12 +86,12 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
     args.fVertBuilder->codeAppendf("float2x2 AFFINE_MATRIX = float2x2(%s);\n", affineMatrixName);
     args.fVertBuilder->codeAppendf("float2 TRANSLATE = %s;\n", translateName);
 
-    if (args.fShaderCaps->infinitySupport()) {
+    if (shader.hasExplicitCurveType()) {
+        args.fVertBuilder->insertFunction(SkStringPrintf(R"(
+        bool is_conic_curve() { return curveTypeAttr != %g; })", skgpu::kCubicCurveType).c_str());
+    } else {
         args.fVertBuilder->insertFunction(R"(
         bool is_conic_curve() { return isinf(pts23Attr.w); })");
-    } else {
-        args.fVertBuilder->insertFunction(SkStringPrintf(R"(
-        bool is_conic_curve() { return curveTypeAttr != %g; })", kCubicCurveType).c_str());
     }
 
     // Tessellation code.
@@ -180,14 +181,15 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
         }
     } else {
         args.fVertBuilder->codeAppendf(R"(
-        float numEdgesInJoin = %i;)", GrStrokeTessellationShader::NumFixedEdgesInJoin(joinType));
+        float numEdgesInJoin = %i;)",
+        skgpu::StrokeFixedCountTessellator::NumFixedEdgesInJoin(joinType));
     }
 
     args.fVertBuilder->codeAppend(R"(
     // Find which direction the curve turns.
     // NOTE: Since the curve is not allowed to inflect, we can just check F'(.5) x F''(.5).
     // NOTE: F'(.5) x F''(.5) has the same sign as (P2 - P0) x (P3 - P1)
-    float turn = cross(p2 - p0, p3 - p1);
+    float turn = cross_length_2d(p2 - p0, p3 - p1);
     float combinedEdgeID = abs(edgeID) - numEdgesInJoin;
     if (combinedEdgeID < 0) {
         tan1 = tan0;
@@ -197,7 +199,7 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
         if (lastControlPoint != p0) {
             tan0 = p0 - lastControlPoint;
         }
-        turn = cross(tan0, tan1);
+        turn = cross_length_2d(tan0, tan1);
     }
 
     // Calculate the curve's starting angle and rotation.
@@ -264,13 +266,4 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
     this->emitTessellationCode(shader, &args.fVertBuilder->code(), gpArgs, *args.fShaderCaps);
 
     this->emitFragmentCode(shader, args);
-}
-
-void GrStrokeTessellationShader::InitializeVertexIDFallbackBuffer(VertexWriter vertexWriter,
-                                                                  size_t bufferSize) {
-    SkASSERT(bufferSize % (sizeof(float) * 2) == 0);
-    int edgeCount = bufferSize / (sizeof(float) * 2);
-    for (int i = 0; i < edgeCount; ++i) {
-        vertexWriter << (float)i << (float)-i;
-    }
 }

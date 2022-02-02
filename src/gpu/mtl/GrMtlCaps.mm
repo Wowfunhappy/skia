@@ -19,7 +19,9 @@
 #include "src/gpu/GrRenderTargetProxy.h"
 #include "src/gpu/GrShaderCaps.h"
 #include "src/gpu/GrSurfaceProxy.h"
+#include "src/gpu/KeyBuilder.h"
 #include "src/gpu/mtl/GrMtlRenderTarget.h"
+#include "src/gpu/mtl/GrMtlTexture.h"
 #include "src/gpu/mtl/GrMtlUtil.h"
 
 #if !__has_feature(objc_arc)
@@ -968,6 +970,13 @@ bool GrMtlCaps::onSurfaceSupportsWritePixels(const GrSurface* surface) const {
 
 GrCaps::SurfaceReadPixelsSupport GrMtlCaps::surfaceSupportsReadPixels(
         const GrSurface* surface) const {
+    if (auto tex = static_cast<const GrMtlTexture*>(surface->asTexture())) {
+        // We disallow reading back directly from compressed textures.
+        if (GrMtlFormatIsCompressed(tex->attachment()->mtlFormat())) {
+            return SurfaceReadPixelsSupport::kCopyToTexture2D;
+        }
+    }
+
     if (auto mtlRT = static_cast<const GrMtlRenderTarget*>(surface->asRenderTarget())) {
         if (mtlRT->numSamples() > 1 && !mtlRT->resolveAttachment()) {
             return SurfaceReadPixelsSupport::kCopyToTexture2D;
@@ -1140,7 +1149,7 @@ GrProgramDesc GrMtlCaps::makeDesc(GrRenderTarget*, const GrProgramInfo& programI
     GrProgramDesc desc;
     GrProgramDesc::Build(&desc, programInfo, *this);
 
-    GrProcessorKeyBuilder b(desc.key());
+    skgpu::KeyBuilder b(desc.key());
 
     // If ordering here is changed, update getStencilPixelFormat() below
     b.add32(programInfo.backendFormat().asMtlFormat());

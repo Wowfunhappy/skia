@@ -12,9 +12,9 @@
 
 #include "include/sksl/DSLCore.h"
 #include "src/core/SkTraceEvent.h"
+#include "src/sksl/SkSLBuiltinMap.h"
 #include "src/sksl/SkSLConstantFolder.h"
 #include "src/sksl/SkSLDSLParser.h"
-#include "src/sksl/SkSLIntrinsicMap.h"
 #include "src/sksl/SkSLOperators.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLRehydrator.h"
@@ -131,7 +131,7 @@ public:
     Context* fContext;
 };
 
-Compiler::Compiler(const ShaderCapsClass* caps)
+Compiler::Compiler(const ShaderCaps* caps)
         : fErrorReporter(this)
         , fContext(std::make_shared<Context>(fErrorReporter, *caps, fMangler))
         , fInliner(fContext.get()) {
@@ -295,6 +295,8 @@ const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
         case ProgramKind::kRuntimeColorFilter: return this->loadPublicModule();        break;
         case ProgramKind::kRuntimeShader:      return this->loadRuntimeShaderModule(); break;
         case ProgramKind::kRuntimeBlender:     return this->loadPublicModule();        break;
+        case ProgramKind::kCustomMeshVertex:   return this->loadPublicModule();        break;
+        case ProgramKind::kCustomMeshFragment: return this->loadPublicModule();        break;
         case ProgramKind::kGeneric:            return this->loadPublicModule();        break;
     }
     SkUNREACHABLE;
@@ -331,7 +333,7 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
         printf("error reading %s\n", data.fPath);
         abort();
     }
-    ParsedModule baseModule = {base, /*fIntrinsics=*/nullptr};
+    ParsedModule baseModule = {base, /*fElements=*/nullptr};
     LoadedModule result = DSLParser(this, settings, kind,
             std::move(text)).moduleInheritingFrom(std::move(baseModule));
     if (this->errorCount()) {
@@ -357,21 +359,21 @@ ParsedModule Compiler::parseModule(ProgramKind kind, ModuleData data, const Pars
     this->optimize(module);
 
     // For modules that just declare (but don't define) intrinsic functions, there will be no new
-    // program elements. In that case, we can share our parent's intrinsic map:
+    // program elements. In that case, we can share our parent's element map:
     if (module.fElements.empty()) {
-        return ParsedModule{module.fSymbols, base.fIntrinsics};
+        return ParsedModule{module.fSymbols, base.fElements};
     }
 
-    auto intrinsics = std::make_shared<IntrinsicMap>(base.fIntrinsics.get());
+    auto elements = std::make_shared<BuiltinMap>(base.fElements.get());
 
-    // Now, transfer all of the program elements to an intrinsic map. This maps certain types of
-    // global objects to the declaring ProgramElement.
+    // Now, transfer all of the program elements to a builtin element map. This maps certain types
+    // of global objects to the declaring ProgramElement.
     for (std::unique_ptr<ProgramElement>& element : module.fElements) {
         switch (element->kind()) {
             case ProgramElement::Kind::kFunction: {
                 const FunctionDefinition& f = element->as<FunctionDefinition>();
                 SkASSERT(f.declaration().isBuiltin());
-                intrinsics->insertOrDie(f.declaration().description(), std::move(element));
+                elements->insertOrDie(f.declaration().description(), std::move(element));
                 break;
             }
             case ProgramElement::Kind::kFunctionPrototype: {
@@ -382,13 +384,13 @@ ParsedModule Compiler::parseModule(ProgramKind kind, ModuleData data, const Pars
                 const GlobalVarDeclaration& global = element->as<GlobalVarDeclaration>();
                 const Variable& var = global.declaration()->as<VarDeclaration>().var();
                 SkASSERT(var.isBuiltin());
-                intrinsics->insertOrDie(String(var.name()), std::move(element));
+                elements->insertOrDie(String(var.name()), std::move(element));
                 break;
             }
             case ProgramElement::Kind::kInterfaceBlock: {
                 const Variable& var = element->as<InterfaceBlock>().variable();
                 SkASSERT(var.isBuiltin());
-                intrinsics->insertOrDie(String(var.name()), std::move(element));
+                elements->insertOrDie(String(var.name()), std::move(element));
                 break;
             }
             default:
@@ -398,7 +400,7 @@ ParsedModule Compiler::parseModule(ProgramKind kind, ModuleData data, const Pars
         }
     }
 
-    return ParsedModule{module.fSymbols, std::move(intrinsics)};
+    return ParsedModule{module.fSymbols, std::move(elements)};
 }
 
 std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
@@ -510,6 +512,7 @@ bool Compiler::optimize(LoadedModule& module) {
     config.fIsBuiltinCode = true;
     config.fKind = module.fKind;
     AutoProgramConfig autoConfig(fContext, &config);
+    AutoModifiersPool autoPool(fContext, &fCoreModifiers);
 
     // Reset the Inliner.
     fInliner.reset();
@@ -674,13 +677,28 @@ bool Compiler::toGLSL(Program& program, String* out) {
     return result;
 }
 
+bool Compiler::toHLSL(Program& program, OutputStream& out) {
+    TRACE_EVENT0("skia.shaders", "SkSL::Compiler::toHLSL");
+    String hlsl;
+    if (!this->toHLSL(program, &hlsl)) {
+        return false;
+    }
+    out.writeString(hlsl);
+    return true;
+}
+
 bool Compiler::toHLSL(Program& program, String* out) {
     String spirv;
     if (!this->toSPIRV(program, &spirv)) {
         return false;
     }
 
-    return SPIRVtoHLSL(spirv, out);
+    if (!SPIRVtoHLSL(spirv, out)) {
+        fErrorText += "HLSL cross-compilation not enabled";
+        return false;
+    }
+
+    return true;
 }
 
 bool Compiler::toMetal(Program& program, OutputStream& out) {

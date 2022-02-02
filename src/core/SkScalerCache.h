@@ -28,32 +28,36 @@ public:
     // Default ctor is only needed for the hash table.
     SkGlyphDigest() = default;
     SkGlyphDigest(size_t i, const SkGlyph& glyph)
-        : fIndex{SkTo<uint32_t>(i)}
+        : fPackedGlyphID{glyph.getPackedID().value()}
+        , fIndex{SkTo<uint32_t>(i)}
         , fIsEmpty(glyph.isEmpty())
         , fIsColor(glyph.isColor())
         , fCanDrawAsMask{SkStrikeForGPU::CanDrawAsMask(glyph)}
-        , fCanDrawAsSDFT{SkStrikeForGPU::CanDrawAsSDFT(glyph)} {}
+        , fCanDrawAsSDFT{SkStrikeForGPU::CanDrawAsSDFT(glyph)}
+        , fMaxDimension{(uint16_t)glyph.maxDimension()} {}
     int index()          const {return fIndex;        }
     bool isEmpty()       const {return fIsEmpty;      }
     bool isColor()       const {return fIsColor;      }
     bool canDrawAsMask() const {return fCanDrawAsMask;}
     bool canDrawAsSDFT() const {return fCanDrawAsSDFT;}
+    uint32_t packedGlyphID() const {return fPackedGlyphID;}
 
 private:
     static_assert(SkPackedGlyphID::kEndData == 20);
-    uint32_t fIndex : SkPackedGlyphID::kEndData;
-    uint32_t fIsEmpty       : 1;
-    uint32_t fIsColor       : 1;
-    uint32_t fCanDrawAsMask : 1;
-    uint32_t fCanDrawAsSDFT : 1;
+    uint64_t fPackedGlyphID : SkPackedGlyphID::kEndData;
+    uint64_t fIndex         : SkPackedGlyphID::kEndData;
+    uint64_t fIsEmpty       : 1;
+    uint64_t fIsColor       : 1;
+    uint64_t fCanDrawAsMask : 1;
+    uint64_t fCanDrawAsSDFT : 1;
+    uint64_t fMaxDimension  : 16;
 };
 
 // This class represents a strike: a specific combination of typeface, size, matrix, etc., and
 // holds the glyphs for that strike.
 class SkScalerCache {
 public:
-    SkScalerCache(const SkDescriptor& desc,
-                  std::unique_ptr<SkScalerContext> scaler,
+    SkScalerCache(std::unique_ptr<SkScalerContext> scaler,
                   const SkFontMetrics* metrics = nullptr);
 
     // Lookup (or create if needed) the toGlyph using toID. If that glyph is not initialized with
@@ -95,8 +99,6 @@ public:
     const SkGlyphPositionRoundingSpec& roundingSpec() const {
         return fRoundingSpec;
     }
-
-    const SkDescriptor& getDescriptor() const;
 
     size_t prepareForMaskDrawing(
             SkDrawableGlyphBuffer* drawables, SkSourceGlyphBuffer* rejects) SK_EXCLUDES(fMu);
@@ -140,7 +142,6 @@ private:
             PathDetail pathDetail,
             const SkGlyph** results) SK_REQUIRES(fMu);
 
-    const SkAutoDescriptor                 fDesc;
     const std::unique_ptr<SkScalerContext> fScalerContext;
     const SkFontMetrics                    fFontMetrics;
     const SkGlyphPositionRoundingSpec      fRoundingSpec;
@@ -152,7 +153,15 @@ private:
     // SkGlyphDigest's fIndex field stores the index. This pointer provides an unchanging
     // reference to the SkGlyph as long as the strike is alive, and fGlyphForIndex
     // provides a dense index for glyphs.
-    SkTHashMap<SkPackedGlyphID, SkGlyphDigest> fDigestForPackedGlyphID SK_GUARDED_BY(fMu);
+    struct DigestTraits {
+        static uint32_t GetKey(SkGlyphDigest digest) {
+            return digest.packedGlyphID();
+        }
+        static uint32_t Hash(uint32_t packedGlyphID) {
+            return SkGoodHash()(packedGlyphID);
+        }
+    };
+    SkTHashTable<SkGlyphDigest, uint32_t, DigestTraits> fDigestForPackedGlyphID SK_GUARDED_BY(fMu);
     std::vector<SkGlyph*> fGlyphForIndex SK_GUARDED_BY(fMu);
 
     // so we don't grow our arrays a lot

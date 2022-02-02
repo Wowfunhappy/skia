@@ -10,13 +10,13 @@
 #include "include/core/SkTypeface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
+#include "src/core/SkStrikeCache.h"
 #include "src/core/SkUtils.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/text/GrStrikeCache.h"
 #include "src/gpu/text/GrTextBlob.h"
 #include "src/utils/SkUTF.h"
-
 
 // From Project Guttenberg. This is UTF-8 text.
 static const char* gText =
@@ -51,7 +51,7 @@ class DirectMaskGlyphVertexFillBenchmark : public Benchmark {
         const SkPoint drawOrigin = glyphRunList.origin();
         drawMatrix.preTranslate(drawOrigin.x(), drawOrigin.y());
         GrSDFTControl control{false, props.isUseDeviceIndependentFonts(), 256, 256};
-        fBlob = GrTextBlob::Make(glyphRunList, paint, drawMatrix, control, &painter);
+        fBlob = GrTextBlob::Make(glyphRunList, paint, drawMatrix, false, control, &painter);
 
         SkASSERT(!fBlob->subRunList().isEmpty());
         GrAtlasSubRun* subRun = fBlob->subRunList().front().testingOnly_atlasSubRun();
@@ -71,7 +71,7 @@ class DirectMaskGlyphVertexFillBenchmark : public Benchmark {
 
         for (int loop = 0; loop < loops; loop++) {
             subRun->fillVertexData(fVertices.get(), 0, subRun->glyphCount(),
-                                   grColor, positionMatrix, clip);
+                                   grColor, positionMatrix, {0, 0}, clip);
         }
     }
 

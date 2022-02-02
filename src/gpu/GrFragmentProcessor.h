@@ -20,10 +20,13 @@ class GrGLSLFPFragmentBuilder;
 class GrGLSLProgramDataManager;
 class GrPaint;
 class GrPipeline;
-class GrProcessorKeyBuilder;
-class GrShaderCaps;
+struct GrShaderCaps;
 class GrSwizzle;
 class GrTextureEffect;
+
+namespace skgpu {
+class KeyBuilder;
+}
 
 /**
  * Some fragment-processor creation methods have preconditions that might not be satisfied by the
@@ -52,19 +55,7 @@ public:
     static std::unique_ptr<GrFragmentProcessor> MakeColor(SkPMColor4f color);
 
     /**
-    *  In many instances (e.g. SkShader::asFragmentProcessor() implementations) it is desirable to
-    *  only consider the input color's alpha. However, there is a competing desire to have reusable
-    *  GrFragmentProcessor subclasses that can be used in other scenarios where the entire input
-    *  color is considered. This function exists to filter the input color and pass it to a FP. It
-    *  does so by returning a parent FP that multiplies the passed in FPs output by the parent's
-    *  input alpha. The passed in FP will not receive an input color.
-    */
-    static std::unique_ptr<GrFragmentProcessor> MulChildByInputAlpha(
-            std::unique_ptr<GrFragmentProcessor> child);
-
-    /**
-     *  Like MulChildByInputAlpha(), but reverses the sense of src and dst. In this case, return
-     *  the input modulated by the child's alpha. The passed in FP will not receive an input color.
+     *  Returns the input color, modulated by the child's alpha.
      *
      *  output = input * child.a
      */
@@ -80,14 +71,6 @@ public:
 
     /**
      *  Returns a fragment processor that generates the passed-in color, modulated by the child's
-     *  alpha channel. The child's input color will be the parent's fInputColor. (Pass a null FP to
-     *  use the alpha from fInputColor instead of a child FP.)
-     */
-    static std::unique_ptr<GrFragmentProcessor> ModulateAlpha(
-            std::unique_ptr<GrFragmentProcessor> child, const SkPMColor4f& color);
-
-    /**
-     *  Returns a fragment processor that generates the passed-in color, modulated by the child's
      *  RGBA color. The child's input color will be the parent's fInputColor. (Pass a null FP to use
      *  the color from fInputColor instead of a child FP.)
      */
@@ -95,22 +78,20 @@ public:
             std::unique_ptr<GrFragmentProcessor> child, const SkPMColor4f& color);
 
     /**
-     *  This assumes that the input color to the returned processor will be unpremul and that the
-     *  passed processor (which becomes the returned processor's child) produces a premul output.
-     *  The result of the returned processor is a premul of its input color modulated by the child
-     *  processor's premul output.
-     */
-    static std::unique_ptr<GrFragmentProcessor> MakeInputPremulAndMulByOutput(
-            std::unique_ptr<GrFragmentProcessor>);
-
-    /**
      *  Returns a parent fragment processor that adopts the passed fragment processor as a child.
      *  The parent will ignore its input color and instead feed the passed in color as input to the
      *  child.
      */
     static std::unique_ptr<GrFragmentProcessor> OverrideInput(std::unique_ptr<GrFragmentProcessor>,
-                                                              const SkPMColor4f&,
-                                                              bool useUniform = true);
+                                                              const SkPMColor4f&);
+
+    /**
+     *  Returns a parent fragment processor that adopts the passed fragment processor as a child.
+     *  The parent will simply return the child's color, but disable the coverage-as-alpha
+     *  optimization.
+     */
+    static std::unique_ptr<GrFragmentProcessor> DisableCoverageAsAlpha(
+            std::unique_ptr<GrFragmentProcessor>);
 
     /**
      *  Returns a fragment processor which samples the passed-in fragment processor using
@@ -118,14 +99,6 @@ public:
      *  (This is only meaningful in contexts like blenders, which use a source and dest color.)
      */
     static std::unique_ptr<GrFragmentProcessor> UseDestColorAsInput(
-            std::unique_ptr<GrFragmentProcessor>);
-
-    /**
-     *  Returns a parent fragment processor that adopts the passed fragment processor as a child.
-     *  The parent will unpremul its input color, make it opaque, and pass that as the input to
-     *  the child. Then the original input alpha is applied to the result of the child.
-     */
-    static std::unique_ptr<GrFragmentProcessor> MakeInputOpaqueAndPostApplyAlpha(
             std::unique_ptr<GrFragmentProcessor>);
 
     /**
@@ -140,13 +113,6 @@ public:
      *  the output to [0, 1].
      */
     static std::unique_ptr<GrFragmentProcessor> ClampOutput(std::unique_ptr<GrFragmentProcessor>);
-
-    /**
-     *  Returns a fragment processor that calls the passed in fragment processor, and then ensures
-     *  the output is a valid premul color by clamping RGB to [0, A].
-     */
-    static std::unique_ptr<GrFragmentProcessor> ClampPremulOutput(
-            std::unique_ptr<GrFragmentProcessor>);
 
     /**
      * Returns a fragment processor that composes two fragment processors `f` and `g` into f(g(x)).
@@ -216,7 +182,7 @@ public:
 
     std::unique_ptr<ProgramImpl> makeProgramImpl() const;
 
-    void addToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
+    void addToKey(const GrShaderCaps& caps, skgpu::KeyBuilder* b) const {
         this->onAddToKey(caps, b);
         for (const auto& child : fChildProcessors) {
             if (child) {
@@ -463,7 +429,7 @@ private:
      */
     virtual std::unique_ptr<ProgramImpl> onMakeProgramImpl() const = 0;
 
-    virtual void onAddToKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const = 0;
+    virtual void onAddToKey(const GrShaderCaps&, skgpu::KeyBuilder*) const = 0;
 
     /**
      * Subclass implements this to support isEqual(). It will only be called if it is known that

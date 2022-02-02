@@ -28,7 +28,7 @@ public:
                                                  uint32_t sampleCount,
                                                  Protected) const override;
 
-    skgpu::TextureInfo getDefaultDepthStencilTextureInfo(DepthStencilType,
+    skgpu::TextureInfo getDefaultDepthStencilTextureInfo(Mask<DepthStencilFlags>,
                                                          uint32_t sampleCount,
                                                          Protected) const override;
 
@@ -36,6 +36,8 @@ public:
     bool isApple()const  { return fGPUFamily == GPUFamily::kApple; }
 
     size_t getMinBufferAlignment() const { return this->isMac() ? 4 : 1; }
+
+    bool isRenderable(const skgpu::TextureInfo&) const override;
 
 private:
     void initGPUFamily(const id<MTLDevice>);
@@ -51,6 +53,13 @@ private:
     static bool GetGPUFamily(id<MTLDevice> device, GPUFamily* gpuFamily, int* group);
     static bool GetGPUFamilyFromFeatureSet(id<MTLDevice> device, GPUFamily* gpuFamily,
                                            int* group);
+
+    bool onAreColorTypeAndTextureInfoCompatible(SkColorType,
+                                                const skgpu::TextureInfo&) const override;
+
+    bool onIsTexturable(const skgpu::TextureInfo&) const override;
+    bool isTexturable(MTLPixelFormat) const;
+    bool isRenderable(MTLPixelFormat, uint32_t numSamples) const;
 
     GPUFamily fGPUFamily;
     int fFamilyGroup;

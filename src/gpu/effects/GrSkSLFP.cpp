@@ -15,6 +15,7 @@
 #include "src/gpu/GrBaseContextPriv.h"
 #include "src/gpu/GrColorInfo.h"
 #include "src/gpu/GrTexture.h"
+#include "src/gpu/KeyBuilder.h"
 #include "src/gpu/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/glsl/GrGLSLProgramBuilder.h"
 #include "src/sksl/SkSLUtil.h"
@@ -273,7 +274,7 @@ std::unique_ptr<GrSkSLFP> GrSkSLFP::MakeWithData(
         return nullptr;
     }
     size_t uniformSize = uniforms->size();
-    size_t uniformFlagSize = effect->uniforms().count() * sizeof(UniformFlags);
+    size_t uniformFlagSize = effect->uniforms().size() * sizeof(UniformFlags);
     std::unique_ptr<GrSkSLFP> fp(new (uniformSize + uniformFlagSize)
                                          GrSkSLFP(std::move(effect), name, OptFlags::kNone));
     sk_careful_memcpy(fp->uniformData(), uniforms->data(), uniformSize);
@@ -298,7 +299,7 @@ GrSkSLFP::GrSkSLFP(sk_sp<SkRuntimeEffect> effect, const char* name, OptFlags opt
         , fEffect(std::move(effect))
         , fName(name)
         , fUniformSize(SkToU32(fEffect->uniformSize())) {
-    memset(this->uniformFlags(), 0, fEffect->uniforms().count() * sizeof(UniformFlags));
+    memset(this->uniformFlags(), 0, fEffect->uniforms().size() * sizeof(UniformFlags));
     if (fEffect->usesSampleCoords()) {
         this->setUsesSampleCoordsDirectly();
     }
@@ -312,10 +313,11 @@ GrSkSLFP::GrSkSLFP(const GrSkSLFP& other)
         , fEffect(other.fEffect)
         , fName(other.fName)
         , fUniformSize(other.fUniformSize)
-        , fInputChildIndex(other.fInputChildIndex) {
+        , fInputChildIndex(other.fInputChildIndex)
+        , fDestColorChildIndex(other.fDestColorChildIndex) {
     sk_careful_memcpy(this->uniformFlags(),
                       other.uniformFlags(),
-                      fEffect->uniforms().count() * sizeof(UniformFlags));
+                      fEffect->uniforms().size() * sizeof(UniformFlags));
     sk_careful_memcpy(this->uniformData(), other.uniformData(), fUniformSize);
 }
 
@@ -351,7 +353,7 @@ std::unique_ptr<GrFragmentProcessor::ProgramImpl> GrSkSLFP::onMakeProgramImpl() 
     return std::make_unique<Impl>();
 }
 
-void GrSkSLFP::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
+void GrSkSLFP::onAddToKey(const GrShaderCaps& caps, skgpu::KeyBuilder* b) const {
     // In the unlikely event of a hash collision, we also include the uniform size in the key.
     // That ensures that we will (at worst) use the wrong program, but one that expects the same
     // amount of uniform data.
@@ -360,7 +362,7 @@ void GrSkSLFP::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) co
 
     const UniformFlags* flags = this->uniformFlags();
     const uint8_t* uniformData = this->uniformData();
-    size_t uniformCount = fEffect->uniforms().count();
+    size_t uniformCount = fEffect->uniforms().size();
     auto iter = fEffect->uniforms().begin();
 
     for (size_t i = 0; i < uniformCount; ++i, ++iter) {
@@ -374,9 +376,9 @@ void GrSkSLFP::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) co
 
 bool GrSkSLFP::onIsEqual(const GrFragmentProcessor& other) const {
     const GrSkSLFP& sk = other.cast<GrSkSLFP>();
-    const size_t uniformFlagSize = fEffect->uniforms().count() * sizeof(UniformFlags);
+    const size_t uniformFlagSize = fEffect->uniforms().size() * sizeof(UniformFlags);
     return fEffect->hash() == sk.fEffect->hash() &&
-           fEffect->uniforms().count() == sk.fEffect->uniforms().count() &&
+           fEffect->uniforms().size() == sk.fEffect->uniforms().size() &&
            fUniformSize == sk.fUniformSize &&
            !sk_careful_memcmp(
                    this->uniformData(), sk.uniformData(), fUniformSize + uniformFlagSize);

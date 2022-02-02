@@ -23,6 +23,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrFragmentProcessor.h"
 #include "src/gpu/GrRecordingContextPriv.h"
+#include "src/gpu/KeyBuilder.h"
 #include "src/gpu/SkGr.h"
 #include "src/gpu/effects/GrMatrixEffect.h"
 #include "src/gpu/effects/GrTextureEffect.h"
@@ -623,7 +624,7 @@ private:
         return std::make_unique<Impl>();
     }
 
-    void onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override;
+    void onAddToKey(const GrShaderCaps& caps, skgpu::KeyBuilder* b) const override;
 
     bool onIsEqual(const GrFragmentProcessor& sBase) const override {
         const GrPerlinNoise2Effect& s = sBase.cast<GrPerlinNoise2Effect>();
@@ -894,7 +895,7 @@ void GrPerlinNoise2Effect::Impl::onSetData(const GrGLSLProgramDataManager& pdman
     }
 }
 
-void GrPerlinNoise2Effect::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
+void GrPerlinNoise2Effect::onAddToKey(const GrShaderCaps& caps, skgpu::KeyBuilder* b) const {
     uint32_t key = fNumOctaves;
     key = key << 3;  // Make room for next 3 bits
     switch (fType) {
@@ -941,13 +942,11 @@ std::unique_ptr<GrFragmentProcessor> SkPerlinNoiseShaderImpl::asFragmentProcesso
 
     if (0 == fNumOctaves) {
         if (kFractalNoise_Type == fType) {
-            // Extract the incoming alpha and emit rgba = (a/4, a/4, a/4, a/2)
+            // Incoming alpha is assumed to be 1. So emit rgba = (1/4, 1/4, 1/4, 1/2)
             // TODO: Either treat the output of this shader as sRGB or allow client to specify a
             // color space of the noise. Either way, this case (and the GLSL) need to convert to
             // the destination.
-            auto inner = GrFragmentProcessor::ModulateRGBA(
-                    /*child=*/nullptr, SkPMColor4f::FromBytes_RGBA(0x80404040));
-            return GrFragmentProcessor::MulChildByInputAlpha(std::move(inner));
+            return GrFragmentProcessor::MakeColor(SkPMColor4f::FromBytes_RGBA(0x80404040));
         }
         // Emit zero.
         return GrFragmentProcessor::MakeColor(SK_PMColor4fTRANSPARENT);
@@ -960,15 +959,14 @@ std::unique_ptr<GrFragmentProcessor> SkPerlinNoiseShaderImpl::asFragmentProcesso
     auto noiseView        = std::get<0>(GrMakeCachedBitmapProxyView(context, noiseBitmap));
 
     if (permutationsView && noiseView) {
-        auto inner = GrPerlinNoise2Effect::Make(fType,
-                                                fNumOctaves,
-                                                fStitchTiles,
-                                                std::move(paintingData),
-                                                std::move(permutationsView),
-                                                std::move(noiseView),
-                                                m,
-                                                *context->priv().caps());
-        return GrFragmentProcessor::MulChildByInputAlpha(std::move(inner));
+        return GrPerlinNoise2Effect::Make(fType,
+                                          fNumOctaves,
+                                          fStitchTiles,
+                                          std::move(paintingData),
+                                          std::move(permutationsView),
+                                          std::move(noiseView),
+                                          m,
+                                          *context->priv().caps());
     }
     return nullptr;
 }

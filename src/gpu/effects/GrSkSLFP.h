@@ -18,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-class GrShaderCaps;
+struct GrShaderCaps;
 class SkData;
 class SkRuntimeEffect;
 
@@ -174,7 +174,7 @@ private:
 
     std::unique_ptr<ProgramImpl> onMakeProgramImpl() const override;
 
-    void onAddToKey(const GrShaderCaps&, GrProcessorKeyBuilder*) const override;
+    void onAddToKey(const GrShaderCaps&, skgpu::KeyBuilder*) const override;
 
     bool onIsEqual(const GrFragmentProcessor&) const override;
 
@@ -183,7 +183,7 @@ private:
     // An instance of GrSkSLFP is always allocated with a payload immediately following the FP.
     // First the values of all the uniforms, and then a set of flags (one per uniform).
     static size_t UniformPayloadSize(const SkRuntimeEffect* effect) {
-        return effect->uniformSize() + effect->uniforms().count() * sizeof(UniformFlags);
+        return effect->uniformSize() + effect->uniforms().size() * sizeof(UniformFlags);
     }
 
     const uint8_t* uniformData() const { return reinterpret_cast<const uint8_t*>(this + 1); }
