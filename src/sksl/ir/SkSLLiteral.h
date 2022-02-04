@@ -96,12 +96,12 @@ public:
         return fValue;
     }
 
-    String description() const override {
+    std::string description() const override {
         if (this->type().isFloat()) {
             return skstd::to_string(this->floatValue());
         }
         if (this->type().isInteger()) {
-            return skstd::to_string(this->intValue());
+            return std::to_string(this->intValue());
         }
         SkASSERT(this->type().isBoolean());
         return fValue ? "true" : "false";

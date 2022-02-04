@@ -115,10 +115,10 @@ void Dehydrator::write(Modifiers m) {
 }
 
 void Dehydrator::write(std::string_view s) {
-    this->write(String(s));
+    this->write(std::string(s));
 }
 
-void Dehydrator::write(String s) {
+void Dehydrator::write(std::string s) {
     auto found = fStrings.find(s);
     int offset;
     if (found == fStrings.end()) {
@@ -603,10 +603,38 @@ void Dehydrator::write(const std::vector<std::unique_ptr<ProgramElement>>& eleme
     this->writeCommand(Rehydrator::kElementsComplete_Command);
 }
 
+void Dehydrator::write(const Program& program) {
+    this->writeCommand(Rehydrator::kProgram_Command);
+
+    // Collect the symbol tables so we can write out the count
+    std::vector<SymbolTable*> symbolTables;
+    SymbolTable* symbols = program.fSymbols.get();
+    while (symbols) {
+        symbolTables.push_back(symbols);
+        symbols = symbols->fParent.get();
+    }
+    this->writeU8(symbolTables.size());
+
+    // Write the symbol tables from the root down
+    for (int i = symbolTables.size() - 1; i >= 0; --i) {
+        this->write(*symbolTables[i]);
+    }
+
+    // Write the elements
+    this->write(program.fOwnedElements);
+
+    // Write the inputs
+    struct KnownSkSLProgramInputs { bool useRTFlipUniform; };
+    // Since it would be easy to forget to update this code in the face of Inputs changes and any
+    // resulting bugs could be very subtle, assert that the struct hasn't changed:
+    static_assert(sizeof(SkSL::Program::Inputs) == sizeof(KnownSkSLProgramInputs));
+    this->writeU8(program.fInputs.fUseFlipRTUniform);
+}
+
 void Dehydrator::finish(OutputStream& out) {
     out.write16(Rehydrator::kVersion);
-    String stringBuffer = fStringBuffer.str();
-    String commandBuffer = fBody.str();
+    std::string stringBuffer = fStringBuffer.str();
+    std::string commandBuffer = fBody.str();
     out.write16(fStringBuffer.str().size());
     fStringBufferStart = 4;
     out.writeString(stringBuffer);

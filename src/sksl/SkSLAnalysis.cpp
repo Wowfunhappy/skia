@@ -160,6 +160,31 @@ public:
     using INHERITED = ProgramVisitor;
 };
 
+class ReturnsNonOpaqueColorVisitor : public ProgramVisitor {
+public:
+    ReturnsNonOpaqueColorVisitor() {}
+
+    bool visitStatement(const Statement& s) override {
+        if (s.is<ReturnStatement>()) {
+            const Expression* e = s.as<ReturnStatement>().expression().get();
+            bool knownOpaque = e && e->type().slotCount() == 4 &&
+                               ConstantFolder::GetConstantValueForVariable(*e)
+                                               ->getConstantValue(/*n=*/3)
+                                               .value_or(0) == 1;
+            return !knownOpaque;
+        }
+        return INHERITED::visitStatement(s);
+    }
+
+    bool visitExpression(const Expression& e) override {
+        // No need to recurse into expressions, these can never contain return statements
+        return false;
+    }
+
+    using INHERITED = ProgramVisitor;
+    using INHERITED::visitProgramElement;
+};
+
 // Visitor that counts the number of nodes visited
 class NodeCountVisitor : public ProgramVisitor {
 public:
@@ -250,7 +275,7 @@ public:
                 const Variable* var = varRef.variable();
                 if (var->modifiers().fFlags & (Modifiers::kConst_Flag | Modifiers::kUniform_Flag)) {
                     fErrors->error(expr.fLine, "cannot modify immutable variable '" +
-                                               SkSL::String(var->name()) + "'");
+                                               std::string(var->name()) + "'");
                 } else {
                     SkASSERT(fAssignedVar == nullptr);
                     fAssignedVar = &varRef;
@@ -346,6 +371,11 @@ bool Analysis::CallsColorTransformIntrinsics(const Program& program) {
     return false;
 }
 
+bool Analysis::ReturnsOpaqueColor(const FunctionDefinition& function) {
+    ReturnsNonOpaqueColorVisitor visitor;
+    return !visitor.visitProgramElement(function);
+}
+
 bool Analysis::DetectVarDeclarationWithoutScope(const Statement& stmt, ErrorReporter* errors) {
     // A variable declaration can create either a lone VarDeclaration or an unscoped Block
     // containing multiple VarDeclaration statements. We need to detect either case.
@@ -373,7 +403,7 @@ bool Analysis::DetectVarDeclarationWithoutScope(const Statement& stmt, ErrorRepo
     // Report an error.
     SkASSERT(var);
     if (errors) {
-        errors->error(stmt.fLine, "variable '" + SkSL::String(var->name()) +
+        errors->error(stmt.fLine, "variable '" + std::string(var->name()) +
                                   "' must be created in a scope");
     }
     return true;
