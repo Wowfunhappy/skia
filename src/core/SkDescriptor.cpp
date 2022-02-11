@@ -29,8 +29,8 @@ void* SkDescriptor::operator new(size_t) {
     SK_ABORT("Descriptors are created with placement new.");
 }
 
-void SkDescriptor::flatten(SkWriteBuffer& buffer) {
-    buffer.writePad32(static_cast<void*>(this), this->fLength);
+void SkDescriptor::flatten(SkWriteBuffer& buffer) const {
+    buffer.writePad32(static_cast<const void*>(this), this->fLength);
 }
 
 void* SkDescriptor::addEntry(uint32_t tag, size_t length, const void* data) {
@@ -181,6 +181,11 @@ std::optional<SkAutoDescriptor> SkAutoDescriptor::MakeFromBuffer(SkReadBuffer& b
     // underflow.
     if (descriptorHeader.getLength() < sizeof(SkDescriptor)) { return {}; }
     uint32_t bodyLength = descriptorHeader.getLength() - sizeof(SkDescriptor);
+
+    // Make sure the fLength makes sense with respect to the incoming data.
+    if (bodyLength > buffer.available()) {
+        return {};
+    }
 
     SkAutoDescriptor ad{descriptorHeader.getLength()};
     memcpy(ad.fDesc, &descriptorHeader, sizeof(SkDescriptor));

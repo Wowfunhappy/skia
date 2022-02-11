@@ -6,6 +6,9 @@
 if (is_fuchsia) {
   import("//build/fuchsia/sdk.gni")
 }
+if (is_wasm) {
+  import("//gn/toolchain/wasm.gni")
+}
 
 declare_args() {
   extra_asmflags = []
@@ -267,6 +270,17 @@ config("default") {
     }
   }
 
+  if (is_wasm) {
+    cflags += [
+      "--sysroot=$emsdk_dir/upstream/emscripten/cache/sysroot",
+      "-sMAIN_MODULE=1",
+    ]
+    if (skia_canvaskit_enable_experimental_simd) {
+      cflags += [ "-msimd128" ]
+    }
+    ldflags += [ "--sysroot=$emsdk_dir/upstream/emscripten/cache/sysroot" ]
+  }
+
   if (sanitize != "" && sanitize != "MSVC") {
     # You can either pass the sanitizers directly, e.g. "address,undefined",
     # or pass one of the couple common aliases used by the bots.
@@ -447,7 +461,6 @@ config("warnings") {
       "-Wno-double-promotion",
       "-Wno-exit-time-destructors",  # TODO: OK outside libskia
       "-Wno-float-equal",
-      "-Wno-format-nonliteral",
       "-Wno-global-constructors",  # TODO: OK outside libskia
       "-Wno-missing-prototypes",
       "-Wno-missing-variable-declarations",
