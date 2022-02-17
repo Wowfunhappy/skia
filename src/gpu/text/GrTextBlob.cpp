@@ -9,10 +9,12 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "include/private/SkTemplates.h"
 #include "include/private/chromium/GrSlug.h"
+#include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 #include "src/core/SkFontPriv.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkPaintPriv.h"
+#include "src/core/SkReadBuffer.h"
 #include "src/core/SkStrikeCache.h"
 #include "src/core/SkStrikeSpec.h"
 #include "src/gpu/GrClip.h"
@@ -521,6 +523,9 @@ public:
 
 protected:
     SubRunType subRunType() const override { return kPath; }
+    void doFlatten(SkWriteBuffer& buffer) const override {
+        SK_ABORT("Not implemented.");
+    }
 
 private:
     PathOpSubmitter fPathDrawing;
@@ -651,6 +656,9 @@ public:
 
 protected:
     SubRunType subRunType() const override { return kDrawable; }
+    void doFlatten(SkWriteBuffer& buffer) const override {
+        SK_ABORT("Not implemented.");
+    }
 
 private:
     DrawableOpSubmitter fDrawingDrawing;
@@ -726,6 +734,9 @@ public:
 
 protected:
     SubRunType subRunType() const override { return kDirectMask; }
+    void doFlatten(SkWriteBuffer& buffer) const override {
+        SK_ABORT("Not implemented.");
+    }
 
 private:
     // The rectangle that surrounds all the glyph bounding boxes in device space.
@@ -1135,6 +1146,9 @@ public:
 
 protected:
     SubRunType subRunType() const override { return kTransformMask; }
+    void doFlatten(SkWriteBuffer& buffer) const override {
+        SK_ABORT("Not implemented.");
+    }
 
 private:
     // The rectangle that surrounds all the glyph bounding boxes in device space.
@@ -1349,6 +1363,9 @@ public:
 
 protected:
     SubRunType subRunType() const override { return kSDFT; }
+    void doFlatten(SkWriteBuffer& buffer) const override {
+        SK_ABORT("Not implemented.");
+    }
 
 private:
     // The rectangle that surrounds all the glyph bounding boxes in device space.
@@ -2611,17 +2628,20 @@ namespace {
 // -- Slug -----------------------------------------------------------------------------------------
 class Slug final : public GrSlug, public SkGlyphRunPainterInterface {
 public:
-    static sk_sp<Slug> Make(const SkMatrixProvider& viewMatrix,
-                            const SkGlyphRunList& glyphRunList,
-                            const SkPaint& paint,
-                            const GrSDFTControl& control,
-                            SkGlyphRunListPainter* painter);
     Slug(SkRect sourceBounds,
          const SkPaint& paint,
          const SkMatrix& positionMatrix,
          SkPoint origin,
          int allocSize);
     ~Slug() override = default;
+
+    static sk_sp<Slug> Make(const SkMatrixProvider& viewMatrix,
+                            const SkGlyphRunList& glyphRunList,
+                            const SkPaint& paint,
+                            const GrSDFTControl& control,
+                            SkGlyphRunListPainter* painter);
+    static sk_sp<GrSlug> MakeFromBuffer(SkReadBuffer& buffer,
+                                        const SkStrikeClient* client);
 
     void surfaceDraw(SkCanvas*,
                      const GrClip* clip,
@@ -2665,7 +2685,7 @@ public:
             subRunCount += 1;
             unflattenSizeHint += subrun.unflattenSize();
         }
-        return {subRunCount, unflattenSizeHint + sizeof(Slug)};
+        return {subRunCount, unflattenSizeHint};
     }
 
 private:
@@ -2697,6 +2717,49 @@ void Slug::surfaceDraw(SkCanvas* canvas, const GrClip* clip, const SkMatrixProvi
     }
 }
 
+void Slug::flatten(SkWriteBuffer& buffer) const {
+    buffer.writeRect(fSourceBounds);
+    SkPaintPriv::Flatten(fPaint, buffer);
+    buffer.writeMatrix(fInitialPositionMatrix);
+    buffer.writePoint(fOrigin);
+    auto [subRunCount, subRunsUnflattenSizeHint] = this->subRunCountAndUnflattenSizeHint();
+    buffer.writeInt(subRunCount);
+    buffer.writeInt(subRunsUnflattenSizeHint);
+    for (auto& subRun : fSubRuns) {
+        subRun.flatten(buffer);
+    }
+}
+
+sk_sp<GrSlug> Slug::MakeFromBuffer(SkReadBuffer& buffer, const SkStrikeClient* client) {
+    SkRect sourceBounds = buffer.readRect();
+    if (!buffer.validate(!sourceBounds.isEmpty())) { return nullptr; }
+
+    SkPaint paint = buffer.readPaint();
+    SkMatrix positionMatrix;
+    buffer.readMatrix(&positionMatrix);
+    SkPoint origin = buffer.readPoint();
+    int subRunCount = buffer.readInt();
+    if (!buffer.validate(subRunCount != 0)) { return nullptr; }
+    int subRunsUnflattenSizeHint = buffer.readInt();
+
+    sk_sp<Slug> slug{new (::operator new (sizeof(Slug) + subRunsUnflattenSizeHint))
+                             Slug(sourceBounds,
+                                  paint,
+                                  positionMatrix,
+                                  origin,
+                                  subRunsUnflattenSizeHint)};
+    for (int i = 0; i < subRunCount; ++i) {
+        auto subRun = GrSubRun::MakeFromBuffer(slug.get(), buffer, &slug->fAlloc, client);
+        if (!buffer.validate(subRun != nullptr)) { return nullptr; }
+        slug->fSubRuns.append(std::move(subRun));
+    }
+
+    // Something went wrong while reading.
+    if (!buffer.isValid()) { return nullptr;}
+
+    return std::move(slug);
+}
+
 // -- DirectMaskSubRunSlug -------------------------------------------------------------------------
 class DirectMaskSubRunSlug final : public GrSubRun, public GrAtlasSubRun {
 public:
@@ -2708,7 +2771,7 @@ public:
                          SkSpan<const DevicePosition> devicePositions,
                          GrGlyphVector&& glyphs);
 
-    static GrSubRunOwner Make(Slug* slug,
+    static GrSubRunOwner Make(const GrTextReferenceFrame* referenceFrame,
                               const SkZip<SkGlyphVariant, SkPoint>& accepted,
                               sk_sp<SkStrike>&& strike,
                               GrMaskFormat format,
@@ -2753,6 +2816,9 @@ public:
 
 protected:
     SubRunType subRunType() const override { return kDirectMask; }
+    void doFlatten(SkWriteBuffer& buffer) const override {
+        SK_ABORT("Not implemented.");
+    }
 
 private:
     // Return true if the positionMatrix represents an integer translation. Return the device
@@ -2783,7 +2849,7 @@ DirectMaskSubRunSlug::DirectMaskSubRunSlug(const GrTextReferenceFrame* reference
         , fLeftTopDevicePos{devicePositions}
         , fGlyphs{std::move(glyphs)} { }
 
-GrSubRunOwner DirectMaskSubRunSlug::Make(Slug* slug,
+GrSubRunOwner DirectMaskSubRunSlug::Make(const GrTextReferenceFrame* referenceFrame,
                                          const SkZip<SkGlyphVariant, SkPoint>& accepted,
                                          sk_sp<SkStrike>&& strike,
                                          GrMaskFormat format,
@@ -2821,7 +2887,7 @@ GrSubRunOwner DirectMaskSubRunSlug::Make(Slug* slug,
 
     SkSpan<const DevicePosition> leftTop{glyphLeftTop, goodPosCount};
     return alloc->makeUnique<DirectMaskSubRunSlug>(
-            slug, format, runBounds, leftTop,
+            referenceFrame, format, runBounds, leftTop,
             GrGlyphVector{std::move(strike), {glyphIDs, goodPosCount}});
 }
 
@@ -3177,8 +3243,6 @@ void Slug::processSourceMasks(const SkZip<SkGlyphVariant, SkPoint>& accepted,
 
     add_multi_mask_format(addGlyphsWithSameFormat, accepted, std::move(strike));
 }
-
-void Slug::flatten(SkWriteBuffer& buffer) const { SK_ABORT("Not implemented."); }
 }  // namespace
 
 namespace skgpu::v1 {
@@ -3222,3 +3286,41 @@ sk_sp<GrSlug> MakeSlug(const SkMatrixProvider& drawMatrix,
     return Slug::Make(drawMatrix, glyphRunList, paint, control, painter);
 }
 }  // namespace skgpu::v1
+
+// -- GrSubRun -------------------------------------------------------------------------------------
+void GrSubRun::flatten(SkWriteBuffer& buffer) const {
+    buffer.writeInt(this->subRunType());
+    this->doFlatten(buffer);
+}
+
+GrSubRunOwner GrSubRun::MakeFromBuffer(const GrTextReferenceFrame* referenceFrame,
+                                       SkReadBuffer& buffer,
+                                       GrSubRunAllocator* alloc,
+                                       const SkStrikeClient* client) {
+    using Maker = GrSubRunOwner (*)(const GrTextReferenceFrame*,
+                                    SkReadBuffer&,
+                                    GrSubRunAllocator*,
+                                    const SkStrikeClient*);
+
+    /* The makers will be populated in the next CL. */
+    static Maker makers[kSubRunTypeCount] = {
+            nullptr,                                             // 0 index is bad.
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+            nullptr,
+    };
+    int subRunTypeInt = buffer.readInt();
+    SkASSERT(kBad < subRunTypeInt && subRunTypeInt < kSubRunTypeCount);
+    if (!buffer.validate(kBad < subRunTypeInt && subRunTypeInt < kSubRunTypeCount)) {
+        return nullptr;
+    }
+    auto maker = makers[subRunTypeInt];
+    if (!buffer.validate(maker != nullptr)) { return nullptr; }
+    return makers[subRunTypeInt](referenceFrame, buffer, alloc, client);
+}
+
+sk_sp<GrSlug> SkMakeSlugFromBuffer(SkReadBuffer& buffer, const SkStrikeClient* client) {
+    return Slug::MakeFromBuffer(buffer, client);
+}
