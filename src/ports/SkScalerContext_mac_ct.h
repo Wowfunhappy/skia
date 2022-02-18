@@ -77,7 +77,8 @@ private:
 
         // cached state
         SkUniqueCFRef<CGContextRef> fCG;
-        SkUniqueCFRef<CGColorRef> fForegroundColor;
+        SkUniqueCFRef<CGColorRef> fCGForegroundColor;
+        SkColor fSKForegroundColor;
         SkISize fSize;
         bool fDoAA;
         bool fDoLCD;
