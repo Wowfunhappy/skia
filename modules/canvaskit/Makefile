@@ -72,7 +72,7 @@ npm:
 	# These features are turned off to keep code size smaller for the
 	# general use case.
 	./compile.sh release no_skottie no_particles no_rt_shader no_sksl_trace no_alias_font \
-		no_effects_deserialization no_encode_jpeg no_encode_webp
+		no_effects_deserialization no_encode_jpeg no_encode_webp legacy_draw_vertices
 	cp ../../out/canvaskit_wasm/canvaskit.js       ./npm_build/bin
 	cp ../../out/canvaskit_wasm/canvaskit.wasm     ./npm_build/bin
 
@@ -157,3 +157,6 @@ bazel_canvaskit_release:
 	cp ../../bazel-bin/modules/canvaskit/canvaskit_wasm/canvaskit.js build/canvaskit.js
 	cp ../../bazel-bin/modules/canvaskit/canvaskit_wasm/canvaskit.wasm build/canvaskit.wasm
 	ls -l build
+
+bazel_test_canvaskit:
+	bazelisk test :hello_world --compilation_mode opt --spawn_strategy=local --test_output=all
