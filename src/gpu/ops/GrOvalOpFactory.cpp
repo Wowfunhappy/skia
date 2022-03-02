@@ -1281,8 +1281,8 @@ private:
 
         sk_sp<const GrBuffer> vertexBuffer;
         int firstVertex;
-        VertexWriter vertices{target->makeVertexSpace(fProgramInfo->geomProc().vertexStride(),
-                                                      fVertCount, &vertexBuffer, &firstVertex)};
+        VertexWriter vertices = target->makeVertexWriter(fProgramInfo->geomProc().vertexStride(),
+                                                         fVertCount, &vertexBuffer, &firstVertex);
         if (!vertices) {
             SkDebugf("Could not allocate vertices\n");
             return;
@@ -1653,8 +1653,8 @@ private:
 
         sk_sp<const GrBuffer> vertexBuffer;
         int firstVertex;
-        VertexWriter vertices{target->makeVertexSpace(fProgramInfo->geomProc().vertexStride(),
-                                                      fVertCount, &vertexBuffer, &firstVertex)};
+        VertexWriter vertices = target->makeVertexWriter(fProgramInfo->geomProc().vertexStride(),
+                                                         fVertCount, &vertexBuffer, &firstVertex);
         if (!vertices) {
             SkDebugf("Could not allocate vertices\n");
             return;
@@ -2684,8 +2684,8 @@ private:
         sk_sp<const GrBuffer> vertexBuffer;
         int firstVertex;
 
-        VertexWriter verts{target->makeVertexSpace(fProgramInfo->geomProc().vertexStride(),
-                                                     fVertCount, &vertexBuffer, &firstVertex)};
+        VertexWriter verts = target->makeVertexWriter(fProgramInfo->geomProc().vertexStride(),
+                                                      fVertCount, &vertexBuffer, &firstVertex);
         if (!verts) {
             SkDebugf("Could not allocate vertices\n");
             return;
@@ -2846,12 +2846,12 @@ private:
 
 static const int kNumRRectsInIndexBuffer = 256;
 
-GR_DECLARE_STATIC_UNIQUE_KEY(gStrokeRRectOnlyIndexBufferKey);
-GR_DECLARE_STATIC_UNIQUE_KEY(gRRectOnlyIndexBufferKey);
+SKGPU_DECLARE_STATIC_UNIQUE_KEY(gStrokeRRectOnlyIndexBufferKey);
+SKGPU_DECLARE_STATIC_UNIQUE_KEY(gRRectOnlyIndexBufferKey);
 static sk_sp<const GrBuffer> get_rrect_index_buffer(RRectType type,
                                                     GrResourceProvider* resourceProvider) {
-    GR_DEFINE_STATIC_UNIQUE_KEY(gStrokeRRectOnlyIndexBufferKey);
-    GR_DEFINE_STATIC_UNIQUE_KEY(gRRectOnlyIndexBufferKey);
+    SKGPU_DEFINE_STATIC_UNIQUE_KEY(gStrokeRRectOnlyIndexBufferKey);
+    SKGPU_DEFINE_STATIC_UNIQUE_KEY(gRRectOnlyIndexBufferKey);
     switch (type) {
         case kFill_RRectType:
             return resourceProvider->findOrCreatePatternedIndexBuffer(

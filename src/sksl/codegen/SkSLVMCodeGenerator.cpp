@@ -68,7 +68,7 @@ namespace {
 
         void line(int lineNum) override {
             fTrace->fTraceInfo.push_back({SkSL::SkVMTraceInfo::Op::kLine,
-                                              /*data=*/{lineNum, 0}});
+                                          /*data=*/{lineNum, 0}});
         }
         void var(int slot, int32_t val) override {
             fTrace->fTraceInfo.push_back({SkSL::SkVMTraceInfo::Op::kVar,
@@ -1035,7 +1035,7 @@ Value SkVMGenerator::writeConstructorSplat(const ConstructorSplat& c) {
 Value SkVMGenerator::writeConstructorDiagonalMatrix(const ConstructorDiagonalMatrix& ctor) {
     const Type& dstType = ctor.type();
     SkASSERT(dstType.isMatrix());
-    SkASSERT(ctor.argument()->type() == dstType.componentType());
+    SkASSERT(ctor.argument()->type().matches(dstType.componentType()));
 
     Value src = this->writeExpression(*ctor.argument());
     Value dst(dstType.rows() * dstType.columns());
@@ -1225,29 +1225,29 @@ Value SkVMGenerator::writeChildCall(const ChildCall& c) {
     switch (c.child().type().typeKind()) {
         case Type::TypeKind::kShader: {
             SkASSERT(c.arguments().size() == 1);
-            SkASSERT(arg->type() == *fProgram.fContext->fTypes.fFloat2);
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fFloat2));
             skvm::Coord coord = {f32(argVal[0]), f32(argVal[1])};
             color = fCallbacks->sampleShader(child_it->second, coord);
             break;
         }
         case Type::TypeKind::kColorFilter: {
             SkASSERT(c.arguments().size() == 1);
-            SkASSERT(arg->type() == *fProgram.fContext->fTypes.fHalf4 ||
-                     arg->type() == *fProgram.fContext->fTypes.fFloat4);
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                     arg->type().matches(*fProgram.fContext->fTypes.fFloat4));
             skvm::Color inColor = {f32(argVal[0]), f32(argVal[1]), f32(argVal[2]), f32(argVal[3])};
             color = fCallbacks->sampleColorFilter(child_it->second, inColor);
             break;
         }
         case Type::TypeKind::kBlender: {
             SkASSERT(c.arguments().size() == 2);
-            SkASSERT(arg->type() == *fProgram.fContext->fTypes.fHalf4 ||
-                     arg->type() == *fProgram.fContext->fTypes.fFloat4);
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                     arg->type().matches(*fProgram.fContext->fTypes.fFloat4));
             skvm::Color srcColor = {f32(argVal[0]), f32(argVal[1]), f32(argVal[2]), f32(argVal[3])};
 
             arg = c.arguments()[1].get();
             argVal = this->writeExpression(*arg);
-            SkASSERT(arg->type() == *fProgram.fContext->fTypes.fHalf4 ||
-                     arg->type() == *fProgram.fContext->fTypes.fFloat4);
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                     arg->type().matches(*fProgram.fContext->fTypes.fFloat4));
             skvm::Color dstColor = {f32(argVal[0]), f32(argVal[1]), f32(argVal[2]), f32(argVal[3])};
 
             color = fCallbacks->sampleBlender(child_it->second, srcColor, dstColor);
@@ -1479,6 +1479,27 @@ Value SkVMGenerator::writeIntrinsicCall(const FunctionCall& c) {
             return result;
         }
         case k_not_IntrinsicKind: return unary(args[0], [](skvm::I32 x) { return ~x; });
+
+        case k_toLinearSrgb_IntrinsicKind: {
+            skvm::Color color = {
+                    f32(args[0][0]), f32(args[0][1]), f32(args[0][2]), fBuilder->splat(1.0f)};
+            color = fCallbacks->toLinearSrgb(color);
+            Value result(3);
+            result[0] = color.r;
+            result[1] = color.g;
+            result[2] = color.b;
+            return result;
+        }
+        case k_fromLinearSrgb_IntrinsicKind: {
+            skvm::Color color = {
+                    f32(args[0][0]), f32(args[0][1]), f32(args[0][2]), fBuilder->splat(1.0f)};
+            color = fCallbacks->fromLinearSrgb(color);
+            Value result(3);
+            result[0] = color.r;
+            result[1] = color.g;
+            result[2] = color.b;
+            return result;
+        }
 
         default:
             SkDEBUGFAILF("unsupported intrinsic %s", c.function().description().c_str());
@@ -1799,13 +1820,17 @@ skvm::Val SkVMGenerator::writeConditionalStore(skvm::Val lhs, skvm::Val rhs, skv
 
 void SkVMGenerator::writeBlock(const Block& b) {
     skvm::I32 mask = this->mask();
-    this->emitTraceScope(mask, +1);
+    if (b.isScope()) {
+        this->emitTraceScope(mask, +1);
+    }
 
     for (const std::unique_ptr<Statement>& stmt : b.children()) {
         this->writeStatement(*stmt);
     }
 
-    this->emitTraceScope(mask, -1);
+    if (b.isScope()) {
+        this->emitTraceScope(mask, -1);
+    }
 }
 
 void SkVMGenerator::writeBreakStatement() {
@@ -1907,8 +1932,8 @@ void SkVMGenerator::writeSwitchStatement(const SwitchStatement& s) {
 
     for (const std::unique_ptr<Statement>& stmt : s.cases()) {
         const SwitchCase& c = stmt->as<SwitchCase>();
-        if (c.value()) {
-            Value caseValue = this->writeExpression(*c.value());
+        if (!c.isDefault()) {
+            Value caseValue = fBuilder->splat((int) c.value());
 
             // We want to execute this switch case if we're falling through from a previous case, or
             // if the case value matches.
@@ -2107,6 +2132,15 @@ bool ProgramToSkVM(const Program& program,
             return fColor;
         }
 
+        skvm::Color toLinearSrgb(skvm::Color) override {
+            fUsedUnsupportedFeatures = true;
+            return fColor;
+        }
+        skvm::Color fromLinearSrgb(skvm::Color) override {
+            fUsedUnsupportedFeatures = true;
+            return fColor;
+        }
+
         bool fUsedUnsupportedFeatures = false;
         const skvm::Color fColor;
     };
@@ -2258,6 +2292,15 @@ bool testingOnly_ProgramToSkVMShader(const Program& program,
 
         skvm::Color sampleBlender(int i, skvm::Color src, skvm::Color dst) override {
             return blend(SkBlendMode::kSrcOver, src, dst);
+        }
+
+        // TODO(skia:10479): Make these actually convert to/from something like sRGB, for use in
+        // test files.
+        skvm::Color toLinearSrgb(skvm::Color color) override {
+            return color;
+        }
+        skvm::Color fromLinearSrgb(skvm::Color color) override {
+            return color;
         }
 
         struct Child {

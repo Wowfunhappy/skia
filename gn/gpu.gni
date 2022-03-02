@@ -27,7 +27,6 @@ skia_gpu_sources = [
   "$_include/private/GrGLTypesPriv.h",
   "$_include/private/GrImageContext.h",
   "$_include/private/GrMtlTypesPriv.h",
-  "$_include/private/GrResourceKey.h",
   "$_include/private/GrSingleOwner.h",
   "$_include/private/GrTypesPriv.h",
   "$_include/private/chromium/GrSlug.h",
@@ -513,8 +512,6 @@ skia_skgpu_v1_sources = [
   "$_src/gpu/ops/DrawAtlasPathOp.h",
   "$_src/gpu/ops/DrawCustomMeshOp.cpp",
   "$_src/gpu/ops/DrawCustomMeshOp.h",
-  "$_src/gpu/ops/DrawVerticesOp.cpp",
-  "$_src/gpu/ops/DrawVerticesOp.h",
   "$_src/gpu/ops/DrawableOp.cpp",
   "$_src/gpu/ops/DrawableOp.h",
   "$_src/gpu/ops/FillPathFlags.h",
@@ -821,6 +818,8 @@ skia_shared_gpu_sources = [
   "$_include/gpu/ShaderErrorHandler.h",
   "$_src/gpu/BufferWriter.h",
   "$_src/gpu/KeyBuilder.h",
+  "$_src/gpu/ResourceKey.cpp",
+  "$_src/gpu/ResourceKey.h",
   "$_src/gpu/ShaderErrorHandler.cpp",
 
   # tessellate

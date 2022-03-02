@@ -175,23 +175,23 @@ void PipelineStageCodeGenerator::writeChildCall(const ChildCall& c) {
         switch (c.child().type().typeKind()) {
             case Type::TypeKind::kShader: {
                 SkASSERT(arguments.size() == 1);
-                SkASSERT(arguments[0]->type() == *fProgram.fContext->fTypes.fFloat2);
+                SkASSERT(arguments[0]->type().matches(*fProgram.fContext->fTypes.fFloat2));
                 sampleOutput = fCallbacks->sampleShader(index, exprBuffer.fBuffer.str());
                 break;
             }
             case Type::TypeKind::kColorFilter: {
                 SkASSERT(arguments.size() == 1);
-                SkASSERT(arguments[0]->type() == *fProgram.fContext->fTypes.fHalf4 ||
-                         arguments[0]->type() == *fProgram.fContext->fTypes.fFloat4);
+                SkASSERT(arguments[0]->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                         arguments[0]->type().matches(*fProgram.fContext->fTypes.fFloat4));
                 sampleOutput = fCallbacks->sampleColorFilter(index, exprBuffer.fBuffer.str());
                 break;
             }
             case Type::TypeKind::kBlender: {
                 SkASSERT(arguments.size() == 2);
-                SkASSERT(arguments[0]->type() == *fProgram.fContext->fTypes.fHalf4 ||
-                         arguments[0]->type() == *fProgram.fContext->fTypes.fFloat4);
-                SkASSERT(arguments[1]->type() == *fProgram.fContext->fTypes.fHalf4 ||
-                         arguments[1]->type() == *fProgram.fContext->fTypes.fFloat4);
+                SkASSERT(arguments[0]->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                         arguments[0]->type().matches(*fProgram.fContext->fTypes.fFloat4));
+                SkASSERT(arguments[1]->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                         arguments[1]->type().matches(*fProgram.fContext->fTypes.fFloat4));
 
                 AutoOutputBuffer exprBuffer2(this);
                 this->writeExpression(*arguments[1], Precedence::kSequence);
@@ -212,6 +212,30 @@ void PipelineStageCodeGenerator::writeChildCall(const ChildCall& c) {
 
 void PipelineStageCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     const FunctionDeclaration& function = c.function();
+
+    if (function.intrinsicKind() == IntrinsicKind::k_toLinearSrgb_IntrinsicKind ||
+        function.intrinsicKind() == IntrinsicKind::k_fromLinearSrgb_IntrinsicKind) {
+        SkASSERT(c.arguments().size() == 1);
+        String colorArg;
+        {
+            AutoOutputBuffer exprBuffer(this);
+            this->writeExpression(*c.arguments()[0], Precedence::kSequence);
+            colorArg = exprBuffer.fBuffer.str();
+        }
+
+        switch (function.intrinsicKind()) {
+            case IntrinsicKind::k_toLinearSrgb_IntrinsicKind:
+                this->write(fCallbacks->toLinearSrgb(std::move(colorArg)));
+                break;
+            case IntrinsicKind::k_fromLinearSrgb_IntrinsicKind:
+                this->write(fCallbacks->fromLinearSrgb(std::move(colorArg)));
+                break;
+            default:
+                SkUNREACHABLE;
+        }
+
+        return;
+    }
 
     if (function.isBuiltin()) {
         this->write(function.name());
@@ -287,12 +311,12 @@ void PipelineStageCodeGenerator::writeSwitchStatement(const SwitchStatement& s) 
     this->writeLine(") {");
     for (const std::unique_ptr<Statement>& stmt : s.cases()) {
         const SwitchCase& c = stmt->as<SwitchCase>();
-        if (c.value()) {
-            this->write("case ");
-            this->writeExpression(*c.value(), Precedence::kTopLevel);
-            this->writeLine(":");
-        } else {
+        if (c.isDefault()) {
             this->writeLine("default:");
+        } else {
+            this->write("case ");
+            this->write(to_string(c.value()));
+            this->writeLine(":");
         }
         if (!c.statement()->isEmpty()) {
             this->writeStatement(*c.statement());
@@ -442,7 +466,8 @@ void PipelineStageCodeGenerator::writeProgramElementSecondPass(const ProgramElem
     }
 }
 
-String PipelineStageCodeGenerator::typeName(const Type& type) {
+String PipelineStageCodeGenerator::typeName(const Type& raw) {
+    const Type& type = raw.resolve();
     if (type.isArray()) {
         // This is necessary so that name mangling on arrays-of-structs works properly.
         String arrayName = this->typeName(type.componentType());

@@ -470,7 +470,7 @@ static constexpr CoverageVertex kVertexData[] = {
         {{{0,0,0,1}},  {{-1,+1}},  {{0,-kOctoOffset}},  {{-1,+1}},  0,  0},
         {{{0,0,0,1}},  {{-1,+1}},  {{+kOctoOffset,0}},  {{-1,+1}},  0,  0}};
 
-GR_DECLARE_STATIC_UNIQUE_KEY(gVertexBufferKey);
+SKGPU_DECLARE_STATIC_UNIQUE_KEY(gVertexBufferKey);
 
 static constexpr uint16_t kIndexData[] = {
         // Inset octagon (solid coverage).
@@ -511,7 +511,7 @@ static constexpr uint16_t kIndexData[] = {
         39, 36, 38,
         36, 38, 37};
 
-GR_DECLARE_STATIC_UNIQUE_KEY(gIndexBufferKey);
+SKGPU_DECLARE_STATIC_UNIQUE_KEY(gIndexBufferKey);
 
 void FillRRectOpImpl::onPrepareDraws(GrMeshDrawTarget* target) {
     if (!fProgramInfo) {
@@ -520,9 +520,9 @@ void FillRRectOpImpl::onPrepareDraws(GrMeshDrawTarget* target) {
 
     size_t instanceStride = fProgramInfo->geomProc().instanceStride();
 
-    if (VertexWriter instanceWrter = target->makeVertexSpace(instanceStride, fInstanceCount,
-                                                             &fInstanceBuffer, &fBaseInstance)) {
-        SkDEBUGCODE(auto end = instanceWrter.makeOffset(instanceStride * fInstanceCount));
+    if (VertexWriter instanceWriter = target->makeVertexWriter(instanceStride, fInstanceCount,
+                                                               &fInstanceBuffer, &fBaseInstance)) {
+        SkDEBUGCODE(auto end = instanceWriter.makeOffset(instanceStride * fInstanceCount));
         for (Instance* i = fHeadInstance; i; i = i->fNext) {
             auto [l, t, r, b] = i->fRRect.rect();
 
@@ -539,23 +539,23 @@ void FillRRectOpImpl::onPrepareDraws(GrMeshDrawTarget* target) {
             radiiX *= 2 / (r - l);
             radiiY *= 2 / (b - t);
 
-            instanceWrter << m.getScaleX() << m.getSkewX() << m.getSkewY() << m.getScaleY()
-                          << m.getTranslateX() << m.getTranslateY()
-                          << radiiX << radiiY
-                          << VertexColor(i->fColor, fProcessorFlags & ProcessorFlags::kWideColor)
-                          << VertexWriter::If(fProcessorFlags & ProcessorFlags::kHasLocalCoords,
-                                              i->fLocalRect);
+            instanceWriter << m.getScaleX() << m.getSkewX() << m.getSkewY() << m.getScaleY()
+                           << m.getTranslateX() << m.getTranslateY()
+                           << radiiX << radiiY
+                           << VertexColor(i->fColor, fProcessorFlags & ProcessorFlags::kWideColor)
+                           << VertexWriter::If(fProcessorFlags & ProcessorFlags::kHasLocalCoords,
+                                               i->fLocalRect);
         }
-        SkASSERT(instanceWrter == end);
+        SkASSERT(instanceWriter == end);
     }
 
-    GR_DEFINE_STATIC_UNIQUE_KEY(gIndexBufferKey);
+    SKGPU_DEFINE_STATIC_UNIQUE_KEY(gIndexBufferKey);
 
     fIndexBuffer = target->resourceProvider()->findOrMakeStaticBuffer(GrGpuBufferType::kIndex,
                                                                       sizeof(kIndexData),
                                                                       kIndexData, gIndexBufferKey);
 
-    GR_DEFINE_STATIC_UNIQUE_KEY(gVertexBufferKey);
+    SKGPU_DEFINE_STATIC_UNIQUE_KEY(gVertexBufferKey);
 
     fVertexBuffer = target->resourceProvider()->findOrMakeStaticBuffer(GrGpuBufferType::kVertex,
                                                                       sizeof(kVertexData),

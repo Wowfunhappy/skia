@@ -221,7 +221,7 @@ void PathStencilCoverOp::onPrePrepare(GrRecordingContext* context,
     }
 }
 
-GR_DECLARE_STATIC_UNIQUE_KEY(gUnitQuadBufferKey);
+SKGPU_DECLARE_STATIC_UNIQUE_KEY(gUnitQuadBufferKey);
 
 void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
     if (!fTessellator) {
@@ -244,7 +244,8 @@ void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
         // edge count of n are fanned by strictly fewer triangles.
         int maxTrianglesInFans = std::max(maxCombinedFanEdges - 2, 0);
         int fanTriangleCount = 0;
-        if (VertexWriter triangleVertexWriter = vertexAlloc.lock<SkPoint>(maxTrianglesInFans * 3)) {
+        if (VertexWriter triangleVertexWriter =
+                    VertexWriter{vertexAlloc.lock<SkPoint>(maxTrianglesInFans * 3)}) {
             for (auto [pathMatrix, path, color] : *fPathDrawList) {
                 AffineMatrix m(pathMatrix);
                 for (PathMiddleOutFanIter it(path); !it.done();) {
@@ -270,10 +271,10 @@ void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
 
     if (fCoverBBoxProgram) {
         size_t instanceStride = fCoverBBoxProgram->geomProc().instanceStride();
-        VertexWriter vertexWriter = flushState->makeVertexSpace(instanceStride,
-                                                                fPathCount,
-                                                                &fBBoxBuffer,
-                                                                &fBBoxBaseInstance);
+        VertexWriter vertexWriter = flushState->makeVertexWriter(instanceStride,
+                                                                 fPathCount,
+                                                                 &fBBoxBuffer,
+                                                                 &fBBoxBaseInstance);
         SkDEBUGCODE(int pathCount = 0;)
         for (auto [pathMatrix, path, color] : *fPathDrawList) {
             SkDEBUGCODE(auto end = vertexWriter.makeOffset(instanceStride));
@@ -307,7 +308,7 @@ void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
     if (!flushState->caps().shaderCaps()->vertexIDSupport()) {
         constexpr static SkPoint kUnitQuad[4] = {{0,0}, {0,1}, {1,0}, {1,1}};
 
-        GR_DEFINE_STATIC_UNIQUE_KEY(gUnitQuadBufferKey);
+        SKGPU_DEFINE_STATIC_UNIQUE_KEY(gUnitQuadBufferKey);
 
         fBBoxVertexBufferIfNoIDSupport = flushState->resourceProvider()->findOrMakeStaticBuffer(
                 GrGpuBufferType::kVertex, sizeof(kUnitQuad), kUnitQuad, gUnitQuadBufferKey);

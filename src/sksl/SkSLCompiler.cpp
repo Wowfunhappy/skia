@@ -57,13 +57,13 @@
 #include "spirv-tools/libspirv.hpp"
 #endif
 
-#if defined(SKSL_STANDALONE)
-
-// In standalone mode, we load the textual sksl source files. GN generates or copies these files
-// to the skslc executable directory. The "data" in this mode is just the filename.
-#define MODULE_DATA(name) MakeModulePath("sksl_" #name ".sksl")
-
+#ifdef SKSL_STANDALONE
+#define REHYDRATE 0
 #else
+#define REHYDRATE 1
+#endif
+
+#if REHYDRATE
 
 // At runtime, we load the dehydrated sksl data files. The data is a (pointer, size) pair.
 #include "src/sksl/generated/sksl_frag.dehydrated.sksl"
@@ -74,6 +74,12 @@
 
 #define MODULE_DATA(name) MakeModuleData(SKSL_INCLUDE_sksl_##name,\
                                          SKSL_INCLUDE_sksl_##name##_LENGTH)
+
+#else
+
+// In standalone mode, we load the textual sksl source files. GN generates or copies these files
+// to the skslc executable directory. The "data" in this mode is just the filename.
+#define MODULE_DATA(name) MakeModulePath("sksl_" #name ".sksl")
 
 #endif
 
@@ -249,26 +255,26 @@ const ParsedModule& Compiler::loadVertexModule() {
 
 static void add_glsl_type_aliases(SkSL::SymbolTable* symbols, const SkSL::BuiltinTypes& types) {
     // Add some aliases to the runtime effect modules so that it's friendlier, and more like GLSL.
-    symbols->addAlias("vec2", types.fFloat2.get());
-    symbols->addAlias("vec3", types.fFloat3.get());
-    symbols->addAlias("vec4", types.fFloat4.get());
+    symbols->addWithoutOwnership(types.fVec2.get());
+    symbols->addWithoutOwnership(types.fVec3.get());
+    symbols->addWithoutOwnership(types.fVec4.get());
 
-    symbols->addAlias("ivec2", types.fInt2.get());
-    symbols->addAlias("ivec3", types.fInt3.get());
-    symbols->addAlias("ivec4", types.fInt4.get());
+    symbols->addWithoutOwnership(types.fIVec2.get());
+    symbols->addWithoutOwnership(types.fIVec3.get());
+    symbols->addWithoutOwnership(types.fIVec4.get());
 
-    symbols->addAlias("bvec2", types.fBool2.get());
-    symbols->addAlias("bvec3", types.fBool3.get());
-    symbols->addAlias("bvec4", types.fBool4.get());
+    symbols->addWithoutOwnership(types.fBVec2.get());
+    symbols->addWithoutOwnership(types.fBVec3.get());
+    symbols->addWithoutOwnership(types.fBVec4.get());
 
-    symbols->addAlias("mat2", types.fFloat2x2.get());
-    symbols->addAlias("mat3", types.fFloat3x3.get());
-    symbols->addAlias("mat4", types.fFloat4x4.get());
+    symbols->addWithoutOwnership(types.fMat2.get());
+    symbols->addWithoutOwnership(types.fMat3.get());
+    symbols->addWithoutOwnership(types.fMat4.get());
 
     // Alias every private type to "invalid". This will prevent code from using built-in names like
     // `sampler2D` as variable names.
     for (BuiltinTypePtr privateType : kPrivateTypes) {
-        symbols->addAlias((types.*privateType)->name(), types.fInvalid.get());
+        symbols->add(Type::MakeAliasType((types.*privateType)->name(), *types.fInvalid));
     }
 }
 
@@ -324,7 +330,16 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
     Program::Settings settings;
     settings.fReplaceSettings = !dehydrate;
 
-#if defined(SKSL_STANDALONE)
+#if REHYDRATE
+    ProgramConfig config;
+    config.fIsBuiltinCode = true;
+    config.fKind = kind;
+    config.fSettings = settings;
+    AutoProgramConfig autoConfig(fContext, &config);
+    SkASSERT(data.fData && (data.fSize != 0));
+    Rehydrator rehydrator(fContext.get(), base, data.fData, data.fSize);
+    LoadedModule result = { kind, rehydrator.symbolTable(), rehydrator.elements() };
+#else
     SkASSERT(this->errorCount() == 0);
     SkASSERT(data.fPath);
     std::ifstream in(data.fPath);
@@ -340,15 +355,6 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
         printf("Unexpected errors: %s\n", this->fErrorText.c_str());
         SkDEBUGFAILF("%s %s\n", data.fPath, this->fErrorText.c_str());
     }
-#else
-    ProgramConfig config;
-    config.fIsBuiltinCode = true;
-    config.fKind = kind;
-    config.fSettings = settings;
-    AutoProgramConfig autoConfig(fContext, &config);
-    SkASSERT(data.fData && (data.fSize != 0));
-    Rehydrator rehydrator(fContext.get(), base, data.fData, data.fSize);
-    LoadedModule result = { kind, rehydrator.symbolTable(), rehydrator.elements() };
 #endif
 
     return result;

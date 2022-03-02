@@ -11,20 +11,19 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"path/filepath"
-
-	"go.skia.org/infra/task_driver/go/lib/bazel"
 
 	"cloud.google.com/go/pubsub"
 	"google.golang.org/api/option"
 
 	"go.skia.org/infra/go/auth"
+	"go.skia.org/infra/go/common"
 	docker_pubsub "go.skia.org/infra/go/docker/build/pubsub"
 	sk_exec "go.skia.org/infra/go/exec"
 	"go.skia.org/infra/task_driver/go/lib/auth_steps"
+	"go.skia.org/infra/task_driver/go/lib/bazel"
 	"go.skia.org/infra/task_driver/go/lib/checkout"
 	"go.skia.org/infra/task_driver/go/lib/docker"
 	"go.skia.org/infra/task_driver/go/lib/golang"
@@ -44,11 +43,6 @@ var (
 	// Optional flags.
 	local  = flag.Bool("local", false, "True if running locally (as opposed to on the bots)")
 	output = flag.String("o", "", "If provided, dump a JSON blob of step data to the given file. Prints to stdout if '-' is given.")
-)
-
-const (
-	infraRepo = "https://skia.googlesource.com/buildbot.git"
-	skiaRepo  = "https://skia.googlesource.com/skia.git"
 )
 
 func main() {
@@ -72,7 +66,7 @@ func main() {
 		}
 		// Check out the Skia infra repo at the specified commit.
 		rs := types.RepoState{
-			Repo:     infraRepo,
+			Repo:     common.REPO_SKIA_INFRA,
 			Revision: *infraRevision,
 		}
 		checkoutDir = filepath.Join("repo")
@@ -124,7 +118,10 @@ func main() {
 		td.Fatal(ctx, err)
 	}
 
-	// TODO(kjlubick) Build and push all apps of interest as they are ported.
+	if err := buildPush(ctx, "debugger-app", wasmProductsDir, checkoutDir, *skiaRevision, topic); err != nil {
+		td.Fatal(ctx, err)
+	}
+
 	if err := buildPush(ctx, "jsfiddle", wasmProductsDir, checkoutDir, *skiaRevision, topic); err != nil {
 		td.Fatal(ctx, err)
 	}
@@ -134,6 +131,10 @@ func main() {
 	}
 
 	if err := buildPush(ctx, "shaders", wasmProductsDir, checkoutDir, *skiaRevision, topic); err != nil {
+		td.Fatal(ctx, err)
+	}
+
+	if err := buildPush(ctx, "skottie", wasmProductsDir, checkoutDir, *skiaRevision, topic); err != nil {
 		td.Fatal(ctx, err)
 	}
 
@@ -171,31 +172,5 @@ func buildPush(ctx context.Context, appName, wasmProductsDir, checkoutDir, skiaR
 	if err != nil {
 		return err
 	}
-	return publishToTopic(ctx, "gcr.io/skia-public/"+appName, skiaRevision, topic)
-}
-
-// publishToTopic publishes a message to the pubsub topic which is subscribed to by
-// https://github.com/google/skia-buildbot/blob/cd593cf6c534ba7a1bd2d88a488d37840663230d/docker_pushes_watcher/go/docker_pushes_watcher/main.go#L335
-// The tag will be used to determine if the image should be updated, as such, it is the
-// skia revision that was used to build the wasm components.
-func publishToTopic(ctx context.Context, image, tag string, topic *pubsub.Topic) error {
-	return td.Do(ctx, td.Props(fmt.Sprintf("Publish pubsub msg to %s", docker_pubsub.TOPIC)).Infra(), func(ctx context.Context) error {
-		b, err := json.Marshal(&docker_pubsub.BuildInfo{
-			ImageName: image,
-			Tag:       tag,
-			Repo:      skiaRepo,
-		})
-		if err != nil {
-			return err
-		}
-		msg := &pubsub.Message{
-			Data: b,
-		}
-		res := topic.Publish(ctx, msg)
-		// Synchronously wait to make sure the publishing actually happens.
-		if _, err := res.Get(ctx); err != nil {
-			return err
-		}
-		return nil
-	})
+	return docker.PublishToTopic(ctx, "gcr.io/skia-public/"+appName, skiaRevision, common.REPO_SKIA, topic)
 }

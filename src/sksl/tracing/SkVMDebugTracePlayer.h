@@ -59,6 +59,9 @@ public:
     /** Retrieves the current line. */
     int32_t getCurrentLine() const;
 
+    /** Retrieves the current line for a given stack frame. */
+    int32_t getCurrentLineInStackFrame(int stackFrameIndex) const;
+
     /** Returns the call stack as an array of FunctionInfo indices. */
     std::vector<int> getCallStack() const;
 
@@ -74,9 +77,9 @@ public:
 
     /** Returns variables from a stack frame, or from global scope. */
     struct VariableData {
-        int      fSlotIndex;
-        bool     fDirty;  // has this slot been written-to since the last step call?
-        int32_t  fValue;  // caller must type-pun bits to float/bool based on slot type
+        int     fSlotIndex;
+        bool    fDirty;  // has this slot been written-to since the last step call?
+        double  fValue;  // value in slot (with type-conversion applied)
     };
     std::vector<VariableData> getLocalVariables(int stackFrameIndex) const;
     std::vector<VariableData> getGlobalVariables() const;
@@ -91,7 +94,7 @@ private:
     /**
      * Cleans up temporary state between steps, such as the dirty mask and function return values.
      */
-    void tidy();
+    void tidyState();
 
     /** Updates fWriteTime for the entire variable at a given slot. */
     void updateVariableWriteTime(int slotIdx, size_t writeTime);
