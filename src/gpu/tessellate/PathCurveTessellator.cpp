@@ -20,9 +20,18 @@
 
 namespace skgpu {
 
-static int write_patches(PatchWriter&& patchWriter,
-                         const SkMatrix& shaderMatrix,
-                         const PathTessellator::PathDrawList& pathDrawList) {
+namespace {
+
+using Writer = PatchWriter<GrVertexChunkBuilder,
+                           Optional<PatchAttribs::kColor>,
+                           Optional<PatchAttribs::kWideColorIfEnabled>,
+                           Optional<PatchAttribs::kExplicitCurveType>,
+                           AddTrianglesWhenChopping,
+                           DiscardFlatCurves>;
+
+int write_patches(Writer&& patchWriter,
+                  const SkMatrix& shaderMatrix,
+                  const PathTessellator::PathDrawList& pathDrawList) {
     wangs_formula::VectorXform shaderXform(shaderMatrix);
     for (auto [pathMatrix, path, color] : pathDrawList) {
         AffineMatrix m(pathMatrix);
@@ -62,6 +71,8 @@ static int write_patches(PatchWriter&& patchWriter,
 
     return patchWriter.requiredResolveLevel();
 }
+
+}  // namespace
 
 void PathCurveTessellator::WriteFixedVertexBuffer(VertexWriter vertexWriter, size_t bufferSize) {
     SkASSERT(bufferSize >= sizeof(SkPoint) * 2);
@@ -157,8 +168,8 @@ void PathCurveTessellator::prepareWithTriangles(
     int patchPreallocCount = PatchPreallocCount(totalCombinedPathVerbCnt) +
                              (extraTriangles ? extraTriangles->count() : 0);
     if (patchPreallocCount) {
-        PatchWriter writer{target, &fVertexChunkArray, fAttribs,
-                           maxTessellationSegments, patchPreallocCount};
+        Writer writer{fAttribs, maxTessellationSegments,
+                      target, &fVertexChunkArray, patchPreallocCount};
 
         // Write out extra space-filling triangles to connect the curve patches with any external
         // source of geometry (e.g. inner triangulation that handles winding explicitly).

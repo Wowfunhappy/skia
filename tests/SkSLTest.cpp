@@ -28,6 +28,7 @@
 #include "src/sksl/SkSLRehydrator.h"
 #include "src/sksl/SkSLThreadContext.h"
 #include "tests/Test.h"
+#include "tests/TestHarness.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 
@@ -48,7 +49,7 @@ namespace SkSLTestFlags {
     static constexpr int GPU_ES3 = 1 << 3;
 
     /** SkQP tests will be run in Android/Fuchsia conformance tests with no driver workarounds. */
-    static constexpr int SkQP    = 1 << 4;  // TODO(skia:13037): implement SkQP flag
+    static constexpr int SkQP    = 1 << 4;
 }
 
 static constexpr bool is_cpu(int flags) {
@@ -61,6 +62,16 @@ static constexpr bool is_gpu(int flags) {
 
 static constexpr bool is_strict_es2(int flags) {
     return !(flags & (SkSLTestFlags::CPU_ES3 | SkSLTestFlags::GPU_ES3));
+}
+
+static bool should_run_in_skqp(int flags) {
+    if (CurrentTestHarnessIsSkQP()) {
+        // Official SkQP builds should only run tests marked with the SkQP flag.
+        return flags & (SkSLTestFlags::SkQP);
+    } else {
+        // Other test binaries (dm/fm) should run every test, regardless of the SkQP flag.
+        return true;
+    }
 }
 
 template <typename T>
@@ -288,14 +299,15 @@ static void test_rehydrate(skiatest::Reporter* r, const char* testFile, int flag
             rehydrated->description().c_str());
 }
 
-#define SKSL_TEST(flags, name, path)                                                              \
-    DEF_CONDITIONAL_TEST(SkSL##name##_CPU, r, is_cpu(flags)) {                                    \
-        test_cpu(r, path, flags);                                                                 \
-    }                                                                                             \
-    DEF_CONDITIONAL_GPUTEST_FOR_RENDERING_CONTEXTS(SkSL##name##_GPU, r, ctxInfo, is_gpu(flags)) { \
-        test_gpu(r, ctxInfo.directContext(), path, flags);                                        \
-    }                                                                                             \
-    DEF_TEST(SkSL##name##_Clone, r) { test_clone(r, path, flags); }                               \
+#define SKSL_TEST(flags, name, path)                                                        \
+    DEF_CONDITIONAL_TEST(SkSL##name##_CPU, r, is_cpu(flags) && should_run_in_skqp(flags)) { \
+        test_cpu(r, path, flags);                                                           \
+    }                                                                                       \
+    DEF_CONDITIONAL_GPUTEST_FOR_RENDERING_CONTEXTS(                                         \
+            SkSL##name##_GPU, r, ctxInfo, is_gpu(flags) && should_run_in_skqp(flags)) {     \
+        test_gpu(r, ctxInfo.directContext(), path, flags);                                  \
+    }                                                                                       \
+    DEF_TEST(SkSL##name##_Clone, r) { test_clone(r, path, flags); }                         \
     DEF_TEST(SkSL##name##_Rehydrate, r) { test_rehydrate(r, path, flags); }
 
 /**
@@ -304,7 +316,7 @@ static void test_rehydrate(skiatest::Reporter* r, const char* testFile, int flag
  * - CPU_ES3: this test should pass on the CPU backend when "enforce ES2 restrictions" is off
  * - GPU:     this test should pass on the GPU backends
  * - GPU_ES3: this test should pass on an ES3-compatible GPU when "enforce ES2 restrictions" is off
- * - SkQP:    TODO(skia:13037): Android CTS (go/wtf/cts) enforces that devices must pass this test
+ * - SkQP:    Android CTS (go/wtf/cts) enforces that devices must pass this test
  */
 
 // clang-format off
@@ -321,6 +333,7 @@ SKSL_TEST(CPU + GPU + SkQP, FloatFolding,                    "folding/FloatFoldi
 SKSL_TEST(CPU + GPU + SkQP, MatrixFoldingES2,                "folding/MatrixFoldingES2.sksl")
 SKSL_TEST(GPU_ES3,          MatrixFoldingES3,                "folding/MatrixFoldingES3.sksl")
 SKSL_TEST(CPU + GPU + SkQP, Negation,                        "folding/Negation.sksl")
+SKSL_TEST(CPU + GPU + SkQP, PreserveSideEffects,             "folding/PreserveSideEffects.sksl")
 SKSL_TEST(CPU + GPU + SkQP, SelfAssignment,                  "folding/SelfAssignment.sksl")
 SKSL_TEST(CPU + GPU + SkQP, ShortCircuitBoolFolding,         "folding/ShortCircuitBoolFolding.sksl")
 SKSL_TEST(CPU + GPU + SkQP, SwitchCaseFolding,               "folding/SwitchCaseFolding.sksl")
