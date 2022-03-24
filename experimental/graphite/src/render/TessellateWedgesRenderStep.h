@@ -14,24 +14,15 @@ namespace skgpu {
 
 class TessellateWedgesRenderStep final : public RenderStep {
 public:
-    // TODO: If this takes DepthStencilSettings directly and a way to adjust the flags to specify
-    // that it performs shading, this RenderStep definition can be shared between the stencil and
-    // the convex rendering variants.
-    TessellateWedgesRenderStep(bool evenOdd);
+    TessellateWedgesRenderStep(std::string_view variantName,
+                               DepthStencilSettings depthStencilSettings);
 
     ~TessellateWedgesRenderStep() override;
 
-    const char* name() const override { return "TessellateWedgesRenderStep"; }
-
     const char* vertexSkSL() const override;
-    void writeVertices(DrawWriter*,
-                       const SkIRect&,
-                       const Transform&,
-                       const Shape&) const override;
-    sk_sp<SkUniformData> writeUniforms(Layout,
-                                       const SkIRect&,
-                                       const Transform&,
-                                       const Shape&) const override;
+    void writeVertices(DrawWriter*, const DrawGeometry&) const override;
+    sk_sp<SkUniformData> writeUniforms(Layout, const DrawGeometry&) const override;
+
 };
 
 }  // namespace skgpu

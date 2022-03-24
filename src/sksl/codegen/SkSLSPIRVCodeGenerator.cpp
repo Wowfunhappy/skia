@@ -7,14 +7,33 @@
 
 #include "src/sksl/codegen/SkSLSPIRVCodeGenerator.h"
 
-#include "src/sksl/GLSL.std.450.h"
-
+#include "include/core/SkSpan.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkSLProgramElement.h"
+#include "include/private/SkSLStatement.h"
+#include "include/private/SkSLSymbol.h"
+#include "include/private/SkTArray.h"
 #include "include/sksl/DSLCore.h"
+#include "include/sksl/DSLExpression.h"
+#include "include/sksl/DSLType.h"
+#include "include/sksl/DSLVar.h"
+#include "include/sksl/SkSLErrorReporter.h"
+#include "include/sksl/SkSLPosition.h"
+#include "src/sksl/GLSL.std.450.h"
+#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLContext.h"
+#include "src/sksl/SkSLLexer.h"
+#include "src/sksl/SkSLModifiersPool.h"
 #include "src/sksl/SkSLOperators.h"
+#include "src/sksl/SkSLOutputStream.h"
+#include "src/sksl/SkSLPool.h"
+#include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLThreadContext.h"
+#include "src/sksl/SkSLUtil.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBlock.h"
+#include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLConstructorArrayCast.h"
 #include "src/sksl/ir/SkSLConstructorCompound.h"
 #include "src/sksl/ir/SkSLConstructorCompoundCast.h"
@@ -23,6 +42,7 @@
 #include "src/sksl/ir/SkSLConstructorScalarCast.h"
 #include "src/sksl/ir/SkSLConstructorSplat.h"
 #include "src/sksl/ir/SkSLDoStatement.h"
+#include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
 #include "src/sksl/ir/SkSLExtension.h"
 #include "src/sksl/ir/SkSLField.h"
@@ -34,18 +54,23 @@
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
+#include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
+#include "src/sksl/ir/SkSLSwitchCase.h"
 #include "src/sksl/ir/SkSLSwitchStatement.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLTernaryExpression.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 
-#ifdef SK_VULKAN
-#include "src/gpu/vk/GrVkCaps.h"
-#endif
+#include <cmath>
+#include <optional>
+#include <set>
+#include <type_traits>
+#include <utility>
 
 #define kLast_Capability SpvCapabilityMultiViewport
 
@@ -2099,7 +2124,8 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                 AutoAttachPoolToThread attach(fProgram.fPool.get());
                 Modifiers modifiers;
                 modifiers.fLayout.fBuiltin = DEVICE_FRAGCOORDS_BUILTIN;
-                auto coordsVar = std::make_unique<Variable>(Position(),
+                auto coordsVar = std::make_unique<Variable>(/*pos=*/Position(),
+                                                            /*modifiersPosition=*/Position(),
                                                             fContext.fModifiersPool->add(modifiers),
                                                             DEVICE_COORDS_NAME,
                                                             fContext.fTypes.fFloat4.get(),
@@ -2133,7 +2159,8 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                 AutoAttachPoolToThread attach(fProgram.fPool.get());
                 Modifiers modifiers;
                 modifiers.fLayout.fBuiltin = DEVICE_CLOCKWISE_BUILTIN;
-                auto clockwiseVar = std::make_unique<Variable>(Position(),
+                auto clockwiseVar = std::make_unique<Variable>(/*pos=*/Position(),
+                        /*modifiersPosition=*/Position(),
                         fContext.fModifiersPool->add(modifiers),
                         DEVICE_CLOCKWISE_NAME,
                         fContext.fTypes.fBool.get(),
@@ -3055,6 +3082,7 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
                             /*interfaceBlock=*/true));
             const Variable* modifiedVar = fProgram.fSymbols->takeOwnershipOfSymbol(
                     std::make_unique<Variable>(intfVar.fPosition,
+                                               intfVar.modifiersPosition(),
                                                &intfVar.modifiers(),
                                                intfVar.name(),
                                                rtFlipStructType,
@@ -3458,8 +3486,9 @@ void SPIRVCodeGenerator::writeUniformBuffer(std::shared_ptr<SymbolTable> topLeve
     Modifiers modifiers{layout, Modifiers::kUniform_Flag};
 
     fUniformBuffer.fInnerVariable = std::make_unique<Variable>(
-            Position(), fProgram.fModifiers->add(modifiers), kUniformBufferName,
-            fUniformBuffer.fStruct.get(), /*builtin=*/false, Variable::Storage::kGlobal);
+            /*pos=*/Position(), /*modifiersPosition=*/Position(),
+            fProgram.fModifiers->add(modifiers), kUniformBufferName, fUniformBuffer.fStruct.get(),
+            /*builtin=*/false, Variable::Storage::kGlobal);
 
     // Create an interface block object for this global variable.
     fUniformBuffer.fInterfaceBlock = std::make_unique<InterfaceBlock>(
@@ -3523,7 +3552,8 @@ void SPIRVCodeGenerator::addRTFlipUniform(Position pos) {
         modsPtr = fProgram.fModifiers->add(modifiers);
     }
     const Variable* intfVar = fSynthetics.takeOwnershipOfSymbol(
-            std::make_unique<Variable>(Position(),
+            std::make_unique<Variable>(/*pos=*/Position(),
+                                       /*modifiersPosition=*/Position(),
                                        modsPtr,
                                        name,
                                        intfStruct,

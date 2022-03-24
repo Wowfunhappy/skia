@@ -54,7 +54,7 @@ constexpr DepthStencilSettings kWindingStencilPass = {
         /*backStencil=*/ kDecrementCCW,
         /*refValue=*/    0,
         /*stencilTest=*/ true,
-        /*depthCompare=*/CompareOp::kAlways, // TODO: kGreater once steps know the right depth value
+        /*depthCompare=*/CompareOp::kGreater,
         /*depthTest=*/   true,
         /*depthWrite=*/  false // The depth write will be handled by the covering pass
 };
@@ -66,7 +66,7 @@ constexpr DepthStencilSettings kEvenOddStencilPass = {
         /*backStencil=*/ kToggle,
         /*refValue=*/    0,
         /*stencilTest=*/ true,
-        /*depthCompare=*/CompareOp::kAlways, // TODO: kGreater once steps know the right depth value
+        /*depthCompare=*/CompareOp::kGreater,
         /*depthTest=*/   true,
         /*depthWrite=*/  false // The depth write will be handled by the covering pass
 };
@@ -103,10 +103,10 @@ constexpr DepthStencilSettings::Face kPassZero = {
 // stencil buffer has been modified by either kWindingStencilPass or kEvenOddStencilPass.
 constexpr DepthStencilSettings kRegularCoverPass = {
         /*frontStencil=*/kPassNonZero,
-        /*frontStencil=*/kPassNonZero,
+        /*backStencil=*/ kPassNonZero,
         /*refValue=*/    0,
         /*stencilTest=*/ true,
-        /*depthCompare=*/CompareOp::kAlways, // TODO: kGreater once steps know the right depth value
+        /*depthCompare=*/CompareOp::kGreater,
         /*depthTest=*/   true,
         /*depthWrite=*/  true
 };
@@ -115,10 +115,10 @@ constexpr DepthStencilSettings kRegularCoverPass = {
 // stencil buffer has been modified by either kWindingStencilPass or kEvenOddStencilPass.
 constexpr DepthStencilSettings kInverseCoverPass = {
         /*frontStencil=*/kPassZero,
-        /*frontStencil=*/kPassZero,
+        /*backStencil=*/ kPassZero,
         /*refValue=*/    0,
         /*stencilTest=*/ true,
-        /*depthCompare=*/CompareOp::kAlways, // TODO: kGreater once steps know the right depth value
+        /*depthCompare=*/CompareOp::kGreater,
         /*depthTest=*/   true,
         /*depthWrite=*/  true
 };

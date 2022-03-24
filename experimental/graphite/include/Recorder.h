@@ -13,6 +13,9 @@
 
 #include <vector>
 
+class SkTextureDataBlock;
+class SkUniformDataBlock;
+
 namespace skgpu {
 
 class Caps;
@@ -25,7 +28,10 @@ class Recording;
 class ResourceProvider;
 class Task;
 class TaskGraph;
-class PipelineDataCache;
+
+template<typename DataBlockT> class PipelineDataCache;
+using UniformDataCache = PipelineDataCache<SkUniformDataBlock>;
+using TextureDataCache = PipelineDataCache<SkTextureDataBlock>;
 
 class Recorder final {
 public:
@@ -79,7 +85,8 @@ private:
     std::unique_ptr<ResourceProvider> fResourceProvider;
 
     std::unique_ptr<TaskGraph> fGraph;
-    std::unique_ptr<PipelineDataCache> fPipelineDataCache;
+    std::unique_ptr<UniformDataCache> fUniformDataCache;
+    std::unique_ptr<TextureDataCache> fTextureDataCache;
     std::unique_ptr<DrawBufferManager> fDrawBufferManager;
     std::vector<Device*> fTrackedDevices;
 

@@ -7,23 +7,21 @@
 
 #include "experimental/graphite/src/Device.h"
 
-#include "experimental/graphite/include/Context.h"
 #include "experimental/graphite/include/Recorder.h"
-#include "experimental/graphite/include/Recording.h"
 #include "experimental/graphite/include/SkStuff.h"
 #include "experimental/graphite/src/Buffer.h"
 #include "experimental/graphite/src/Caps.h"
+#include "experimental/graphite/src/CommandBuffer.h"
 #include "experimental/graphite/src/ContextPriv.h"
-#include "experimental/graphite/src/CopyTask.h"
 #include "experimental/graphite/src/DrawContext.h"
+#include "experimental/graphite/src/DrawGeometry.h"
 #include "experimental/graphite/src/DrawList.h"
 #include "experimental/graphite/src/Gpu.h"
 #include "experimental/graphite/src/Log.h"
 #include "experimental/graphite/src/RecorderPriv.h"
 #include "experimental/graphite/src/Renderer.h"
-#include "experimental/graphite/src/ResourceProvider.h"
-#include "experimental/graphite/src/Texture.h"
 #include "experimental/graphite/src/TextureProxy.h"
+#include "experimental/graphite/src/TextureUtils.h"
 #include "experimental/graphite/src/geom/BoundsManager.h"
 #include "experimental/graphite/src/geom/IntersectionTree.h"
 #include "experimental/graphite/src/geom/Shape.h"
@@ -198,54 +196,19 @@ bool Device::onReadPixels(const SkPixmap& pm, int x, int y) {
 bool Device::readPixels(Context* context,
                         Recorder* recorder,
                         const SkPixmap& pm,
-                        int x,
-                        int y) {
-    // TODO: Support more formats that we can read back into
-    if (pm.colorType() != kRGBA_8888_SkColorType) {
-        return false;
-    }
-
-    ResourceProvider* resourceProvider = recorder->priv().resourceProvider();
-
-    TextureProxy* srcProxy = fDC->target();
-    if (!srcProxy->instantiate(resourceProvider)) {
-        return false;
-    }
-    sk_sp<Texture> srcTexture = srcProxy->refTexture();
-    SkASSERT(srcTexture);
-
-    size_t rowBytes = pm.rowBytes();
-    size_t size = rowBytes * pm.height();
-    sk_sp<Buffer> dstBuffer = resourceProvider->findOrCreateBuffer(size,
-                                                                   BufferType::kXferGpuToCpu,
-                                                                   PrioritizeGpuReads::kNo);
-    if (!dstBuffer) {
-        return false;
-    }
-
-    SkIRect srcRect = SkIRect::MakeXYWH(x, y, pm.width(), pm.height());
-    sk_sp<CopyTextureToBufferTask> task =
-            CopyTextureToBufferTask::Make(std::move(srcTexture),
-                                          srcRect,
-                                          dstBuffer,
-                                          /*bufferOffset=*/0,
-                                          rowBytes);
-    if (!task) {
-        return false;
-    }
-
-    this->flushPendingWorkToRecorder();
-    fRecorder->priv().add(std::move(task));
-
-    // TODO: Can snapping ever fail?
-    context->insertRecording(fRecorder->snap());
-    context->submit(SyncToCpu::kYes);
-
-    void* mappedMemory = dstBuffer->map();
-
-    memcpy(pm.writable_addr(), mappedMemory, size);
-
-    return true;
+                        int srcX,
+                        int srcY) {
+    return ReadPixelsHelper([this]() {
+                                this->flushPendingWorkToRecorder();
+                            },
+                            context,
+                            recorder,
+                            fDC->target(),
+                            pm.info(),
+                            pm.writable_addr(),
+                            pm.rowBytes(),
+                            srcX,
+                            srcY);
 }
 
 bool Device::onWritePixels(const SkPixmap& pm, int x, int y) {
@@ -407,7 +370,7 @@ void Device::drawShape(const Shape& shape,
     if (styleType == SkStrokeRec::kStroke_Style ||
         styleType == SkStrokeRec::kHairline_Style ||
         styleType == SkStrokeRec::kStrokeAndFill_Style) {
-        StrokeParams stroke(style.getWidth(), style.getMiter(), style.getJoin(), style.getCap());
+        StrokeStyle stroke(style.getWidth(), style.getMiter(), style.getJoin(), style.getCap());
         this->recordDraw(localToDevice, shape, clip, order, &shading, &stroke);
     }
     if (styleType == SkStrokeRec::kFill_Style ||
@@ -434,7 +397,7 @@ void Device::recordDraw(const Transform& localToDevice,
                         const Clip& clip,
                         DrawOrder ordering,
                         const PaintParams* paint,
-                        const StrokeParams* stroke) {
+                        const StrokeStyle* stroke) {
     // TODO: remove after CPU-transform fallbacks are no longer needed
     static const Transform kIdentity{SkM44()};
 
@@ -487,20 +450,21 @@ void Device::recordDraw(const Transform& localToDevice,
     // are large enough to exceed the fixed count tessellation limits.
     const Renderer* renderer = nullptr;
 
-    // TODO: Combine this heuristic with what is used in PathStencilCoverOp to choose between wedges
-    // curves consistently in Graphite and Ganesh.
-    const bool preferWedges = (shape.isPath() && shape.path().countVerbs() < 50) ||
-                              clip.drawBounds().area() <= (256 * 256);
-
-    // TODO: Route all filled shapes to stencil-and-cover for the sprint; convex will draw
-    // correctly but uses an unnecessary stencil step.
-    // if (shape.convex()) {
-    //     renderer = Renderer::ConvexPath();
-    // } else {
-    if (preferWedges) {
-        renderer = &Renderer::StencilTessellatedWedges(shape.fillType());
+    if (shape.convex() && !shape.inverted()) {
+        // TODO: Ganesh doesn't have a curve+middle-out triangles option for convex paths, but it
+        // would be pretty trivial to spin up.
+        renderer = &Renderer::ConvexTessellatedWedges();
     } else {
-        renderer = &Renderer::StencilTessellatedCurvesAndTris(shape.fillType());
+        // TODO: Combine this heuristic with what is used in PathStencilCoverOp to choose between
+        // wedges curves consistently in Graphite and Ganesh.
+        const bool preferWedges = (shape.isPath() && shape.path().countVerbs() < 50) ||
+                                   clip.drawBounds().area() <= (256 * 256);
+
+        if (preferWedges) {
+            renderer = &Renderer::StencilTessellatedWedges(shape.fillType());
+        } else {
+            renderer = &Renderer::StencilTessellatedCurvesAndTris(shape.fillType());
+        }
     }
 
     if (!renderer) {

@@ -20,18 +20,18 @@
 
 #include <array>
 #include <initializer_list>
+#include <string>
+#include <string_view>
 #include <vector>
 
-struct SkIRect;
 enum class SkPathFillType;
 class SkUniformData;
 
 namespace skgpu {
 
 class DrawWriter;
+class DrawGeometry;
 class ResourceProvider;
-class Shape;
-class Transform;
 
 enum class Layout;
 
@@ -42,10 +42,7 @@ public:
     // The DrawWriter is configured with the vertex and instance strides of the RenderStep, and its
     // primitive type. The recorded draws will be executed with a graphics pipeline compatible with
     // this RenderStep.
-    virtual void writeVertices(DrawWriter*,
-                               const SkIRect& bounds,
-                               const Transform&,
-                               const Shape&) const = 0;
+    virtual void writeVertices(DrawWriter*, const DrawGeometry&) const = 0;
 
     // Write out the uniform values (aligned for the layout). These values will be de-duplicated
     // across all draws using the RenderStep before uploading to the GPU, but it can be assumed the
@@ -56,12 +53,11 @@ public:
     // nice if we could remember the offsets for the layout/gpu and reuse them across draws.
     // Similarly, it would be nice if this could write into reusable storage and then DrawPass or
     // UniformCache handles making an sk_sp if we need to assign a new unique ID to the uniform data
-    virtual sk_sp<SkUniformData> writeUniforms(Layout layout,
-                                               const SkIRect& bounds,
-                                               const Transform&,
-                                               const Shape&) const = 0;
+    virtual sk_sp<SkUniformData> writeUniforms(Layout layout, const DrawGeometry&) const = 0;
 
-    virtual const char* name()      const = 0;
+    // Returns a name formatted as "Subclass[variant]", where "Subclass" matches the C++ class name
+    // and variant is a unique term describing instance's specific configuration.
+    const char* name() const { return fName.c_str(); }
 
     // TODO: This is only temporary. Eventually the RenderStep will define its logic in SkSL and
     // be able to have code operate in both the vertex and fragment shaders. Ideally the RenderStep
@@ -71,7 +67,9 @@ public:
 
     // Returns the body of a vertex function, which must define a float4 devPosition variable.
     // It has access to the variables declared by vertexAttributes(), instanceAttributes(),
-    // and uniforms().
+    // and uniforms(). The 'devPosition' variable's z must store the PaintDepth normalized to a
+    // float from [0, 1], for each processed draw although the RenderStep can choose to upload it
+    // as attributes or uniforms.
     //
     // NOTE: The above contract is mainly so that the entire SkSL program can be created by just str
     // concatenating struct definitions generated from the RenderStep and paint Combination
@@ -124,7 +122,9 @@ protected:
     // While RenderStep does not define the full program that's run for a draw, it defines the
     // entire vertex layout of the pipeline. This is not allowed to change, so can be provided to
     // the RenderStep constructor by subclasses.
-    RenderStep(Mask<Flags> flags,
+    RenderStep(std::string_view className,
+               std::string_view variantName,
+               Mask<Flags> flags,
                std::initializer_list<SkUniform> uniforms,
                PrimitiveType primitiveType,
                DepthStencilSettings depthStencilSettings,
@@ -137,12 +137,18 @@ protected:
             , fVertexAttrs(vertexAttrs)
             , fInstanceAttrs(instanceAttrs)
             , fVertexStride(0)
-            , fInstanceStride(0) {
+            , fInstanceStride(0)
+            , fName(className) {
         for (auto v : this->vertexAttributes()) {
             fVertexStride += v.sizeAlign4();
         }
         for (auto i : this->instanceAttributes()) {
             fInstanceStride += i.sizeAlign4();
+        }
+        if (variantName.size() > 0) {
+            fName += "[";
+            fName += variantName;
+            fName += "]";
         }
     }
 
@@ -168,6 +174,8 @@ private:
 
     size_t fVertexStride;   // derived from vertex attribute set
     size_t fInstanceStride; // derived from instance attribute set
+
+    std::string fName;
 };
 SKGPU_MAKE_MASK_OPS(RenderStep::Flags);
 
@@ -195,8 +203,10 @@ public:
     static const Renderer& StencilTessellatedCurvesAndTris(SkPathFillType);
 
     static const Renderer& StencilTessellatedWedges(SkPathFillType);
+
+    static const Renderer& ConvexTessellatedWedges();
+
     // TODO: Not on the immediate sprint target, but show what needs to be added for DrawList's API
-    // static const Renderer& FillConvexPath();
     // static const Renderer& StrokePath();
     // TODO: Will add more of these as primitive rendering etc. is fleshed out
 

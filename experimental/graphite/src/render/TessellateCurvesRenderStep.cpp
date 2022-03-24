@@ -7,15 +7,13 @@
 
 #include "experimental/graphite/src/render/TessellateCurvesRenderStep.h"
 
+#include "experimental/graphite/src/DrawGeometry.h"
 #include "experimental/graphite/src/DrawWriter.h"
-#include "experimental/graphite/src/geom/Shape.h"
-#include "experimental/graphite/src/geom/Transform_graphite.h"
 #include "experimental/graphite/src/render/StencilAndCoverDSS.h"
 
 #include "src/gpu/tessellate/AffineMatrix.h"
+#include "src/gpu/tessellate/FixedCountBufferUtils.h"
 #include "src/gpu/tessellate/PatchWriter.h"
-#include "src/gpu/tessellate/PathCurveTessellator.h"
-#include "src/gpu/tessellate/PathTessellator.h"
 
 namespace skgpu {
 
@@ -42,8 +40,7 @@ struct DrawWriterAllocator {
         // TODO (skbug.com/13056): Actually compute optimal minimum required index count based on
         // PatchWriter's tracked segment count^4.
         static constexpr unsigned int kMaxIndexCount =
-                3 * PathTessellator::NumCurveTrianglesAtResolveLevel(
-                            PathTessellator::kMaxFixedResolveLevel);
+                3 * NumCurveTrianglesAtResolveLevel(kMaxFixedResolveLevel);
         return fInstances.append(kMaxIndexCount, 1);
     }
 
@@ -54,29 +51,26 @@ struct DrawWriterAllocator {
 // No explicit curve type, since we assume infinity is supported on GPUs using graphite
 // No color or wide color attribs, since it might always be part of the PaintParams
 // or we'll add a color-only fast path to RenderStep later.
-static constexpr PatchAttribs kAttribs = PatchAttribs::kNone;
+static constexpr PatchAttribs kAttribs = PatchAttribs::kPaintDepth;
 using Writer = PatchWriter<DrawWriterAllocator,
+                           Required<PatchAttribs::kPaintDepth>,
                            AddTrianglesWhenChopping,
                            DiscardFlatCurves>;
-
-size_t fixed_vertex_buffer_size() {
-    return PathCurveTessellator::FixedVertexBufferSize(PathTessellator::kMaxFixedResolveLevel);
-}
-size_t fixed_index_buffer_size() {
-    return PathCurveTessellator::FixedIndexBufferSize(PathTessellator::kMaxFixedResolveLevel);
-}
 
 }  // namespace
 
 TessellateCurvesRenderStep::TessellateCurvesRenderStep(bool evenOdd)
-        : RenderStep(Flags::kRequiresMSAA,
+        : RenderStep("TessellateCurvesRenderStep",
+                     evenOdd ? "even-odd" : "winding",
+                     Flags::kRequiresMSAA,
                      /*uniforms=*/{},
                      PrimitiveType::kTriangles,
                      evenOdd ? kEvenOddStencilPass : kWindingStencilPass,
                      /*vertexAttrs=*/  {{"resolveLevel_and_idx",
                                          VertexAttribType::kFloat2, SkSLType::kFloat2}},
                      /*instanceAttrs=*/{{"p01", VertexAttribType::kFloat4, SkSLType::kFloat4},
-                                        {"p23", VertexAttribType::kFloat4, SkSLType::kFloat4}}) {
+                                        {"p23", VertexAttribType::kFloat4, SkSLType::kFloat4},
+                                        {"depth", VertexAttribType::kFloat, SkSLType::kFloat}}) {
     SkASSERT(this->instanceStride() == PatchStride(kAttribs));
 }
 
@@ -143,29 +137,26 @@ const char* TessellateCurvesRenderStep::vertexSkSL() const {
                 localcoord = (fixedVertexID == 0) ? p0.xy : p3.xy;
             }
         }
-        float4 devPosition = float4(localcoord.xy, 0.0, 1.0);)";
+        float4 devPosition = float4(localcoord.xy, depth, 1.0);)";
 }
 
-void TessellateCurvesRenderStep::writeVertices(DrawWriter* dw,
-                                               const SkIRect& bounds,
-                                               const Transform& localToDevice,
-                                               const Shape& shape) const {
-    // TODO: Caps check
-    static constexpr int kMaxTessellationSegments = 1 << PathTessellator::kMaxFixedResolveLevel;
-    SkPath path = shape.asPath(); // TODO: Iterate the Shape directly
+void TessellateCurvesRenderStep::writeVertices(DrawWriter* dw, const DrawGeometry& geom) const {
+    SkPath path = geom.shape().asPath(); // TODO: Iterate the Shape directly
 
     BindBufferInfo fixedVertexBuffer = dw->bufferManager()->getStaticBuffer(
             BufferType::kVertex,
-            PathCurveTessellator::WriteFixedVertexBuffer,
-            fixed_vertex_buffer_size);
+            FixedCountCurves::WriteVertexBuffer,
+            FixedCountCurves::VertexBufferSize);
     BindBufferInfo fixedIndexBuffer = dw->bufferManager()->getStaticBuffer(
             BufferType::kIndex,
-            PathCurveTessellator::WriteFixedIndexBuffer,
-            fixed_index_buffer_size);
+            FixedCountCurves::WriteIndexBuffer,
+            FixedCountCurves::IndexBufferSize);
 
-    int patchReserveCount = PathCurveTessellator::PatchPreallocCount(path.countVerbs());
-    Writer writer{kAttribs, kMaxTessellationSegments,
-                    *dw, fixedVertexBuffer, fixedIndexBuffer, patchReserveCount};
+    int patchReserveCount = FixedCountCurves::PreallocCount(path.countVerbs());
+    Writer writer{kAttribs, kMaxParametricSegments,
+                  *dw, fixedVertexBuffer, fixedIndexBuffer, patchReserveCount};
+
+    writer.updatePaintDepthAttrib(geom.order().depthAsFloat());
 
     // TODO: Is it better to pre-transform on the CPU and only have a matrix uniform to compute
     // local coords, or is it better to always transform on the GPU (less CPU usage, more
@@ -176,7 +167,7 @@ void TessellateCurvesRenderStep::writeVertices(DrawWriter* dw,
     // TODO: This doesn't handle perspective yet, and ideally wouldn't go through SkMatrix.
     // It may not be relevant, though, if transforms are applied on the GPU and we only need to
     // determine an approximate 2x2 for 'shaderXform' and Wang's formula evaluation.
-    AffineMatrix m(localToDevice.matrix().asM33());
+    AffineMatrix m(geom.transform().matrix().asM33());
 
     // TODO: For filled curves, the path verb loop is simple enough that it's not too big a deal
     // to copy the logic from PathCurveTessellator::write_patches. It may be required if we end
@@ -216,10 +207,7 @@ void TessellateCurvesRenderStep::writeVertices(DrawWriter* dw,
     }
 }
 
-sk_sp<SkUniformData> TessellateCurvesRenderStep::writeUniforms(Layout,
-                                                              const SkIRect&,
-                                                              const Transform&,
-                                                              const Shape&) const {
+sk_sp<SkUniformData> TessellateCurvesRenderStep::writeUniforms(Layout, const DrawGeometry&) const {
     // Control points are pre-transformed to device space on the CPU, so no uniforms needed.
     return nullptr;
 }

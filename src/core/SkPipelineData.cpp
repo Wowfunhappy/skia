@@ -8,16 +8,12 @@
 #include "src/core/SkOpts.h"
 #include "src/core/SkPipelineData.h"
 
-SkPipelineData::SkPipelineData(sk_sp<SkUniformData> initial)
-        : fUniformDataBlock(std::move(initial)) {
-}
-
 void SkPipelineData::add(sk_sp<SkUniformData> uniforms) {
     SkASSERT(uniforms && uniforms->count());
     fUniformDataBlock.add(std::move(uniforms));
 }
 
-size_t SkPipelineData::UniformDataBlock::totalUniformSize() const {
+size_t SkUniformDataBlock::totalUniformSize() const {
     size_t total = 0;
 
     // TODO: It seems like we need to worry about alignment between the separate sets of uniforms
@@ -28,7 +24,7 @@ size_t SkPipelineData::UniformDataBlock::totalUniformSize() const {
     return total;
 }
 
-int SkPipelineData::UniformDataBlock::numUniforms() const {
+int SkUniformDataBlock::numUniforms() const {
     int total = 0;
 
     for (auto& u : fUniformData) {
@@ -38,7 +34,7 @@ int SkPipelineData::UniformDataBlock::numUniforms() const {
     return total;
 }
 
-bool SkPipelineData::UniformDataBlock::operator==(const UniformDataBlock& other) const {
+bool SkUniformDataBlock::operator==(const SkUniformDataBlock& other) const {
     if (fUniformData.size() != other.fUniformData.size()) {
         return false;
     }
@@ -52,7 +48,7 @@ bool SkPipelineData::UniformDataBlock::operator==(const UniformDataBlock& other)
     return true;
 }
 
-uint32_t SkPipelineData::UniformDataBlock::hash() const {
+uint32_t SkUniformDataBlock::hash() const {
     uint32_t hash = 0;
 
     for (auto& u : fUniformData) {
@@ -66,14 +62,14 @@ uint32_t SkPipelineData::UniformDataBlock::hash() const {
 #ifdef SK_GRAPHITE_ENABLED
 static constexpr int kSkFilterModeCount = static_cast<int>(SkFilterMode::kLast) + 1;
 
-bool SkPipelineData::TextureDataBlock::TextureInfo::operator==(const TextureInfo& other) const {
+bool SkTextureDataBlock::TextureInfo::operator==(const TextureInfo& other) const {
     return fProxy == other.fProxy &&
            fSamplingOptions == other.fSamplingOptions &&
            fTileModes[0] == other.fTileModes[0] &&
            fTileModes[1] == other.fTileModes[1];
 }
 
-uint32_t SkPipelineData::TextureDataBlock::TextureInfo::samplerKey() const {
+uint32_t SkTextureDataBlock::TextureInfo::samplerKey() const {
     static_assert(kSkTileModeCount <= 4 && kSkFilterModeCount <= 2);
     return (static_cast<int>(fTileModes[0])           << 0) |
            (static_cast<int>(fTileModes[1])           << 2) |
@@ -81,7 +77,7 @@ uint32_t SkPipelineData::TextureDataBlock::TextureInfo::samplerKey() const {
            (static_cast<int>(fSamplingOptions.mipmap) << 5);
 }
 
-bool SkPipelineData::TextureDataBlock::operator==(const TextureDataBlock& other) const {
+bool SkTextureDataBlock::operator==(const SkTextureDataBlock& other) const {
     if (fTextureData.size() != other.fTextureData.size()) {
         return false;
     }
@@ -95,7 +91,7 @@ bool SkPipelineData::TextureDataBlock::operator==(const TextureDataBlock& other)
     return true;
 }
 
-uint32_t SkPipelineData::TextureDataBlock::hash() const {
+uint32_t SkTextureDataBlock::hash() const {
     uint32_t hash = 0;
 
     for (auto& d : fTextureData) {

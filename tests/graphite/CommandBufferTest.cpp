@@ -15,6 +15,7 @@
 #include "experimental/graphite/src/CommandBuffer.h"
 #include "experimental/graphite/src/ContextPriv.h"
 #include "experimental/graphite/src/DrawBufferManager.h"
+#include "experimental/graphite/src/DrawGeometry.h"
 #include "experimental/graphite/src/DrawWriter.h"
 #include "experimental/graphite/src/GlobalCache.h"
 #include "experimental/graphite/src/Gpu.h"
@@ -63,38 +64,31 @@ public:
         return &kSingleton;
     }
 
-    const char* name() const override { return "uniform-rect"; }
-
     const char* vertexSkSL() const override {
         return "float2 tmpPosition = float2(float(sk_VertexID >> 1), float(sk_VertexID & 1));\n"
                "float4 devPosition = float4(tmpPosition * scale + translate, 0.0, 1.0);\n";
     }
 
-    void writeVertices(DrawWriter* writer,
-                       const SkIRect&,
-                       const Transform&,
-                       const Shape&) const override {
+    void writeVertices(DrawWriter* writer, const DrawGeometry&) const override {
         // The shape is upload via uniforms, so this just needs to record 4 data-less vertices
         writer->draw({}, 4);
     }
 
-    sk_sp<SkUniformData> writeUniforms(Layout layout,
-                                       const SkIRect&,
-                                       const Transform&,
-                                       const Shape& shape) const override {
-        SkASSERT(shape.isRect());
+    sk_sp<SkUniformData> writeUniforms(Layout layout, const DrawGeometry& geom) const override {
+        SkASSERT(geom.shape().isRect());
         // TODO: A << API for uniforms would be nice, particularly if it could take pre-computed
         // offsets for each uniform.
         auto uniforms = SkUniformData::Make(this->uniforms(), sizeof(float) * 4);
-        float2 scale = shape.rect().size();
-        float2 translate = shape.rect().topLeft();
+        float2 scale = geom.shape().rect().size();
+        float2 translate = geom.shape().rect().topLeft();
         memcpy(uniforms->data(), &scale, sizeof(float2));
         memcpy(uniforms->data() + sizeof(float2), &translate, sizeof(float2));
         return uniforms;
     }
 
 private:
-    UniformRectDraw() : RenderStep(Flags::kPerformsShading,
+    UniformRectDraw() : RenderStep("UniformRectDraw", "test-only",
+                                   Flags::kPerformsShading,
                                    /*uniforms=*/{{"scale",     SkSLType::kFloat2},
                                                  {"translate", SkSLType::kFloat2}},
                                    PrimitiveType::kTriangleStrip,
@@ -118,16 +112,12 @@ public:
         return &kSingleton;
     }
 
-    const char* name() const override { return "triangle-rect"; }
-
     const char* vertexSkSL() const override {
         return "float4 devPosition = float4(position * scale + translate, 0.0, 1.0);\n";
     }
 
-    void writeVertices(DrawWriter* writer,
-                       const SkIRect&,
-                       const Transform&,
-                       const Shape& shape) const override {
+    void writeVertices(DrawWriter* writer, const DrawGeometry& geom) const override {
+        const Shape& shape = geom.shape();
         DrawBufferManager* bufferMgr = writer->bufferManager();
         auto [vertexWriter, vertices] = bufferMgr->getVertexWriter(4 * this->vertexStride());
         vertexWriter << 0.5f * (shape.rect().left() + 1.f)  << 0.5f * (shape.rect().top() + 1.f)
@@ -143,10 +133,7 @@ public:
         writer->drawIndexed(vertices, indices, 6);
     }
 
-    sk_sp<SkUniformData> writeUniforms(Layout layout,
-                                       const SkIRect&,
-                                       const Transform&,
-                                       const Shape&) const override {
+    sk_sp<SkUniformData> writeUniforms(Layout layout, const DrawGeometry&) const override {
         auto uniforms = SkUniformData::Make(this->uniforms(), sizeof(float) * 4);
         float data[4] = {2.f, 2.f, -1.f, -1.f};
         memcpy(uniforms->data(), data, 4 * sizeof(float));
@@ -155,7 +142,8 @@ public:
 
 private:
     TriangleRectDraw()
-            : RenderStep(Flags::kPerformsShading,
+            : RenderStep("TriangleRectDraw", "test-only",
+                         Flags::kPerformsShading,
                          /*uniforms=*/{{"scale",     SkSLType::kFloat2},
                                        {"translate", SkSLType::kFloat2}},
                          PrimitiveType::kTriangles,
@@ -175,18 +163,13 @@ public:
         return &kSingleton;
     }
 
-    const char* name() const override { return "instance-rect"; }
-
     const char* vertexSkSL() const override {
         return "float2 tmpPosition = float2(float(sk_VertexID >> 1), float(sk_VertexID & 1));\n"
                "float4 devPosition = float4(tmpPosition * dims + position, 0.0, 1.0);\n";
     }
 
-    void writeVertices(DrawWriter* writer,
-                       const SkIRect&,
-                       const Transform&,
-                       const Shape& shape) const override {
-        SkASSERT(shape.isRect());
+    void writeVertices(DrawWriter* writer, const DrawGeometry& geom) const override {
+        SkASSERT(geom.shape().isRect());
 
         DrawBufferManager* bufferMgr = writer->bufferManager();
 
@@ -197,19 +180,17 @@ public:
                     << 2 << 1 << 3;
 
         DrawWriter::Instances instances{*writer, {}, indices, 6};
-        instances.append(1) << shape.rect().topLeft() << shape.rect().size();
+        instances.append(1) << geom.shape().rect().topLeft() << geom.shape().rect().size();
     }
 
-    sk_sp<SkUniformData> writeUniforms(Layout,
-                                       const SkIRect&,
-                                       const Transform&,
-                                       const Shape&) const override {
+    sk_sp<SkUniformData> writeUniforms(Layout, const DrawGeometry&) const override {
         return nullptr;
     }
 
 private:
     InstanceRectDraw()
-            : RenderStep(Flags::kPerformsShading,
+            : RenderStep("InstanceRectDraw", "test-only",
+                         Flags::kPerformsShading,
                          /*uniforms=*/{},
                          PrimitiveType::kTriangles,
                          kTestDepthStencilSettings,
@@ -322,12 +303,16 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(CommandBufferTest, reporter, context) {
         // No set scissor, so use entire render target dimensions
         static const SkIRect kBounds = SkIRect::MakeWH(kTextureWidth, kTextureHeight);
 
+        PaintersDepth depth = DrawOrder::kClearDepth;
         for (auto d : draws) {
+            depth = depth.next();
+
             drawWriter.newDynamicState();
             Shape shape(d.fRect);
+            DrawOrder order(depth);
+            DrawGeometry geom{kIdentity, shape, {shape.bounds(), kBounds}, order, nullptr};
 
-            auto renderStepUniforms =
-                    step->writeUniforms(Layout::kMetal, kBounds, kIdentity, shape);
+            auto renderStepUniforms =  step->writeUniforms(Layout::kMetal, geom);
             if (renderStepUniforms) {
                 auto [writer, bindInfo] =
                         bufferMgr.getUniformWriter(renderStepUniforms->dataSize());
@@ -344,7 +329,7 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(CommandBufferTest, reporter, context) {
                                              sk_ref_sp(bindInfo.fBuffer),
                                              bindInfo.fOffset);
 
-            step->writeVertices(&drawWriter, kBounds, kIdentity, shape);
+            step->writeVertices(&drawWriter, geom);
         }
     };
 
