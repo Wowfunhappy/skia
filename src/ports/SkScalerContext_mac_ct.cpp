@@ -389,7 +389,7 @@ bool SkScalerContext_Mac::generateBBoxes() {
     uint16_t entries = fGlyphCount - fFBoundingBoxesGlyphOffset;
     fFBoundingBoxes.reset(entries);
     SkOTTableHead::IndexToLocFormat locaFormat = headTable->indexToLocFormat;
-    SkOTTableGlyph::Iterator glyphDataIter(*glyfTable.fData, *locaTable.fData, locaFormat);
+    SkOTTableGlyph::Iterator glyphDataIter(const_cast<SkOTTableGlyph&>(*glyfTable.fData), *locaTable.fData, locaFormat);
     glyphDataIter.advance(fFBoundingBoxesGlyphOffset);
     for (uint16_t boundingBoxesIndex = 0; boundingBoxesIndex < entries; ++boundingBoxesIndex) {
         const SkOTTableGlyphData* glyphData = glyphDataIter.next();
