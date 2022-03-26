@@ -832,7 +832,8 @@ protected:
 					return nullptr;
         }
 
-        CTFontVariation ctVariation = SkCTVariationFromSkFontArguments(ct.get(), args);
+        SkUniqueCFRef<CFArrayRef> axes(CTFontCopyVariationAxes(ct.get()));
+        CTFontVariation ctVariation = SkCTVariationFromSkFontArguments(ct.get(), axes.get(), args);
 
         SkUniqueCFRef<CTFontRef> ctVariant;
         if (ctVariation.variation) {
