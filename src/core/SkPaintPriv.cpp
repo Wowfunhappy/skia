@@ -6,11 +6,11 @@
  */
 
 #include "include/core/SkPaint.h"
-#include "include/private/SkPaintParamsKey.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkColorFilterBase.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkKeyHelpers.h"
+#include "src/core/SkPaintParamsKey.h"
 #include "src/core/SkPaintPriv.h"
 #include "src/core/SkXfermodePriv.h"
 #include "src/shaders/SkColorFilterShader.h"
@@ -52,7 +52,7 @@ bool SkPaintPriv::Overwrites(const SkPaint* paint, ShaderOverrideOpacity overrid
     return SkXfermode::IsOpaque(bm.value(), opacityType);
 }
 
-bool SkPaintPriv::ShouldDither(const SkPaint& p, SkColorType dstCT) {
+bool SkPaintPriv::ShouldDither(const SkPaint& p, SkColorType dstCT, bool shaderOverride) {
     // The paint dither flag can veto.
     if (!p.isDither()) {
         return false;
@@ -65,7 +65,8 @@ bool SkPaintPriv::ShouldDither(const SkPaint& p, SkColorType dstCT) {
 
     // Otherwise, dither is only needed for non-const paints.
     return p.getImageFilter() || p.getMaskFilter() ||
-           (p.getShader() && !as_SB(p.getShader())->isConstant());
+           (p.getShader() && !as_SB(p.getShader())->isConstant()) ||
+           shaderOverride;
 }
 
 // return true if the paint is just a single color (i.e. not a shader). If its
@@ -130,19 +131,21 @@ std::vector<SkPaintParamsKey> SkPaintPriv::ToKeys(const SkPaint& paint,
 
     // TODO: actually split the SkPaint into multiple PaintParams and generate the keys
     // for them separately.
+    // TODO: actually collect and return the SkUniformData vector for each PaintParams derived
+    // from the SkPaint
     {
         SkPaintParamsKey key;
 
         if (paint.getShader()) {
-            as_SB(paint.getShader())->addToKey(dict, backend, &key);
+            as_SB(paint.getShader())->addToKey(dict, backend, &key, nullptr);
         } else {
-            SolidColorShaderBlock::AddToKey(backend, &key);
+            SolidColorShaderBlock::AddToKey(dict, backend, &key, nullptr, paint.getColor4f());
         }
 
         if (paint.getBlender()) {
-            as_BB(paint.getBlender())->addToKey(dict, backend, &key);
+            as_BB(paint.getBlender())->addToKey(dict, backend, &key, nullptr);
         } else {
-            BlendModeBlock::AddToKey(backend, &key, SkBlendMode::kSrcOver);
+            BlendModeBlock::AddToKey(dict, backend, &key, nullptr, SkBlendMode::kSrcOver);
         }
 
         SkASSERT(key.sizeInBytes() > 0);

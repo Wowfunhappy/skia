@@ -35,13 +35,13 @@ public:
             , fColor(color) {
         if (!shaderCaps.vertexIDSupport()) {
             constexpr static Attribute kUnitCoordAttrib("unitCoord", kFloat2_GrVertexAttribType,
-                                                        kFloat2_GrSLType);
+                                                        SkSLType::kFloat2);
             this->setVertexAttributesWithImplicitOffsets(&kUnitCoordAttrib, 1);
         }
         constexpr static Attribute kInstanceAttribs[] = {
-            {"matrix2d", kFloat4_GrVertexAttribType, kFloat4_GrSLType},
-            {"translate", kFloat2_GrVertexAttribType, kFloat2_GrSLType},
-            {"pathBounds", kFloat4_GrVertexAttribType, kFloat4_GrSLType}
+            {"matrix2d", kFloat4_GrVertexAttribType, SkSLType::kFloat4},
+            {"translate", kFloat2_GrVertexAttribType, SkSLType::kFloat2},
+            {"pathBounds", kFloat4_GrVertexAttribType, SkSLType::kFloat4}
         };
         this->setInstanceAttributesWithImplicitOffsets(kInstanceAttribs,
                                                        SK_ARRAY_COUNT(kInstanceAttribs));
@@ -85,13 +85,13 @@ std::unique_ptr<GrGeometryProcessor::ProgramImpl> BoundingBoxShader::makeProgram
             // Find the vertex position.
             float2 localcoord = mix(pathBounds.xy - bloat, pathBounds.zw + bloat, unitCoord);
             float2 vertexpos = float2x2(matrix2d) * localcoord + translate;)");
-            gpArgs->fLocalCoordVar.set(kFloat2_GrSLType, "localcoord");
-            gpArgs->fPositionVar.set(kFloat2_GrSLType, "vertexpos");
+            gpArgs->fLocalCoordVar.set(SkSLType::kFloat2, "localcoord");
+            gpArgs->fPositionVar.set(SkSLType::kFloat2, "vertexpos");
 
             // Fragment shader.
             const char* color;
             fColorUniform = args.fUniformHandler->addUniform(nullptr, kFragment_GrShaderFlag,
-                                                             kHalf4_GrSLType, "color", &color);
+                                                             SkSLType::kHalf4, "color", &color);
             args.fFragBuilder->codeAppendf("half4 %s = %s;", args.fOutputColor, color);
             args.fFragBuilder->codeAppendf("const half4 %s = half4(1);", args.fOutputCoverage);
         }
@@ -245,7 +245,7 @@ void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
         int maxTrianglesInFans = std::max(maxCombinedFanEdges - 2, 0);
         int fanTriangleCount = 0;
         if (VertexWriter triangleVertexWriter =
-                    VertexWriter{vertexAlloc.lock<SkPoint>(maxTrianglesInFans * 3)}) {
+                    vertexAlloc.lockWriter(sizeof(SkPoint), maxTrianglesInFans * 3)) {
             for (auto [pathMatrix, path, color] : *fPathDrawList) {
                 AffineMatrix m(pathMatrix);
                 for (PathMiddleOutFanIter it(path); !it.done();) {
@@ -255,10 +255,12 @@ void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
                     }
                 }
             }
+
+
+            SkASSERT(fanTriangleCount <= maxTrianglesInFans);
+            fFanVertexCount = fanTriangleCount * 3;
+            vertexAlloc.unlock(fFanVertexCount);
         }
-        SkASSERT(fanTriangleCount <= maxTrianglesInFans);
-        fFanVertexCount = fanTriangleCount * 3;
-        vertexAlloc.unlock(fFanVertexCount);
     }
 
     auto tessShader = &fStencilPathProgram->geomProc().cast<GrPathTessellationShader>();
@@ -277,7 +279,7 @@ void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
                                                                  &fBBoxBaseInstance);
         SkDEBUGCODE(int pathCount = 0;)
         for (auto [pathMatrix, path, color] : *fPathDrawList) {
-            SkDEBUGCODE(auto end = vertexWriter.makeOffset(instanceStride));
+            SkDEBUGCODE(auto end = vertexWriter.mark(instanceStride));
             vertexWriter << pathMatrix.getScaleX()
                          << pathMatrix.getSkewY()
                          << pathMatrix.getSkewX()
@@ -299,7 +301,7 @@ void PathStencilCoverOp::onPrepare(GrOpFlushState* flushState) {
             } else {
                 vertexWriter << path.getBounds();
             }
-            SkASSERT(vertexWriter == end);
+            SkASSERT(vertexWriter.mark() == end);
             SkDEBUGCODE(++pathCount;)
         }
         SkASSERT(pathCount == fPathCount);
