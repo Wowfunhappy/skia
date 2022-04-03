@@ -479,7 +479,7 @@ void SkScalerContext_Mac::generateMetrics(SkGlyph* glyph, SkArenaAlloc* alloc) {
         // it should be empty. So, if we see a zero-advance, we check if it has an
         // empty path or not, and if so, we jam the bounds to 0. Hopefully a zero-advance
         // is rare, so we won't incur a big performance cost for this extra check.
-        if (0 == cgAdvance.width && 0 == cgAdvance.height && !isMavericks()) {
+        if (0 == cgAdvance.width && 0 == cgAdvance.height && (!isMavericks()) && !isMountainLion()) {
             SkUniqueCFRef<CGPathRef> path(CTFontCreatePathForGlyph(fCTFont.get(), cgGlyph,nullptr));
             if (!path || CGPathIsEmpty(path.get())) {
                 return;
