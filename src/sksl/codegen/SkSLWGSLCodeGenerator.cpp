@@ -473,7 +473,9 @@ void WGSLCodeGenerator::writeExpression(const Expression& e, Precedence parentPr
             this->writeLiteral(e.as<Literal>());
             break;
         default:
-            SkDEBUGFAILF("unsupported expression (kind: %d) %s", e.kind(), e.description().c_str());
+            SkDEBUGFAILF("unsupported expression (kind: %d) %s",
+                         static_cast<int>(e.kind()),
+                         e.description().c_str());
             break;
     }
 }
