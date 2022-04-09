@@ -21,10 +21,10 @@
 #include "src/shaders/SkBitmapProcShader.h"
 
 #if SK_SUPPORT_GPU
-#include "src/gpu/GrRecordingContextPriv.h"
-#include "src/gpu/SkGr.h"
-#include "src/gpu/effects/GrBicubicEffect.h"
-#include "src/gpu/effects/GrTextureEffect.h"
+#include "src/gpu/ganesh/GrRecordingContextPriv.h"
+#include "src/gpu/ganesh/SkGr.h"
+#include "src/gpu/ganesh/effects/GrBicubicEffect.h"
+#include "src/gpu/ganesh/effects/GrTextureEffect.h"
 #endif
 
 #ifdef SK_GRAPHITE_ENABLED
@@ -166,9 +166,8 @@ private:
                                                                const SkRect*) const override;
 #endif
 #ifdef SK_GRAPHITE_ENABLED
-    std::tuple<skgpu::TextureProxyView, SkColorType> onAsView(skgpu::Recorder*,
-                                                              skgpu::Mipmapped,
-                                                              SkBudgeted) const override;
+    std::tuple<skgpu::graphite::TextureProxyView, SkColorType> onAsView(
+            skgpu::graphite::Recorder*, skgpu::graphite::Mipmapped, SkBudgeted) const override;
 #endif
 
     SkBitmap fBitmap;
@@ -486,9 +485,9 @@ std::unique_ptr<GrFragmentProcessor> SkImage_Raster::onAsFragmentProcessor(
 #endif
 
 #ifdef SK_GRAPHITE_ENABLED
-std::tuple<skgpu::TextureProxyView, SkColorType> SkImage_Raster::onAsView(
-        skgpu::Recorder* recorder,
-        skgpu::Mipmapped mipmapped,
+std::tuple<skgpu::graphite::TextureProxyView, SkColorType> SkImage_Raster::onAsView(
+        skgpu::graphite::Recorder* recorder,
+        skgpu::graphite::Mipmapped mipmapped,
         SkBudgeted budgeted) const {
     return MakeBitmapProxyView(recorder, fBitmap, mipmapped, budgeted);
 }

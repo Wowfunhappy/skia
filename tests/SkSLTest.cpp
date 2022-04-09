@@ -25,9 +25,9 @@
 #include "include/private/SkSLProgramKind.h"
 #include "include/sksl/DSLCore.h"
 #include "src/core/SkRuntimeEffectPriv.h"
-#include "src/gpu/GrCaps.h"
-#include "src/gpu/GrDirectContextPriv.h"
-#include "src/gpu/GrShaderCaps.h"
+#include "src/gpu/ganesh/GrCaps.h"
+#include "src/gpu/ganesh/GrDirectContextPriv.h"
+#include "src/gpu/ganesh/GrShaderCaps.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLDehydrator.h"
 #include "src/sksl/SkSLRehydrator.h"
@@ -352,6 +352,7 @@ SKSL_TEST(CPU + GPU + SkQP, SelfAssignment,                  "folding/SelfAssign
 SKSL_TEST(CPU + GPU + SkQP, ShortCircuitBoolFolding,         "folding/ShortCircuitBoolFolding.sksl")
 SKSL_TEST(CPU + GPU + SkQP, SwitchCaseFolding,               "folding/SwitchCaseFolding.sksl")
 SKSL_TEST(CPU + GPU + SkQP, SwizzleFolding,                  "folding/SwizzleFolding.sksl")
+SKSL_TEST(CPU + GPU + SkQP, TernaryFolding,                  "folding/TernaryFolding.sksl")
 SKSL_TEST(CPU + GPU + SkQP, VectorScalarFolding,             "folding/VectorScalarFolding.sksl")
 SKSL_TEST(CPU + GPU + SkQP, VectorVectorFolding,             "folding/VectorVectorFolding.sksl")
 
