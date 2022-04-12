@@ -17,10 +17,10 @@
 #include "include/private/SkColorData.h"
 
 #ifdef SK_GRAPHITE_ENABLED
-#include "experimental/graphite/src/TextureProxy.h"
-#include "experimental/graphite/src/UniformManager.h"
-#include "experimental/graphite/src/geom/VectorTypes.h"
 #include "src/gpu/Blend.h"
+#include "src/gpu/graphite/TextureProxy.h"
+#include "src/gpu/graphite/UniformManager.h"
+#include "src/gpu/graphite/geom/VectorTypes.h"
 #endif
 
 class SkArenaAlloc;
@@ -28,15 +28,10 @@ class SkUniform;
 
 class SkUniformDataBlock {
 public:
-    static std::unique_ptr<SkUniformDataBlock> Make(const SkUniformDataBlock&, SkArenaAlloc*);
+    static SkUniformDataBlock* Make(const SkUniformDataBlock&, SkArenaAlloc*);
 
-    SkUniformDataBlock(SkSpan<const char> data, bool ownMem) : fData(data), fOwnMem(ownMem) {}
+    SkUniformDataBlock(SkSpan<const char> data) : fData(data) {}
     SkUniformDataBlock() = default;
-    ~SkUniformDataBlock() {
-        if (fOwnMem) {
-            delete [] fData.data();
-        }
-    }
 
     const char* data() const { return fData.data(); }
     size_t size() const { return fData.size(); }
@@ -51,10 +46,21 @@ public:
 
 private:
     SkSpan<const char> fData;
+};
 
-    // This is only required until the uniform data is stored in the arena. Once there this
-    // class will never delete the data referenced w/in the span
-    bool fOwnMem = false;
+// We would like to store just a "const SkUniformDataBlock*" in the UniformDataCache but, until
+// the TextureDataCache is switched over to storing its data in an arena, whatever is held in
+// the cache must interoperate w/ std::unique_ptr (i.e., have a get() function).
+// TODO: remove this class
+class SkUniformDataBlockPassThrough {
+public:
+    SkUniformDataBlockPassThrough() = default;
+    SkUniformDataBlockPassThrough(SkUniformDataBlock* udb) : fUDB(udb) {}
+
+    SkUniformDataBlock* get() const { return fUDB; }
+
+private:
+    SkUniformDataBlock* fUDB = nullptr;
 };
 
 #ifdef SK_GRAPHITE_ENABLED
@@ -150,31 +156,56 @@ public:
 
     const SkTextureDataBlock& textureDataBlock() { return fTextureDataBlock; }
 
-#ifdef SK_DEBUG
-    void setExpectedUniforms(SkSpan<const SkUniform> expectedUniforms) {
-        fUniformManager.setExpectedUniforms(expectedUniforms);
-    }
-    void doneWithExpectedUniforms() { fUniformManager.doneWithExpectedUniforms(); }
-#endif // SK_DEBUG
-
     void write(const SkColor4f* colors, int numColors) { fUniformManager.write(colors, numColors); }
     void write(const SkPMColor4f& premulColor) { fUniformManager.write(&premulColor, 1); }
     void write(const SkRect& rect) { fUniformManager.write(rect); }
     void write(SkPoint point) { fUniformManager.write(point); }
     void write(const float* floats, int count) { fUniformManager.write(floats, count); }
-    void write(float something) { fUniformManager.write(&something, 1); }
-    void write(int something) { fUniformManager.write(something); }
-    void write(skgpu::graphite::float2 something) { fUniformManager.write(something); }
+    void write(float f) { fUniformManager.write(&f, 1); }
+    void write(int i) { fUniformManager.write(i); }
+    void write(skgpu::graphite::float2 v) { fUniformManager.write(v); }
 
     bool hasUniforms() const { return fUniformManager.size(); }
 
     SkUniformDataBlock peekUniformData() const { return fUniformManager.peekData(); }
 
 private:
+#ifdef SK_DEBUG
+    friend class UniformExpectationsValidator;
+
+    void setExpectedUniforms(SkSpan<const SkUniform> expectedUniforms) {
+        fUniformManager.setExpectedUniforms(expectedUniforms);
+    }
+    void doneWithExpectedUniforms() { fUniformManager.doneWithExpectedUniforms(); }
+#endif // SK_DEBUG
+
     SkTextureDataBlock              fTextureDataBlock;
     BlendInfo                       fBlendInfo;
     skgpu::graphite::UniformManager fUniformManager;
 #endif // SK_GRAPHITE_ENABLED
 };
+
+#if defined(SK_DEBUG) && defined(SK_GRAPHITE_ENABLED)
+class UniformExpectationsValidator {
+public:
+    UniformExpectationsValidator(SkPipelineDataGatherer *gatherer,
+                                 SkSpan<const SkUniform> expectedUniforms)
+            : fGatherer(gatherer) {
+        fGatherer->setExpectedUniforms(expectedUniforms);
+    }
+
+    ~UniformExpectationsValidator() {
+        fGatherer->doneWithExpectedUniforms();
+    }
+
+private:
+    SkPipelineDataGatherer *fGatherer;
+
+    UniformExpectationsValidator(UniformExpectationsValidator &&) = delete;
+    UniformExpectationsValidator(const UniformExpectationsValidator &) = delete;
+    UniformExpectationsValidator &operator=(UniformExpectationsValidator &&) = delete;
+    UniformExpectationsValidator &operator=(const UniformExpectationsValidator &) = delete;
+};
+#endif // SK_DEBUG && SK_GRAPHITE_ENABLED
 
 #endif // SkPipelineData_DEFINED
