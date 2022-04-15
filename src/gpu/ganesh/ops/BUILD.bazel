@@ -1,5 +1,7 @@
 load("//bazel:macros.bzl", "generated_cc_atom")
 
+licenses(["notice"])
+
 generated_cc_atom(
     name = "AAConvexPathRenderer_hdr",
     hdrs = ["AAConvexPathRenderer.h"],
@@ -386,7 +388,7 @@ generated_cc_atom(
     deps = [
         ":GrOp_hdr",
         "//include/core:SkRefCnt_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
     ],
 )
 
@@ -480,7 +482,7 @@ generated_cc_atom(
     visibility = ["//:__subpackages__"],
     deps = [
         ":GrOp_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
     ],
 )
 
@@ -519,7 +521,7 @@ generated_cc_atom(
     visibility = ["//:__subpackages__"],
     deps = [
         ":GrSimpleMeshDrawOpHelper_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
     ],
 )
 
@@ -891,7 +893,7 @@ generated_cc_atom(
         ":TextureOp_hdr",
         "//include/core:SkPoint3_hdr",
         "//include/core:SkPoint_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
         "//src/gpu:BufferWriter_hdr",
         "//src/gpu/ganesh:GrColor_hdr",
         "//src/gpu/ganesh:GrGeometryProcessor_hdr",
@@ -926,7 +928,7 @@ generated_cc_atom(
     visibility = ["//:__subpackages__"],
     deps = [
         ":GrOp_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
     ],
 )
 
@@ -1110,7 +1112,7 @@ generated_cc_atom(
     visibility = ["//:__subpackages__"],
     deps = [
         ":GrOp_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
     ],
 )
 
@@ -1208,7 +1210,7 @@ generated_cc_atom(
         ":GrOp_hdr",
         "//include/core:SkCanvas_hdr",
         "//include/core:SkRefCnt_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
         "//src/gpu/ganesh:GrColor_hdr",
         "//src/gpu/ganesh:GrSamplerState_hdr",
     ],
@@ -1306,7 +1308,7 @@ generated_cc_atom(
         "//include/core:SkCanvas_hdr",
         "//include/core:SkCustomMesh_hdr",
         "//include/core:SkRefCnt_hdr",
-        "//include/private:GrTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
     ],
 )
 

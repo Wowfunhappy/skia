@@ -13,7 +13,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkSurfaceProps.h"
-#include "include/private/GrTypesPriv.h"
+#include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/core/SkGlyphRunPainter.h"
 #include "src/gpu/ganesh/GrPaint.h"
 #include "src/gpu/ganesh/GrRenderTargetProxy.h"
@@ -505,21 +505,6 @@ public:
                                  const SkPaint& paint);
 
     /**
-     * Convert the glyph-run list to a slug.
-     */
-    sk_sp<GrSlug> convertGlyphRunListToSlug(const SkMatrixProvider& viewMatrix,
-                                            const SkGlyphRunList& glyphRunList,
-                                            const SkPaint& paint);
-
-    /**
-     * Draw a slug.
-     */
-    void drawSlug(SkCanvas*,
-                  const GrClip* clip,
-                  const SkMatrixProvider& viewMatrix,
-                  const GrSlug* slugPtr);
-
-    /**
      * Adds the necessary signal and wait semaphores and adds the passed in SkDrawable to the
      * command stream.
      */
@@ -712,8 +697,6 @@ private:
                                                  GrDstProxyView* result);
 
     OpsTask* replaceOpsTaskIfModifiesColor();
-
-    SkGlyphRunListPainter* glyphPainter() { return &fGlyphPainter; }
 
     const SkSurfaceProps fSurfaceProps;
     const bool fCanUseDynamicMSAA;

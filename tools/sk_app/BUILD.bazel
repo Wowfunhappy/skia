@@ -1,6 +1,6 @@
-# https://github.com/bazelbuild/bazel-skylib
-load("@bazel_skylib//lib:selects.bzl", "selects")
-load("//bazel:macros.bzl", "generated_cc_atom")
+load("//bazel:macros.bzl", "generated_cc_atom", "selects")
+
+licenses(["notice"])
 
 selects.config_setting_group(
     name = "dawn_unix",
@@ -201,7 +201,7 @@ generated_cc_atom(
         "//include/core:SkRefCnt_hdr",
         "//include/core:SkSurface_hdr",
         "//include/ports:SkCFObject_hdr",
-        "//include/private:GrMtlTypesPriv_hdr",
+        "//include/private/gpu/ganesh:GrMtlTypesPriv_hdr",
     ],
 )
 
