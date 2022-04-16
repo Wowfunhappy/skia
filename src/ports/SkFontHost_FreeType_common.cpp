@@ -1660,8 +1660,10 @@ bool generateGlyphPathStatic(FT_Face face, SkPath* path) {
 }
 
 bool generateFacePathStatic(FT_Face face, SkGlyphID glyphID, uint32_t loadGlyphFlags, SkPath* path){
-    loadGlyphFlags |= FT_LOAD_NO_BITMAP; // ignore embedded bitmaps so we're sure to get the outline
-    loadGlyphFlags &= ~FT_LOAD_RENDER;   // don't scan convert (we just want the outline)
+    loadGlyphFlags |= FT_LOAD_BITMAP_METRICS_ONLY;  // Don't decode any bitmaps.
+    loadGlyphFlags |= FT_LOAD_NO_BITMAP; // Ignore embedded bitmaps.
+    loadGlyphFlags &= ~FT_LOAD_RENDER;  // Don't scan convert.
+    loadGlyphFlags &= ~FT_LOAD_COLOR;  // Ignore SVG.
     if (FT_Load_Glyph(face, glyphID, loadGlyphFlags)) {
         path->reset();
         return false;
@@ -1672,8 +1674,10 @@ bool generateFacePathStatic(FT_Face face, SkGlyphID glyphID, uint32_t loadGlyphF
 #ifdef TT_SUPPORT_COLRV1
 bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path) {
     uint32_t flags = 0;
-    flags |= FT_LOAD_NO_BITMAP; // ignore embedded bitmaps so we're sure to get the outline
-    flags &= ~FT_LOAD_RENDER;   // don't scan convert (we just want the outline)
+    flags |= FT_LOAD_BITMAP_METRICS_ONLY;  // Don't decode any bitmaps.
+    flags |= FT_LOAD_NO_BITMAP; // Ignore embedded bitmaps.
+    flags &= ~FT_LOAD_RENDER;  // Don't scan convert.
+    flags &= ~FT_LOAD_COLOR;  // Ignore SVG.
     flags |= FT_LOAD_NO_HINTING;
     flags |= FT_LOAD_NO_AUTOHINT;
     flags |= FT_LOAD_IGNORE_TRANSFORM;
@@ -1751,28 +1755,14 @@ bool SkScalerContext_FreeType_Base::generateFacePath(FT_Face face,
     return generateFacePathStatic(face, glyphID, loadGlyphFlags, path);
 }
 
+#ifdef TT_SUPPORT_COLRV1
 bool SkScalerContext_FreeType_Base::computeColrV1GlyphBoundingBox(FT_Face face,
                                                                   SkGlyphID glyphID,
-                                                                  FT_BBox* boundingBox) {
-#ifdef TT_SUPPORT_COLRV1
+                                                                  SkRect* bounds) {
     SkMatrix ctm;
-    SkRect bounds = SkRect::MakeEmpty();
+    *bounds = SkRect::MakeEmpty();
     VisitedSet activePaints;
-    if (!colrv1_start_glyph_bounds(&ctm, &bounds, face, glyphID,
-                                   FT_COLOR_INCLUDE_ROOT_TRANSFORM, &activePaints)) {
-        return false;
-    }
-
-    /* Convert back to FT_BBox as caller needs it in this format. */
-    bounds.sort();
-    boundingBox->xMin = SkScalarToFDot6(bounds.left());
-    boundingBox->xMax = SkScalarToFDot6(bounds.right());
-    boundingBox->yMin = SkScalarToFDot6(-bounds.bottom());
-    boundingBox->yMax = SkScalarToFDot6(-bounds.top());
-
-    return true;
-#else
-    SkASSERT(false);
-    return false;
-#endif
+    return colrv1_start_glyph_bounds(&ctm, bounds, face, glyphID,
+                                     FT_COLOR_INCLUDE_ROOT_TRANSFORM, &activePaints);
 }
+#endif
