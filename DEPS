@@ -6,17 +6,17 @@ vars = {
   # Three lines of non-changing comments so that
   # the commit queue can handle CLs rolling different
   # dependencies without interference from each other.
-  'sk_tool_revision': 'git_revision:61eae4de7c4a3eeb0450c17a1a7b022ff2591243',
+  'sk_tool_revision': 'git_revision:74c60f8523c999fc280c9437f3c5022dfc6abd58',
 }
 
 deps = {
   "buildtools"                            : "https://chromium.googlesource.com/chromium/src/buildtools.git@b138e6ce86ae843c42a1a08f37903207bebcca75",
-  "third_party/externals/angle2"          : "https://chromium.googlesource.com/angle/angle.git@3587e217d96cb0664e10fa0957eebc7c47e19705",
+  "third_party/externals/angle2"          : "https://chromium.googlesource.com/angle/angle.git@3636d129ee9c6c970e9b31883fcc88c539382434",
   "third_party/externals/brotli"          : "https://skia.googlesource.com/external/github.com/google/brotli.git@e61745a6b7add50d380cfd7d3883dd6c62fc2c71",
   "third_party/externals/d3d12allocator"  : "https://skia.googlesource.com/external/github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator.git@169895d529dfce00390a20e69c2f516066fe7a3b",
   # Dawn requires jinja2 and markupsafe for the code generator, tint for SPIRV compilation, and abseil for string formatting.
   # When the Dawn revision is updated these should be updated from the Dawn DEPS as well.
-  "third_party/externals/dawn"            : "https://dawn.googlesource.com/dawn.git@e6d4598d36157639606a780164c425c6bffb93f6",
+  "third_party/externals/dawn"            : "https://dawn.googlesource.com/dawn.git@69daaab75938cbe10c40f1a04988d46e09c3007d",
   "third_party/externals/jinja2"          : "https://chromium.googlesource.com/chromium/src/third_party/jinja2@ee69aa00ee8536f61db6a451f3858745cf587de6",
   "third_party/externals/markupsafe"      : "https://chromium.googlesource.com/chromium/src/third_party/markupsafe@0944e71f4b2cb9a871bcbe353f95e889b64a611a",
   "third_party/externals/abseil-cpp"      : "https://skia.googlesource.com/external/github.com/abseil/abseil-cpp.git@c5a424a2a21005660b182516eb7a079cd8021699",
@@ -42,7 +42,7 @@ deps = {
   "third_party/externals/swiftshader"     : "https://swiftshader.googlesource.com/SwiftShader@103a69bd6c82980c967c2f4002c9a302ea67c716",
   # vulkan-deps is a meta-repo containing several interdependent Khronos Vulkan repositories.
   # When the vulkan-deps revision is updated, those repos (spirv-*, vulkan-*) should be updated as well.
-  "third_party/externals/vulkan-deps"     : "https://chromium.googlesource.com/vulkan-deps@9ef8e65d013665f8ded0e66665a017899d05bdfd",
+  "third_party/externals/vulkan-deps"     : "https://chromium.googlesource.com/vulkan-deps@1a408eb154d7045aab854be59dd5271505aab9bb",
   "third_party/externals/spirv-cross"     : "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Cross@6a67891418a3f08be63f92726e049dc788e46f5b",
   "third_party/externals/spirv-headers"   : "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers.git@82becc8a8a92e509d3d8d635889da0a3c17d0606",
   "third_party/externals/spirv-tools"     : "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git@cb96abbf7affd986016f17dd09f9f971138a922b",
@@ -53,7 +53,7 @@ deps = {
   "third_party/externals/zlib"            : "https://chromium.googlesource.com/chromium/src/third_party/zlib@c876c8f87101c5a75f6014b0f832499afeb65b73",
 
   "../src": {
-    "url": "https://chromium.googlesource.com/chromium/src.git@deef3481d4570fa6c77d17c65b7e821a05088f72",
+    "url": "https://chromium.googlesource.com/chromium/src.git@9b1b8c387f01742ddd84d4a93dbd9f5de2993b58",
     "condition": "checkout_chromium",
   },
 
