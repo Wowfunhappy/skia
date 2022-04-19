@@ -1064,7 +1064,6 @@ private:
     const SkGlyphRect fGlyphDeviceBounds;
     const SkSpan<const DevicePosition> fLeftTopDevicePos;
     const bool fSomeGlyphsExcluded;
-    const bool fSupportBilerpAtlas;
 
     // The regenerateAtlas method mutates fGlyphs. It should be called from onPrepare which must
     // be single threaded.
@@ -1083,7 +1082,6 @@ DirectMaskSubRun::DirectMaskSubRun(const GrTextReferenceFrame* referenceFrame,
         , fGlyphDeviceBounds{deviceBounds}
         , fLeftTopDevicePos{devicePositions}
         , fSomeGlyphsExcluded{glyphsOutOfBounds}
-        , fSupportBilerpAtlas{supportBilerpAtlas}
         , fGlyphs{std::move(glyphs)} {}
 
 GrSubRunOwner DirectMaskSubRun::Make(const GrTextBlob* blob,
@@ -1277,9 +1275,7 @@ void DirectMaskSubRun::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCache *cache) 
 
 std::tuple<bool, int>
 DirectMaskSubRun::regenerateAtlas(int begin, int end, GrMeshDrawTarget* target) const {
-    int srcPadding = fSupportBilerpAtlas ? 1 : 0;
-    return fGlyphs.regenerateAtlas(
-            begin, end, fMaskFormat, srcPadding, target, fSupportBilerpAtlas);
+    return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, 0, target);
 }
 
 // The 99% case. No clip. Non-color only.
@@ -1583,7 +1579,7 @@ void TransformedMaskSubRun::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCache *ca
 
 std::tuple<bool, int> TransformedMaskSubRun::regenerateAtlas(int begin, int end,
                                                              GrMeshDrawTarget* target) const {
-    return fGlyphs.regenerateAtlas(begin, end, fVertexFiller.grMaskType(), 1, target, true);
+    return fGlyphs.regenerateAtlas(begin, end, fVertexFiller.grMaskType(), 1, target);
 }
 
 void TransformedMaskSubRun::fillVertexData(void* vertexDst, int offset, int count,
@@ -1858,8 +1854,8 @@ void SDFTSubRun::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCache *cache) const 
     fGlyphs.packedGlyphIDToGrGlyph(cache);
 }
 
-std::tuple<bool, int> SDFTSubRun::regenerateAtlas(
-        int begin, int end, GrMeshDrawTarget *target) const {
+std::tuple<bool, int>
+SDFTSubRun::regenerateAtlas(int begin, int end, GrMeshDrawTarget *target) const {
     return fGlyphs.regenerateAtlas(begin, end, kA8_GrMaskFormat, SK_DistanceFieldInset, target);
 }
 
@@ -2239,7 +2235,6 @@ public:
     using DevicePosition = skvx::Vec<2, int16_t>;
 
     DirectMaskSubRunNoCache(GrMaskFormat format,
-                            bool supportBilerpAtlas,
                             const SkRect& bounds,
                             SkSpan<const DevicePosition> devicePositions,
                             GrGlyphVector&& glyphs);
@@ -2247,7 +2242,6 @@ public:
     static GrAtlasSubRunOwner Make(const SkZip<SkGlyphVariant, SkPoint>& accepted,
                                    sk_sp<SkStrike>&& strike,
                                    GrMaskFormat format,
-                                   bool supportBilerpAtlas,
                                    GrSubRunAllocator* alloc);
 
     size_t vertexStride(const SkMatrix& drawMatrix) const override;
@@ -2275,9 +2269,6 @@ public:
 private:
     const GrMaskFormat fMaskFormat;
 
-    // Support bilerping from the atlas.
-    const bool fSupportBilerpAtlas;
-
     // The vertex bounds in device space. The bounds are the joined rectangles of all the glyphs.
     const SkRect fGlyphDeviceBounds;
     const SkSpan<const DevicePosition> fLeftTopDevicePos;
@@ -2291,12 +2282,10 @@ private:
 };
 
 DirectMaskSubRunNoCache::DirectMaskSubRunNoCache(GrMaskFormat format,
-                                                 bool supportBilerpAtlas,
                                                  const SkRect& deviceBounds,
                                                  SkSpan<const DevicePosition> devicePositions,
                                                  GrGlyphVector&& glyphs)
         : fMaskFormat{format}
-        , fSupportBilerpAtlas{supportBilerpAtlas}
         , fGlyphDeviceBounds{deviceBounds}
         , fLeftTopDevicePos{devicePositions}
         , fGlyphs{std::move(glyphs)} { }
@@ -2304,7 +2293,6 @@ DirectMaskSubRunNoCache::DirectMaskSubRunNoCache(GrMaskFormat format,
 GrAtlasSubRunOwner DirectMaskSubRunNoCache::Make(const SkZip<SkGlyphVariant, SkPoint>& accepted,
                                                  sk_sp<SkStrike>&& strike,
                                                  GrMaskFormat format,
-                                                 bool supportBilerpAtlas,
                                                  GrSubRunAllocator* alloc) {
     auto glyphLeftTop = alloc->makePODArray<DevicePosition>(accepted.size());
     auto glyphIDs = alloc->makePODArray<GrGlyphVector::Variant>(accepted.size());
@@ -2339,7 +2327,7 @@ GrAtlasSubRunOwner DirectMaskSubRunNoCache::Make(const SkZip<SkGlyphVariant, SkP
 
     SkSpan<const DevicePosition> leftTop{glyphLeftTop, goodPosCount};
     return alloc->makeUnique<DirectMaskSubRunNoCache>(
-            format, supportBilerpAtlas, runBounds.rect(), leftTop,
+            format, runBounds.rect(), leftTop,
             GrGlyphVector{std::move(strike), {glyphIDs, goodPosCount}});
 }
 
@@ -2421,11 +2409,7 @@ void DirectMaskSubRunNoCache::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCache *
 
 std::tuple<bool, int>
 DirectMaskSubRunNoCache::regenerateAtlas(int begin, int end, GrMeshDrawTarget* target) const {
-    if (fSupportBilerpAtlas) {
-        return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, 1, target, true);
-    } else {
-        return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, 0, target, false);
-    }
+    return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, 0, target);
 }
 
 // The 99% case. No clip. Non-color only.
@@ -2592,7 +2576,7 @@ void TransformedMaskSubRunNoCache::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCa
 
 std::tuple<bool, int> TransformedMaskSubRunNoCache::regenerateAtlas(
         int begin, int end, GrMeshDrawTarget* target) const {
-    return fGlyphs.regenerateAtlas(begin, end, fVertexFiller.grMaskType(), 1, target, true);
+    return fGlyphs.regenerateAtlas(begin, end, fVertexFiller.grMaskType(), 1, target);
 }
 
 void TransformedMaskSubRunNoCache::fillVertexData(
@@ -2847,10 +2831,7 @@ void GrSubRunNoCachePainter::processDeviceMasks(
     auto addGlyphsWithSameFormat = [&] (const SkZip<SkGlyphVariant, SkPoint>& accepted,
                                         GrMaskFormat format,
                                         sk_sp<SkStrike>&& runStrike) {
-        const bool padAtlas =
-                fSDC->recordingContext()->priv().options().fSupportBilerpFromGlyphAtlas;
-        this->draw(DirectMaskSubRunNoCache::Make(
-                accepted, std::move(runStrike), format, padAtlas, fAlloc));
+        this->draw(DirectMaskSubRunNoCache::Make(accepted, std::move(runStrike), format, fAlloc));
     };
 
     add_multi_mask_format(addGlyphsWithSameFormat, accepted, std::move(strike));
@@ -3334,7 +3315,7 @@ void DirectMaskSubRunSlug::testingOnly_packedGlyphIDToGrGlyph(GrStrikeCache *cac
 
 std::tuple<bool, int>
 DirectMaskSubRunSlug::regenerateAtlas(int begin, int end, GrMeshDrawTarget* target) const {
-    return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, 1, target, true);
+    return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, 0, target);
 }
 
 template<typename Quad, typename VertexData>
