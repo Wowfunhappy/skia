@@ -189,10 +189,10 @@ private:
     bool parseInitializer(Position pos, dsl::DSLExpression* initializer);
 
     void globalVarDeclarationEnd(Position position, const dsl::DSLModifiers& mods,
-            dsl::DSLType baseType, std::string_view name);
+            dsl::DSLType baseType, Token name);
 
     dsl::DSLStatement localVarDeclarationEnd(Position position, const dsl::DSLModifiers& mods,
-            dsl::DSLType baseType, std::string_view name);
+            dsl::DSLType baseType, Token name);
 
     std::optional<dsl::DSLWrapper<dsl::DSLParameter>> parameter(size_t paramIndex);
 
@@ -271,7 +271,7 @@ private:
     dsl::DSLExpression postfixExpression();
 
     dsl::DSLExpression swizzle(Position pos, dsl::DSLExpression base,
-            std::string_view swizzleMask);
+            std::string_view swizzleMask, Position maskPos);
 
     dsl::DSLExpression call(Position pos, dsl::DSLExpression base, ExpressionArray args);
 

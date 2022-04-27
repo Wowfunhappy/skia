@@ -10,6 +10,8 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkDrawable.h"
+#include "include/core/SkGraphics.h"
+#include "include/core/SkOpenTypeSVGDecoder.h"
 #include "include/core/SkPath.h"
 #include "include/effects/SkGradientShader.h"
 #include "include/pathops/SkPathOps.h"
@@ -36,6 +38,10 @@
 namespace {
 [[maybe_unused]] static inline const constexpr bool kSkShowTextBlitCoverage = false;
 }
+
+#if defined(FT_CONFIG_OPTION_SVG)
+#   include <freetype/otsvg.h>
+#endif
 
 #ifdef TT_SUPPORT_COLRV1
 // FT_ClipBox and FT_Get_Color_Glyph_ClipBox introduced VER-2-11-0-18-g47cf8ebf4
@@ -725,24 +731,6 @@ bool colrv1_configure_skpaint(FT_Face face,
             };
             startAngle = clampAngleToRange(startAngle);
             endAngle = clampAngleToRange(endAngle);
-#ifdef SK_IGNORE_COLRV1_SWEEP_FIX
-            /* TODO: Spec clarifications on which side of the gradient is to be
-             * painted, repeat modes, how to handle 0 degrees transition, see
-             * https://github.com/googlefonts/colr-gradients-spec/issues/250 */
-            if (startAngle >= endAngle) {
-                endAngle += 360.f;
-            }
-
-            // Skia's angles start from the horizontal x-Axis, rotate left 90
-            // degrees and then mirror horizontally to correct for Skia angles
-            // going clockwise, COLR v1 angles going counterclockwise.
-            SkMatrix angleAdjust = SkMatrix::RotateDeg(-90.f, center);
-            angleAdjust.postScale(-1, 1, center.x(), center.y());
-
-            paint->setShader(SkGradientShader::MakeSweep(
-                    center.x(), center.y(), colors.data(), stops.data(), stops.size(),
-                    SkTileMode::kDecal, startAngle, endAngle, 0, &angleAdjust));
-#else
             SkScalar sectorAngle =
                     endAngle > startAngle ? endAngle - startAngle : endAngle + 360.0f - startAngle;
 
@@ -762,7 +750,6 @@ bool colrv1_configure_skpaint(FT_Face face,
             paint->setShader(SkGradientShader::MakeSweep(
                     center.x(), center.y(), colors.data(), stops.data(), stops.size(),
                     tileMode, 0, sectorAngle, 0, &localMatrix));
-#endif
             return true;
         }
         default: {
@@ -888,11 +875,7 @@ void colrv1_transform(FT_Face face,
             // COLRv1 angles are counter-clockwise, compare
             // https://docs.microsoft.com/en-us/typography/opentype/spec/colr#formats-24-to-27-paintrotate-paintvarrotate-paintrotatearoundcenter-paintvarrotatearoundcenter
             transform = SkMatrix::RotateDeg(
-#ifdef SK_IGNORE_COLRV1_TRANSFORM_FIX
-                    SkFixedToScalar(colrPaint.u.rotate.angle) * 180.0f,
-#else
                     -SkFixedToScalar(colrPaint.u.rotate.angle) * 180.0f,
-#endif
                     SkPoint::Make( SkFixedToScalar(colrPaint.u.rotate.center_x),
                                   -SkFixedToScalar(colrPaint.u.rotate.center_y)));
             break;
@@ -902,11 +885,7 @@ void colrv1_transform(FT_Face face,
             // snaps to 0 for values very close to 0. Do the same here.
 
             SkScalar xDeg = SkFixedToScalar(colrPaint.u.skew.x_skew_angle) * 180.0f;
-#ifdef SK_IGNORE_COLRV1_TRANSFORM_FIX
-            SkScalar xRad = SkDegreesToRadians(-xDeg);
-#else
             SkScalar xRad = SkDegreesToRadians(xDeg);
-#endif
             SkScalar xTan = SkScalarTan(xRad);
             xTan = SkScalarNearlyZero(xTan) ? 0.0f : xTan;
 
@@ -1321,6 +1300,43 @@ bool SkScalerContext_FreeType_Base::drawCOLRv0Glyph(FT_Face face,
 }
 #endif  // FT_COLOR_H
 
+#if defined(FT_CONFIG_OPTION_SVG)
+bool SkScalerContext_FreeType_Base::drawSVGGlyph(FT_Face face,
+                                                 const SkGlyph& glyph,
+                                                 uint32_t loadGlyphFlags,
+                                                 SkSpan<SkColor> palette,
+                                                 SkCanvas* canvas) {
+    SkASSERT(face->glyph->format == FT_GLYPH_FORMAT_SVG);
+
+    FT_SVG_Document ftSvg = (FT_SVG_Document)face->glyph->other;
+    SkMatrix m;
+    FT_Matrix ftMatrix = ftSvg->transform;
+    FT_Vector ftOffset = ftSvg->delta;
+    m.setAll(
+        SkFixedToFloat(ftMatrix.xx), -SkFixedToFloat(ftMatrix.xy),  SkFixedToFloat(ftOffset.x),
+       -SkFixedToFloat(ftMatrix.yx),  SkFixedToFloat(ftMatrix.yy), -SkFixedToFloat(ftOffset.y),
+        0                          ,  0                          ,  1                        );
+    m.postScale(SkFixedToFloat(ftSvg->metrics.x_scale) / 64.0f,
+                SkFixedToFloat(ftSvg->metrics.y_scale) / 64.0f);
+    if (this->isSubpixel()) {
+        m.postTranslate(SkFixedToScalar(glyph.getSubXFixed()),
+                        SkFixedToScalar(glyph.getSubYFixed()));
+    }
+    canvas->concat(m);
+
+    SkGraphics::OpenTypeSVGDecoderFactory svgFactory = SkGraphics::GetOpenTypeSVGDecoderFactory();
+    if (!svgFactory) {
+        return false;
+    }
+    auto svgDecoder = svgFactory(ftSvg->svg_document, ftSvg->svg_document_length);
+    if (!svgDecoder) {
+        return false;
+    }
+    return svgDecoder->render(*canvas, ftSvg->units_per_EM, glyph.getGlyphID(),
+                              fRec.fForegroundColor, palette);
+}
+#endif  // FT_CONFIG_OPTION_SVG
+
 void SkScalerContext_FreeType_Base::generateGlyphImage(FT_Face face,
                                                        const SkGlyph& glyph,
                                                        const SkMatrix& bitmapTransform)
@@ -1547,7 +1563,6 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(FT_Face face,
                     src += dstBitmap.rowBytes();
                 }
             }
-
         } break;
 
         default:

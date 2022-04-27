@@ -170,10 +170,6 @@ std::string get_sksl_vs(const GraphicsPipelineDesc& desc) {
         sksl += emit_SKSL_uniforms(1, "Step", step->uniforms());
     }
 
-    // TODO: This is only needed for tessellation path renderers and should be handled using a
-    // helper function injector that the SkSL built-in code snippets can use.
-    sksl += wangs_formula::as_sksl().c_str();
-
     // Vertex shader function declaration
     sksl += "void main() {\n";
     // Vertex shader body
@@ -507,7 +503,7 @@ sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(
     ShaderErrorHandler* errorHandler = DefaultShaderErrorHandler();
     if (!SkSLToMSL(gpu,
                    get_sksl_vs(pipelineDesc),
-                   SkSL::ProgramKind::kVertex,
+                   SkSL::ProgramKind::kGraphiteVertex,
                    settings,
                    &msl[kVertex_ShaderType],
                    &inputs[kVertex_ShaderType],
@@ -519,7 +515,7 @@ sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(
     auto dict = resourceProvider->shaderCodeDictionary();
     if (!SkSLToMSL(gpu,
                    get_sksl_fs(dict, pipelineDesc, &blendInfo),
-                   SkSL::ProgramKind::kFragment,
+                   SkSL::ProgramKind::kGraphiteFragment,
                    settings,
                    &msl[kFragment_ShaderType],
                    &inputs[kFragment_ShaderType],

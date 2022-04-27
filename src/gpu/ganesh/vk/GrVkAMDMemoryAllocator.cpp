@@ -36,6 +36,10 @@ sk_sp<GrVkMemoryAllocator> GrVkAMDMemoryAllocator::Make(VkInstance instance,
 #define GR_COPY_FUNCTION_KHR(NAME) functions.vk##NAME##KHR = interface->fFunctions.f##NAME
 
     VmaVulkanFunctions functions;
+    // We don't use dynamic function getting in the allocator so we set the getProc functions to
+    // null.
+    functions.vkGetInstanceProcAddr = nullptr;
+    functions.vkGetDeviceProcAddr = nullptr;
     GR_COPY_FUNCTION(GetPhysicalDeviceProperties);
     GR_COPY_FUNCTION(GetPhysicalDeviceMemoryProperties);
     GR_COPY_FUNCTION(AllocateMemory);
@@ -79,7 +83,9 @@ sk_sp<GrVkMemoryAllocator> GrVkAMDMemoryAllocator::Make(VkInstance instance,
     info.pHeapSizeLimit = nullptr;
     info.pVulkanFunctions = &functions;
     info.instance = instance;
-    info.vulkanApiVersion = physicalDeviceVersion;
+    // TODO: Update our interface and headers to support vulkan 1.3 and add in the new required
+    // functions for 1.3 that the allocator needs. Until then we just clamp the version to 1.1.
+    info.vulkanApiVersion = std::min(physicalDeviceVersion, VK_MAKE_VERSION(1, 1, 0));
     info.pTypeExternalMemoryHandleTypes = nullptr;
 
     VmaAllocator allocator;

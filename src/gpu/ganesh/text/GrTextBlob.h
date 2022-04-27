@@ -116,6 +116,14 @@ public:
     // of the slug. If it's off then there may be more allocations needed to unflatten.
     virtual int unflattenSize() const = 0;
 
+    // Given an already cached subRun, can this subRun handle this combination paint, matrix, and
+    // position.
+    virtual bool canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const = 0;
+
+    // Return the underlying atlas SubRun if it exists. Otherwise, return nullptr.
+    // * Don't use this API. It is only to support testing.
+    virtual const GrAtlasSubRun* testingOnly_atlasSubRun() const = 0;
+
 protected:
     enum SubRunType : int;
     virtual SubRunType subRunType() const = 0;
@@ -219,7 +227,6 @@ public:
     static sk_sp<GrTextBlob> Make(const SkGlyphRunList& glyphRunList,
                                   const SkPaint& paint,
                                   const SkMatrix& positionMatrix,
-                                  bool supportBilerpAtlas,
                                   const GrSDFTControl& control,
                                   SkGlyphRunListPainter* painter);
 
@@ -236,7 +243,6 @@ public:
     void addKey(const Key& key);
     bool hasPerspective() const;
     const SkMatrix& initialPositionMatrix() const override { return fInitialPositionMatrix; }
-    bool supportBilerpAtlas() const { return fSupportBilerpAtlas; }
 
     bool canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const;
 
@@ -253,7 +259,6 @@ public:
 
 private:
     GrTextBlob(int allocSize,
-               bool supportBilerpAtlas,
                const SkMatrix& positionMatrix,
                SkColor initialLuminance);
 
@@ -287,9 +292,6 @@ private:
     // Overall size of this struct plus vertices and glyphs at the end.
     const int fSize;
 
-    // Support using bilerp for directly mapped sub runs.
-    const bool fSupportBilerpAtlas;
-
     // The initial view matrix combined with the initial origin. Used to determine if a cached
     // subRun can be used in this draw situation.
     const SkMatrix fInitialPositionMatrix;
@@ -301,52 +303,11 @@ private:
     bool fSomeGlyphsExcluded{false};
 };
 
-class GrSubRunNoCachePainter : public SkGlyphRunPainterInterface {
-public:
-    GrSubRunNoCachePainter(SkCanvas*,
-                           skgpu::v1::SurfaceDrawContext*,
-                           GrSubRunAllocator*,
-                           const GrClip*,
-                           const SkMatrixProvider& viewMatrix,
-                           const SkGlyphRunList&,
-                           const SkPaint&);
-    void processDeviceMasks(const SkZip<SkGlyphVariant, SkPoint>& accepted,
-                            sk_sp<SkStrike>&& strike) override;
-    void processSourceMasks(const SkZip<SkGlyphVariant, SkPoint>& accepted,
-                            sk_sp<SkStrike>&& strike,
-                            SkScalar strikeToSourceScale) override;
-    void processSourcePaths(const SkZip<SkGlyphVariant, SkPoint>& accepted,
-                            const SkFont& runFont,
-                            const SkDescriptor& descriptor,
-                            SkScalar strikeToSourceScale) override;
-    void processSourceDrawables(const SkZip<SkGlyphVariant, SkPoint>& accepted,
-                                const SkFont& runFont,
-                                const SkDescriptor& descriptor,
-                                SkScalar strikeToSourceScale) override;
-    void processSourceSDFT(const SkZip<SkGlyphVariant, SkPoint>& accepted,
-                           sk_sp<SkStrike>&& strike,
-                           SkScalar strikeToSourceScale,
-                           const SkFont& runFont,
-                           const GrSDFTMatrixRange& matrixRange) override;
-
-private:
-
-    // Draw passes ownership of the sub run to the op.
-    void draw(GrAtlasSubRunOwner subRun);
-
-    SkCanvas* fCanvas;
-    skgpu::v1::SurfaceDrawContext* const fSDC;
-    GrSubRunAllocator* const fAlloc;
-    const GrClip* const fClip;
-    const SkMatrixProvider& fViewMatrix;
-    const SkGlyphRunList& fGlyphRunList;
-    const SkPaint& fPaint;
-};
-
 namespace skgpu::v1 {
 sk_sp<GrSlug> MakeSlug(const SkMatrixProvider& drawMatrix,
                        const SkGlyphRunList& glyphRunList,
-                       const SkPaint& paint,
+                       const SkPaint& initialPaint,
+                       const SkPaint& drawingPaint,
                        const GrSDFTControl& control,
                        SkGlyphRunListPainter* painter);
 }  // namespace skgpu::v1

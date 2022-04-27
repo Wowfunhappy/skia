@@ -70,6 +70,8 @@
 
 // At runtime, we load the dehydrated sksl data files. The data is a (pointer, size) pair.
 #include "src/sksl/generated/sksl_frag.dehydrated.sksl"
+#include "src/sksl/generated/sksl_graphite_frag.dehydrated.sksl"
+#include "src/sksl/generated/sksl_graphite_vert.dehydrated.sksl"
 #include "src/sksl/generated/sksl_gpu.dehydrated.sksl"
 #include "src/sksl/generated/sksl_public.dehydrated.sksl"
 #include "src/sksl/generated/sksl_rt_shader.dehydrated.sksl"
@@ -259,6 +261,24 @@ const ParsedModule& Compiler::loadVertexModule() {
     return fVertexModule;
 }
 
+const ParsedModule& Compiler::loadGraphiteFragmentModule() {
+    if (!fGraphiteFragmentModule.fSymbols) {
+        fGraphiteFragmentModule = this->parseModule(ProgramKind::kGraphiteFragment,
+                                                    MODULE_DATA(graphite_frag),
+                                                    this->loadFragmentModule());
+    }
+    return fGraphiteFragmentModule;
+}
+
+const ParsedModule& Compiler::loadGraphiteVertexModule() {
+    if (!fGraphiteVertexModule.fSymbols) {
+        fGraphiteVertexModule = this->parseModule(ProgramKind::kGraphiteVertex,
+                                                  MODULE_DATA(graphite_vert),
+                                                  this->loadVertexModule());
+    }
+    return fGraphiteVertexModule;
+}
+
 static void add_glsl_type_aliases(SkSL::SymbolTable* symbols, const SkSL::BuiltinTypes& types) {
     // Add some aliases to the runtime effect modules so that it's friendlier, and more like GLSL.
     symbols->addWithoutOwnership(types.fVec2.get());
@@ -308,7 +328,7 @@ const ParsedModule& Compiler::loadPublicModule() {
     return fPublicModule;
 }
 
-const ParsedModule& Compiler::loadRuntimeShaderModule() {
+const ParsedModule& Compiler::loadPrivateRTShaderModule() {
     if (!fRuntimeShaderModule.fSymbols) {
         fRuntimeShaderModule = this->parseModule(
                 ProgramKind::kRuntimeShader, MODULE_DATA(rt_shader), this->loadPublicModule());
@@ -318,14 +338,17 @@ const ParsedModule& Compiler::loadRuntimeShaderModule() {
 
 const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
     switch (kind) {
-        case ProgramKind::kVertex:             return this->loadVertexModule();        break;
-        case ProgramKind::kFragment:           return this->loadFragmentModule();      break;
-        case ProgramKind::kRuntimeColorFilter: return this->loadPublicModule();        break;
-        case ProgramKind::kRuntimeShader:      return this->loadRuntimeShaderModule(); break;
-        case ProgramKind::kRuntimeBlender:     return this->loadPublicModule();        break;
-        case ProgramKind::kCustomMeshVertex:   return this->loadPublicModule();        break;
-        case ProgramKind::kCustomMeshFragment: return this->loadPublicModule();        break;
-        case ProgramKind::kGeneric:            return this->loadPublicModule();        break;
+        case ProgramKind::kVertex:               return this->loadVertexModule();           break;
+        case ProgramKind::kFragment:             return this->loadFragmentModule();         break;
+        case ProgramKind::kGraphiteVertex:       return this->loadGraphiteVertexModule();   break;
+        case ProgramKind::kGraphiteFragment:     return this->loadGraphiteFragmentModule(); break;
+        case ProgramKind::kRuntimeColorFilter:   return this->loadPublicModule();           break;
+        case ProgramKind::kRuntimeShader:        return this->loadPublicModule();           break;
+        case ProgramKind::kRuntimeBlender:       return this->loadPublicModule();           break;
+        case ProgramKind::kPrivateRuntimeShader: return this->loadPrivateRTShaderModule();  break;
+        case ProgramKind::kCustomMeshVertex:     return this->loadPublicModule();           break;
+        case ProgramKind::kCustomMeshFragment:   return this->loadPublicModule();           break;
+        case ProgramKind::kGeneric:              return this->loadPublicModule();           break;
     }
     SkUNREACHABLE;
 }
@@ -384,7 +407,7 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
 
 ParsedModule Compiler::parseModule(ProgramKind kind, ModuleData data, const ParsedModule& base) {
     LoadedModule module = this->loadModule(kind, data, base.fSymbols, /*dehydrate=*/false);
-    this->optimize(module);
+    this->optimize(module, base);
 
     // For modules that just declare (but don't define) intrinsic functions, there will be no new
     // program elements. In that case, we can share our parent's element map:
@@ -539,7 +562,7 @@ std::unique_ptr<Expression> Compiler::convertIdentifier(Position pos, std::strin
     }
 }
 
-bool Compiler::optimize(LoadedModule& module) {
+bool Compiler::optimize(LoadedModule& module, const ParsedModule& base) {
     SkASSERT(!this->errorCount());
 
     // Create a temporary program configuration with default settings.
@@ -552,7 +575,7 @@ bool Compiler::optimize(LoadedModule& module) {
     // Reset the Inliner.
     fInliner.reset();
 
-    std::unique_ptr<ProgramUsage> usage = Analysis::GetUsage(module);
+    std::unique_ptr<ProgramUsage> usage = Analysis::GetUsage(module, base);
 
     while (this->errorCount() == 0) {
         // Perform inline-candidate analysis and inline any functions deemed suitable.
@@ -636,6 +659,40 @@ bool Compiler::finalize(Program& program) {
 
 #if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || SK_GRAPHITE_ENABLED
 
+#if defined(SK_ENABLE_SPIRV_VALIDATION)
+static bool validate_spirv(ErrorReporter& reporter, std::string_view program) {
+    SkASSERT(0 == program.size() % 4);
+    const uint32_t* programData = reinterpret_cast<const uint32_t*>(program.data());
+    size_t programSize = program.size() / 4;
+
+    spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_0);
+    std::string errors;
+    auto msgFn = [&errors](spv_message_level_t, const char*, const spv_position_t&, const char* m) {
+        String::appendf(&errors, "SPIR-V validation error: %s\n", m);
+    };
+    tools.SetMessageConsumer(msgFn);
+
+    // Verify that the SPIR-V we produced is valid. At runtime, we will abort() with a message
+    // explaining the error. In standalone mode (skslc), we will send the message, plus the
+    // entire disassembled SPIR-V (for easier context & debugging) as *our* error message.
+    bool result = tools.Validate(programData, programSize);
+    if (!result) {
+#if defined(SKSL_STANDALONE)
+        // Convert the string-stream to a SPIR-V disassembly.
+        std::string disassembly;
+        if (tools.Disassemble(programData, programSize, &disassembly)) {
+            errors.append(disassembly);
+        }
+        reporter.error(Position(), errors);
+        reporter.reportPendingErrors(Position());
+#else
+        SkDEBUGFAILF("%s", errors.c_str());
+#endif
+    }
+    return result;
+}
+#endif
+
 bool Compiler::toSPIRV(Program& program, OutputStream& out) {
     TRACE_EVENT0("skia.shaders", "SkSL::Compiler::toSPIRV");
     AutoSource as(this, *program.fSource);
@@ -648,36 +705,11 @@ bool Compiler::toSPIRV(Program& program, OutputStream& out) {
     StringStream buffer;
     SPIRVCodeGenerator cg(fContext.get(), &program, &buffer);
     bool result = cg.generateCode();
+
     if (result && program.fConfig->fSettings.fValidateSPIRV) {
-        spvtools::SpirvTools tools(SPV_ENV_VULKAN_1_0);
-        const std::string& data = buffer.str();
-        SkASSERT(0 == data.size() % 4);
-        std::string errors;
-        auto dumpmsg = [&errors](spv_message_level_t, const char*, const spv_position_t&,
-                                 const char* m) {
-            String::appendf(&errors, "SPIR-V validation error: %s\n", m);
-        };
-        tools.SetMessageConsumer(dumpmsg);
-
-        // Verify that the SPIR-V we produced is valid. At runtime, we will abort() with a message
-        // explaining the error. In standalone mode (skslc), we will send the message, plus the
-        // entire disassembled SPIR-V (for easier context & debugging) as *our* error message.
-        result = tools.Validate((const uint32_t*) data.c_str(), data.size() / 4);
-
-        if (!result) {
-#if defined(SKSL_STANDALONE)
-            // Convert the string-stream to a SPIR-V disassembly.
-            std::string disassembly;
-            if (tools.Disassemble((const uint32_t*)data.data(), data.size() / 4, &disassembly)) {
-                errors.append(disassembly);
-            }
-            this->errorReporter().error(Position(), errors);
-            this->errorReporter().reportPendingErrors(Position());
-#else
-            SkDEBUGFAILF("%s", errors.c_str());
-#endif
-        }
-        out.write(data.c_str(), data.size());
+        std::string_view binary = buffer.str();
+        result = validate_spirv(this->errorReporter(), binary);
+        out.write(binary.data(), binary.size());
     }
 #else
     SPIRVCodeGenerator cg(fContext.get(), &program, &out);

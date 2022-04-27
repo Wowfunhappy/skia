@@ -199,7 +199,10 @@ public:
     virtual skgpu::graphite::Device* asGraphiteDevice() { return nullptr; }
 
     // Ensure that non-RSXForm runs are passed to onDrawGlyphRunList.
-    void drawGlyphRunList(SkCanvas*, const SkGlyphRunList& glyphRunList, const SkPaint& paint);
+    void drawGlyphRunList(SkCanvas*,
+                          const SkGlyphRunList& glyphRunList,
+                          const SkPaint& initialPaint,
+                          const SkPaint& drawingPaint);
 
 protected:
     enum TileUsage {
@@ -311,14 +314,18 @@ protected:
     virtual void drawDrawable(SkCanvas*, SkDrawable*, const SkMatrix*);
 
     // Only called with glyphRunLists that do not contain RSXForm.
-    virtual void onDrawGlyphRunList(SkCanvas*, const SkGlyphRunList&, const SkPaint&) = 0;
+    virtual void onDrawGlyphRunList(SkCanvas*,
+                                    const SkGlyphRunList&,
+                                    const SkPaint& initialPaint,
+                                    const SkPaint& drawingPaint) = 0;
 
     // GrSlug handling routines.
 #if SK_SUPPORT_GPU
     virtual sk_sp<GrSlug> convertGlyphRunListToSlug(
             const SkGlyphRunList& glyphRunList,
-            const SkPaint& paint);
-    virtual void drawSlug(SkCanvas*, const GrSlug* slug);
+            const SkPaint& initialPaint,
+            const SkPaint& drawingPaint);
+    virtual void drawSlug(SkCanvas*, const GrSlug* slug, const SkPaint& drawingPaint);
 #endif
 
     /**
@@ -436,7 +443,10 @@ private:
     friend class SkSurface_Raster;
     friend class DeviceTestingAccess;
 
-    void simplifyGlyphRunRSXFormAndRedraw(SkCanvas*, const SkGlyphRunList&, const SkPaint&);
+    void simplifyGlyphRunRSXFormAndRedraw(SkCanvas*,
+                                          const SkGlyphRunList&,
+                                          const SkPaint& initialPaint,
+                                          const SkPaint& drawingPaint);
 
     // used to change the backend's pixels (and possibly config/rowbytes)
     // but cannot change the width/height, so there should be no change to
@@ -458,12 +468,14 @@ private:
     // Returns false if the final device coordinate space is invalid, in which case the canvas
     // should discard the device
     bool SK_WARN_UNUSED_RESULT setDeviceCoordinateSystem(const SkM44& deviceToGlobal,
+                                                         const SkM44& globalToDevice,
                                                          const SkM44& localToDevice,
-                                                         int bufferOriginX, int bufferOriginY);
+                                                         int bufferOriginX,
+                                                         int bufferOriginY);
     // Convenience to configure the device to be axis-aligned with the root canvas, but with a
     // unique origin.
     void setOrigin(const SkM44& globalCTM, int x, int y) {
-        SkAssertResult(this->setDeviceCoordinateSystem(SkM44(), globalCTM, x, y));
+        SkAssertResult(this->setDeviceCoordinateSystem(SkM44(), SkM44(), globalCTM, x, y));
     }
 
     virtual SkImageFilterCache* getImageFilterCache() { return nullptr; }
@@ -546,8 +558,8 @@ protected:
     void drawFilteredImage(const skif::Mapping&, SkSpecialImage* src, const SkImageFilter*,
                            const SkSamplingOptions&, const SkPaint&) override {}
 
-    void onDrawGlyphRunList(SkCanvas*, const SkGlyphRunList&, const SkPaint&) override {}
-
+    void onDrawGlyphRunList(
+            SkCanvas*, const SkGlyphRunList&, const SkPaint&, const SkPaint&) override {}
 
     bool isNoPixelsDevice() const override { return true; }
 

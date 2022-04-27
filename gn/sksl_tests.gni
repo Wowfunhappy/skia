@@ -278,6 +278,10 @@ sksl_metal_tests = [
 ]
 
 sksl_spirv_tests = [
+  "/sksl/shared/Switch.sksl",
+  "/sksl/shared/SwitchDefaultOnly.sksl",
+  "/sksl/shared/SwitchWithFallthrough.sksl",
+  "/sksl/shared/SwitchWithLoops.sksl",
   "/sksl/spirv/ConstantVectorFromVector.sksl",
   "/sksl/spirv/ConstantVectorize.sksl",
   "/sksl/spirv/InterfaceBlockPushConstant.sksl",
@@ -696,6 +700,7 @@ sksl_rte_error_tests = [
   "/sksl/runtime_errors/InvalidColorFilterFeatures.rtcf",
   "/sksl/runtime_errors/InvalidColorFilterMain.rtcf",
   "/sksl/runtime_errors/InvalidShaderMain.rts",
+  "/sksl/runtime_errors/InvalidUniformTypes.rts",
   "/sksl/runtime_errors/LoopConditionErrors.rts",
   "/sksl/runtime_errors/LoopExpressionErrors.rts",
   "/sksl/runtime_errors/LoopInitializerErrors.rts",
@@ -703,6 +708,7 @@ sksl_rte_error_tests = [
   "/sksl/runtime_errors/Ossfuzz36655.rts",
   "/sksl/runtime_errors/Ossfuzz38131.rts",
   "/sksl/runtime_errors/Ossfuzz45279.rts",
+  "/sksl/runtime_errors/PrivateRTShader.rts",
   "/sksl/runtime_errors/ProgramTooLarge_BlocklessLoops.rts",
   "/sksl/runtime_errors/ProgramTooLarge_Extreme.rts",
   "/sksl/runtime_errors/ProgramTooLarge_FlatLoop.rts",
