@@ -572,13 +572,11 @@ bool Compiler::optimize(LoadedModule& module, const ParsedModule& base) {
     AutoProgramConfig autoConfig(fContext, &config);
     AutoModifiersPool autoPool(fContext, &fCoreModifiers);
 
-    // Reset the Inliner.
-    fInliner.reset();
-
     std::unique_ptr<ProgramUsage> usage = Analysis::GetUsage(module, base);
 
+    // Perform inline-candidate analysis and inline any functions deemed suitable.
+    fInliner.reset();
     while (this->errorCount() == 0) {
-        // Perform inline-candidate analysis and inline any functions deemed suitable.
         if (!this->runInliner(module.fElements, module.fSymbols, usage.get())) {
             break;
         }
@@ -598,6 +596,7 @@ bool Compiler::optimize(Program& program) {
     if (this->errorCount() == 0) {
         // Run the inliner only once; it is expensive! Multiple passes can occasionally shake out
         // more wins, but it's diminishing returns.
+        fInliner.reset();
         this->runInliner(program.fOwnedElements, program.fSymbols, usage);
 
         // Unreachable code can confuse some drivers, so it's worth removing. (skia:12012)
@@ -651,7 +650,7 @@ bool Compiler::finalize(Program& program) {
         }
         // Verify that the program size is reasonable after unrolling and inlining. This also
         // issues errors for static recursion and overly-deep function-call chains.
-        Analysis::CheckProgramUnrolledSize(program);
+        Analysis::CheckProgramStructure(program);
     }
 
     return this->errorCount() == 0;
