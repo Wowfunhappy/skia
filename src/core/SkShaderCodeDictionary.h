@@ -15,13 +15,10 @@
 #include "include/private/SkSpinlock.h"
 #include "include/private/SkUniquePaintParamsID.h"
 #include "src/core/SkArenaAlloc.h"
+#include "src/core/SkEnumBitMask.h"
 #include "src/core/SkPaintParamsKey.h"
 #include "src/core/SkPipelineData.h"
 #include "src/core/SkUniform.h"
-
-#ifdef SK_GRAPHITE_ENABLED
-#include "src/gpu/graphite/EnumBitMask.h"
-#endif
 
 // TODO: How to represent the type (e.g., 2D) of texture being sampled?
 class SkTextureAndSampler {
@@ -36,11 +33,9 @@ private:
 
 enum class SnippetRequirementFlags : uint32_t {
     kNone = 0x0,
-    kDev2LocalMat = 0x1,
+    kLocalCoords = 0x1,
 };
-#ifdef SK_GRAPHITE_ENABLED
-SKGPU_MAKE_MASK_OPS(SnippetRequirementFlags);
-#endif
+SK_MAKE_BITMASK_OPS(SnippetRequirementFlags);
 
 struct SkShaderSnippet {
     using GenerateGlueCodeForEntry = std::string (*)(const std::string& resultName,
@@ -86,14 +81,14 @@ public:
     void add(const SkPaintParamsKey::BlockReader& reader) {
         fBlockReaders.push_back(reader);
     }
-#ifdef SK_GRAPHITE_ENABLED
     void addFlags(SnippetRequirementFlags flags) {
         fSnippetRequirementFlags |= flags;
     }
-    bool needsDev2Local() const {
-        return fSnippetRequirementFlags & SnippetRequirementFlags::kDev2LocalMat;
+    bool needsLocalCoords() const {
+        return fSnippetRequirementFlags & SnippetRequirementFlags::kLocalCoords;
     }
 
+#ifdef SK_GRAPHITE_ENABLED
     void setBlendInfo(const SkPipelineDataGatherer::BlendInfo& blendInfo) {
         fBlendInfo = blendInfo;
     }
@@ -112,9 +107,9 @@ private:
 
     std::vector<SkPaintParamsKey::BlockReader> fBlockReaders;
 
+    SkEnumBitMask<SnippetRequirementFlags> fSnippetRequirementFlags =SnippetRequirementFlags::kNone;
 #ifdef SK_GRAPHITE_ENABLED
-    skgpu::graphite::Mask<SnippetRequirementFlags> fSnippetRequirementFlags =
-                                                                     SnippetRequirementFlags::kNone;
+
     // The blendInfo doesn't actually contribute to the program's creation but, it contains the
     // matching fixed-function settings that the program's caller needs to set up.
     SkPipelineDataGatherer::BlendInfo fBlendInfo;

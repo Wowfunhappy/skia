@@ -13,6 +13,7 @@
 #include "src/gpu/tessellate/WangsFormula.h"
 
 using skgpu::VertexWriter;
+using skgpu::FixedCountStrokes;
 
 void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPArgs* gpArgs) {
     const auto& shader = args.fGeomProc.cast<GrStrokeTessellationShader>();
@@ -22,11 +23,20 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
     args.fVertBuilder->defineConstant("float", "PI", "3.141592653589793238");
     args.fVertBuilder->defineConstant("PRECISION", skgpu::kTessellationPrecision);
 
+    // There is an artificial maximum number of edges (compared to the max limit calculated based on
+    // the number of radial segments per radian, Wang's formula, and join type). When there is
+    // vertex ID support, the limit is what can be represented in a uint16; otherwise the limit is
+    // the size of the fallback vertex buffer.
+    float maxEdges = args.fShaderCaps->vertexIDSupport() ? FixedCountStrokes::kMaxEdges
+                                                         : FixedCountStrokes::kMaxEdgesNoVertexIDs;
+    args.fVertBuilder->defineConstant("NUM_TOTAL_EDGES", maxEdges);
+
     // Helper functions.
     if (shader.hasDynamicStroke()) {
         args.fVertBuilder->insertFunction(kNumRadialSegmentsPerRadianFn);
     }
-    args.fVertBuilder->insertFunction(kCosineBetweenVectorsFn);
+    args.fVertBuilder->insertFunction(kRobustNormalizeDiffFn);
+    args.fVertBuilder->insertFunction(kCosineBetweenUnitVectorsFn);
     args.fVertBuilder->insertFunction(kMiterExtentFn);
     args.fVertBuilder->insertFunction(kUncheckedMixFn);
     args.fVertBuilder->insertFunction(GrTessellationShader::WangsFormulaSkSL());
@@ -64,17 +74,6 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
         fDynamicColorName = dynamicColor.fsIn();
     }
 
-    if (shader.mode() == GrStrokeTessellationShader::Mode::kLog2Indirect) {
-        args.fVertBuilder->codeAppend(R"(
-        float NUM_TOTAL_EDGES = abs(argsAttr.z);)");
-    } else {
-        SkASSERT(shader.mode() == GrStrokeTessellationShader::Mode::kFixedCount);
-        const char* edgeCountName;
-        fEdgeCountUniform = args.fUniformHandler->addUniform(
-                nullptr, kVertex_GrShaderFlag, SkSLType::kFloat, "edgeCount", &edgeCountName);
-        args.fVertBuilder->codeAppendf(R"(
-        float NUM_TOTAL_EDGES = %s;)", edgeCountName);
-    }
 
     // View matrix uniforms.
     const char* translateName, *affineMatrixName;
@@ -138,8 +137,9 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
 
     args.fVertBuilder->codeAppend(R"(
     // Find the starting and ending tangents.
-    float2 tan0 = ((p0 == p1) ? (p1 == p2) ? p3 : p2 : p1) - p0;
-    float2 tan1 = p3 - ((p3 == p2) ? (p2 == p1) ? p0 : p1 : p2);
+    // (p0 == p1) ? ((p1 == p2) ? p3 : p2) : p1
+    float2 tan0 = robust_normalize_diff((p0 == p1) ? ((p1 == p2) ? p3 : p2) : p1, p0);
+    float2 tan1 = robust_normalize_diff(p3, (p3 == p2) ? ((p2 == p1) ? p0 : p1) : p2);
     if (tan0 == float2(0)) {
         // The stroke is a point. This special case tells us to draw a stroke-width circle as a
         // 180 degree point stroke instead.
@@ -163,12 +163,14 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
         // of the join twice: once full width and once restricted to half width. This guarantees
         // perfect seaming by matching the vertices from the join as well as from the strokes on
         // either side.
-        float joinRads = acos(cosine_between_vectors(p0 - lastControlPoint, tan0));
+        float2 prevTan = robust_normalize_diff(p0, lastControlPoint);
+        float joinRads = acos(cosine_between_unit_vectors(prevTan, tan0));
         float numRadialSegmentsInJoin = max(ceil(joinRads * NUM_RADIAL_SEGMENTS_PER_RADIAN), 1);
         // +2 because we emit the beginning and ending edges twice (see above comment).
         float numEdgesInJoin = numRadialSegmentsInJoin + 2;
         // The stroke section needs at least two edges. Don't assign more to the join than
-        // "NUM_TOTAL_EDGES - 2".
+        // "NUM_TOTAL_EDGES - 2". (This is only relevant when the ideal max edge count calculated
+        // on the CPU had to be limited to NUM_TOTAL_EDGES in the draw call).
         numEdgesInJoin = min(numEdgesInJoin, NUM_TOTAL_EDGES - 2);)");
         if (shader.mode() == GrStrokeTessellationShader::Mode::kLog2Indirect) {
             args.fVertBuilder->codeAppend(R"(
@@ -205,13 +207,13 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
         // means the join is disabled, and to disable it with the existing code we can leave
         // tan0 equal to tan1.
         if (lastControlPoint != p0) {
-            tan0 = p0 - lastControlPoint;
+            tan0 = robust_normalize_diff(p0, lastControlPoint);
         }
         turn = cross_length_2d(tan0, tan1);
     }
 
     // Calculate the curve's starting angle and rotation.
-    float cosTheta = cosine_between_vectors(tan0, tan1);
+    float cosTheta = cosine_between_unit_vectors(tan0, tan1);
     float rotation = acos(cosTheta);
     if (turn < 0) {
         // Adjust sign of rotation to match the direction the curve turns.
@@ -247,7 +249,9 @@ void GrStrokeTessellationShader::InstancedImpl::onEmitCode(EmitArgs& args, GrGPA
         }
         combinedEdgeID = max(combinedEdgeID, 0);
     } else {
-        // We belong to the stroke.
+        // We belong to the stroke. Unless NUM_RADIAL_SEGMENTS_PER_RADIAN is incredibly high,
+        // clamping to maxCombinedSegments will be a no-op because the draw call was invoked with
+        // sufficient vertices to cover the worst case scenario of 180 degree rotation.
         float maxCombinedSegments = NUM_TOTAL_EDGES - numEdgesInJoin - 1;
         numRadialSegments = max(ceil(abs(rotation) * NUM_RADIAL_SEGMENTS_PER_RADIAN), 1);
         numRadialSegments = min(numRadialSegments, maxCombinedSegments);

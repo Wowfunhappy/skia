@@ -21,8 +21,8 @@ void SkPipelineDataGatherer::reset() {
     fTextureDataBlock.reset();
     fBlendInfo = BlendInfo();
     fUniformManager.reset();
-    fSnippetRequirementFlags = SnippetRequirementFlags::kNone;
 #endif
+    fSnippetRequirementFlags = SnippetRequirementFlags::kNone;
 }
 
 #ifdef SK_DEBUG
@@ -31,20 +31,18 @@ void SkPipelineDataGatherer::checkReset() {
     SkASSERT(fTextureDataBlock.empty());
     SkASSERT(fBlendInfo == BlendInfo());
     SkDEBUGCODE(fUniformManager.checkReset());
-    SkASSERT(fSnippetRequirementFlags == SnippetRequirementFlags::kNone);
 #endif
+    SkASSERT(fSnippetRequirementFlags == SnippetRequirementFlags::kNone);
 }
 #endif // SK_DEBUG
 
-#ifdef SK_GRAPHITE_ENABLED
 void SkPipelineDataGatherer::addFlags(SnippetRequirementFlags flags) {
     fSnippetRequirementFlags |= flags;
 }
 
-bool SkPipelineDataGatherer::needsDev2Local() const {
-    return fSnippetRequirementFlags & SnippetRequirementFlags::kDev2LocalMat;
+bool SkPipelineDataGatherer::needsLocalCoords() const {
+    return fSnippetRequirementFlags & SnippetRequirementFlags::kLocalCoords;
 }
-#endif // SK_GRAPHITE_ENABLED
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 SkUniformDataBlock* SkUniformDataBlock::Make(const SkUniformDataBlock& other,

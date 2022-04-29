@@ -44,14 +44,6 @@ public:
     bool hasExplicitCurveType() const { return fPatchAttribs & PatchAttribs::kExplicitCurveType; }
     const SkStrokeRec& stroke() const { return fStroke;}
     int8_t maxParametricSegments_log2() const { return fMaxParametricSegments_log2; }
-    float fixedCountNumTotalEdges() const { return fFixedCountNumTotalEdges;}
-
-    // Used by GrFixedCountTessellator to configure the uniform value that tells the shader how many
-    // total edges are in the triangle strip.
-    void setFixedCountNumTotalEdges(int value) {
-        SkASSERT(fMode == Mode::kFixedCount);
-        fFixedCountNumTotalEdges = value;
-    }
 
 private:
     const char* name() const override {
@@ -75,10 +67,6 @@ private:
     constexpr static int kMaxAttribCount = 6;
     SkSTArray<kMaxAttribCount, Attribute> fAttribs;
 
-    // This is a uniform value used when fMode is kFixedCount that tells the shader how many total
-    // edges are in the triangle strip.
-    float fFixedCountNumTotalEdges = 0;
-
     class Impl;
     class HardwareImpl;
     class InstancedImpl;
@@ -89,10 +77,17 @@ private:
 // emitTessellationCode and emitFragment code.
 class GrStrokeTessellationShader::Impl : public ProgramImpl {
 protected:
-    // float cosine_between_vectors(float2 a, float2 b) { ...
+    // float2 robust_normalize_diff(float2 a, float b) { ... }
     //
-    // Returns dot(a, b) / (length(a) * length(b)).
-    static const char* kCosineBetweenVectorsFn;
+    // Returns the normalized difference between a and b, i.e. normalize(a - b), with care taken for
+    // if b and/or a have large coordinates.
+    static const char* kRobustNormalizeDiffFn;
+
+    // float cosine_between_unit_vectors(float2 a, float2 b) { ...
+    //
+    // Returns the cosine of the angle between a and b, assuming a and b are unit vectors already.
+    // Guaranteed to be between [-1, 1].
+    static const char* kCosineBetweenUnitVectorsFn;
 
     // float miter_extent(float cosTheta, float miterLimit) { ...
     //
@@ -149,7 +144,6 @@ protected:
     GrGLSLUniformHandler::UniformHandle fTessControlArgsUniform;
     GrGLSLUniformHandler::UniformHandle fTranslateUniform;
     GrGLSLUniformHandler::UniformHandle fAffineMatrixUniform;
-    GrGLSLUniformHandler::UniformHandle fEdgeCountUniform;
     GrGLSLUniformHandler::UniformHandle fColorUniform;
     SkString fDynamicColorName;
 };

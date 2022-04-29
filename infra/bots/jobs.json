@@ -12,7 +12,9 @@
   {"name": "Build-Debian10-GCC-x86_64-Release-NoGPU_Docker"},
   {"name": "Build-Debian10-GCC-x86_64-Release-Shared_Docker"},
   {"name": "Build-Debian10-BazelClang-x86_64-Release-IWYU",
-    "cq_config": {"location_regexes": ["src/sksl/*", "src/svg/*", "tools/debugger/*"]}
+    "cq_config": {
+      "location_regexes": ["src/sksl/*", "src/svg/*", "src/utils/*", "tools/debugger/*"]
+    }
    },
   {"name": "Build-Debian10-Clang-arm-Debug-Android",
    "cq_config": {}
@@ -384,6 +386,7 @@
   {"name": "Perf-Win10-Clang-NUC9i7QN-GPU-RTX3060-x86_64-Release-All-Vulkan"},
   {"name": "Perf-Win10-Clang-NUCD34010WYKH-GPU-IntelHD4400-x86_64-Release-All"},
   {"name": "Perf-Win10-Clang-NUCD34010WYKH-GPU-IntelHD4400-x86_64-Release-All-ANGLE"},
+  {"name": "Perf-Win10-Clang-RUBYR5-GPU-RadeonVega6-x86_64-Release-All-Vulkan"},
   {"name": "Perf-Win10-Clang-ShuttleA-GPU-GTX660-x86_64-Release-All"},
   {"name": "Perf-Win10-Clang-ShuttleA-GPU-GTX660-x86_64-Release-All-ANGLE"},
   {"name": "Perf-Win10-Clang-ShuttleA-GPU-GTX660-x86_64-Release-All-Vulkan"},
@@ -684,6 +687,8 @@
   {"name": "Test-Win10-Clang-NUCD34010WYKH-GPU-IntelHD4400-x86_64-Debug-All-ANGLE"},
   {"name": "Test-Win10-Clang-NUCD34010WYKH-GPU-IntelHD4400-x86_64-Release-All"},
   {"name": "Test-Win10-Clang-NUCD34010WYKH-GPU-IntelHD4400-x86_64-Release-All-ANGLE"},
+  {"name": "Test-Win10-Clang-RUBYR5-GPU-RadeonVega6-x86_64-Debug-All-Vulkan"},
+  {"name": "Test-Win10-Clang-RUBYR5-GPU-RadeonVega6-x86_64-Release-All-Vulkan"},
   {"name": "Test-Win10-Clang-ShuttleA-GPU-GTX660-x86_64-Debug-All"},
   {"name": "Test-Win10-Clang-ShuttleA-GPU-GTX660-x86_64-Debug-All-ANGLE"},
   {"name": "Test-Win10-Clang-ShuttleA-GPU-GTX660-x86_64-Debug-All-Vulkan"},
