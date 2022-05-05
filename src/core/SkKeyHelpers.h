@@ -13,6 +13,7 @@
 #endif
 
 #include "include/core/SkBlendMode.h"
+#include "include/core/SkM44.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkTileMode.h"
@@ -62,6 +63,7 @@ namespace GradientShaderBlocks {
         // This ctor is used when extracting information from PaintParams. It must provide
         // enough data to generate the uniform data the selected code snippet will require.
         GradientData(SkShader::GradientType,
+                     SkM44 localMatrix,
                      SkPoint point0, SkPoint point1,
                      float radius0, float radius1,
                      SkTileMode,
@@ -71,6 +73,7 @@ namespace GradientShaderBlocks {
 
         bool operator==(const GradientData& rhs) const {
             return fType == rhs.fType &&
+                   fLocalMatrix == rhs.fLocalMatrix &&
                    fPoints[0] == rhs.fPoints[0] &&
                    fPoints[1] == rhs.fPoints[1] &&
                    fRadii[0] == rhs.fRadii[0] &&
@@ -83,6 +86,7 @@ namespace GradientShaderBlocks {
         bool operator!=(const GradientData& rhs) const { return !(*this == rhs); }
 
         SkShader::GradientType fType;
+        SkM44                  fLocalMatrix;
         SkPoint                fPoints[2];
         float                  fRadii[2];
         SkTileMode             fTM;
@@ -98,17 +102,38 @@ namespace GradientShaderBlocks {
 
 } // namespace GradientShaderBlocks
 
+namespace LocalMatrixShaderBlock {
+
+    struct LMShaderData {
+        LMShaderData(SkShader* proxyShader, const SkMatrix& localMatrix)
+                : fProxyShader(proxyShader)
+                , fLocalMatrix(localMatrix) {
+        }
+
+        SkShader*   fProxyShader;
+        const SkM44 fLocalMatrix;
+    };
+
+    void AddToKey(const SkKeyContext&,
+                  SkPaintParamsKeyBuilder*,
+                  SkPipelineDataGatherer*,
+                  const LMShaderData&);
+
+} // namespace LocalMatrixShaderBlock
+
 namespace ImageShaderBlock {
 
     struct ImageData {
         ImageData(const SkSamplingOptions& sampling,
                   SkTileMode tileModeX,
                   SkTileMode tileModeY,
-                  SkRect subset);
+                  SkRect subset,
+                  const SkMatrix& localMatrix);
 
         SkSamplingOptions fSampling;
         SkTileMode fTileModes[2];
         SkRect fSubset;
+        const SkMatrix& fLocalMatrix;
 
 #ifdef SK_GRAPHITE_ENABLED
         // TODO: Currently this is only filled in when we're generating the key from an actual
@@ -127,7 +152,7 @@ namespace ImageShaderBlock {
 
 namespace BlendShaderBlock {
 
-    struct BlendData {
+    struct BlendShaderData {
         SkShader*   fDst;
         SkShader*   fSrc;
         // TODO: add support for blenders
@@ -137,7 +162,7 @@ namespace BlendShaderBlock {
     void AddToKey(const SkKeyContext&,
                   SkPaintParamsKeyBuilder*,
                   SkPipelineDataGatherer*,
-                  const BlendData&);
+                  const BlendShaderData&);
 
 } // namespace BlendShaderBlock
 

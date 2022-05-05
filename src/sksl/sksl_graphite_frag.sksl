@@ -8,44 +8,54 @@ half4 sk_solid_shader(float4 colorParam) {
     return half4(colorParam);
 }
 
-float $tile(int tm, float f, float origin, float length) {
+// The localMatrix is passed to the child by the glue code. This snippet just needs to bubble the
+// child's output back up. 'localMatrix' is passed in to be consistent w/ the default glue code.
+half4 sk_local_matrix_shader(float4x4 localMatrix, half4 childResult) {
+    return childResult;
+}
+
+float $tile(int tm, float f, float min, float max, float normalizer) {
     const int kClamp         = 0;
     const int kRepeat        = 1;
     const int kMirrorRepeat  = 2;
     const int kClampToBorder = 3;
 
     if (tm == kClamp) {
-        return clamp(f, origin, origin+length) / length;
+        return clamp(f, min, max) / normalizer;
     } else if (tm == kRepeat) {
-        return mod(f - origin, length) / length;
+        float length = max - min;
+        return (mod(f - min, length) + min) / normalizer;
     } else if (tm == kMirrorRepeat) {
-        // For now, just repeat.
-        return mod(f - origin, length) / length;
+        float length = max - min;
+        float length2 = 2 * length;
+        float tmp = mod(f - min, length2);
+        return (mix(tmp, length2 - tmp, step(length, tmp)) + min) / normalizer;
     } else { // kClampToBorder
         // For now, just clamp.
-        return clamp(f, origin, origin+length) / length;
+        return clamp(f, min, max) / normalizer;
     }
 }
 
-float2 sk_compute_coords(float4 subset,
-                        int tmX, int tmY,
-                        int pad1, int pad2,
-                        float4x4 dev2Local) {
+float2 sk_compute_coords(float4x4 dev2Local,
+                         float4 subset,
+                         int tmX,
+                         int tmY,
+                         int imgWidth,
+                         int imgHeight) {
     float4 localCoords = dev2Local * sk_FragCoord;
-    float2 subsetWH = (subset.zw - subset.xy);
-    float2 coords = float2($tile(tmX, localCoords.x, subset.x, subsetWH.x),
-                           $tile(tmY, localCoords.y, subset.y, subsetWH.y));
+    float2 coords = float2($tile(tmX, localCoords.x, subset.x, subset.z, float(imgWidth)),
+                           $tile(tmY, localCoords.y, subset.y, subset.w, float(imgHeight)));
     return coords;
 }
 
-half4 sk_linear_grad_4_shader(float4 colorsParam[4],
+half4 sk_linear_grad_4_shader(float4x4 dev2Local,
+                              float4 colorsParam[4],
                               float offsetsParam[4],
                               float2 point0Param,
                               float2 point1Param,
                               float radius0Param,
                               float radius1Param,
-                              float2 padding,
-                              float4x4 dev2Local) {
+                              float2 padding) {
     float2 pos = (dev2Local * sk_FragCoord).xy;
     float2 delta = point1Param - point0Param;
     float2 pt = pos - point0Param;
@@ -63,7 +73,7 @@ half4 sk_linear_grad_4_shader(float4 colorsParam[4],
     return half4(result);
 }
 
-half4 sk_blend(int mode, half4 src, half4 dst) {
+half4 sk_blend(int blendMode, half4 src, half4 dst) {
     const int kClear      = 0;
     const int kSrc        = 1;
     const int kDst        = 2;
@@ -94,7 +104,7 @@ half4 sk_blend(int mode, half4 src, half4 dst) {
     const int kColor      = 27;
     const int kLuminosity = 28;
 
-    switch (mode) {
+    switch (blendMode) {
         case kClear:      { return blend_clear(src, dst); }
         case kSrc:        { return blend_src(src, dst); }
         case kDst:        { return blend_dst(src, dst); }
@@ -126,4 +136,8 @@ half4 sk_blend(int mode, half4 src, half4 dst) {
         case kLuminosity: { return blend_hslc(src, dst, /*flipSat=*/half2(1, 0)); }
         default: return half4(0);  // Avoids 'blend can exit without returning a value' error
     }
+}
+
+half4 sk_blend_shader(int blendMode, int pad0, int pad1, int pad2, half4 child0, half4 child1) {
+    return sk_blend(blendMode, child1, child0);
 }

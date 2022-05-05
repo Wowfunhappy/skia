@@ -100,7 +100,6 @@ skia_gpu_sources = [
   "$_src/gpu/ganesh/GrFragmentProcessor.h",
   "$_src/gpu/ganesh/GrGeometryProcessor.cpp",
   "$_src/gpu/ganesh/GrGeometryProcessor.h",
-  "$_src/gpu/ganesh/GrGlyph.h",
   "$_src/gpu/ganesh/GrGpu.cpp",
   "$_src/gpu/ganesh/GrGpu.h",
   "$_src/gpu/ganesh/GrGpuBuffer.cpp",
@@ -316,12 +315,8 @@ skia_gpu_sources = [
   # tessellate/shaders
   "$_src/gpu/ganesh/tessellate/shaders/GrPathTessellationShader.cpp",
   "$_src/gpu/ganesh/tessellate/shaders/GrPathTessellationShader.h",
-  "$_src/gpu/ganesh/tessellate/shaders/GrPathTessellationShader_Hardware.cpp",
-  "$_src/gpu/ganesh/tessellate/shaders/GrPathTessellationShader_MiddleOut.cpp",
   "$_src/gpu/ganesh/tessellate/shaders/GrStrokeTessellationShader.cpp",
   "$_src/gpu/ganesh/tessellate/shaders/GrStrokeTessellationShader.h",
-  "$_src/gpu/ganesh/tessellate/shaders/GrStrokeTessellationShader_HardwareImpl.cpp",
-  "$_src/gpu/ganesh/tessellate/shaders/GrStrokeTessellationShader_InstancedImpl.cpp",
   "$_src/gpu/ganesh/tessellate/shaders/GrTessellationShader.cpp",
   "$_src/gpu/ganesh/tessellate/shaders/GrTessellationShader.h",
 
@@ -343,6 +338,7 @@ skia_gpu_sources = [
   "$_src/gpu/ganesh/text/GrTextBlob.h",
   "$_src/gpu/ganesh/text/GrTextBlobRedrawCoordinator.cpp",
   "$_src/gpu/ganesh/text/GrTextBlobRedrawCoordinator.h",
+  "$_src/text/gpu/Glyph.h",
 
   # GLSL
   "$_src/gpu/ganesh/glsl/GrGLSL.cpp",
@@ -708,6 +704,8 @@ skia_direct3d_sources = [
 skia_dawn_sources = [
   "$_include/gpu/dawn/GrDawnTypes.h",
   "$_include/private/gpu/ganesh/GrDawnTypesPriv.h",
+  "$_src/gpu/ganesh/dawn/GrDawnAsyncWait.cpp",
+  "$_src/gpu/ganesh/dawn/GrDawnAsyncWait.h",
   "$_src/gpu/ganesh/dawn/GrDawnAttachment.cpp",
   "$_src/gpu/ganesh/dawn/GrDawnAttachment.h",
   "$_src/gpu/ganesh/dawn/GrDawnBuffer.cpp",

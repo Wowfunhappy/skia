@@ -11,7 +11,6 @@
 #include "include/core/SkBlender.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkCustomMesh.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkRegion.h"
 #include "include/core/SkShader.h"
@@ -24,6 +23,7 @@
 
 class SkBitmap;
 class SkColorSpace;
+class SkCustomMesh;
 struct SkDrawShadowRec;
 class SkGlyphRun;
 class SkGlyphRunList;
@@ -284,7 +284,7 @@ protected:
                               const SkPaint&,
                               bool skipColorXform = false) = 0;
 #ifdef SK_ENABLE_SKSL
-    virtual void drawCustomMesh(SkCustomMesh cm, sk_sp<SkBlender>, const SkPaint&) = 0;
+    virtual void drawCustomMesh(const SkCustomMesh& cm, sk_sp<SkBlender>, const SkPaint&) = 0;
 #endif
     virtual void drawShadow(const SkPath&, const SkDrawShadowRec&);
 
@@ -464,18 +464,15 @@ private:
     // is anchored in the device space. The final device-to-global matrix stored by the SkDevice
     // will include a pre-translation by T(deviceOriginX, deviceOriginY), and the final
     // local-to-device matrix will have a post-translation of T(-deviceOriginX, -deviceOriginY).
-    //
-    // Returns false if the final device coordinate space is invalid, in which case the canvas
-    // should discard the device
-    bool SK_WARN_UNUSED_RESULT setDeviceCoordinateSystem(const SkM44& deviceToGlobal,
-                                                         const SkM44& globalToDevice,
-                                                         const SkM44& localToDevice,
-                                                         int bufferOriginX,
-                                                         int bufferOriginY);
+    void setDeviceCoordinateSystem(const SkM44& deviceToGlobal,
+                                   const SkM44& globalToDevice,
+                                   const SkM44& localToDevice,
+                                   int bufferOriginX,
+                                   int bufferOriginY);
     // Convenience to configure the device to be axis-aligned with the root canvas, but with a
     // unique origin.
     void setOrigin(const SkM44& globalCTM, int x, int y) {
-        SkAssertResult(this->setDeviceCoordinateSystem(SkM44(), SkM44(), globalCTM, x, y));
+        this->setDeviceCoordinateSystem(SkM44(), SkM44(), globalCTM, x, y);
     }
 
     virtual SkImageFilterCache* getImageFilterCache() { return nullptr; }
@@ -552,7 +549,7 @@ protected:
     void drawDevice(SkBaseDevice*, const SkSamplingOptions&, const SkPaint&) override {}
     void drawVertices(const SkVertices*, sk_sp<SkBlender>, const SkPaint&, bool) override {}
 #ifdef SK_ENABLE_SKSL
-    void drawCustomMesh(SkCustomMesh, sk_sp<SkBlender>, const SkPaint&) override {}
+    void drawCustomMesh(const SkCustomMesh&, sk_sp<SkBlender>, const SkPaint&) override {}
 #endif
 
     void drawFilteredImage(const skif::Mapping&, SkSpecialImage* src, const SkImageFilter*,

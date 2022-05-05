@@ -1,6 +1,8 @@
-load("//bazel:macros.bzl", "enforce_iwyu_on_package", "generated_cc_atom")
+load("//bazel:macros.bzl", "cc_library", "enforce_iwyu_on_package", "exports_files_legacy", "generated_cc_atom")
 
 licenses(["notice"])
+
+exports_files_legacy()
 
 enforce_iwyu_on_package()
 
@@ -487,7 +489,6 @@ generated_cc_atom(
         "//src/sksl/ir:SkSLFunctionPrototype_hdr",
         "//src/sksl/ir:SkSLIfStatement_hdr",
         "//src/sksl/ir:SkSLIndexExpression_hdr",
-        "//src/sksl/ir:SkSLInlineMarker_hdr",
         "//src/sksl/ir:SkSLInterfaceBlock_hdr",
         "//src/sksl/ir:SkSLLiteral_hdr",
         "//src/sksl/ir:SkSLPostfixExpression_hdr",
@@ -592,7 +593,6 @@ generated_cc_atom(
         "//src/sksl/ir:SkSLFunctionDefinition_hdr",
         "//src/sksl/ir:SkSLIfStatement_hdr",
         "//src/sksl/ir:SkSLIndexExpression_hdr",
-        "//src/sksl/ir:SkSLInlineMarker_hdr",
         "//src/sksl/ir:SkSLLiteral_hdr",
         "//src/sksl/ir:SkSLNop_hdr",
         "//src/sksl/ir:SkSLPostfixExpression_hdr",
@@ -782,7 +782,6 @@ generated_cc_atom(
         "//src/sksl/ir:SkSLFunctionPrototype_hdr",
         "//src/sksl/ir:SkSLIfStatement_hdr",
         "//src/sksl/ir:SkSLIndexExpression_hdr",
-        "//src/sksl/ir:SkSLInlineMarker_hdr",
         "//src/sksl/ir:SkSLInterfaceBlock_hdr",
         "//src/sksl/ir:SkSLLiteral_hdr",
         "//src/sksl/ir:SkSLNop_hdr",

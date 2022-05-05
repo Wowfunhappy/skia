@@ -1,6 +1,8 @@
-load("//bazel:macros.bzl", "generated_cc_atom", "py_binary")
+load("//bazel:macros.bzl", "cc_library", "exports_files_legacy", "generated_cc_atom", "py_binary")
 
 licenses(["notice"])
+
+exports_files_legacy()
 
 py_binary(
     name = "embed_resources",

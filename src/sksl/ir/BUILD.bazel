@@ -1,6 +1,8 @@
-load("//bazel:macros.bzl", "generated_cc_atom")
+load("//bazel:macros.bzl", "exports_files_legacy", "generated_cc_atom")
 
 licenses(["notice"])
+
+exports_files_legacy()
 
 generated_cc_atom(
     name = "SkSLBinaryExpression_hdr",
@@ -696,17 +698,6 @@ generated_cc_atom(
         ":SkSLTypeReference_hdr",
         "//src/sksl:SkSLConstantFolder_hdr",
         "//src/sksl:SkSLProgramSettings_hdr",
-    ],
-)
-
-generated_cc_atom(
-    name = "SkSLInlineMarker_hdr",
-    hdrs = ["SkSLInlineMarker.h"],
-    visibility = ["//:__subpackages__"],
-    deps = [
-        ":SkSLFunctionDeclaration_hdr",
-        ":SkSLSymbolTable_hdr",
-        "//include/private:SkSLStatement_hdr",
     ],
 )
 

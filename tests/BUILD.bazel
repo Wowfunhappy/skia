@@ -1,6 +1,8 @@
-load("//bazel:macros.bzl", "generated_cc_atom")
+load("//bazel:macros.bzl", "cc_library", "exports_files_legacy", "generated_cc_atom")
 
 licenses(["notice"])
+
+exports_files_legacy()
 
 cc_library(
     name = "tests",
@@ -17,7 +19,6 @@ cc_library(
         "//src/lazy:SkDiscardableMemoryPool_src",
         "//src/svg:SkSVGCanvas_src",
         "//tools/fonts:TestEmptyTypeface_hdr",
-        "//tools/gpu/gl/command_buffer:GLTestContext_command_buffer_src",
         "//tools/gpu/gl:GLTestContext_src",
         "//tools/gpu:gpu_tool_utils",
         "//tools:RuntimeBlendUtils_src",
@@ -2296,6 +2297,7 @@ generated_cc_atom(
     deps = [
         ":Test_hdr",
         "//include/core:SkCanvas_hdr",
+        "//include/core:SkColorSpace_hdr",
         "//include/core:SkImage_hdr",
         "//include/core:SkSurface_hdr",
         "//include/core:SkTypes_hdr",
@@ -3369,6 +3371,7 @@ generated_cc_atom(
     visibility = ["//:__subpackages__"],
     deps = [
         ":Test_hdr",
+        "//include/core:SkColorSpace_hdr",
         "//include/core:SkTypes_hdr",
         "//include/ports:SkImageGeneratorNDK_hdr",
         "//tools:Resources_hdr",
@@ -3382,6 +3385,7 @@ generated_cc_atom(
     visibility = ["//:__subpackages__"],
     deps = [
         ":Test_hdr",
+        "//include/core:SkColorSpace_hdr",
         "//include/core:SkColor_hdr",
         "//include/core:SkImageEncoder_hdr",
         "//include/core:SkImageGenerator_hdr",
@@ -6946,6 +6950,7 @@ generated_cc_atom(
         ":Test_hdr",
         "//include/core:SkBitmap_hdr",
         "//include/core:SkCanvas_hdr",
+        "//include/core:SkColorSpace_hdr",
         "//include/core:SkImage_hdr",
         "//include/core:SkSurface_hdr",
         "//include/core:SkTypes_hdr",

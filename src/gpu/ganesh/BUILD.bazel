@@ -1,6 +1,8 @@
-load("//bazel:macros.bzl", "generated_cc_atom", "selects")
+load("//bazel:macros.bzl", "cc_library", "exports_files_legacy", "generated_cc_atom", "selects")
 
 licenses(["notice"])
+
+exports_files_legacy()
 
 cc_library(
     name = "core_srcs",
@@ -183,11 +185,7 @@ cc_library(
         "//src/gpu/ganesh/ops:TessellationPathRenderer_src",
         "//src/gpu/ganesh/ops:TextureOp_src",
         "//src/gpu/ganesh/ops:TriangulatingPathRenderer_src",
-        "//src/gpu/ganesh/tessellate/shaders:GrPathTessellationShader_Hardware_src",
-        "//src/gpu/ganesh/tessellate/shaders:GrPathTessellationShader_MiddleOut_src",
         "//src/gpu/ganesh/tessellate/shaders:GrPathTessellationShader_src",
-        "//src/gpu/ganesh/tessellate/shaders:GrStrokeTessellationShader_HardwareImpl_src",
-        "//src/gpu/ganesh/tessellate/shaders:GrStrokeTessellationShader_InstancedImpl_src",
         "//src/gpu/ganesh/tessellate/shaders:GrStrokeTessellationShader_src",
         "//src/gpu/ganesh/tessellate/shaders:GrTessellationShader_src",
         "//src/gpu/ganesh/text:GrAtlasManager_src",
@@ -205,6 +203,7 @@ cc_library(
 cc_library(
     name = "dawn_srcs",
     deps = [
+        "//src/gpu/ganesh/dawn:GrDawnAsyncWait_src",
         "//src/gpu/ganesh/dawn:GrDawnAttachment_src",
         "//src/gpu/ganesh/dawn:GrDawnBuffer_src",
         "//src/gpu/ganesh/dawn:GrDawnCaps_src",
@@ -429,6 +428,7 @@ generated_cc_atom(
         ":GrTextureProxy_hdr",
         ":GrTexture_hdr",
         ":SkGr_hdr",
+        "//include/core:SkColorSpace_hdr",
         "//include/core:SkTypes_hdr",
         "//include/gpu:GrBackendSurface_hdr",
         "//include/gpu:GrDirectContext_hdr",
@@ -1492,18 +1492,6 @@ generated_cc_atom(
         "//src/gpu/ganesh/glsl:GrGLSLProgramBuilder_hdr",
         "//src/gpu/ganesh/glsl:GrGLSLUniformHandler_hdr",
         "//src/gpu/ganesh/glsl:GrGLSLVarying_hdr",
-    ],
-)
-
-generated_cc_atom(
-    name = "GrGlyph_hdr",
-    hdrs = ["GrGlyph.h"],
-    visibility = ["//:__subpackages__"],
-    deps = [
-        ":GrDrawOpAtlas_hdr",
-        "//include/private/gpu/ganesh:GrTypesPriv_hdr",
-        "//src/core:SkGlyph_hdr",
-        "//src/core:SkMask_hdr",
     ],
 )
 
@@ -2733,6 +2721,7 @@ generated_cc_atom(
     deps = [
         "//include/core:SkMath_hdr",
         "//include/core:SkSpan_hdr",
+        "//include/private:SkTemplates_hdr",
         "//src/core:SkArenaAlloc_hdr",
     ],
 )
