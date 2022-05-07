@@ -106,13 +106,13 @@ public:
 
 
     // TODO: Actual API to do things
-    // 1. Provide stencil settings
     // 6. Some Renderers benefit from being able to share vertices between RenderSteps. Must find a
     //    way to support that. It may mean that RenderSteps get state per draw.
     //    - Does Renderer make RenderStepFactories that create steps for each DrawList::Draw?
     //    - Does DrawList->DrawPass conversion build a separate array of blind data that the
     //      stateless Renderstep can refer to for {draw,step} pairs?
     //    - Does each DrawList::Draw have extra space (e.g. 8 bytes) that steps can cache data in?
+    // 7. Painter's order for the draw sent as uniform or attribute
 protected:
     enum class Flags : unsigned {
         kNone            = 0b000,
@@ -192,7 +192,9 @@ public:
     // across draw calls, and reduce the number of shader permutations required. These Renderers
     // are stateless singletons and remain alive for the entire program. Each Renderer corresponds
     // to a specific recording function on DrawList and fill type.
-    static const Renderer& StencilAndFillPath(SkPathFillType);
+    static const Renderer& StencilTessellatedCurvesAndTris(SkPathFillType);
+
+    static const Renderer& StencilTessellatedWedges(SkPathFillType);
     // TODO: Not on the immediate sprint target, but show what needs to be added for DrawList's API
     // static const Renderer& FillConvexPath();
     // static const Renderer& StrokePath();

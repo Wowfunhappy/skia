@@ -13,6 +13,7 @@
 #include "include/core/SkPath.h"
 #include "include/core/SkPictureRecorder.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/pathops/SkPathOps.h"
 #include "include/private/SkColorData.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkFDot6.h"
@@ -47,6 +48,11 @@
 #else
 #    include "src/core/SkScopeExit.h"
 #endif
+#endif
+
+// FT_OUTLINE_OVERLAP was added in FreeType 2.10.3
+#ifndef FT_OUTLINE_OVERLAP
+#    define FT_OUTLINE_OVERLAP 0x40
 #endif
 
 // FT_LOAD_COLOR and the corresponding FT_Pixel_Mode::FT_PIXEL_MODE_BGRA
@@ -1242,8 +1248,6 @@ bool SkScalerContext_FreeType_Base::drawColorGlyph(FT_Face face,
                                                    uint32_t loadGlyphFlags,
                                                    SkSpan<SkColor> palette,
                                                    SkCanvas* canvas) {
-    SkPaint paint;
-    paint.setAntiAlias(true);
 
     // Only attempt to draw a COLRv1 glyph if FreeType is new enough to have the COLRv1 support.
 #ifdef TT_SUPPORT_COLRV1
@@ -1264,6 +1268,8 @@ bool SkScalerContext_FreeType_Base::drawColorGlyph(FT_Face face,
     layerIterator.p = nullptr;
     FT_UInt layerGlyphIndex = 0;
     FT_UInt layerColorIndex = 0;
+    SkPaint paint;
+    paint.setAntiAlias(!(loadGlyphFlags & FT_LOAD_TARGET_MONO));
     while (FT_Get_Color_Glyph_Layer(face, glyph.getGlyphID(), &layerGlyphIndex,
                                     &layerColorIndex, &layerIterator)) {
         haveLayers = true;
@@ -1648,9 +1654,6 @@ bool generateGlyphPathStatic(FT_Face face, SkPath* path) {
 }
 
 bool generateFacePathStatic(FT_Face face, SkGlyphID glyphID, uint32_t loadGlyphFlags, SkPath* path){
-#ifdef SK_IGNORE_FREETYPE_COLRV0_LOAD_FLAGS_FIX
-    loadGlyphFlags = 0;
-#endif
     loadGlyphFlags |= FT_LOAD_NO_BITMAP; // ignore embedded bitmaps so we're sure to get the outline
     loadGlyphFlags &= ~FT_LOAD_RENDER;   // don't scan convert (we just want the outline)
 
@@ -1733,7 +1736,13 @@ bool generateFacePathCOLRv1(FT_Face face, SkGlyphID glyphID, SkPath* path) {
 }  // namespace
 
 bool SkScalerContext_FreeType_Base::generateGlyphPath(FT_Face face, SkPath* path) {
-    return generateGlyphPathStatic(face, path);
+    if (!generateGlyphPathStatic(face, path)) {
+        return false;
+    }
+    if (face->glyph->outline.flags & FT_OUTLINE_OVERLAP) {
+        Simplify(*path, path);
+    }
+    return true;
 }
 
 bool SkScalerContext_FreeType_Base::generateFacePath(FT_Face face,
