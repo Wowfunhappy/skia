@@ -644,12 +644,6 @@ public:
 
     virtual void storeVkPipelineCacheData() {}
 
-    // http://skbug.com/9739
-    virtual void insertManualFramebufferBarrier() {
-        SkASSERT(!this->caps()->requiresManualFBBarrierAfterTessellatedStencilDraw());
-        SK_ABORT("Manual framebuffer barrier not supported.");
-    }
-
     // Called before certain draws in order to guarantee coherent results from dst reads.
     virtual void xferBarrier(GrRenderTarget*, GrXferBarrierType) = 0;
 
@@ -708,7 +702,8 @@ private:
                                              SkBudgeted,
                                              GrProtected,
                                              int mipLevelCoont,
-                                             uint32_t levelClearMask) = 0;
+                                             uint32_t levelClearMask,
+                                             std::string_view label) = 0;
     virtual sk_sp<GrTexture> onCreateCompressedTexture(SkISize dimensions,
                                                        const GrBackendFormat&,
                                                        SkBudgeted,
@@ -812,7 +807,8 @@ private:
                                          SkBudgeted,
                                          GrProtected,
                                          int mipLevelCnt,
-                                         uint32_t levelClearMask);
+                                         uint32_t levelClearMask,
+                                         std::string_view label);
 
     void resetContext() {
         this->onResetContext(fResetBits);

@@ -13,8 +13,8 @@
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/GrResourceProvider.h"
 #include "src/gpu/ganesh/glsl/GrGLSLVertexGeoBuilder.h"
-#include "src/gpu/ganesh/ops/PathTessellator.h"
-#include "src/gpu/ganesh/tessellate/shaders/GrPathTessellationShader.h"
+#include "src/gpu/ganesh/tessellate/GrPathTessellationShader.h"
+#include "src/gpu/ganesh/tessellate/PathTessellator.h"
 
 namespace skgpu::v1 {
 
@@ -447,9 +447,6 @@ void PathInnerTriangulateOp::onExecute(GrOpFlushState* flushState, const SkRect&
         SkASSERT(fTessellator);
         flushState->bindPipelineAndScissorClip(*fStencilCurvesProgram, this->bounds());
         fTessellator->draw(flushState);
-        if (flushState->caps().requiresManualFBBarrierAfterTessellatedStencilDraw()) {
-            flushState->gpu()->insertManualFramebufferBarrier();  // http://skbug.com/9739
-        }
     }
 
     // Allocation of the fan vertex buffer may have failed but we already pushed back fan programs.

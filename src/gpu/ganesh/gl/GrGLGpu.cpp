@@ -1387,7 +1387,8 @@ sk_sp<GrTexture> GrGLGpu::onCreateTexture(SkISize dimensions,
                                           SkBudgeted budgeted,
                                           GrProtected isProtected,
                                           int mipLevelCount,
-                                          uint32_t levelClearMask) {
+                                          uint32_t levelClearMask,
+                                          std::string_view label) {
     // We don't support protected textures in GL.
     if (isProtected == GrProtected::kYes) {
         return nullptr;
@@ -1442,10 +1443,10 @@ sk_sp<GrTexture> GrGLGpu::onCreateTexture(SkISize dimensions,
                                                   texDesc,
                                                   rtIDDesc,
                                                   mipmapStatus,
-                                                  /*label=*/"");
+                                                  label);
         tex->baseLevelWasBoundToFBO();
     } else {
-        tex = sk_make_sp<GrGLTexture>(this, budgeted, texDesc, mipmapStatus, /*label=*/"");
+        tex = sk_make_sp<GrGLTexture>(this, budgeted, texDesc, mipmapStatus, label);
     }
     // The non-sampler params are still at their default values.
     tex->parameters()->set(&initialState, GrGLTextureParameters::NonsamplerState(),
@@ -3646,11 +3647,6 @@ void GrGLGpu::xferBarrier(GrRenderTarget* rt, GrXferBarrierType type) {
             return;
         default: break; // placate compiler warnings that kNone not handled
     }
-}
-
-void GrGLGpu::insertManualFramebufferBarrier() {
-    SkASSERT(this->caps()->requiresManualFBBarrierAfterTessellatedStencilDraw());
-    GL_CALL(MemoryBarrier(GR_GL_FRAMEBUFFER_BARRIER_BIT));
 }
 
 GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,

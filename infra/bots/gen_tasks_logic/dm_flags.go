@@ -210,6 +210,11 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip("pdf", "gm", ALL, "longpathdash")
 		}
 
+		if b.extraConfig("OldestSupportedSkpVersion") {
+			// For triaging convenience, make the old-skp job's output match the size of the DDL jobs' output
+			args = append(args, "--skpViewportSize", "2048")
+		}
+
 	} else if b.gpu() {
 		args = append(args, "--nocpu")
 
