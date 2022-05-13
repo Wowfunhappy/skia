@@ -27,6 +27,7 @@ namespace skgpu::v1 {
 // as degenerate triangles.
 class StrokeTessellator {
 public:
+    using PatchAttribs = tess::PatchAttribs;
 
     struct PathStrokeList {
         PathStrokeList(const SkPath& path, const SkStrokeRec& stroke, const SkPMColor4f& color)
@@ -44,7 +45,6 @@ public:
     // Returns the fixed number of edges the tessellator will draw per patch.
     void prepare(GrMeshDrawTarget*,
                  const SkMatrix& shaderMatrix,
-                 std::array<float,2> matrixMinMaxScales,
                  PathStrokeList*,
                  int totalCombinedStrokeVerbCnt);
 

@@ -2148,6 +2148,16 @@ void MetalCodeGenerator::writeName(std::string_view name) {
 }
 
 void MetalCodeGenerator::writeVarDeclaration(const VarDeclaration& varDecl) {
+    // The graphite shaders include functions with `switch` statements using named constant labels.
+    // When called with known values, the switch is eliminated. This leaves unused variables like:
+    //   const int kFoo = ...;
+    // All of these happen to be `const int`. As a hack, mark any `const int` as maybe_unused, to
+    // suppress warnings from the metal compiler when validation is enabled.
+    if ((varDecl.var().modifiers().fFlags & Modifiers::kConst_Flag) &&
+        varDecl.var().type().matches(*fContext.fTypes.fInt)) {
+        this->write("[[maybe_unused]] ");
+    }
+
     this->writeModifiers(varDecl.var().modifiers());
     this->writeType(varDecl.var().type());
     this->write(" ");
@@ -2270,10 +2280,12 @@ void MetalCodeGenerator::writeDoStatement(const DoStatement& d) {
 }
 
 void MetalCodeGenerator::writeExpressionStatement(const ExpressionStatement& s) {
-    if (s.expression()->hasSideEffects()) {
-        this->writeExpression(*s.expression(), Precedence::kTopLevel);
-        this->write(";");
+    if (fProgram.fConfig->fSettings.fOptimize && !s.expression()->hasSideEffects()) {
+        // Don't emit dead expressions.
+        return;
     }
+    this->writeExpression(*s.expression(), Precedence::kTopLevel);
+    this->write(";");
 }
 
 void MetalCodeGenerator::writeSwitchStatement(const SwitchStatement& s) {

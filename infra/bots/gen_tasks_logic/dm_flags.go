@@ -292,6 +292,11 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			configs = []string{"dawn"}
 		}
 
+		// The FailFlushTimeCallbacks bots only run the 'gl' config
+		if b.extraConfig("FailFlushTimeCallbacks") {
+			configs = []string{"gl"}
+		}
+
 		// Graphite bot *only* runs the grmtl config
 		if b.extraConfig("Graphite") {
 			args = append(args, "--nogpu") // disable non-Graphite tests
@@ -469,7 +474,8 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 		// Test 1010102 on our Linux/NVIDIA bots and the persistent cache config
 		// on the GL bots.
-		if b.gpu("QuadroP400") && !b.extraConfig("PreAbandonGpuContext") && !b.extraConfig("TSAN") && b.isLinux() {
+		if b.gpu("QuadroP400") && !b.extraConfig("PreAbandonGpuContext") && !b.extraConfig("TSAN") && b.isLinux() &&
+			!b.extraConfig("FailFlushTimeCallbacks") {
 			if b.extraConfig("Vulkan") {
 				configs = append(configs, "vk1010102")
 				// Decoding transparent images to 1010102 just looks bad
@@ -644,6 +650,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	if b.matchExtraConfig("Graphite") {
 		// The Graphite bots run the skps, gms and tests
 		removeFromArgs("image")
+		removeFromArgs("lottie")
 		removeFromArgs("colorImage")
 		removeFromArgs("svg")
 	} else if b.matchExtraConfig("DDL", "PDF") {
@@ -660,6 +667,12 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		removeFromArgs("colorImage")
 		removeFromArgs("lottie")
 		removeFromArgs("svg")
+	} else if b.matchExtraConfig("FailFlushTimeCallbacks") {
+		// The FailFlushTimeCallbacks bot only runs skps, gms and svgs
+		removeFromArgs("tests")
+		removeFromArgs("image")
+		removeFromArgs("lottie")
+		removeFromArgs("colorImage")
 	} else {
 		// No other bots render the .skps.
 		removeFromArgs("skp")
@@ -986,6 +999,10 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLUnaryPositiveNegative_GPU")
 	}
 
+	if b.model("Pixel3") || b.model("Pixel2XL") {
+		skip(ALL, "tests", ALL, "SkSLEmptyBlocksES3_GPU")  // skia:13309
+	}
+
 	if b.matchGpu("Adreno[3456]") { // disable broken tests on Adreno 3/4/5/6xx
 		skip(ALL, "tests", ALL, "SkSLArrayCast_GPU")       // skia:12332
 		skip(ALL, "tests", ALL, "SkSLArrayComparison_GPU") // skia:12332
@@ -1308,6 +1325,10 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 	if b.extraConfig("ReleaseAndAbandonGpuContext") {
 		args = append(args, "--releaseAndAbandonGpuContext")
+	}
+
+	if b.extraConfig("FailFlushTimeCallbacks") {
+		args = append(args, "--failFlushTimeCallbacks")
 	}
 
 	// Finalize the DM flags and properties.

@@ -136,9 +136,6 @@ void add_linear_gradient_uniform_data(const SkShaderCodeDictionary* dict,
     gatherer->write(gradData.fOffsets, GradientData::kMaxStops);
     gatherer->write(gradData.fPoints[0]);
     gatherer->write(gradData.fPoints[1]);
-    gatherer->write(gradData.fRadii[0]);        // unused
-    gatherer->write(gradData.fRadii[1]);        // unused
-    gatherer->write(SkPoint::Make(0.0f, 0.0f)); // padding
 
     gatherer->addFlags(
             dict->getSnippetRequirementFlags(SkBuiltInCodeSnippetID::kLinearGradientShader));
@@ -159,10 +156,8 @@ void add_radial_gradient_uniform_data(const SkShaderCodeDictionary* dict,
     gatherer->write(gradData.fColor4fs, GradientData::kMaxStops);
     gatherer->write(gradData.fOffsets, GradientData::kMaxStops);
     gatherer->write(gradData.fPoints[0]);
-    gatherer->write(gradData.fPoints[1]);       // unused
     gatherer->write(gradData.fRadii[0]);
-    gatherer->write(gradData.fRadii[1]);        // unused
-    gatherer->write(SkPoint::Make(0.0f, 0.0f)); // padding
+    gatherer->write(0.0f);  // padding
 
     gatherer->addFlags(
             dict->getSnippetRequirementFlags(SkBuiltInCodeSnippetID::kRadialGradientShader));
@@ -183,10 +178,8 @@ void add_sweep_gradient_uniform_data(const SkShaderCodeDictionary* dict,
     gatherer->write(gradData.fColor4fs, GradientData::kMaxStops);
     gatherer->write(gradData.fOffsets, GradientData::kMaxStops);
     gatherer->write(gradData.fPoints[0]);
-    gatherer->write(gradData.fPoints[1]);       // unused
-    gatherer->write(gradData.fRadii[0]);        // unused
-    gatherer->write(gradData.fRadii[1]);        // unused
-    gatherer->write(SkPoint::Make(0.0f, 0.0f)); // padding
+    gatherer->write(gradData.fBias);
+    gatherer->write(gradData.fScale);
 
     gatherer->addFlags(
             dict->getSnippetRequirementFlags(SkBuiltInCodeSnippetID::kSweepGradientShader));
@@ -226,6 +219,8 @@ GradientData::GradientData(SkShader::GradientType type,
         : fType(type)
         , fPoints{{0.0f, 0.0f}, {0.0f, 0.0f}}
         , fRadii{0.0f, 0.0f}
+        , fBias(0.0f)
+        , fScale(0.0f)
         , fTM(tm)
         , fNumStops(numStops) {
     sk_bzero(fColor4fs, sizeof(fColor4fs));
@@ -236,12 +231,15 @@ GradientData::GradientData(SkShader::GradientType type,
                            SkM44 localMatrix,
                            SkPoint point0, SkPoint point1,
                            float radius0, float radius1,
+                           float bias, float scale,
                            SkTileMode tm,
                            int numStops,
                            SkColor4f* color4fs,
                            float* offsets)
         : fType(type)
         , fLocalMatrix(localMatrix)
+        , fBias(bias)
+        , fScale(scale)
         , fTM(tm)
         , fNumStops(std::min(numStops, kMaxStops)) {
     SkASSERT(fNumStops >= 1);

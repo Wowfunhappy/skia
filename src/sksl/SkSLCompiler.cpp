@@ -346,8 +346,8 @@ const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
         case ProgramKind::kRuntimeShader:        return this->loadPublicModule();           break;
         case ProgramKind::kRuntimeBlender:       return this->loadPublicModule();           break;
         case ProgramKind::kPrivateRuntimeShader: return this->loadPrivateRTShaderModule();  break;
-        case ProgramKind::kCustomMeshVertex:     return this->loadPublicModule();           break;
-        case ProgramKind::kCustomMeshFragment:   return this->loadPublicModule();           break;
+        case ProgramKind::kMeshVertex:           return this->loadPublicModule();           break;
+        case ProgramKind::kMeshFragment:         return this->loadPublicModule();           break;
         case ProgramKind::kGeneric:              return this->loadPublicModule();           break;
     }
     SkUNREACHABLE;
@@ -490,6 +490,12 @@ std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
     settings.fInlineThreshold *= (int)settings.fOptimize;
     settings.fRemoveDeadFunctions &= settings.fOptimize;
     settings.fRemoveDeadVariables &= settings.fOptimize;
+
+    // For "generic" interpreter programs, leave all functions intact. (The API supports calling
+    // any function, not just 'main').
+    if (kind == ProgramKind::kGeneric) {
+        settings.fRemoveDeadFunctions = false;
+    }
 
     // Runtime effects always allow narrowing conversions.
     if (ProgramConfig::IsRuntimeEffect(kind)) {

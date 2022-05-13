@@ -66,8 +66,7 @@ public:
                                                     sk_sp<GrSurfaceProxy>,
                                                     sk_sp<SkColorSpace>,
                                                     GrSurfaceOrigin,
-                                                    const SkSurfaceProps&,
-                                                    bool flushTimeOpsTask = false);
+                                                    const SkSurfaceProps&);
 
     /* Uses the default texture format for the color type */
     static std::unique_ptr<SurfaceDrawContext> Make(GrRecordingContext*,
@@ -133,8 +132,7 @@ public:
                        GrSurfaceProxyView writeView,
                        GrColorType,
                        sk_sp<SkColorSpace>,
-                       const SkSurfaceProps&,
-                       bool flushTimeOpsTask = false);
+                       const SkSurfaceProps&);
 
     ~SurfaceDrawContext() override;
 
@@ -380,12 +378,12 @@ public:
      *
      * @param   paint            describes how to color pixels.
      * @param   matrixProvider   provides the transformation matrix
-     * @param   cm               the custom mesh to draw.
+     * @param   mesh             the mesh to draw.
      */
-    void drawCustomMesh(const GrClip*,
-                        GrPaint&& paint,
-                        const SkMatrixProvider& matrixProvider,
-                        const SkCustomMesh& cm);
+    void drawMesh(const GrClip*,
+                  GrPaint&& paint,
+                  const SkMatrixProvider& matrixProvider,
+                  const SkMesh& mesh);
 
     /**
      * Draws textured sprites from an atlas with a paint. This currently does not support AA for the
