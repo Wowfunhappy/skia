@@ -1,5 +1,7 @@
 load("//bazel:macros.bzl", "generated_cc_atom")
 
+licenses(["notice"])
+
 generated_cc_atom(
     name = "Attribute_hdr",
     hdrs = ["Attribute.h"],
@@ -191,6 +193,7 @@ generated_cc_atom(
         ":EnumBitMask_hdr",
         "//src/core:SkDevice_hdr",
         "//src/gpu/graphite/geom:Rect_hdr",
+        "//src/gpu/graphite/geom:Transform_graphite_hdr",
     ],
 )
 
@@ -1058,6 +1061,7 @@ generated_cc_atom(
     visibility = ["//:__subpackages__"],
     deps = [
         ":ClipStack_graphite_hdr",
+        ":Device_hdr",
         ":DrawGeometry_hdr",
         "//include/core:SkMatrix_hdr",
         "//include/core:SkShader_hdr",

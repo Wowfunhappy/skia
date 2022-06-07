@@ -1,5 +1,7 @@
 load("//bazel:macros.bzl", "enforce_iwyu_on_package", "generated_cc_atom")
 
+licenses(["notice"])
+
 enforce_iwyu_on_package()
 
 cc_library(
@@ -171,9 +173,9 @@ generated_cc_atom(
         "//include/core:SkTypeface_hdr",
         "//include/encode:SkPngEncoder_hdr",
         "//include/gpu:GrRecordingContext_hdr",
-        "//include/private:GrImageContext_hdr",
         "//include/private:SkMalloc_hdr",
         "//include/private:SkShadowFlags_hdr",
+        "//include/private/gpu/ganesh:GrImageContext_hdr",
         "//src/core:SkAutoMalloc_hdr",
         "//src/core:SkCanvasPriv_hdr",
         "//src/core:SkMaskFilterBase_hdr",

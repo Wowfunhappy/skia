@@ -1,7 +1,7 @@
 load(":defs.bzl", "bool_flag", "string_flag_with_values")
+load("//bazel:macros.bzl", "selects")
 
-# https://github.com/bazelbuild/bazel-skylib
-load("@bazel_skylib//lib:selects.bzl", "selects")
+licenses(["notice"])
 
 # @platforms is found at https://github.com/bazelbuild/platforms
 package(default_visibility = ["//:__subpackages__"])
@@ -190,6 +190,11 @@ bool_flag(
 bool_flag(
     default = False,
     flag_name = "enable_skslc",
+)
+
+bool_flag(
+    default = False,
+    flag_name = "enable_sksl_tracing",
 )
 
 bool_flag(

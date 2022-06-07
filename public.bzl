@@ -1,5 +1,5 @@
 ################################################################################
-# Skylark macros
+# Starlark macros
 ################################################################################
 
 def skia_select(conditions, results):
@@ -177,10 +177,10 @@ def skia_opts_deps(cpu):
     res = [":opts_rest"]
 
     if cpu == SKIA_CPU_ARM:
-        res += [":opts_neon"]
+        res.append(":opts_neon")
 
     if cpu == SKIA_CPU_ARM64:
-        res += [":opts_crc32"]
+        res.append(":opts_crc32")
 
     if cpu == SKIA_CPU_X86:
         res += [
@@ -1082,4 +1082,4 @@ SVG_TOOL_SRCS = [
 ################################################################################
 
 SKIA_EGL_HDRS = ["include/gpu/gl/egl/GrGLMakeEGLInterface.h"]
-SKIA_EGL_SRCS = ["src/gpu/gl/egl/GrGLMakeEGLInterface.cpp"]
+SKIA_EGL_SRCS = ["src/gpu/ganesh/gl/egl/GrGLMakeEGLInterface.cpp"]

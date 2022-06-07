@@ -1,6 +1,8 @@
 load("//bazel:macros.bzl", "generated_cc_atom")
 load("//bazel:cc_binary_with_flags.bzl", "cc_binary_with_flags")
 
+licenses(["notice"])
+
 cc_binary_with_flags(
     name = "hello_world_gl",
     srcs = [
@@ -23,7 +25,6 @@ cc_binary_with_flags(
     },
     deps = [
         "//:skia_core",
-        "//src/utils:json_srcs",
         "//tools/sk_app",
     ],
 )
@@ -46,7 +47,6 @@ cc_binary_with_flags(
     },
     deps = [
         "//:skia_core",
-        "//src/utils:json_srcs",
         "//tools/sk_app",
     ],
 )
@@ -69,7 +69,6 @@ cc_binary_with_flags(
     },
     deps = [
         "//:skia_core",
-        "//src/utils:json_srcs",
         "//tools/sk_app",
     ],
 )
@@ -87,7 +86,6 @@ cc_binary_with_flags(
     },
     deps = [
         "//:skia_core",
-        "//src/utils:json_srcs",
         # This DEPS is for the utility in the demo for creating a vulkan context.
         # Outside clients would not need it.
         "//tools/gpu/vk:VkTestUtils_src",

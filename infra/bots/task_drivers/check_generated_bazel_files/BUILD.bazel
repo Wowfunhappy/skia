@@ -1,5 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 
+licenses(["notice"])
+
 go_library(
     name = "check_generated_bazel_files_lib",
     srcs = ["check_generated_bazel_files.go"],

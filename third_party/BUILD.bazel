@@ -1,7 +1,6 @@
-# https://github.com/bazelbuild/bazel-skylib
-load("@bazel_skylib//lib:selects.bzl", "selects")
-load("@rules_python//python:defs.bzl", "py_binary")
-load("@py_deps//:requirements.bzl", "requirement")
+load("//bazel:macros.bzl", "py_binary", "requirement", "selects")
+
+licenses(["notice"])
 
 cc_library(
     name = "skcms",
@@ -3545,4 +3544,3 @@ cc_library(
     defines = ["SPIRV_CROSS_EXCEPTIONS_TO_ASSERTIONS"],
     visibility = ["//:__subpackages__"],
 )
-

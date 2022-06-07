@@ -1,5 +1,7 @@
 load("//bazel:macros.bzl", "select_multi")
 
+licenses(["notice"])
+
 GENERAL_DEFINES = [
     "SK_HAS_ANDROID_CODEC",
     "SKIA_IMPLEMENTATION=1",
@@ -31,6 +33,11 @@ GENERAL_DEFINES = [
         "SK_DISABLE_TRACING",
         "SK_ENABLE_SPIRV_CROSS",
         "SK_ENABLE_SPIRV_VALIDATION",
+    ],
+    "//conditions:default": [],
+}) + select({
+    "//bazel/common_config_settings:enable_sksl_tracing_true": [
+        "SKSL_ENABLE_TRACING",
     ],
     "//conditions:default": [],
 })
