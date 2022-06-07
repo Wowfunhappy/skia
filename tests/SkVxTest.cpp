@@ -43,6 +43,14 @@ DEF_TEST(SkVx, r) {
         REPORTER_ASSERT(r, !all(mask));
     }
 
+    {
+        // Tests that any/all work with non-zero values, not just full bit lanes.
+        REPORTER_ASSERT(r,  all(int4{1,2,3,4}));
+        REPORTER_ASSERT(r, !all(int4{1,2,3}));
+        REPORTER_ASSERT(r,  any(int4{1,2}));
+        REPORTER_ASSERT(r, !any(int4{}));
+    }
+
     REPORTER_ASSERT(r, min(float4{1,2,3,4}) == 1);
     REPORTER_ASSERT(r, max(float4{1,2,3,4}) == 4);
 
@@ -296,7 +304,7 @@ DEF_TEST(SkVx_strided_loads, r) {
     check_strided_loads<float>(r);
 }
 
-DEF_TEST(SkVM_ScaledDividerU32, r) {
+DEF_TEST(SkVx_ScaledDividerU32, r) {
     static constexpr uint32_t kMax = std::numeric_limits<uint32_t>::max();
 
     auto errorBounds = [&](uint32_t actual, uint32_t expected) {
@@ -332,6 +340,18 @@ DEF_TEST(SkVM_ScaledDividerU32, r) {
     test(65'535);
     test(15'485'863);
     test(512'927'377);
+}
+
+DEF_TEST(SkVx_saturated_add, r) {
+    for (int a = 0; a < (1<<8); a++) {
+        for (int b = 0; b < (1<<8); b++) {
+            int exact = a+b;
+            if (exact > 255) { exact = 255; }
+            if (exact <   0) { exact =   0; }
+
+            REPORTER_ASSERT(r, saturated_add(skvx::byte16(a), skvx::byte16(b))[0] == exact);
+        }
+    }
 }
 
 }  // namespace skvx

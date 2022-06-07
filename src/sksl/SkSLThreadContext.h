@@ -9,7 +9,6 @@
 #define SKSL_THREADCONTEXT
 
 #include "include/core/SkTypes.h"
-#include "include/private/SkSLDefines.h"
 #include "include/private/SkSLProgramKind.h"
 #include "include/sksl/SkSLErrorReporter.h"
 #include "src/sksl/SkSLContext.h"
@@ -17,15 +16,9 @@
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/ir/SkSLProgram.h"
 
-#include <list>
 #include <memory>
-#include <stack>
 #include <string_view>
 #include <vector>
-
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-#include "src/gpu/ganesh/GrFragmentProcessor.h"
-#endif
 
 namespace SkSL {
 
@@ -158,11 +151,6 @@ public:
      */
     static void ReportError(std::string_view msg, Position pos = {});
 
-    /**
-     * Forwards any pending errors to the DSL ErrorReporter.
-     */
-    static void ReportErrors(Position pos);
-
     static ThreadContext& Instance();
 
     static void SetInstance(std::unique_ptr<ThreadContext> instance);
@@ -190,15 +178,6 @@ private:
     Program::Inputs fInputs;
     // for DSL error reporting purposes
     const char* fFilename = "";
-
-#if !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
-    struct StackFrame {
-        GrFragmentProcessor::ProgramImpl* fProcessor;
-        GrFragmentProcessor::ProgramImpl::EmitArgs* fEmitArgs;
-        SkSL::StatementArray fSavedDeclarations;
-    };
-    std::stack<StackFrame, std::list<StackFrame>> fStack;
-#endif // !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
 
     friend class dsl::DSLCore;
     friend class dsl::DSLWriter;

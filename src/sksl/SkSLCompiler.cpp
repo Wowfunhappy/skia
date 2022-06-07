@@ -510,7 +510,6 @@ std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
     this->resetErrors();
     fInliner.reset();
 
-    settings.fDSLMangling = false;
     return DSLParser(this, settings, kind, std::move(text)).program();
 }
 
@@ -696,7 +695,7 @@ bool Compiler::finalize(Program& program) {
     return this->errorCount() == 0;
 }
 
-#if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || SK_GRAPHITE_ENABLED
+#if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || defined(SK_GRAPHITE_ENABLED)
 
 #if defined(SK_ENABLE_SPIRV_VALIDATION)
 static bool validate_spirv(ErrorReporter& reporter, std::string_view program) {
@@ -723,7 +722,6 @@ static bool validate_spirv(ErrorReporter& reporter, std::string_view program) {
             errors.append(disassembly);
         }
         reporter.error(Position(), errors);
-        reporter.reportPendingErrors(Position());
 #else
         SkDEBUGFAILF("%s", errors.c_str());
 #endif
@@ -834,7 +832,6 @@ static bool validate_wgsl(ErrorReporter& reporter, const std::string& wgsl) {
         std::string diagOutput = diagFormatter.format(program.Diagnostics());
 #if defined(SKSL_STANDALONE)
         reporter.error(Position(), diagOutput);
-        reporter.reportPendingErrors(Position());
 #else
         SkDEBUGFAILF("%s", diagOutput.c_str());
 #endif
@@ -863,7 +860,7 @@ bool Compiler::toWGSL(Program& program, OutputStream& out) {
     return result;
 }
 
-#endif // defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || SK_GRAPHITE_ENABLED
+#endif // defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || defined(SK_GRAPHITE_ENABLED)
 
 void Compiler::handleError(std::string_view msg, Position pos) {
     fErrorText += "error: ";

@@ -11,9 +11,10 @@
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
 #include "src/core/SkDevice.h"
+#include "src/core/SkGlyphRun.h"
 #include "src/core/SkSurfacePriv.h"
 #include "src/gpu/ganesh/GrColorInfo.h"
-#include "src/gpu/ganesh/text/GrTextBlob.h"
+#include "src/text/gpu/TextBlob.h"
 #include "tests/Test.h"
 #include "tools/ToolUtils.h"
 
@@ -327,6 +328,8 @@ DEF_TEST(SubRunAllocator, r) {
     }
 }
 
+using TextBlob = sktext::gpu::TextBlob;
+
 DEF_TEST(KeyEqualityOnPerspective, r) {
     SkTextBlobBuilder builder;
     SkFont font(SkTypeface::MakeDefault(), 16);
@@ -339,18 +342,18 @@ DEF_TEST(KeyEqualityOnPerspective, r) {
 
     // Build the strike device.
     SkSurfaceProps props;
-    GrSDFTControl control(false, false, 1, 100);
+    sktext::gpu::SDFTControl control(false, false, 1, 100);
     SkStrikeDeviceInfo strikeDevice{props, SkScalerContextFlags::kBoostContrast, &control};
     SkMatrix matrix1;
     matrix1.setAll(1, 0, 0, 0, 1, 0, 1, 1, 1);
     SkMatrix matrix2;
     matrix2.setAll(1, 0, 0, 0, 1, 0, 2, 2, 1);
     auto key1 = std::get<1>(
-            GrTextBlob::Key::Make(glyphRunList, paint, matrix1, strikeDevice));
+            TextBlob::Key::Make(glyphRunList, paint, matrix1, strikeDevice));
     auto key2 = std::get<1>(
-            GrTextBlob::Key::Make(glyphRunList, paint, matrix1, strikeDevice));
+            TextBlob::Key::Make(glyphRunList, paint, matrix1, strikeDevice));
     auto key3 = std::get<1>(
-            GrTextBlob::Key::Make(glyphRunList, paint, matrix2, strikeDevice));
+            TextBlob::Key::Make(glyphRunList, paint, matrix2, strikeDevice));
     REPORTER_ASSERT(r, key1 == key2);
     REPORTER_ASSERT(r, !(key1 == key3));
 }

@@ -1416,17 +1416,16 @@ void MetalCodeGenerator::writeFieldAccess(const FieldAccess& f) {
         case SK_POSITION_BUILTIN:
             this->write("_out.sk_Position");
             break;
+        case SK_POINTSIZE_BUILTIN:
+            this->write("_out.sk_PointSize");
+            break;
         default:
-            if (field->fName == "sk_PointSize") {
-                this->write("_out.sk_PointSize");
-            } else {
-                if (FieldAccess::OwnerKind::kAnonymousInterfaceBlock == f.ownerKind()) {
-                    this->write("_globals.");
-                    this->write(fInterfaceBlockNameMap[fInterfaceBlockMap[field]]);
-                    this->write("->");
-                }
-                this->writeName(field->fName);
+            if (FieldAccess::OwnerKind::kAnonymousInterfaceBlock == f.ownerKind()) {
+                this->write("_globals.");
+                this->write(fInterfaceBlockNameMap[fInterfaceBlockMap[field]]);
+                this->write("->");
             }
+            this->writeName(field->fName);
     }
 }
 
@@ -2087,12 +2086,12 @@ void MetalCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf) {
 
 void MetalCodeGenerator::writeFields(const std::vector<Type::Field>& fields, Position parentPos,
         const InterfaceBlock* parentIntf) {
-    MemoryLayout memoryLayout(MemoryLayout::kMetal_Standard);
+    MemoryLayout memoryLayout(MemoryLayout::Standard::kMetal);
     int currentOffset = 0;
     for (const Type::Field& field : fields) {
         int fieldOffset = field.fModifiers.fLayout.fOffset;
         const Type* fieldType = field.fType;
-        if (!MemoryLayout::LayoutIsSupported(*fieldType)) {
+        if (!memoryLayout.isSupported(*fieldType)) {
             fContext.fErrors->error(parentPos, "type '" + std::string(fieldType->name()) +
                                                 "' is not permitted here");
             return;
@@ -2804,7 +2803,6 @@ bool MetalCodeGenerator::generateCode() {
     write_stringstream(fExtraFunctionPrototypes, *fOut);
     write_stringstream(fExtraFunctions, *fOut);
     write_stringstream(body, *fOut);
-    fContext.fErrors->reportPendingErrors(Position());
     return fContext.fErrors->errorCount() == 0;
 }
 

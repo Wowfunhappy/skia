@@ -10,86 +10,107 @@
 #include "include/core/SkTypes.h"
 #include "include/private/SkSLDefines.h"
 #include "include/private/SkSLStatement.h"
-#include "include/private/SkSLString.h"
 #include "include/private/SkSLSymbol.h"
 #include "include/sksl/DSLModifiers.h"
 #include "include/sksl/DSLType.h"
 #include "include/sksl/SkSLOperator.h"
 #include "src/sksl/SkSLThreadContext.h"
-#include "src/sksl/dsl/priv/DSLWriter.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
 #include "src/sksl/ir/SkSLFunctionCall.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
-#include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVariable.h"
 
-#include <string>
+#include <utility>
 
 namespace SkSL {
 
 namespace dsl {
 
-DSLVarBase::DSLVarBase(DSLType type, std::string_view name, DSLExpression initialValue,
-                       Position pos, Position namePos)
-    : DSLVarBase(DSLModifiers(), std::move(type), name, std::move(initialValue), pos, namePos) {}
+/**
+ * DSLVarBase
+ */
 
-DSLVarBase::DSLVarBase(DSLType type, DSLExpression initialValue, Position pos, Position namePos)
-    : DSLVarBase(type, "var", std::move(initialValue), pos, namePos) {}
-
-DSLVarBase::DSLVarBase(const DSLModifiers& modifiers, DSLType type, DSLExpression initialValue,
-                       Position pos, Position namePos)
-    : DSLVarBase(modifiers, type, "var", std::move(initialValue), pos, namePos) {}
-
-DSLVarBase::DSLVarBase(const DSLModifiers& modifiers, DSLType type, std::string_view name,
+DSLVarBase::DSLVarBase(VariableStorage storage, DSLType type, std::string_view name,
                        DSLExpression initialValue, Position pos, Position namePos)
+    : DSLVarBase(storage, DSLModifiers(), std::move(type), name, std::move(initialValue),
+                 pos, namePos) {}
+
+DSLVarBase::DSLVarBase(VariableStorage storage, const DSLModifiers& modifiers, DSLType type,
+                       std::string_view name, DSLExpression initialValue, Position pos,
+                       Position namePos)
     : fModifiers(std::move(modifiers))
     , fType(std::move(type))
     , fNamePosition(namePos)
-    , fRawName(name)
-    , fName(fType.skslType().isOpaque() ? name : DSLWriter::Name(name))
+    , fName(name)
     , fInitialValue(std::move(initialValue))
-    , fDeclared(DSLWriter::MarkVarsDeclared())
-    , fPosition(pos) {}
-
-DSLVarBase::~DSLVarBase() {
-    if (fDeclaration && !fDeclared) {
-        ThreadContext::ReportError(String::printf("variable '%.*s' was destroyed without being "
-                                                  "declared",
-                                                  (int)fRawName.length(),
-                                                  fRawName.data()).c_str());
-    }
-}
+    , fPosition(pos)
+    , fStorage(storage) {}
 
 void DSLVarBase::swap(DSLVarBase& other) {
     SkASSERT(this->storage() == other.storage());
     std::swap(fModifiers, other.fModifiers);
     std::swap(fType, other.fType);
-    std::swap(fUniformHandle, other.fUniformHandle);
     std::swap(fDeclaration, other.fDeclaration);
     std::swap(fVar, other.fVar);
     std::swap(fNamePosition, other.fNamePosition);
-    std::swap(fRawName, other.fRawName);
     std::swap(fName, other.fName);
     std::swap(fInitialValue.fExpression, other.fInitialValue.fExpression);
-    std::swap(fDeclared, other.fDeclared);
     std::swap(fInitialized, other.fInitialized);
     std::swap(fPosition, other.fPosition);
 }
+
+DSLExpression DSLVarBase::operator[](DSLExpression&& index) {
+    return DSLExpression(*this)[std::move(index)];
+}
+
+DSLExpression DSLVarBase::assignExpression(DSLExpression expr) {
+    return DSLExpression(BinaryExpression::Convert(ThreadContext::Context(), Position(),
+            DSLExpression(*this, Position()).release(), SkSL::Operator::Kind::EQ,
+            expr.release()));
+}
+
+/**
+ * DSLVar
+ */
+
+DSLVar::DSLVar() : DSLVarBase(SkSL::VariableStorage::kLocal) {}
+
+DSLVar::DSLVar(DSLType type, std::string_view name, DSLExpression initialValue,
+               Position pos, Position namePos)
+        : INHERITED(SkSL::VariableStorage::kLocal, type, name, std::move(initialValue),
+                    pos, namePos) {}
+
+DSLVar::DSLVar(const DSLModifiers& modifiers, DSLType type, std::string_view name,
+               DSLExpression initialValue, Position pos, Position namePos)
+        : INHERITED(SkSL::VariableStorage::kLocal, modifiers, type, name, std::move(initialValue),
+                    pos, namePos) {}
 
 void DSLVar::swap(DSLVar& other) {
     INHERITED::swap(other);
 }
 
-VariableStorage DSLVar::storage() const {
-    return VariableStorage::kLocal;
-}
+/**
+ * DSLGlobalVar
+ */
+
+DSLGlobalVar::DSLGlobalVar() : DSLVarBase(SkSL::VariableStorage::kGlobal) {}
+
+DSLGlobalVar::DSLGlobalVar(DSLType type, std::string_view name, DSLExpression initialValue,
+                           Position pos, Position namePos)
+        : INHERITED(SkSL::VariableStorage::kGlobal, type, name, std::move(initialValue),
+                    pos, namePos) {}
+
+DSLGlobalVar::DSLGlobalVar(const DSLModifiers& modifiers, DSLType type, std::string_view name,
+                           DSLExpression initialValue, Position pos, Position namePos)
+        : INHERITED(SkSL::VariableStorage::kGlobal, modifiers, type, name, std::move(initialValue),
+                    pos, namePos) {}
 
 DSLGlobalVar::DSLGlobalVar(const char* name)
-    : INHERITED(kVoid_Type, name, DSLExpression(), Position(), Position()) {
+    : INHERITED(SkSL::VariableStorage::kGlobal, kVoid_Type, name, DSLExpression(),
+                Position(), Position()) {
     fName = name;
-    DSLWriter::MarkDeclared(*this);
     const SkSL::Symbol* result = (*ThreadContext::SymbolTable())[fName];
     SkASSERTF(result, "could not find '%.*s' in symbol table", (int)fName.length(), fName.data());
     fVar = &result->as<SkSL::Variable>();
@@ -98,29 +119,6 @@ DSLGlobalVar::DSLGlobalVar(const char* name)
 
 void DSLGlobalVar::swap(DSLGlobalVar& other) {
     INHERITED::swap(other);
-}
-
-VariableStorage DSLGlobalVar::storage() const {
-    return VariableStorage::kGlobal;
-}
-
-void DSLParameter::swap(DSLParameter& other) {
-    INHERITED::swap(other);
-}
-
-VariableStorage DSLParameter::storage() const {
-    return VariableStorage::kParameter;
-}
-
-
-DSLPossibleExpression DSLVarBase::operator[](DSLExpression&& index) {
-    return DSLExpression(*this, Position())[std::move(index)];
-}
-
-DSLPossibleExpression DSLVarBase::assign(DSLExpression expr) {
-    return BinaryExpression::Convert(ThreadContext::Context(), Position(),
-            DSLExpression(*this, Position()).release(), SkSL::Operator::Kind::EQ,
-            expr.release());
 }
 
 std::unique_ptr<SkSL::Expression> DSLGlobalVar::methodCall(std::string_view methodName,
@@ -153,6 +151,24 @@ DSLExpression DSLGlobalVar::eval(DSLExpression x, DSLExpression y, Position pos)
     converted.push_back(x.release());
     converted.push_back(y.release());
     return this->eval(std::move(converted), pos);
+}
+
+/**
+ * DSLParameter
+ */
+
+DSLParameter::DSLParameter() : DSLVarBase(SkSL::VariableStorage::kParameter) {}
+
+DSLParameter::DSLParameter(DSLType type, std::string_view name, Position pos, Position namePos)
+        : INHERITED(SkSL::VariableStorage::kParameter, type, name, DSLExpression(), pos, namePos) {}
+
+DSLParameter::DSLParameter(const DSLModifiers& modifiers, DSLType type, std::string_view name,
+                           Position pos, Position namePos)
+        : INHERITED(SkSL::VariableStorage::kParameter, modifiers, type, name, DSLExpression(),
+                    pos, namePos) {}
+
+void DSLParameter::swap(DSLParameter& other) {
+    INHERITED::swap(other);
 }
 
 } // namespace dsl

@@ -20,6 +20,7 @@
 #include "include/private/SkColorData.h"
 
 enum class SkBackend : uint8_t;
+enum class SkShaderType : uint32_t;
 class SkPaintParamsKeyBuilder;
 class SkPipelineDataGatherer;
 class SkUniquePaintParamsID;
@@ -49,8 +50,8 @@ namespace SolidColorShaderBlock {
 namespace GradientShaderBlocks {
 
     struct GradientData {
-        // TODO: For the sprint we only support 4 stops in the gradients
-        static constexpr int kMaxStops = 4;
+        // TODO: For the sprint we only support 8 stops in the gradients
+        static constexpr int kMaxStops = 8;
 
         // This ctor is used during pre-compilation when we don't have enough information to
         // extract uniform data. However, we must be able to provide enough data to make all the
@@ -183,13 +184,11 @@ namespace BlendModeBlock {
 
 } // namespace BlendModeBlock
 
-#ifdef SK_GRAPHITE_ENABLED
 // Bridge between the combinations system and the SkPaintParamsKey
 SkUniquePaintParamsID CreateKey(const SkKeyContext&,
                                 SkPaintParamsKeyBuilder*,
-                                skgpu::graphite::ShaderCombo::ShaderType,
+                                SkShaderType,
                                 SkTileMode,
                                 SkBlendMode);
-#endif
 
 #endif // SkKeyHelpers_DEFINED

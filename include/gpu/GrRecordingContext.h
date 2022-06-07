@@ -27,7 +27,6 @@ class GrProgramInfo;
 class GrProxyProvider;
 class GrRecordingContextPriv;
 class GrSurfaceProxy;
-class GrTextBlobRedrawCoordinator;
 class GrThreadSafeCache;
 class SkArenaAlloc;
 class SkCapabilities;
@@ -35,6 +34,7 @@ class SkJSONWriter;
 
 namespace sktext::gpu {
 class SubRunAllocator;
+class TextBlobRedrawCoordinator;
 }
 
 #if GR_TEST_UTILS
@@ -98,7 +98,7 @@ public:
         return INHERITED::maxSurfaceSampleCountForColorType(colorType);
     }
 
-    SK_API sk_sp<SkCapabilities> skCapabilities() const;
+    SK_API sk_sp<const SkCapabilities> skCapabilities() const;
 
     // Provides access to functions that aren't part of the public API.
     GrRecordingContextPriv priv();
@@ -192,8 +192,8 @@ protected:
     // same lifetime at the DDL itself.
     virtual void detachProgramData(SkTArray<ProgramData>*) {}
 
-    GrTextBlobRedrawCoordinator* getTextBlobRedrawCoordinator();
-    const GrTextBlobRedrawCoordinator* getTextBlobRedrawCoordinator() const;
+    sktext::gpu::TextBlobRedrawCoordinator* getTextBlobRedrawCoordinator();
+    const sktext::gpu::TextBlobRedrawCoordinator* getTextBlobRedrawCoordinator() const;
 
     GrThreadSafeCache* threadSafeCache();
     const GrThreadSafeCache* threadSafeCache() const;

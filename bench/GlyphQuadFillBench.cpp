@@ -16,8 +16,8 @@
 #include "src/core/SkUtils.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/SkGr.h"
-#include "src/gpu/ganesh/text/GrTextBlob.h"
 #include "src/text/gpu/StrikeCache.h"
+#include "src/text/gpu/TextBlob.h"
 #include "src/utils/SkTestCanvas.h"
 #include "src/utils/SkUTF.h"
 
@@ -53,24 +53,23 @@ class DirectMaskGlyphVertexFillBenchmark : public Benchmark {
         auto glyphRunList = builder.textToGlyphRunList(font, paint, gText, len, {100, 100});
         SkASSERT(!glyphRunList.empty());
         auto device = SkTestCanvas<FillBench>::GetDevice(canvas);
-        SkGlyphRunListPainter painter{SkStrikeCache::GlobalStrikeCache()};
         SkMatrix drawMatrix = view;
         const SkPoint drawOrigin = glyphRunList.origin();
         drawMatrix.preTranslate(drawOrigin.x(), drawOrigin.y());
-        fBlob = GrTextBlob::Make(glyphRunList,
-                                 paint,
-                                 drawMatrix,
-                                 device->strikeDeviceInfo(),
-                                 &painter);
+        fBlob = sktext::gpu::TextBlob::Make(glyphRunList,
+                                            paint,
+                                            drawMatrix,
+                                            device->strikeDeviceInfo(),
+                                            SkStrikeCache::GlobalStrikeCache());
 
-        const GrAtlasSubRun* subRun = fBlob->testingOnlyFirstSubRun();
+        const sktext::gpu::AtlasSubRun* subRun = fBlob->testingOnlyFirstSubRun();
         SkASSERT(subRun);
         subRun->testingOnly_packedGlyphIDToGlyph(&fCache);
         fVertices.reset(new char[subRun->vertexStride(drawMatrix) * subRun->glyphCount() * 4]);
     }
 
     void onDraw(int loops, SkCanvas* canvas) override {
-        const GrAtlasSubRun* subRun = fBlob->testingOnlyFirstSubRun();
+        const sktext::gpu::AtlasSubRun* subRun = fBlob->testingOnlyFirstSubRun();
         SkASSERT(subRun);
 
         SkIRect clip = SkIRect::MakeEmpty();
@@ -85,7 +84,7 @@ class DirectMaskGlyphVertexFillBenchmark : public Benchmark {
     }
 
 private:
-    sk_sp<GrTextBlob> fBlob;
+    sk_sp<sktext::gpu::TextBlob> fBlob;
     sktext::gpu::StrikeCache fCache;
     std::unique_ptr<char[]> fVertices;
 };
