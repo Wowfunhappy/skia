@@ -7,14 +7,32 @@
 
 #include "src/sksl/codegen/SkSLSPIRVCodeGenerator.h"
 
-#include "src/sksl/GLSL.std.450.h"
-
+#include "include/core/SkSpan.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkSLProgramElement.h"
+#include "include/private/SkSLStatement.h"
+#include "include/private/SkSLSymbol.h"
+#include "include/private/SkTArray.h"
 #include "include/sksl/DSLCore.h"
+#include "include/sksl/DSLExpression.h"
+#include "include/sksl/DSLType.h"
+#include "include/sksl/DSLVar.h"
+#include "include/sksl/SkSLErrorReporter.h"
+#include "include/sksl/SkSLOperator.h"
+#include "include/sksl/SkSLPosition.h"
+#include "src/sksl/GLSL.std.450.h"
+#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
-#include "src/sksl/SkSLOperators.h"
+#include "src/sksl/SkSLContext.h"
+#include "src/sksl/SkSLModifiersPool.h"
+#include "src/sksl/SkSLOutputStream.h"
+#include "src/sksl/SkSLPool.h"
+#include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLThreadContext.h"
+#include "src/sksl/SkSLUtil.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBlock.h"
+#include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLConstructorArrayCast.h"
 #include "src/sksl/ir/SkSLConstructorCompound.h"
 #include "src/sksl/ir/SkSLConstructorCompoundCast.h"
@@ -23,6 +41,7 @@
 #include "src/sksl/ir/SkSLConstructorScalarCast.h"
 #include "src/sksl/ir/SkSLConstructorSplat.h"
 #include "src/sksl/ir/SkSLDoStatement.h"
+#include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
 #include "src/sksl/ir/SkSLExtension.h"
 #include "src/sksl/ir/SkSLField.h"
@@ -34,18 +53,23 @@
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
+#include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
+#include "src/sksl/ir/SkSLSwitchCase.h"
 #include "src/sksl/ir/SkSLSwitchStatement.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLTernaryExpression.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 
-#ifdef SK_VULKAN
-#include "src/gpu/vk/GrVkCaps.h"
-#endif
+#include <cmath>
+#include <optional>
+#include <set>
+#include <type_traits>
+#include <utility>
 
 #define kLast_Capability SpvCapabilityMultiViewport
 
@@ -474,11 +498,11 @@ void SPIRVCodeGenerator::writeStruct(const Type& type, const MemoryLayout& memor
         const Layout& fieldLayout = field.fModifiers.fLayout;
         if (fieldLayout.fOffset >= 0) {
             if (fieldLayout.fOffset < (int) offset) {
-                fContext.fErrors->error(type.fPosition, "offset of field '" +
+                fContext.fErrors->error(field.fPosition, "offset of field '" +
                         std::string(field.fName) + "' must be at least " + std::to_string(offset));
             }
             if (fieldLayout.fOffset % alignment) {
-                fContext.fErrors->error(type.fPosition,
+                fContext.fErrors->error(field.fPosition,
                         "offset of field '" + std::string(field.fName) +
                         "' must be a multiple of " + std::to_string(alignment));
             }
@@ -871,23 +895,15 @@ SpvId SPIRVCodeGenerator::writeIntrinsicCall(const FunctionCall& c, OutputStream
 SpvId SPIRVCodeGenerator::vectorize(const Expression& arg, int vectorSize, OutputStream& out) {
     SkASSERT(vectorSize >= 1 && vectorSize <= 4);
     const Type& argType = arg.type();
-    SpvId raw = this->writeExpression(arg, out);
-    if (argType.isScalar()) {
-        if (vectorSize == 1) {
-            return raw;
-        }
-        SpvId vector = this->nextId(&argType);
-        this->writeOpCode(SpvOpCompositeConstruct, 3 + vectorSize, out);
-        this->writeWord(this->getType(argType.toCompound(fContext, vectorSize, 1)), out);
-        this->writeWord(vector, out);
-        for (int i = 0; i < vectorSize; i++) {
-            this->writeWord(raw, out);
-        }
-        return vector;
-    } else {
-        SkASSERT(vectorSize == argType.columns());
-        return raw;
+    if (argType.isScalar() && vectorSize > 1) {
+        ConstructorSplat splat{arg.fPosition,
+                               argType.toCompound(fContext, vectorSize, /*rows=*/1),
+                               arg.clone()};
+        return this->writeConstructorSplat(splat, out);
     }
+
+    SkASSERT(vectorSize == argType.columns());
+    return this->writeExpression(arg, out);
 }
 
 std::vector<SpvId> SPIRVCodeGenerator::vectorize(const ExpressionArray& args, OutputStream& out) {
@@ -1037,7 +1053,8 @@ SpvId SPIRVCodeGenerator::writeSpecialIntrinsic(const FunctionCall& c, SpecialIn
             } else {
                 SkASSERT(arguments.size() == 2);
                 if (fProgram.fConfig->fSettings.fSharpenTextures) {
-                    SpvId lodBias = this->writeLiteral(-0.5, *fContext.fTypes.fFloat);
+                    SpvId lodBias = this->writeLiteral(kSharpenTexturesBias,
+                                                       *fContext.fTypes.fFloat);
                     this->writeInstruction(op, type, result, sampler, uv,
                                            SpvImageOperandsBiasMask, lodBias, out);
                 } else {
@@ -1263,6 +1280,10 @@ SpvId SPIRVCodeGenerator::writeConstantVector(const AnyConstructor& c) {
         key.fValueId[n] = this->writeLiteral(*slotVal, scalarType);
     }
 
+    return this->writeConstantVector(type, key);
+}
+
+SpvId SPIRVCodeGenerator::writeConstantVector(const Type& type, const SPIRVVectorConstant& key) {
     // Check to see if we've already synthesized this vector constant.
     if (SpvId* entry = fVectorConstants.find(key)) {
         return *entry;
@@ -1450,18 +1471,15 @@ void SPIRVCodeGenerator::writeUniformScaleMatrix(SpvId id, SpvId diagonal, const
     SpvId zeroId = this->writeLiteral(0.0, *fContext.fTypes.fFloat);
     std::vector<SpvId> columnIds;
     columnIds.reserve(type.columns());
+    const Type& vecType = type.componentType().toCompound(fContext,
+                                                          /*columns=*/type.rows(),
+                                                          /*rows=*/1);
+    std::vector<SpvId> arguments(/*count*/ type.rows());
     for (int column = 0; column < type.columns(); column++) {
-        this->writeOpCode(SpvOpCompositeConstruct, 3 + type.rows(),
-                          out);
-        this->writeWord(this->getType(type.componentType().toCompound(
-                                fContext, /*columns=*/type.rows(), /*rows=*/1)),
-                        out);
-        SpvId columnId = this->nextId(&type);
-        this->writeWord(columnId, out);
-        columnIds.push_back(columnId);
         for (int row = 0; row < type.rows(); row++) {
-            this->writeWord(row == column ? diagonal : zeroId, out);
+            arguments[row] = (row == column) ? diagonal : zeroId;
         }
+        columnIds.push_back(this->writeComposite(arguments, vecType, out));
     }
     this->writeOpCode(SpvOpCompositeConstruct, 3 + type.columns(),
                       out);
@@ -1672,12 +1690,48 @@ SpvId SPIRVCodeGenerator::writeVectorConstructor(const ConstructorCompound& c, O
     return this->writeComposite(arguments, type, out);
 }
 
+SpvId SPIRVCodeGenerator::writeCompositeAsConstant(const std::vector<SpvId>& arguments,
+                                                   const Type& type,
+                                                   OutputStream& out) {
+    if (!type.isVector()) {
+        // Only vectors are allowed.
+        return (SpvId)-1;
+    }
+    SPIRVVectorConstant key = {/*fTypeId=*/(SpvId)-1,
+                               /*fValueId=*/{(SpvId)-1, (SpvId)-1, (SpvId)-1, (SpvId)-1}};
+    for (size_t index = 0; index < arguments.size(); ++index) {
+        // See if this argument is a numeric constant by scanning fNumberConstants.
+        SpvId arg = arguments[index];
+        bool found = false;
+        for (const auto& [k, v] : fNumberConstants) {
+            if (v == arg) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            // This argument isn't a literal.
+            return (SpvId)-1;
+        }
+        key.fValueId[index] = arg;
+    }
+    // We found a composite that's composed entirely of literals. Write an OpConstantComposite.
+    key.fTypeId = this->getType(type);
+    return this->writeConstantVector(type, key);
+}
+
 SpvId SPIRVCodeGenerator::writeComposite(const std::vector<SpvId>& arguments,
                                          const Type& type,
                                          OutputStream& out) {
+    // If this is a vector composed entirely of literals, write a constant.
+    SpvId result = this->writeCompositeAsConstant(arguments, type, out);
+    if (result != (SpvId)-1) {
+        return result;
+    }
+
     SkASSERT(arguments.size() == (type.isStruct() ? type.fields().size() : (size_t)type.columns()));
 
-    SpvId result = this->nextId(&type);
+    result = this->nextId(&type);
     this->writeOpCode(SpvOpCompositeConstruct, 3 + (int32_t) arguments.size(), out);
     this->writeWord(this->getType(type), out);
     this->writeWord(result, out);
@@ -2099,7 +2153,8 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                 AutoAttachPoolToThread attach(fProgram.fPool.get());
                 Modifiers modifiers;
                 modifiers.fLayout.fBuiltin = DEVICE_FRAGCOORDS_BUILTIN;
-                auto coordsVar = std::make_unique<Variable>(Position(),
+                auto coordsVar = std::make_unique<Variable>(/*pos=*/Position(),
+                                                            /*modifiersPosition=*/Position(),
                                                             fContext.fModifiersPool->add(modifiers),
                                                             DEVICE_COORDS_NAME,
                                                             fContext.fTypes.fFloat4.get(),
@@ -2133,7 +2188,8 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                 AutoAttachPoolToThread attach(fProgram.fPool.get());
                 Modifiers modifiers;
                 modifiers.fLayout.fBuiltin = DEVICE_CLOCKWISE_BUILTIN;
-                auto clockwiseVar = std::make_unique<Variable>(Position(),
+                auto clockwiseVar = std::make_unique<Variable>(/*pos=*/Position(),
+                        /*modifiersPosition=*/Position(),
                         fContext.fModifiersPool->add(modifiers),
                         DEVICE_CLOCKWISE_NAME,
                         fContext.fTypes.fBool.get(),
@@ -2325,7 +2381,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
                                                 const Type& rightType, SpvId rhs,
                                                 const Type& resultType, OutputStream& out) {
     // The comma operator ignores the type of the left-hand side entirely.
-    if (op.kind() == Token::Kind::TK_COMMA) {
+    if (op.kind() == Operator::Kind::COMMA) {
         return rhs;
     }
     // overall type we are operating on: float2, int, uint4...
@@ -2336,11 +2392,11 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
         if (leftType.isVector() && rightType.isNumber()) {
             if (resultType.componentType().isFloat()) {
                 switch (op.kind()) {
-                    case Token::Kind::TK_SLASH: {
+                    case Operator::Kind::SLASH: {
                         rhs = this->writeReciprocal(rightType, rhs, out);
                         [[fallthrough]];
                     }
-                    case Token::Kind::TK_STAR: {
+                    case Operator::Kind::STAR: {
                         SpvId result = this->nextId(&resultType);
                         this->writeInstruction(SpvOpVectorTimesScalar, this->getType(resultType),
                                                result, lhs, rhs, out);
@@ -2350,39 +2406,25 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
                         break;
                 }
             }
-            // promote number to vector
-            const Type& vecType = leftType;
-            SpvId vec = this->nextId(&vecType);
-            this->writeOpCode(SpvOpCompositeConstruct, 3 + vecType.columns(), out);
-            this->writeWord(this->getType(vecType), out);
-            this->writeWord(vec, out);
-            for (int i = 0; i < vecType.columns(); i++) {
-                this->writeWord(rhs, out);
-            }
-            rhs = vec;
+            // Vectorize the right-hand side.
+            std::vector<SpvId> arguments(/*count*/ leftType.columns(), /*value*/ rhs);
+            rhs = this->writeComposite(arguments, leftType, out);
             operandType = &leftType;
         } else if (rightType.isVector() && leftType.isNumber()) {
             if (resultType.componentType().isFloat()) {
-                if (op.kind() == Token::Kind::TK_STAR) {
+                if (op.kind() == Operator::Kind::STAR) {
                     SpvId result = this->nextId(&resultType);
                     this->writeInstruction(SpvOpVectorTimesScalar, this->getType(resultType),
                                            result, rhs, lhs, out);
                     return result;
                 }
             }
-            // promote number to vector
-            const Type& vecType = rightType;
-            SpvId vec = this->nextId(&vecType);
-            this->writeOpCode(SpvOpCompositeConstruct, 3 + vecType.columns(), out);
-            this->writeWord(this->getType(vecType), out);
-            this->writeWord(vec, out);
-            for (int i = 0; i < vecType.columns(); i++) {
-                this->writeWord(lhs, out);
-            }
-            lhs = vec;
+            // Vectorize the left-hand side.
+            std::vector<SpvId> arguments(/*count*/ rightType.columns(), /*value*/ lhs);
+            lhs = this->writeComposite(arguments, rightType, out);
             operandType = &rightType;
         } else if (leftType.isMatrix()) {
-            if (op.kind() == Token::Kind::TK_STAR) {
+            if (op.kind() == Operator::Kind::STAR) {
                 // Matrix-times-vector and matrix-times-scalar have dedicated ops in SPIR-V.
                 SpvOp_ spvop;
                 if (rightType.isMatrix()) {
@@ -2409,7 +2451,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
                                                    resultType, out);
             }
         } else if (rightType.isMatrix()) {
-            if (op.kind() == Token::Kind::TK_STAR) {
+            if (op.kind() == Operator::Kind::STAR) {
                 // Matrix-times-vector and matrix-times-scalar have dedicated ops in SPIR-V.
                 SpvId result = this->nextId(&resultType);
                 if (leftType.isVector()) {
@@ -2442,7 +2484,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
         SkASSERT(operandType->matches(this->getActualType(rightType)));
     }
     switch (op.kind()) {
-        case Token::Kind::TK_EQEQ: {
+        case Operator::Kind::EQEQ: {
             if (operandType->isMatrix()) {
                 return this->writeMatrixComparison(*operandType, lhs, rhs, SpvOpFOrdEqual,
                                                    SpvOpIEqual, SpvOpAll, SpvOpLogicalAnd, out);
@@ -2467,7 +2509,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
                                                                SpvOpIEqual, SpvOpLogicalEqual, out),
                                     *operandType, SpvOpAll, out);
         }
-        case Token::Kind::TK_NEQ:
+        case Operator::Kind::NEQ:
             if (operandType->isMatrix()) {
                 return this->writeMatrixComparison(*operandType, lhs, rhs, SpvOpFUnordNotEqual,
                                                    SpvOpINotEqual, SpvOpAny, SpvOpLogicalOr, out);
@@ -2479,7 +2521,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
                 return this->writeArrayComparison(*operandType, lhs, op, rhs, out);
             }
             [[fallthrough]];
-        case Token::Kind::TK_LOGICALXOR:
+        case Operator::Kind::LOGICALXOR:
             SkASSERT(resultType.isBoolean());
             const Type* tmpType;
             if (operandType->isVector()) {
@@ -2494,40 +2536,40 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
                                                                SpvOpINotEqual, SpvOpLogicalNotEqual,
                                                                out),
                                     *operandType, SpvOpAny, out);
-        case Token::Kind::TK_GT:
+        case Operator::Kind::GT:
             SkASSERT(resultType.isBoolean());
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs,
                                               SpvOpFOrdGreaterThan, SpvOpSGreaterThan,
                                               SpvOpUGreaterThan, SpvOpUndef, out);
-        case Token::Kind::TK_LT:
+        case Operator::Kind::LT:
             SkASSERT(resultType.isBoolean());
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpFOrdLessThan,
                                               SpvOpSLessThan, SpvOpULessThan, SpvOpUndef, out);
-        case Token::Kind::TK_GTEQ:
+        case Operator::Kind::GTEQ:
             SkASSERT(resultType.isBoolean());
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs,
                                               SpvOpFOrdGreaterThanEqual, SpvOpSGreaterThanEqual,
                                               SpvOpUGreaterThanEqual, SpvOpUndef, out);
-        case Token::Kind::TK_LTEQ:
+        case Operator::Kind::LTEQ:
             SkASSERT(resultType.isBoolean());
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs,
                                               SpvOpFOrdLessThanEqual, SpvOpSLessThanEqual,
                                               SpvOpULessThanEqual, SpvOpUndef, out);
-        case Token::Kind::TK_PLUS:
+        case Operator::Kind::PLUS:
             if (leftType.isMatrix() && rightType.isMatrix()) {
                 SkASSERT(leftType.matches(rightType));
                 return this->writeComponentwiseMatrixBinary(leftType, lhs, rhs, SpvOpFAdd, out);
             }
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpFAdd,
                                               SpvOpIAdd, SpvOpIAdd, SpvOpUndef, out);
-        case Token::Kind::TK_MINUS:
+        case Operator::Kind::MINUS:
             if (leftType.isMatrix() && rightType.isMatrix()) {
                 SkASSERT(leftType.matches(rightType));
                 return this->writeComponentwiseMatrixBinary(leftType, lhs, rhs, SpvOpFSub, out);
             }
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpFSub,
                                               SpvOpISub, SpvOpISub, SpvOpUndef, out);
-        case Token::Kind::TK_STAR:
+        case Operator::Kind::STAR:
             if (leftType.isMatrix() && rightType.isMatrix()) {
                 // matrix multiply
                 SpvId result = this->nextId(&resultType);
@@ -2537,31 +2579,31 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
             }
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpFMul,
                                               SpvOpIMul, SpvOpIMul, SpvOpUndef, out);
-        case Token::Kind::TK_SLASH:
+        case Operator::Kind::SLASH:
             if (leftType.isMatrix() && rightType.isMatrix()) {
                 SkASSERT(leftType.matches(rightType));
                 return this->writeComponentwiseMatrixBinary(leftType, lhs, rhs, SpvOpFDiv, out);
             }
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpFDiv,
                                               SpvOpSDiv, SpvOpUDiv, SpvOpUndef, out);
-        case Token::Kind::TK_PERCENT:
+        case Operator::Kind::PERCENT:
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpFMod,
                                               SpvOpSMod, SpvOpUMod, SpvOpUndef, out);
-        case Token::Kind::TK_SHL:
+        case Operator::Kind::SHL:
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpUndef,
                                               SpvOpShiftLeftLogical, SpvOpShiftLeftLogical,
                                               SpvOpUndef, out);
-        case Token::Kind::TK_SHR:
+        case Operator::Kind::SHR:
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpUndef,
                                               SpvOpShiftRightArithmetic, SpvOpShiftRightLogical,
                                               SpvOpUndef, out);
-        case Token::Kind::TK_BITWISEAND:
+        case Operator::Kind::BITWISEAND:
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpUndef,
                                               SpvOpBitwiseAnd, SpvOpBitwiseAnd, SpvOpUndef, out);
-        case Token::Kind::TK_BITWISEOR:
+        case Operator::Kind::BITWISEOR:
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpUndef,
                                               SpvOpBitwiseOr, SpvOpBitwiseOr, SpvOpUndef, out);
-        case Token::Kind::TK_BITWISEXOR:
+        case Operator::Kind::BITWISEXOR:
             return this->writeBinaryOperation(resultType, *operandType, lhs, rhs, SpvOpUndef,
                                               SpvOpBitwiseXor, SpvOpBitwiseXor, SpvOpUndef, out);
         default:
@@ -2573,7 +2615,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const Type& leftType, SpvId lhs,
 SpvId SPIRVCodeGenerator::writeArrayComparison(const Type& arrayType, SpvId lhs, Operator op,
                                                SpvId rhs, OutputStream& out) {
     // The inputs must be arrays, and the op must be == or !=.
-    SkASSERT(op.kind() == Token::Kind::TK_EQEQ || op.kind() == Token::Kind::TK_NEQ);
+    SkASSERT(op.kind() == Operator::Kind::EQEQ || op.kind() == Operator::Kind::NEQ);
     SkASSERT(arrayType.isArray());
     const Type& componentType = arrayType.componentType();
     const SpvId componentTypeId = this->getType(componentType);
@@ -2601,7 +2643,7 @@ SpvId SPIRVCodeGenerator::writeArrayComparison(const Type& arrayType, SpvId lhs,
 SpvId SPIRVCodeGenerator::writeStructComparison(const Type& structType, SpvId lhs, Operator op,
                                                 SpvId rhs, OutputStream& out) {
     // The inputs must be structs containing fields, and the op must be == or !=.
-    SkASSERT(op.kind() == Token::Kind::TK_EQEQ || op.kind() == Token::Kind::TK_NEQ);
+    SkASSERT(op.kind() == Operator::Kind::EQEQ || op.kind() == Operator::Kind::NEQ);
     SkASSERT(structType.isStruct());
     const std::vector<Type::Field>& fields = structType.fields();
     SkASSERT(!fields.empty());
@@ -2638,11 +2680,11 @@ SpvId SPIRVCodeGenerator::mergeComparisons(SpvId comparison, SpvId allComparison
     SpvId boolTypeId = this->getType(boolType);
     SpvId logicalOp = this->nextId(&boolType);
     switch (op.kind()) {
-        case Token::Kind::TK_EQEQ:
+        case Operator::Kind::EQEQ:
             this->writeInstruction(SpvOpLogicalAnd, boolTypeId, logicalOp,
                                    comparison, allComparisons, out);
             break;
-        case Token::Kind::TK_NEQ:
+        case Operator::Kind::NEQ:
             this->writeInstruction(SpvOpLogicalOr, boolTypeId, logicalOp,
                                    comparison, allComparisons, out);
             break;
@@ -2655,7 +2697,7 @@ SpvId SPIRVCodeGenerator::mergeComparisons(SpvId comparison, SpvId allComparison
 
 static float division_by_literal_value(Operator op, const Expression& right) {
     // If this is a division by a literal value, returns that literal value. Otherwise, returns 0.
-    if (op.kind() == Token::Kind::TK_SLASH && right.isFloatLiteral()) {
+    if (op.kind() == Operator::Kind::SLASH && right.isFloatLiteral()) {
         float rhsValue = right.as<Literal>().floatValue();
         if (std::isfinite(rhsValue)) {
             return rhsValue;
@@ -2670,17 +2712,17 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const BinaryExpression& b, Outpu
     Operator op = b.getOperator();
 
     switch (op.kind()) {
-        case Token::Kind::TK_EQ: {
+        case Operator::Kind::EQ: {
             // Handles assignment.
             SpvId rhs = this->writeExpression(*right, out);
             this->getLValue(*left, out)->store(rhs, out);
             return rhs;
         }
-        case Token::Kind::TK_LOGICALAND:
+        case Operator::Kind::LOGICALAND:
             // Handles short-circuiting; we don't necessarily evaluate both LHS and RHS.
             return this->writeLogicalAnd(*b.left(), *b.right(), out);
 
-        case Token::Kind::TK_LOGICALOR:
+        case Operator::Kind::LOGICALOR:
             // Handles short-circuiting; we don't necessarily evaluate both LHS and RHS.
             return this->writeLogicalOr(*b.left(), *b.right(), out);
 
@@ -2704,7 +2746,7 @@ SpvId SPIRVCodeGenerator::writeBinaryExpression(const BinaryExpression& b, Outpu
         // Rewrite floating-point division by a literal into multiplication by the reciprocal.
         // This converts `expr / 2` into `expr * 0.5`
         // This improves codegen, especially for certain types of divides (e.g. vector/scalar).
-        op = Operator(Token::Kind::TK_STAR);
+        op = Operator(Operator::Kind::STAR);
         rhs = this->writeLiteral(1.0 / rhsValue, right->type());
     } else {
         // Write the right-hand side expression normally.
@@ -2797,7 +2839,7 @@ SpvId SPIRVCodeGenerator::writeTernaryExpression(const TernaryExpression& t, Out
 
 SpvId SPIRVCodeGenerator::writePrefixExpression(const PrefixExpression& p, OutputStream& out) {
     const Type& type = p.type();
-    if (p.getOperator().kind() == Token::Kind::TK_MINUS) {
+    if (p.getOperator().kind() == Operator::Kind::MINUS) {
         SpvOp_ negateOp = SpvOpFNegate;
         if (is_float(fContext, type)) {
             negateOp = SpvOpFNegate;
@@ -2817,9 +2859,9 @@ SpvId SPIRVCodeGenerator::writePrefixExpression(const PrefixExpression& p, Outpu
         return result;
     }
     switch (p.getOperator().kind()) {
-        case Token::Kind::TK_PLUS:
+        case Operator::Kind::PLUS:
             return this->writeExpression(*p.operand(), out);
-        case Token::Kind::TK_PLUSPLUS: {
+        case Operator::Kind::PLUSPLUS: {
             std::unique_ptr<LValue> lv = this->getLValue(*p.operand(), out);
             SpvId one = this->writeLiteral(1.0, type);
             SpvId result = this->writeBinaryOperation(type, type, lv->load(out), one,
@@ -2828,7 +2870,7 @@ SpvId SPIRVCodeGenerator::writePrefixExpression(const PrefixExpression& p, Outpu
             lv->store(result, out);
             return result;
         }
-        case Token::Kind::TK_MINUSMINUS: {
+        case Operator::Kind::MINUSMINUS: {
             std::unique_ptr<LValue> lv = this->getLValue(*p.operand(), out);
             SpvId one = this->writeLiteral(1.0, type);
             SpvId result = this->writeBinaryOperation(type, type, lv->load(out), one, SpvOpFSub,
@@ -2836,14 +2878,14 @@ SpvId SPIRVCodeGenerator::writePrefixExpression(const PrefixExpression& p, Outpu
             lv->store(result, out);
             return result;
         }
-        case Token::Kind::TK_LOGICALNOT: {
+        case Operator::Kind::LOGICALNOT: {
             SkASSERT(p.operand()->type().isBoolean());
             SpvId result = this->nextId(nullptr);
             this->writeInstruction(SpvOpLogicalNot, this->getType(type), result,
                                    this->writeExpression(*p.operand(), out), out);
             return result;
         }
-        case Token::Kind::TK_BITWISENOT: {
+        case Operator::Kind::BITWISENOT: {
             SpvId result = this->nextId(nullptr);
             this->writeInstruction(SpvOpNot, this->getType(type), result,
                                    this->writeExpression(*p.operand(), out), out);
@@ -2861,13 +2903,13 @@ SpvId SPIRVCodeGenerator::writePostfixExpression(const PostfixExpression& p, Out
     SpvId result = lv->load(out);
     SpvId one = this->writeLiteral(1.0, type);
     switch (p.getOperator().kind()) {
-        case Token::Kind::TK_PLUSPLUS: {
+        case Operator::Kind::PLUSPLUS: {
             SpvId temp = this->writeBinaryOperation(type, type, result, one, SpvOpFAdd,
                                                     SpvOpIAdd, SpvOpIAdd, SpvOpUndef, out);
             lv->store(temp, out);
             return result;
         }
-        case Token::Kind::TK_MINUSMINUS: {
+        case Operator::Kind::MINUSMINUS: {
             SpvId temp = this->writeBinaryOperation(type, type, result, one, SpvOpFSub,
                                                     SpvOpISub, SpvOpISub, SpvOpUndef, out);
             lv->store(temp, out);
@@ -3036,7 +3078,8 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
         // entirely new block when the variable is referenced. And we can't modify the existing
         // block, so we instead create a modified copy of it and write that.
         std::vector<Type::Field> fields = type.fields();
-        fields.emplace_back(Modifiers(Layout(/*flags=*/0,
+        fields.emplace_back(Position(),
+                            Modifiers(Layout(/*flags=*/0,
                                              /*location=*/-1,
                                              fProgram.fConfig->fSettings.fRTFlipOffset,
                                              /*binding=*/-1,
@@ -3055,6 +3098,7 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
                             /*interfaceBlock=*/true));
             const Variable* modifiedVar = fProgram.fSymbols->takeOwnershipOfSymbol(
                     std::make_unique<Variable>(intfVar.fPosition,
+                                               intfVar.modifiersPosition(),
                                                &intfVar.modifiers(),
                                                intfVar.name(),
                                                rtFlipStructType,
@@ -3404,7 +3448,7 @@ SPIRVCodeGenerator::EntrypointAdapter SPIRVCodeGenerator::writeEntrypointAdapter
     auto assignmentStmt = std::make_unique<ExpressionStatement>(std::make_unique<BinaryExpression>(
             Position(),
             std::move(skFragColorRef),
-            Token::Kind::TK_EQ,
+            Operator::Kind::EQ,
             std::move(callMainFn),
             &main.returnType()));
 
@@ -3412,7 +3456,7 @@ SPIRVCodeGenerator::EntrypointAdapter SPIRVCodeGenerator::writeEntrypointAdapter
     StatementArray entrypointStmts;
     entrypointStmts.push_back(std::move(assignmentStmt));
     auto entrypointBlock = Block::Make(Position(), std::move(entrypointStmts),
-                                       symbolTable, /*isScope=*/true);
+                                       Block::Kind::kBracedScope, symbolTable);
     // Declare an entrypoint function.
     EntrypointAdapter adapter;
     adapter.fLayout = {};
@@ -3446,7 +3490,7 @@ void SPIRVCodeGenerator::writeUniformBuffer(std::shared_ptr<SymbolTable> topLeve
     for (const VarDeclaration* topLevelUniform : fTopLevelUniforms) {
         const Variable* var = &topLevelUniform->var();
         fTopLevelUniformMap.set(var, (int)fields.size());
-        fields.emplace_back(var->modifiers(), var->name(), &var->type());
+        fields.emplace_back(var->fPosition, var->modifiers(), var->name(), &var->type());
     }
     fUniformBuffer.fStruct = Type::MakeStructType(Position(), kUniformBufferName, std::move(fields),
             /*interfaceBlock=*/true);
@@ -3458,8 +3502,9 @@ void SPIRVCodeGenerator::writeUniformBuffer(std::shared_ptr<SymbolTable> topLeve
     Modifiers modifiers{layout, Modifiers::kUniform_Flag};
 
     fUniformBuffer.fInnerVariable = std::make_unique<Variable>(
-            Position(), fProgram.fModifiers->add(modifiers), kUniformBufferName,
-            fUniformBuffer.fStruct.get(), /*builtin=*/false, Variable::Storage::kGlobal);
+            /*pos=*/Position(), /*modifiersPosition=*/Position(),
+            fProgram.fModifiers->add(modifiers), kUniformBufferName, fUniformBuffer.fStruct.get(),
+            /*builtin=*/false, Variable::Storage::kGlobal);
 
     // Create an interface block object for this global variable.
     fUniformBuffer.fInterfaceBlock = std::make_unique<InterfaceBlock>(
@@ -3481,7 +3526,8 @@ void SPIRVCodeGenerator::addRTFlipUniform(Position pos) {
     if (fProgram.fConfig->fSettings.fRTFlipOffset < 0) {
         fContext.fErrors->error(pos, "RTFlipOffset is negative");
     }
-    fields.emplace_back(Modifiers(Layout(/*flags=*/0,
+    fields.emplace_back(pos,
+                        Modifiers(Layout(/*flags=*/0,
                                          /*location=*/-1,
                                          fProgram.fConfig->fSettings.fRTFlipOffset,
                                          /*binding=*/-1,
@@ -3523,7 +3569,8 @@ void SPIRVCodeGenerator::addRTFlipUniform(Position pos) {
         modsPtr = fProgram.fModifiers->add(modifiers);
     }
     const Variable* intfVar = fSynthetics.takeOwnershipOfSymbol(
-            std::make_unique<Variable>(Position(),
+            std::make_unique<Variable>(/*pos=*/Position(),
+                                       /*modifiersPosition=*/Position(),
                                        modsPtr,
                                        name,
                                        intfStruct,

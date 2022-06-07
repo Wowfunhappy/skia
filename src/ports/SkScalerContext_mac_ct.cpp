@@ -59,8 +59,9 @@
 class SkDescriptor;
 
 
-// Set to make glyph bounding boxes visible.
-#define SK_SHOW_TEXT_BLIT_COVERAGE 0
+namespace {
+static inline const constexpr bool kSkShowTextBlitCoverage = false;
+}
 
 template<typename T> class AutoCGTable : SkNoncopyable {
 public:
@@ -479,7 +480,7 @@ void SkScalerContext_Mac::generateMetrics(SkGlyph* glyph, SkArenaAlloc* alloc) {
         // it should be empty. So, if we see a zero-advance, we check if it has an
         // empty path or not, and if so, we jam the bounds to 0. Hopefully a zero-advance
         // is rare, so we won't incur a big performance cost for this extra check.
-        if (0 == cgAdvance.width && 0 == cgAdvance.height && !isMavericks()) {
+        if (0 == cgAdvance.width && 0 == cgAdvance.height && (!isMavericks()) && !isMountainLion()) {
             SkUniqueCFRef<CGPathRef> path(CTFontCreatePathForGlyph(fCTFont.get(), cgGlyph,nullptr));
             if (!path || CGPathIsEmpty(path.get())) {
                 return;
@@ -553,9 +554,9 @@ static inline uint8_t rgb_to_a8(CGRGBPixel rgb, const uint8_t* table8) {
     U8CPU g = 0xFF - ((rgb >>  8) & 0xFF);
     U8CPU b = 0xFF - ((rgb >>  0) & 0xFF);
     U8CPU lum = sk_apply_lut_if<APPLY_PREBLEND>(SkComputeLuminance(r, g, b), table8);
-#if SK_SHOW_TEXT_BLIT_COVERAGE
-    lum = std::max(lum, (U8CPU)0x30);
-#endif
+    if constexpr (kSkShowTextBlitCoverage) {
+        lum = std::max(lum, (U8CPU)0x30);
+    }
     return lum;
 }
 
@@ -582,11 +583,11 @@ static uint16_t RGBToLcd16(CGRGBPixel rgb,
     U8CPU r = sk_apply_lut_if<APPLY_PREBLEND>(0xFF - ((rgb >> 16) & 0xFF), tableR);
     U8CPU g = sk_apply_lut_if<APPLY_PREBLEND>(0xFF - ((rgb >>  8) & 0xFF), tableG);
     U8CPU b = sk_apply_lut_if<APPLY_PREBLEND>(0xFF - ((rgb >>  0) & 0xFF), tableB);
-#if SK_SHOW_TEXT_BLIT_COVERAGE
-    r = std::max(r, (U8CPU)0x30);
-    g = std::max(g, (U8CPU)0x30);
-    b = std::max(b, (U8CPU)0x30);
-#endif
+    if constexpr (kSkShowTextBlitCoverage) {
+        r = std::max(r, (U8CPU)0x30);
+        g = std::max(g, (U8CPU)0x30);
+        b = std::max(b, (U8CPU)0x30);
+    }
     return SkPack888ToRGB16(r, g, b);
 }
 
@@ -613,9 +614,9 @@ static SkPMColor cgpixels_to_pmcolor(CGRGBPixel rgb) {
     U8CPU r = (rgb >> 16) & 0xFF;
     U8CPU g = (rgb >>  8) & 0xFF;
     U8CPU b = (rgb >>  0) & 0xFF;
-#if SK_SHOW_TEXT_BLIT_COVERAGE
-    a = std::max(a, (U8CPU)0x30);
-#endif
+    if constexpr (kSkShowTextBlitCoverage) {
+        a = std::max(a, (U8CPU)0x30);
+    }
     return SkPackARGB32(a, r, g, b);
 }
 
@@ -862,8 +863,8 @@ void SkScalerContext_Mac::generateFontMetrics(SkFontMetrics* metrics) {
     metrics->fFlags |= SkFontMetrics::kUnderlineThicknessIsValid_Flag;
     metrics->fFlags |= SkFontMetrics::kUnderlinePositionIsValid_Flag;
 
-    SkUniqueCFRef<CFArrayRef> ctAxes(CTFontCopyVariationAxes(fCTFont.get()));
-    if (ctAxes && CFArrayGetCount(ctAxes.get()) > 0) {
+    CFArrayRef ctAxes = ((SkTypeface_Mac*)this->getTypeface())->getVariationAxes();
+    if (ctAxes && CFArrayGetCount(ctAxes) > 0) {
         // The bounds are only valid for the default variation.
         metrics->fFlags |= SkFontMetrics::kBoundsInvalid_Flag;
     }

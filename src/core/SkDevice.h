@@ -23,6 +23,7 @@
 #include "src/shaders/SkShaderBase.h"
 
 class SkBitmap;
+class SkColorSpace;
 struct SkDrawShadowRec;
 class SkGlyphRun;
 class SkGlyphRunList;
@@ -35,6 +36,8 @@ class SkSpecialImage;
 namespace skif { class Mapping; }
 namespace skgpu {
 class BaseDevice;
+}
+namespace skgpu::graphite {
 class Device;
 }
 
@@ -192,7 +195,7 @@ public:
     virtual bool android_utils_clipWithStencil() { return false; }
 
     virtual skgpu::BaseDevice* asGaneshDevice() { return nullptr; }
-    virtual skgpu::Device* asGraphiteDevice() { return nullptr; }
+    virtual skgpu::graphite::Device* asGraphiteDevice() { return nullptr; }
 
     // Ensure that non-RSXForm runs are passed to onDrawGlyphRunList.
     void drawGlyphRunList(SkCanvas*, const SkGlyphRunList& glyphRunList, const SkPaint& paint);
@@ -479,17 +482,9 @@ private:
 
 class SkNoPixelsDevice : public SkBaseDevice {
 public:
+    SkNoPixelsDevice(const SkIRect& bounds, const SkSurfaceProps& props);
     SkNoPixelsDevice(const SkIRect& bounds, const SkSurfaceProps& props,
-                     sk_sp<SkColorSpace> colorSpace = nullptr)
-            : SkBaseDevice(SkImageInfo::Make(bounds.size(), kUnknown_SkColorType,
-                                             kUnknown_SkAlphaType, std::move(colorSpace)),
-                           props) {
-        // this fails if we enable this assert: DiscardableImageMapTest.GetDiscardableImagesInRectMaxImage
-        //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);
-
-        this->setOrigin(SkM44(), bounds.left(), bounds.top());
-        this->resetClipStack();
-    }
+                     sk_sp<SkColorSpace> colorSpace);
 
     void resetForNextPicture(const SkIRect& bounds) {
         //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);

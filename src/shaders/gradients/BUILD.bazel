@@ -86,6 +86,7 @@ generated_cc_atom(
         ":SkRadialGradient_hdr",
         ":SkSweepGradient_hdr",
         ":SkTwoPointConicalGradient_hdr",
+        "//include/core:SkColorSpace_hdr",
         "//include/core:SkMallocPixelRef_hdr",
         "//include/private:SkFloatBits_hdr",
         "//include/private:SkHalf_hdr",
@@ -117,7 +118,7 @@ generated_cc_atom(
         "//src/core:SkKeyHelpers_hdr",
         "//src/core:SkReadBuffer_hdr",
         "//src/core:SkWriteBuffer_hdr",
-        "//src/gpu/gradients:GrGradientShader_hdr",
+        "//src/gpu/ganesh/gradients:GrGradientShader_hdr",
     ],
 )
 
@@ -138,7 +139,7 @@ generated_cc_atom(
         "//src/core:SkRasterPipeline_hdr",
         "//src/core:SkReadBuffer_hdr",
         "//src/core:SkWriteBuffer_hdr",
-        "//src/gpu/gradients:GrGradientShader_hdr",
+        "//src/gpu/ganesh/gradients:GrGradientShader_hdr",
     ],
 )
 
@@ -160,7 +161,7 @@ generated_cc_atom(
         "//src/core:SkRasterPipeline_hdr",
         "//src/core:SkReadBuffer_hdr",
         "//src/core:SkWriteBuffer_hdr",
-        "//src/gpu/gradients:GrGradientShader_hdr",
+        "//src/gpu/ganesh/gradients:GrGradientShader_hdr",
     ],
 )
 
@@ -182,6 +183,6 @@ generated_cc_atom(
         "//src/core:SkRasterPipeline_hdr",
         "//src/core:SkReadBuffer_hdr",
         "//src/core:SkWriteBuffer_hdr",
-        "//src/gpu/gradients:GrGradientShader_hdr",
+        "//src/gpu/ganesh/gradients:GrGradientShader_hdr",
     ],
 )

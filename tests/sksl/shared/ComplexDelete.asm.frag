@@ -49,8 +49,13 @@ OpDecorate %24 RelaxedPrecision
 %int = OpTypeInt 32 1
 %int_0 = OpConstant %int 0
 %float_0 = OpConstant %float 0
+%35 = OpConstantComposite %v4float %float_1 %float_0 %float_0 %float_0
+%36 = OpConstantComposite %v4float %float_0 %float_1 %float_0 %float_0
+%37 = OpConstantComposite %v4float %float_0 %float_0 %float_1 %float_0
+%38 = OpConstantComposite %v4float %float_0 %float_0 %float_0 %float_1
 %v4bool = OpTypeVector %bool 4
 %v3float = OpTypeVector %float 3
+%75 = OpConstantComposite %v3float %float_0 %float_0 %float_0
 %main = OpFunction %void None %19
 %20 = OpLabel
 %tmpColor = OpVariable %_ptr_Function_v4float Function
@@ -60,10 +65,6 @@ OpDecorate %24 RelaxedPrecision
 OpStore %tmpColor %23
 %28 = OpAccessChain %_ptr_Uniform_mat4v4float %14 %int_0
 %32 = OpLoad %mat4v4float %28
-%35 = OpCompositeConstruct %v4float %float_1 %float_0 %float_0 %float_0
-%36 = OpCompositeConstruct %v4float %float_0 %float_1 %float_0 %float_0
-%37 = OpCompositeConstruct %v4float %float_0 %float_0 %float_1 %float_0
-%38 = OpCompositeConstruct %v4float %float_0 %float_0 %float_0 %float_1
 %33 = OpCompositeConstruct %mat4v4float %35 %36 %37 %38
 %40 = OpCompositeExtract %v4float %32 0
 %41 = OpCompositeExtract %v4float %33 0
@@ -97,7 +98,6 @@ OpBranchConditional %58 %60 %61
 %72 = OpCompositeConstruct %v4float %69 %70 %71 %float_1
 %73 = OpMatrixTimesVector %v4float %65 %72
 %74 = OpVectorShuffle %v3float %73 %73 0 1 2
-%75 = OpCompositeConstruct %v3float %float_0 %float_0 %float_0
 %76 = OpLoad %v4float %tmpColor
 %77 = OpCompositeExtract %float %76 3
 %78 = OpCompositeConstruct %v3float %77 %77 %77

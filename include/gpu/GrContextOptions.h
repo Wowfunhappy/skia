@@ -170,13 +170,6 @@ struct SK_API GrContextOptions {
     bool fAvoidStencilBuffers = false;
 
     /**
-     * If true, texture fetches from mip-mapped textures will be biased to read larger MIP levels.
-     * This has the effect of sharpening those textures, at the cost of some aliasing, and possible
-     * performance impact.
-     */
-    bool fSharpenMipmappedTextures = false;
-
-    /**
      * Enables driver workaround to use draws instead of HW clears, e.g. glClear on the GL backend.
      */
     Enable fUseDrawInsteadOfClear = Enable::kDefault;
