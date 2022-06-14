@@ -47,7 +47,6 @@ GrGLCaps::GrGLCaps(const GrContextOptions& contextOptions,
     fBindUniformLocationSupport = false;
     fMipmapLevelControlSupport = false;
     fMipmapLodControlSupport = false;
-    fUseBufferDataNullHint = false;
     fDoManualMipmapping = false;
     fClearToBoundaryValuesIsBroken = false;
     fClearTextureSupport = false;
@@ -311,9 +310,15 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
         fMipmapLodControlSupport = false;
     }
 
-    // Chrome's command buffer will zero out a buffer if null is passed to glBufferData to avoid
-    // letting an application see uninitialized memory. WebGL spec explicitly disallows null values.
-    fUseBufferDataNullHint = !GR_IS_GR_WEBGL(standard) && !ctxInfo.isOverCommandBuffer();
+    if ((GR_IS_GR_GL_ES(standard) || GR_IS_GR_GL(standard)) &&
+        ctxInfo.hasExtension("GL_ARB_invalidate_subdata")) {
+        fInvalidateBufferType = InvalidateBufferType::kInvalidate;
+    } else if (!GR_IS_GR_WEBGL(standard) && !ctxInfo.isOverCommandBuffer()) {
+        // Chrome's command buffer will push an array of zeros to a buffer if null is passed to
+        // glBufferData (to avoid letting an application see uninitialized memory). This is
+        // expensive so we avoid it. WebGL spec explicitly disallows null values.
+        fInvalidateBufferType = InvalidateBufferType::kNullData;
+    }
 
     if (GR_IS_GR_GL(standard)) {
         fClearTextureSupport = (version >= GR_GL_VER(4,4) ||
@@ -1064,8 +1069,8 @@ void GrGLCaps::initBlendEqationSupport(const GrGLContextInfo& ctxInfo) {
     GrShaderCaps* shaderCaps = static_cast<GrShaderCaps*>(fShaderCaps.get());
 
     bool layoutQualifierSupport = false;
-    if ((GR_IS_GR_GL(fStandard) && shaderCaps->generation() >= SkSL::GLSLGeneration::k140)  ||
-        (GR_IS_GR_GL_ES(fStandard) && shaderCaps->generation() >= SkSL::GLSLGeneration::k300es)) {
+    if ((GR_IS_GR_GL(fStandard) && shaderCaps->fGLSLGeneration >= SkSL::GLSLGeneration::k140) ||
+        (GR_IS_GR_GL_ES(fStandard) && shaderCaps->fGLSLGeneration >= SkSL::GLSLGeneration::k300es)){
         layoutQualifierSupport = true;
     } else if (GR_IS_GR_WEBGL(fStandard)) {
         return;
@@ -1156,47 +1161,51 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
 
     writer->endArray();
 
-    static const char* kMSFBOExtStr[] = {
-        "None",
-        "Standard",
-        "Apple",
-        "IMG MS To Texture",
-        "EXT MS To Texture",
+    auto msfboStr = [&] {
+        switch (fMSFBOType) {
+            case kNone_MSFBOType:               return "None";
+            case kStandard_MSFBOType:           return "Standard";
+            case kES_Apple_MSFBOType:           return "Apple";
+            case kES_IMG_MsToTexture_MSFBOType: return "IMG MS To Texture";
+            case kES_EXT_MsToTexture_MSFBOType: return "EXT MS To Texture";
+        }
+        SkUNREACHABLE;
     };
-    static_assert(0 == kNone_MSFBOType);
-    static_assert(1 == kStandard_MSFBOType);
-    static_assert(2 == kES_Apple_MSFBOType);
-    static_assert(3 == kES_IMG_MsToTexture_MSFBOType);
-    static_assert(4 == kES_EXT_MsToTexture_MSFBOType);
-    static_assert(SK_ARRAY_COUNT(kMSFBOExtStr) == kLast_MSFBOType + 1);
 
-    static const char* kInvalidateFBTypeStr[] = {
-        "None",
-        "Discard",
-        "Invalidate",
+    auto invalidateFBTypeStr = [&] {
+        switch (fInvalidateFBType) {
+            case kNone_InvalidateFBType:       return "None";
+            case kDiscard_InvalidateFBType:    return "Discard";
+            case kInvalidate_InvalidateFBType: return "Invalidate";
+        }
+        SkUNREACHABLE;
     };
-    static_assert(0 == kNone_InvalidateFBType);
-    static_assert(1 == kDiscard_InvalidateFBType);
-    static_assert(2 == kInvalidate_InvalidateFBType);
-    static_assert(SK_ARRAY_COUNT(kInvalidateFBTypeStr) == kLast_InvalidateFBType + 1);
 
-    static const char* kMapBufferTypeStr[] = {
-        "None",
-        "MapBuffer",
-        "MapBufferRange",
-        "Chromium",
+    auto invalidateBufferTypeStr = [&] {
+        switch (fInvalidateBufferType) {
+            case InvalidateBufferType::kNone:       return "None";
+            case InvalidateBufferType::kNullData:   return "Null data hint";
+            case InvalidateBufferType::kInvalidate: return "Invalidate";
+        }
+        SkUNREACHABLE;
     };
-    static_assert(0 == kNone_MapBufferType);
-    static_assert(1 == kMapBuffer_MapBufferType);
-    static_assert(2 == kMapBufferRange_MapBufferType);
-    static_assert(3 == kChromium_MapBufferType);
-    static_assert(SK_ARRAY_COUNT(kMapBufferTypeStr) == kLast_MapBufferType + 1);
+
+    auto mapBufferTypeStr = [&] {
+        switch (fMapBufferType) {
+            case kNone_MapBufferType:           return "None";
+            case kMapBuffer_MapBufferType:      return "MapBuffer";
+            case kMapBufferRange_MapBufferType: return "MapBufferRange";
+            case kChromium_MapBufferType:       return "Chromium";
+        }
+        SkUNREACHABLE;
+    };
 
     writer->appendBool("Core Profile", fIsCoreProfile);
-    writer->appendString("MSAA Type", kMSFBOExtStr[fMSFBOType]);
-    writer->appendString("Invalidate FB Type", kInvalidateFBTypeStr[fInvalidateFBType]);
-    writer->appendString("Map Buffer Type", kMapBufferTypeStr[fMapBufferType]);
-    writer->appendString("Multi Draw Type", multi_draw_type_name(fMultiDrawType));
+    writer->appendCString("MSAA Type", msfboStr());
+    writer->appendCString("Invalidate FB Type", invalidateFBTypeStr());
+    writer->appendCString("Invalidate Buffer Type", invalidateBufferTypeStr());
+    writer->appendCString("Map Buffer Type", mapBufferTypeStr());
+    writer->appendCString("Multi Draw Type", multi_draw_type_name(fMultiDrawType));
     writer->appendS32("Max FS Uniform Vectors", fMaxFragmentUniformVectors);
     writer->appendBool("Pack Flip Y support", fPackFlipYSupport);
 
@@ -1211,7 +1220,6 @@ void GrGLCaps::onDumpJSON(SkJSONWriter* writer) const {
     writer->appendBool("Rectangle texture support", fRectangleTextureSupport);
     writer->appendBool("Mipmap LOD control support", fMipmapLodControlSupport);
     writer->appendBool("Mipmap level control support", fMipmapLevelControlSupport);
-    writer->appendBool("Use buffer data null hint", fUseBufferDataNullHint);
     writer->appendBool("Clear texture support", fClearTextureSupport);
     writer->appendBool("Program binary support", fProgramBinarySupport);
     writer->appendBool("Program parameters support", fProgramParameterSupport);
@@ -4215,8 +4223,10 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     // All Adrenos claim to support LUM16F but don't appear to actually do so.
     // The failing devices/gpus were: Nexus5/Adreno330, Nexus5x/Adreno418, Pixel/Adreno530,
     // Pixel2XL/Adreno540 and Pixel3/Adreno630
-    formatWorkarounds->fDisableLuminance16F = ctxInfo.renderer() == GrGLRenderer::kIntelBroadwell ||
-                                              ctxInfo.vendor()   == GrGLVendor::kQualcomm;
+    formatWorkarounds->fDisableLuminance16F =
+            (ctxInfo.renderer() == GrGLRenderer::kIntelBroadwell ||
+             ctxInfo.vendor() == GrGLVendor::kQualcomm) &&
+            ctxInfo.angleBackend() == GrGLANGLEBackend::kUnknown;
 
 #ifdef SK_BUILD_FOR_MAC
     // On a MacBookPro 11.5 running MacOS 10.13 with a Radeon M370X the TransferPixelsFrom test

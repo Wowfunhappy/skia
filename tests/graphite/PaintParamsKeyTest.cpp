@@ -13,11 +13,13 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkShader.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/private/SkUniquePaintParamsID.h"
 #include "src/core/SkKeyContext.h"
 #include "src/core/SkKeyHelpers.h"
 #include "src/core/SkPipelineData.h"
+#include "src/core/SkRuntimeEffectPriv.h"
 #include "src/core/SkShaderCodeDictionary.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/ContextUtils.h"
@@ -90,6 +92,12 @@ std::tuple<SkPaint, int> create_paint(Recorder* recorder,
             s = SkShaders::Blend(SkBlendMode::kColorDodge, std::move(dst), std::move(src));
             break;
         }
+        case SkShaderType::kRuntimeShader: {
+            sk_sp<SkRuntimeEffect> effect = TestingOnly_GetCommonRuntimeEffect();
+            s = effect->makeShader(/*uniforms=*/nullptr, /*children=*/{});
+            break;
+        }
+
     }
     SkPaint p;
     p.setColor(SK_ColorRED);
@@ -127,14 +135,8 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(PaintParamsKeyTest, reporter, context) {
                     SkShaderType::kConicalGradient,
                     SkShaderType::kLocalMatrix,
                     SkShaderType::kImage,
-                    SkShaderType::kBlendShader }) {
-
-        if (s == SkShaderType::kLocalMatrix || s == SkShaderType::kBlendShader) {
-            // TODO: For these two cases to work we need to create a PaintCombination for
-            // CreateKey
-            continue;
-        }
-
+                    SkShaderType::kBlendShader,
+                    SkShaderType::kRuntimeShader }) {
         for (auto tm: { SkTileMode::kClamp,
                         SkTileMode::kRepeat,
                         SkTileMode::kMirror,
@@ -153,7 +155,7 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(PaintParamsKeyTest, reporter, context) {
                 auto [ uniqueID1, uIndex, tIndex] = ExtractPaintData(recorder.get(), &gatherer,
                                                                      &builder, {}, PaintParams(p));
 
-                SkUniquePaintParamsID uniqueID2 = CreateKey(keyContext, &builder, s, tm, bm);
+                SkUniquePaintParamsID uniqueID2 = CreateKey(keyContext, &builder, s, bm);
                 // ExtractPaintData and CreateKey agree
                 REPORTER_ASSERT(reporter, uniqueID1 == uniqueID2);
 

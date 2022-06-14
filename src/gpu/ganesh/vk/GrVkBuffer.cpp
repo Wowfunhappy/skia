@@ -150,7 +150,8 @@ sk_sp<GrVkBuffer> GrVkBuffer::Make(GrVkGpu* gpu,
     }
 
     return sk_sp<GrVkBuffer>(new GrVkBuffer(
-            gpu, size, bufferType, accessPattern, buffer, alloc, uniformDescSet, /*label=*/{}));
+            gpu, size, bufferType, accessPattern, buffer, alloc, uniformDescSet,
+            /*label=*/"MakeVkBuffer"));
 }
 
 void GrVkBuffer::vkMap(size_t size) {
@@ -298,14 +299,6 @@ void GrVkBuffer::onUnmap() {
 }
 
 bool GrVkBuffer::onUpdateData(const void* src, size_t srcSizeInBytes) {
-    if (this->wasDestroyed()) {
-        return false;
-    }
-
-    if (srcSizeInBytes > this->size()) {
-        return false;
-    }
-
     if (this->isVkMappable()) {
         this->vkMap(srcSizeInBytes);
         if (!fMapPtr) {

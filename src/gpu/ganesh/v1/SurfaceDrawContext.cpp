@@ -181,7 +181,8 @@ std::unique_ptr<SurfaceDrawContext> SurfaceDrawContext::Make(
             mipmapped,
             fit,
             budgeted,
-            isProtected);
+            isProtected,
+            /*label=*/"MakeSurfaceDrawContextWithCustomSwizzles");
     if (!proxy) {
         return nullptr;
     }
@@ -219,14 +220,16 @@ std::unique_ptr<SurfaceDrawContext> SurfaceDrawContext::Make(
     if (!format.isValid()) {
         return nullptr;
     }
-    sk_sp<GrTextureProxy> proxy = rContext->priv().proxyProvider()->createProxy(format,
-                                                                                dimensions,
-                                                                                GrRenderable::kYes,
-                                                                                sampleCnt,
-                                                                                mipmapped,
-                                                                                fit,
-                                                                                budgeted,
-                                                                                isProtected);
+    sk_sp<GrTextureProxy> proxy = rContext->priv().proxyProvider()->createProxy(
+            format,
+            dimensions,
+            GrRenderable::kYes,
+            sampleCnt,
+            mipmapped,
+            fit,
+            budgeted,
+            isProtected,
+            /*label=*/"MakeSurfaceDrawContextUsingDefaultTextureFormat");
     if (!proxy) {
         return nullptr;
     }

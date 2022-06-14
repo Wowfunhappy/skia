@@ -21,8 +21,10 @@
 
 enum class SkBackend : uint8_t;
 enum class SkShaderType : uint32_t;
+class SkData;
 class SkPaintParamsKeyBuilder;
 class SkPipelineDataGatherer;
+class SkRuntimeEffect;
 class SkUniquePaintParamsID;
 class SkKeyContext;
 
@@ -30,24 +32,16 @@ namespace skgpu::graphite { class TextureProxy; }
 
 // The KeyHelpers can be used to manually construct an SkPaintParamsKey
 
-namespace DepthStencilOnlyBlock {
+struct SolidColorShaderBlock {
 
-    void AddToKey(const SkKeyContext&,
-                  SkPaintParamsKeyBuilder*,
-                  SkPipelineDataGatherer*);
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           const SkPMColor4f&);
 
-} // namespace DepthStencilOnlyBlock
+};
 
-namespace SolidColorShaderBlock {
-
-    void AddToKey(const SkKeyContext&,
-                  SkPaintParamsKeyBuilder*,
-                  SkPipelineDataGatherer*,
-                  const SkPMColor4f&);
-
-} // namespace SolidColorShaderBlock
-
-namespace GradientShaderBlocks {
+struct GradientShaderBlocks {
 
     struct GradientData {
         // TODO: For the sprint we only support 8 stops in the gradients
@@ -56,14 +50,12 @@ namespace GradientShaderBlocks {
         // This ctor is used during pre-compilation when we don't have enough information to
         // extract uniform data. However, we must be able to provide enough data to make all the
         // relevant decisions about which code snippets to use.
-        GradientData(SkShader::GradientType,
-                     SkTileMode,
-                     int numStops);
+        GradientData(SkShader::GradientType, int numStops);
 
         // This ctor is used when extracting information from PaintParams. It must provide
         // enough data to generate the uniform data the selected code snippet will require.
         GradientData(SkShader::GradientType,
-                     SkM44 localMatrix,
+                     const SkM44& localMatrix,
                      SkPoint point0, SkPoint point1,
                      float radius0, float radius1,
                      float bias, float scale,
@@ -104,33 +96,31 @@ namespace GradientShaderBlocks {
         float                  fOffsets[kMaxStops];
     };
 
-    void AddToKey(const SkKeyContext&,
-                  SkPaintParamsKeyBuilder*,
-                  SkPipelineDataGatherer*,
-                  const GradientData&);
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           const GradientData&);
 
-} // namespace GradientShaderBlocks
+};
 
-namespace LocalMatrixShaderBlock {
+struct LocalMatrixShaderBlock {
 
     struct LMShaderData {
-        LMShaderData(SkShader* proxyShader, const SkMatrix& localMatrix)
-                : fProxyShader(proxyShader)
-                , fLocalMatrix(localMatrix) {
+        LMShaderData(const SkMatrix& localMatrix)
+                : fLocalMatrix(localMatrix) {
         }
 
-        SkShader*   fProxyShader;
         const SkM44 fLocalMatrix;
     };
 
-    void AddToKey(const SkKeyContext&,
-                  SkPaintParamsKeyBuilder*,
-                  SkPipelineDataGatherer*,
-                  const LMShaderData&);
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           const LMShaderData&);
 
-} // namespace LocalMatrixShaderBlock
+};
 
-namespace ImageShaderBlock {
+struct ImageShaderBlock {
 
     struct ImageData {
         ImageData(const SkSamplingOptions& sampling,
@@ -152,43 +142,62 @@ namespace ImageShaderBlock {
 #endif
     };
 
-    void AddToKey(const SkKeyContext&,
-                  SkPaintParamsKeyBuilder*,
-                  SkPipelineDataGatherer*,
-                  const ImageData&);
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           const ImageData&);
 
-} // namespace ImageShaderBlock
+};
 
-namespace BlendShaderBlock {
-
+struct BlendShaderBlock {
     struct BlendShaderData {
-        SkShader*   fDst;
-        SkShader*   fSrc;
         // TODO: add support for blenders
         SkBlendMode fBM;
     };
 
-    void AddToKey(const SkKeyContext&,
-                  SkPaintParamsKeyBuilder*,
-                  SkPipelineDataGatherer*,
-                  const BlendShaderData&);
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           const BlendShaderData&);
 
-} // namespace BlendShaderBlock
+};
 
-namespace BlendModeBlock {
+struct BlendModeBlock {
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           SkBlendMode);
+};
 
-    void AddToKey(const SkKeyContext&,
-                  SkPaintParamsKeyBuilder*,
-                  SkPipelineDataGatherer*,
-                  SkBlendMode);
+struct RuntimeShaderBlock {
+    struct ShaderData {
+        // This ctor is used during pre-compilation when we don't have enough information to
+        // extract uniform data.
+        ShaderData(sk_sp<const SkRuntimeEffect> effect);
 
-} // namespace BlendModeBlock
+        // This ctor is used when extracting information from PaintParams.
+        ShaderData(sk_sp<const SkRuntimeEffect> effect, sk_sp<const SkData> uniforms);
+
+        bool operator==(const ShaderData& rhs) const;
+        bool operator!=(const ShaderData& rhs) const { return !(*this == rhs); }
+
+        // Runtime shader data.
+        sk_sp<const SkRuntimeEffect> fEffect;
+        sk_sp<const SkData>          fUniforms;
+    };
+
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           const ShaderData&);
+};
 
 // Bridge between the combinations system and the SkPaintParamsKey
+sk_sp<SkRuntimeEffect> TestingOnly_GetCommonRuntimeEffect();
+
 SkUniquePaintParamsID CreateKey(const SkKeyContext&,
                                 SkPaintParamsKeyBuilder*,
                                 SkShaderType,
-                                SkTileMode,
                                 SkBlendMode);
 
 #endif // SkKeyHelpers_DEFINED

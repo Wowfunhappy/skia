@@ -150,23 +150,17 @@ debs_to_install = [
 def _download_and_extract_deb(ctx, deb, sha256, prefix, output = ""):
     """Downloads a debian file and extracts the data into the provided output directory"""
 
-    # https://bazel.build/rules/lib/repository_ctx#download
-    # .deb files are also .ar archives.
-    ctx.download(
+    # https://bazel.build/rules/lib/repository_ctx#download_and_extract
+    # A .deb file has a data.tar.xz and a control.tar.xz, but the important contents
+    # (i.e. the headers or libs) are in the data.tar.xz
+    ctx.download_and_extract(
         url = _mirror([deb, mirror_prefix + sha256 + ".deb"]),
-        output = "tmp/deb.ar",
+        output = "tmp",
         sha256 = sha256,
     )
 
-    # https://bazel.build/rules/lib/repository_ctx#execute
-    # This uses the statically built binary from the infra repo
-    res = ctx.execute(["bin/open_ar", "--input", "tmp/deb.ar", "--output_dir", "tmp"], quiet = False)
-    if res.return_code != 0:
-        # Run it again to display the error
-        fail("Could not open deb.ar from " + deb)
-
     # https://bazel.build/rules/lib/repository_ctx#extract
-    extract_info = ctx.extract(
+    ctx.extract(
         archive = "tmp/data.tar.xz",
         output = output,
         stripPrefix = prefix,
@@ -176,16 +170,6 @@ def _download_and_extract_deb(ctx, deb, sha256, prefix, output = ""):
     ctx.delete("tmp")
 
 def _download_linux_amd64_toolchain_impl(ctx):
-    # Workaround for Bazel not yet supporting .ar files
-    # See https://skia-review.googlesource.com/c/buildbot/+/524764
-    # https://bazel.build/rules/lib/repository_ctx#download
-    ctx.download(
-        url = mirror_prefix + "open_ar_v1",
-        sha256 = "55bb74d9ce5d6fa06e390b2319a410ec595dbb591a3ce650da356efe970f86d3",
-        executable = True,
-        output = "bin/open_ar",
-    )
-
     # Download the clang toolchain (the extraction can take a while)
     # https://bazel.build/rules/lib/repository_ctx#download_and_extract
     ctx.download_and_extract(
@@ -205,18 +189,59 @@ def _download_linux_amd64_toolchain_impl(ctx):
             ".",
         )
 
-    # Create a BUILD.bazel file that makes all the files in this subfolder
-    # available for use in rules, i.e. in the toolchain declaration.
+    # Create a BUILD.bazel file that makes the files downloaded into the toolchain visible.
+    # We have separate groups for each task because doing less work (sandboxing fewer files
+    # or uploading less data to RBE) makes compiles go faster. We try to strike a balance
+    # between minimal specifications and not having to edit this file often with our use
+    # of globs.
     # https://bazel.build/rules/lib/repository_ctx#file
     ctx.file(
         "BUILD.bazel",
         content = """
 filegroup(
-    name = "all_files",
-    srcs = glob([
-        "**",
-    ]),
-    visibility = ["//visibility:public"]
+    name = "archive_files",
+    srcs = [
+        "bin/llvm-ar",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "compile_files",
+    srcs = [
+        "bin/clang",
+        "usr/bin/include-what-you-use",
+    ] + glob(
+        include = [
+            "include/c++/v1/**",
+            "usr/include/**",
+            "lib/clang/13.0.0/**",
+            "usr/include/x86_64-linux-gnu/**",
+        ],
+        allow_empty = False,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "link_files",
+    srcs = [
+        "bin/clang",
+        "bin/ld.lld",
+        "bin/lld",
+        "lib/libc++.a",
+        "lib/libc++abi.a",
+        "lib/libunwind.a",
+        "lib64/ld-linux-x86-64.so.2",
+    ] + glob(
+        include = [
+            "lib/clang/13.0.0/lib/**",
+            "lib/x86_64-linux-gnu/**",
+            "usr/lib/x86_64-linux-gnu/**",
+        ],
+        allow_empty = False,
+    ),
+    visibility = ["//visibility:public"],
 )
 """,
         executable = False,

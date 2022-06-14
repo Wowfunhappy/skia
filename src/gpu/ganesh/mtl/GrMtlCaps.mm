@@ -524,8 +524,6 @@ void GrMtlCaps::initShaderCaps() {
     shaderCaps->fHalfIs32Bits = false;
 
     shaderCaps->fMaxFragmentSamplers = 16;
-
-    shaderCaps->fCanUseFastMath = true;
 }
 
 void GrMtlCaps::applyDriverCorrectnessWorkarounds(const GrContextOptions&, const id<MTLDevice>) {
@@ -1243,13 +1241,13 @@ void GrMtlCaps::onDumpJSON(SkJSONWriter* writer) const {
 
     switch (fGPUFamily) {
         case GPUFamily::kMac:
-            writer->appendString("GPU Family", "Mac");
+            writer->appendNString("GPU Family", "Mac");
             break;
         case GPUFamily::kApple:
-            writer->appendString("GPU Family", "Apple");
+            writer->appendNString("GPU Family", "Apple");
             break;
         default:
-            writer->appendString("GPU Family", "unknown");
+            writer->appendNString("GPU Family", "unknown");
             break;
     }
     writer->appendS32("Family Group", fFamilyGroup);
