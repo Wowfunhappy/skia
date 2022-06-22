@@ -16,13 +16,25 @@ namespace {
 
 SkPaintParamsKey create_key_with_data(SkPaintParamsKeyBuilder* builder,
                                       int snippetID,
-                                      SkSpan<const uint8_t> span) {
+                                      SkSpan<const uint8_t> dataPayload) {
     SkDEBUGCODE(builder->checkReset());
 
     builder->beginBlock(snippetID);
+    builder->addBytes(dataPayload.size(), dataPayload.data());
+    builder->endBlock();
 
-    builder->addBytes(span.size(), span.data());
+    return builder->lockAsKey();
+}
 
+SkPaintParamsKey create_key_with_ptr(SkPaintParamsKeyBuilder* builder,
+                                     int snippetID,
+                                     SkSpan<const uint8_t> dataPayload,
+                                     void* pointerData) {
+    SkDEBUGCODE(builder->checkReset());
+
+    builder->beginBlock(snippetID);
+    builder->addBytes(dataPayload.size(), dataPayload.data());
+    builder->addPointer(pointerData);
     builder->endBlock();
 
     return builder->lockAsKey();
@@ -31,7 +43,7 @@ SkPaintParamsKey create_key_with_data(SkPaintParamsKeyBuilder* builder,
 SkPaintParamsKey create_key(SkPaintParamsKeyBuilder* builder, int snippetID, int size) {
     SkASSERT(size <= 1024);
     static constexpr uint8_t kDummyData[1024] = {};
-    return create_key_with_data(builder, snippetID, SkMakeSpan(kDummyData, size));
+    return create_key_with_data(builder, snippetID, SkSpan(kDummyData, size));
 }
 
 } // anonymous namespace
@@ -54,12 +66,12 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyValidBlockSizeTest, reporter, context) {
 
     // _Just_ on the edge of being too big
     static const int kMaxBlockDataSize = SkPaintParamsKey::kMaxBlockSize -
-                                         SkPaintParamsKey::kBlockHeaderSizeInBytes;
+                                         sizeof(SkPaintParamsKey::Header);
     static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
             {"data", SkPaintParamsKey::DataPayloadType::kByte, kMaxBlockDataSize},
     };
 
-    int userSnippetID = dict->addUserDefinedSnippet("keyAlmostTooBig", SkMakeSpan(kDataFields));
+    int userSnippetID = dict->addUserDefinedSnippet("keyAlmostTooBig", kDataFields);
     SkPaintParamsKey key = create_key(&builder, userSnippetID, kMaxBlockDataSize);
 
     // Key is created successfully.
@@ -73,12 +85,12 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyTooLargeBlockSizeTest, reporter, context) {
 
     // Too big by one byte
     static const int kBlockDataSize = SkPaintParamsKey::kMaxBlockSize -
-                                      SkPaintParamsKey::kBlockHeaderSizeInBytes + 1;
+                                      sizeof(SkPaintParamsKey::Header) + 1;
     static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
             {"data", SkPaintParamsKey::DataPayloadType::kByte, kBlockDataSize},
     };
 
-    int userSnippetID = dict->addUserDefinedSnippet("keyTooBig", SkMakeSpan(kDataFields));
+    int userSnippetID = dict->addUserDefinedSnippet("keyTooBig", kDataFields);
     SkPaintParamsKey key = create_key(&builder, userSnippetID, kBlockDataSize);
 
     // Key creation fails.
@@ -93,8 +105,8 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyEqualityChecksSnippetID, reporter, context) {
             {"data", SkPaintParamsKey::DataPayloadType::kByte, kBlockDataSize},
     };
 
-    int userSnippetID1 = dict->addUserDefinedSnippet("key1", SkMakeSpan(kDataFields));
-    int userSnippetID2 = dict->addUserDefinedSnippet("key2", SkMakeSpan(kDataFields));
+    int userSnippetID1 = dict->addUserDefinedSnippet("key1", kDataFields);
+    int userSnippetID2 = dict->addUserDefinedSnippet("key2", kDataFields);
 
     SkPaintParamsKeyBuilder builderA(dict, SkBackend::kGraphite);
     SkPaintParamsKeyBuilder builderB(dict, SkBackend::kGraphite);
@@ -118,7 +130,7 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyEqualityChecksData, reporter, context) {
             {"data", SkPaintParamsKey::DataPayloadType::kByte, kBlockDataSize},
     };
 
-    int userSnippetID = dict->addUserDefinedSnippet("key", SkMakeSpan(kDataFields));
+    int userSnippetID = dict->addUserDefinedSnippet("key", kDataFields);
 
     static constexpr uint8_t kData [kBlockDataSize] = {1, 2, 3, 4};
     static constexpr uint8_t kData2[kBlockDataSize] = {1, 2, 3, 99};
@@ -126,9 +138,9 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyEqualityChecksData, reporter, context) {
     SkPaintParamsKeyBuilder builderA(dict, SkBackend::kGraphite);
     SkPaintParamsKeyBuilder builderB(dict, SkBackend::kGraphite);
     SkPaintParamsKeyBuilder builderC(dict, SkBackend::kGraphite);
-    SkPaintParamsKey keyA = create_key_with_data(&builderA, userSnippetID, SkMakeSpan(kData));
-    SkPaintParamsKey keyB = create_key_with_data(&builderB, userSnippetID, SkMakeSpan(kData));
-    SkPaintParamsKey keyC = create_key_with_data(&builderC, userSnippetID, SkMakeSpan(kData2));
+    SkPaintParamsKey keyA = create_key_with_data(&builderA, userSnippetID, kData);
+    SkPaintParamsKey keyB = create_key_with_data(&builderB, userSnippetID, kData);
+    SkPaintParamsKey keyC = create_key_with_data(&builderC, userSnippetID, kData2);
 
     // Verify that keyA matches keyB, and that it does not match keyC.
     REPORTER_ASSERT(reporter, keyA == keyB);
@@ -137,39 +149,121 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyEqualityChecksData, reporter, context) {
     REPORTER_ASSERT(reporter, !(keyA != keyB));
 }
 
+DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyEqualityDoesNotCheckPointers, reporter, context) {
+
+    SkShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
+    static const int kBlockDataSize = 4;
+    static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
+            {"data",     SkPaintParamsKey::DataPayloadType::kByte, kBlockDataSize},
+            {"ptrIndex", SkPaintParamsKey::DataPayloadType::kPointerIndex, 1},
+    };
+
+    int userSnippetID = dict->addUserDefinedSnippet("key", SkSpan(kDataFields));
+
+    static constexpr uint8_t kData[kBlockDataSize] = {1, 2, 3, 4};
+    int arbitraryData1 = 1;
+    int arbitraryData2 = 2;
+
+    SkPaintParamsKeyBuilder builderA(dict, SkBackend::kGraphite);
+    SkPaintParamsKeyBuilder builderB(dict, SkBackend::kGraphite);
+    SkPaintParamsKeyBuilder builderC(dict, SkBackend::kGraphite);
+    SkPaintParamsKey keyA = create_key_with_ptr(&builderA, userSnippetID, SkSpan(kData),
+                                                &arbitraryData1);
+    SkPaintParamsKey keyB = create_key_with_ptr(&builderB, userSnippetID, SkSpan(kData),
+                                                &arbitraryData2);
+    SkPaintParamsKey keyC = create_key_with_ptr(&builderC, userSnippetID, SkSpan(kData),
+                                                nullptr);
+
+    // Verify that keyA, keyB, and keyC all match, even though the pointer data does not.
+    REPORTER_ASSERT(reporter, keyA == keyB);
+    REPORTER_ASSERT(reporter, keyB == keyC);
+    REPORTER_ASSERT(reporter, !(keyA != keyB));
+    REPORTER_ASSERT(reporter, !(keyB != keyC));
+}
+
 DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyBlockReaderWorks, reporter, context) {
 
     SkShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
-    static const int kBlockDataSizeX = 3;
-    static const int kBlockDataSizeY = 7;
+    static const int kCountX = 3;
+    static const int kCountY = 2;
+    static const int kCountZ = 7;
     static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
-            {"DataX", SkPaintParamsKey::DataPayloadType::kByte, kBlockDataSizeX},
-            {"DataY", SkPaintParamsKey::DataPayloadType::kByte, kBlockDataSizeY},
+            {"ByteX",   SkPaintParamsKey::DataPayloadType::kByte,   kCountX},
+            {"Float4Y", SkPaintParamsKey::DataPayloadType::kFloat4, kCountY},
+            {"ByteZ",   SkPaintParamsKey::DataPayloadType::kByte,   kCountZ},
     };
 
-    int userSnippetID = dict->addUserDefinedSnippet("key", SkMakeSpan(kDataFields));
+    int userSnippetID = dict->addUserDefinedSnippet("key", kDataFields);
 
-    static constexpr uint8_t kDataX[kBlockDataSizeX] = {1, 2, 3};
-    static constexpr uint8_t kDataY[kBlockDataSizeY] = {4, 5, 6, 7, 8, 9, 10};
+    static constexpr uint8_t   kDataX[kCountX] = {1, 2, 3};
+    static constexpr SkColor4f kDataY[kCountY] = {{4, 5, 6, 7}, {8, 9, 10, 11}};
+    static constexpr uint8_t   kDataZ[kCountZ] = {12, 13, 14, 15, 16, 17, 18};
 
     SkPaintParamsKeyBuilder builder(dict, SkBackend::kGraphite);
     builder.beginBlock(userSnippetID);
-    builder.addBytes(sizeof(kDataX), kDataX);
-    builder.addBytes(sizeof(kDataY), kDataY);
+    builder.addBytes(kCountX, kDataX);
+    builder.add     (kCountY, kDataY);
+    builder.addBytes(kCountZ, kDataZ);
     builder.endBlock();
 
     SkPaintParamsKey key = builder.lockAsKey();
 
     // Verify that the block reader can extract out our data from the SkPaintParamsKey.
     SkPaintParamsKey::BlockReader reader = key.reader(dict, /*headerOffset=*/0);
-    REPORTER_ASSERT(reporter, reader.blockSize() == kBlockDataSizeX + kBlockDataSizeY +
-                                                    SkPaintParamsKey::kBlockHeaderSizeInBytes);
+    REPORTER_ASSERT(reporter,
+                    reader.blockSize() == (sizeof(SkPaintParamsKey::Header) +
+                                           sizeof(kDataX) + sizeof(kDataY) + sizeof(kDataZ)));
 
-    SkSpan<const uint8_t> readerBytesX = reader.bytes(0);
-    REPORTER_ASSERT(reporter, readerBytesX.size() == kBlockDataSizeX);
-    REPORTER_ASSERT(reporter, 0 == memcmp(readerBytesX.data(), kDataX, kBlockDataSizeX));
+    SkSpan<const uint8_t> readerDataX = reader.bytes(0);
+    REPORTER_ASSERT(reporter, readerDataX.size() == kCountX);
+    REPORTER_ASSERT(reporter, 0 == memcmp(readerDataX.data(), kDataX, sizeof(kDataX)));
 
-    SkSpan<const uint8_t> readerBytesY = reader.bytes(1);
-    REPORTER_ASSERT(reporter, readerBytesY.size() == kBlockDataSizeY);
-    REPORTER_ASSERT(reporter, 0 == memcmp(readerBytesY.data(), kDataY, kBlockDataSizeY));
+    SkSpan<const SkColor4f> readerDataY = reader.colors(1);
+    REPORTER_ASSERT(reporter, readerDataY.size() == kCountY);
+    REPORTER_ASSERT(reporter, 0 == memcmp(readerDataY.data(), kDataY, sizeof(kDataY)));
+
+    SkSpan<const uint8_t> readerBytesZ = reader.bytes(2);
+    REPORTER_ASSERT(reporter, readerBytesZ.size() == kCountZ);
+    REPORTER_ASSERT(reporter, 0 == memcmp(readerBytesZ.data(), kDataZ, sizeof(kDataZ)));
+}
+
+DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyBlockReaderPointersWork, reporter, context) {
+
+    SkShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
+    static const int kCountX = 3;
+    static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
+            {"PtrIndexA", SkPaintParamsKey::DataPayloadType::kPointerIndex, 1},
+            {"DataX",     SkPaintParamsKey::DataPayloadType::kByte,         kCountX},
+            {"PtrIndexB", SkPaintParamsKey::DataPayloadType::kPointerIndex, 1},
+    };
+
+    int userSnippetID = dict->addUserDefinedSnippet("key", kDataFields);
+    int arbitraryDataA = 123;
+    int arbitraryDataB = 456;
+
+    static constexpr uint8_t kDataX[kCountX] = {1, 2, 3};
+    SkPaintParamsKeyBuilder builder(dict, SkBackend::kGraphite);
+
+    builder.beginBlock(userSnippetID);
+    builder.addPointer(&arbitraryDataA);
+    builder.addBytes(sizeof(kDataX), kDataX);
+    builder.addPointer(&arbitraryDataB);
+    builder.endBlock();
+
+    SkPaintParamsKey key = builder.lockAsKey();
+
+    // Verify that the block reader can extract out our data from the SkPaintParamsKey.
+    SkPaintParamsKey::BlockReader reader = key.reader(dict, /*headerOffset=*/0);
+    REPORTER_ASSERT(reporter, reader.blockSize() == (sizeof(SkPaintParamsKey::Header) +
+                                                     1 + sizeof(kDataX) + 1));
+
+    const void* readerPtrA = reader.pointer(0);
+    REPORTER_ASSERT(reporter, readerPtrA == &arbitraryDataA);
+
+    SkSpan<const uint8_t> readerDataX = reader.bytes(1);
+    REPORTER_ASSERT(reporter, readerDataX.size() == kCountX);
+    REPORTER_ASSERT(reporter, 0 == memcmp(readerDataX.data(), kDataX, sizeof(kDataX)));
+
+    const void* readerPtrB = reader.pointer(2);
+    REPORTER_ASSERT(reporter, readerPtrB == &arbitraryDataB);
 }

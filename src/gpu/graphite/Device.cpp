@@ -15,8 +15,8 @@
 #include "src/gpu/graphite/CommandBuffer.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/DrawContext.h"
-#include "src/gpu/graphite/DrawGeometry.h"
 #include "src/gpu/graphite/DrawList.h"
+#include "src/gpu/graphite/DrawParams.h"
 #include "src/gpu/graphite/Gpu.h"
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
@@ -24,6 +24,7 @@
 #include "src/gpu/graphite/TextureProxy.h"
 #include "src/gpu/graphite/TextureUtils.h"
 #include "src/gpu/graphite/geom/BoundsManager.h"
+#include "src/gpu/graphite/geom/Geometry.h"
 #include "src/gpu/graphite/geom/IntersectionTree.h"
 #include "src/gpu/graphite/geom/Shape.h"
 #include "src/gpu/graphite/geom/Transform_graphite.h"
@@ -185,17 +186,30 @@ sk_sp<Device> Device::Make(Recorder* recorder,
     return sk_sp<Device>(new Device(recorder, std::move(dc)));
 }
 
+// These default tuning numbers for the HybridBoundsManager were chosen from looking at performance
+// and accuracy curves produced by the BoundsManagerBench for random draw bounding boxes. This
+// config will use brute force for the first 64 draw calls to the Device and then switch to a grid
+// that is dynamically sized to produce cells that are 16x16, which seemed to be in the sweet spot
+// for maintaining good performance without becoming too inaccurate.
+// TODO: These could be exposed as context options or surface options, and we may want to have
+// different strategies in place for a base device vs. a layer's device.
+static constexpr int kGridCellSize = 16;
+static constexpr int kMaxBruteForceN = 64;
+
 Device::Device(Recorder* recorder, sk_sp<DrawContext> dc)
         : SkBaseDevice(dc->imageInfo(), SkSurfaceProps())
         , fRecorder(recorder)
         , fDC(std::move(dc))
         , fClip(this)
-        , fColorDepthBoundsManager(std::make_unique<NaiveBoundsManager>())
+        , fColorDepthBoundsManager(
+                    std::make_unique<HybridBoundsManager>(fDC->imageInfo().dimensions(),
+                                                          kGridCellSize,
+                                                          kMaxBruteForceN))
         , fDisjointStencilSet(std::make_unique<IntersectionTreeSet>())
         , fCachedLocalToDevice(SkM44())
         , fCurrentDepth(DrawOrder::kClearDepth)
         // TODO: set this up based on ContextOptions
-        , fSDFTControl(true, false, 18, 324)
+        , fSDFTControl(true, false, 18, 324, true)
         , fDrawsOverlap(false) {
     SkASSERT(SkToBool(fDC) && SkToBool(fRecorder));
     fRecorder->registerDevice(this);
@@ -525,7 +539,7 @@ void Device::drawImageRect(const SkImage* image, const SkRect* src, const SkRect
 }
 
 void Device::onDrawGlyphRunList(SkCanvas* canvas,
-                                const SkGlyphRunList& glyphRunList,
+                                const sktext::GlyphRunList& glyphRunList,
                                 const SkPaint& initialPaint,
                                 const SkPaint& drawingPaint) {
     fRecorder->priv().textBlobCache()->drawGlyphRunList(canvas,
@@ -699,10 +713,11 @@ void Device::recordDraw(const Transform& localToDevice,
                                                                  clip.drawBounds());
         ordering.dependsOnStencil(setIndex);
     }
+
     // TODO: if the chosen Renderer uses coverage AA, then 'ordering' depends on painter's order,
     // so we will need to take into account the previous draw. Since no Renderer uses coverage AA
     // right now, it's not an issue yet.
-    fDC->recordDraw(*renderer, localToDevice, shape, clip, ordering, paint, stroke);
+    fDC->recordDraw(*renderer, localToDevice, Geometry{shape}, clip, ordering, paint, stroke);
 
     fRecorder->priv().tokenTracker()->issueDrawToken();
 }
