@@ -7,6 +7,7 @@
 
 #include "include/gpu/graphite/Recorder.h"
 
+#include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/graphite/Recording.h"
 #include "src/core/SkPipelineData.h"
 #include "src/gpu/AtlasTypes.h"
@@ -44,10 +45,7 @@ Recorder::Recorder(sk_sp<Gpu> gpu, sk_sp<GlobalCache> globalCache)
         , fUniformDataCache(new UniformDataCache)
         , fTextureDataCache(new TextureDataCache)
         , fRecorderID(next_id())
-        // TODO: add config to control maxTextureBytes
-        , fAtlasManager(std::make_unique<AtlasManager>(this, 2048*2048,
-                                                       DrawAtlas::AllowMultitexturing::kYes,
-                                                       false))
+        , fAtlasManager(std::make_unique<AtlasManager>(this))
         , fTokenTracker(std::make_unique<TokenTracker>())
         , fStrikeCache(std::make_unique<sktext::gpu::StrikeCache>())
         , fTextBlobCache(std::make_unique<sktext::gpu::TextBlobRedrawCoordinator>(fRecorderID)) {
@@ -86,32 +84,16 @@ std::unique_ptr<Recording> Recorder::snap() {
         fTextureDataCache = std::make_unique<TextureDataCache>();
         // We leave the UniformDataCache alone
         fGraph->reset();
+        fResourceProvider->resetAfterSnap();
         return nullptr;
     }
 
-    // TODO: Adding commands to a CommandBuffer should all take place in the Context when we insert
-    // a Recording.
-    auto commandBuffer = fResourceProvider->createCommandBuffer();
+    std::unique_ptr<Recording> recording(new Recording(std::move(fGraph)));
+    fDrawBufferManager->transferToRecording(recording.get());
+    fUploadBufferManager->transferToRecording(recording.get());
 
-    if (!fGraph->addCommands(fResourceProvider.get(), commandBuffer.get())) {
-        // Leaving 'fTrackedDevices' alone since they were flushed earlier and could still be
-        // attached to extant SkSurfaces.
-        size_t requiredAlignment = fGpu->caps()->requiredUniformBufferAlignment();
-        fDrawBufferManager.reset(new DrawBufferManager(fResourceProvider.get(), requiredAlignment));
-        fTextureDataCache = std::make_unique<TextureDataCache>();
-        // We leave the UniformDataCache alone
-        fGraph->reset();
-        return nullptr;
-    }
-
-    // TODO: These buffer refs will need to be stored on Recording before they eventually get passed
-    // onto the CommandBuffer.
-    fDrawBufferManager->transferToCommandBuffer(commandBuffer.get());
-    fUploadBufferManager->transferToCommandBuffer(commandBuffer.get());
-
-    fGraph->reset();
-    std::unique_ptr<Recording> recording(new Recording(std::move(commandBuffer),
-                                                       std::move(fTextureDataCache)));
+    fGraph = std::make_unique<TaskGraph>();
+    fResourceProvider->resetAfterSnap();
     fTextureDataCache = std::make_unique<TextureDataCache>();
     return recording;
 }

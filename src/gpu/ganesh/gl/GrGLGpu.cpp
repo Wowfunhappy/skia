@@ -109,7 +109,7 @@ static_assert(14 == (int)skgpu::BlendEquation::kHSLHue);
 static_assert(15 == (int)skgpu::BlendEquation::kHSLSaturation);
 static_assert(16 == (int)skgpu::BlendEquation::kHSLColor);
 static_assert(17 == (int)skgpu::BlendEquation::kHSLLuminosity);
-static_assert(SK_ARRAY_COUNT(gXfermodeEquation2Blend) == skgpu::kBlendEquationCnt);
+static_assert(std::size(gXfermodeEquation2Blend) == skgpu::kBlendEquationCnt);
 
 static const GrGLenum gXfermodeCoeff2Blend[] = {
     GR_GL_ZERO,
@@ -403,7 +403,6 @@ GrGLGpu::GrGLGpu(std::unique_ptr<GrGLContext> ctx, GrDirectContext* dContext)
     for (int i = 0; i < kGrGpuBufferTypeCount; ++i) {
         fHWBufferState[i].invalidate();
     }
-    static_assert(kGrGpuBufferTypeCount == SK_ARRAY_COUNT(fHWBufferState));
 
     if (this->glCaps().useSamplerObjects()) {
         fSamplerObjectCache = std::make_unique<SamplerObjectCache>(this);
@@ -436,13 +435,13 @@ GrGLGpu::~GrGLGpu() {
         this->deleteFramebuffer(fStencilClearFBOID);
     }
 
-    for (size_t i = 0; i < SK_ARRAY_COUNT(fCopyPrograms); ++i) {
+    for (size_t i = 0; i < std::size(fCopyPrograms); ++i) {
         if (0 != fCopyPrograms[i].fProgram) {
             GL_CALL(DeleteProgram(fCopyPrograms[i].fProgram));
         }
     }
 
-    for (size_t i = 0; i < SK_ARRAY_COUNT(fMipmapPrograms); ++i) {
+    for (size_t i = 0; i < std::size(fMipmapPrograms); ++i) {
         if (0 != fMipmapPrograms[i].fProgram) {
             GL_CALL(DeleteProgram(fMipmapPrograms[i].fProgram));
         }
@@ -468,12 +467,12 @@ void GrGLGpu::disconnect(DisconnectType type) {
         if (fStencilClearFBOID) {
             this->deleteFramebuffer(fStencilClearFBOID);
         }
-        for (size_t i = 0; i < SK_ARRAY_COUNT(fCopyPrograms); ++i) {
+        for (size_t i = 0; i < std::size(fCopyPrograms); ++i) {
             if (fCopyPrograms[i].fProgram) {
                 GL_CALL(DeleteProgram(fCopyPrograms[i].fProgram));
             }
         }
-        for (size_t i = 0; i < SK_ARRAY_COUNT(fMipmapPrograms); ++i) {
+        for (size_t i = 0; i < std::size(fMipmapPrograms); ++i) {
             if (fMipmapPrograms[i].fProgram) {
                 GL_CALL(DeleteProgram(fMipmapPrograms[i].fProgram));
             }
@@ -500,11 +499,11 @@ void GrGLGpu::disconnect(DisconnectType type) {
     fTempDstFBOID = 0;
     fStencilClearFBOID = 0;
     fCopyProgramArrayBuffer.reset();
-    for (size_t i = 0; i < SK_ARRAY_COUNT(fCopyPrograms); ++i) {
+    for (size_t i = 0; i < std::size(fCopyPrograms); ++i) {
         fCopyPrograms[i].fProgram = 0;
     }
     fMipmapProgramArrayBuffer.reset();
-    for (size_t i = 0; i < SK_ARRAY_COUNT(fMipmapPrograms); ++i) {
+    for (size_t i = 0; i < std::size(fMipmapPrograms); ++i) {
         fMipmapPrograms[i].fProgram = 0;
     }
 
@@ -703,7 +702,10 @@ sk_sp<GrTexture> GrGLGpu::onWrapBackendTexture(const GrBackendTexture& backendTe
                                                           : GrMipmapStatus::kNotAllocated;
 
     auto texture = GrGLTexture::MakeWrapped(this, mipmapStatus, desc,
-                                            backendTex.getGLTextureParams(), cacheable, ioType);
+                                            backendTex.getGLTextureParams(),
+                                            cacheable,
+                                            ioType,
+                                            backendTex.getLabel());
     if (this->glCaps().isFormatRenderable(backendTex.getBackendFormat(), 1)) {
         // Pessimistically assume this external texture may have been bound to a FBO.
         texture->baseLevelWasBoundToFBO();
@@ -758,7 +760,7 @@ sk_sp<GrTexture> GrGLGpu::onWrapCompressedBackendTexture(const GrBackendTexture&
 
     auto texture = GrGLTexture::MakeWrapped(this, mipmapStatus, desc,
                                             backendTex.getGLTextureParams(), cacheable,
-                                            kRead_GrIOType);
+                                            kRead_GrIOType, backendTex.getLabel());
     return std::move(texture);
 }
 
@@ -800,7 +802,7 @@ sk_sp<GrTexture> GrGLGpu::onWrapRenderableBackendTexture(const GrBackendTexture&
 
     sk_sp<GrGLTextureRenderTarget> texRT(GrGLTextureRenderTarget::MakeWrapped(
             this, sampleCnt, desc, backendTex.getGLTextureParams(), rtIDs, cacheable,
-            mipmapStatus));
+            mipmapStatus, backendTex.getLabel()));
     texRT->baseLevelWasBoundToFBO();
     return std::move(texRT);
 }
@@ -835,8 +837,13 @@ sk_sp<GrRenderTarget> GrGLGpu::onWrapBackendRenderTarget(const GrBackendRenderTa
     rtIDs.fRTFBOOwnership = GrBackendObjectOwnership::kBorrowed;
     rtIDs.fTotalMemorySamplesPerPixel = sampleCount;
 
-    return GrGLRenderTarget::MakeWrapped(this, backendRT.dimensions(), format, sampleCount, rtIDs,
-                                         backendRT.stencilBits());
+    return GrGLRenderTarget::MakeWrapped(this,
+                                         backendRT.dimensions(),
+                                         format,
+                                         sampleCount,
+                                         rtIDs,
+                                         backendRT.stencilBits(),
+                                         /*label=*/"GLGpu_WrapBackendRenderTarget");
 }
 
 static bool check_write_and_transfer_input(GrGLTexture* glTex) {
@@ -893,6 +900,28 @@ bool GrGLGpu::onWritePixels(GrSurface* surface,
                                         srcColorType,
                                         texels,
                                         mipLevelCount);
+}
+
+bool GrGLGpu::onTransferFromBufferToBuffer(sk_sp<GrGpuBuffer> src,
+                                           size_t srcOffset,
+                                           sk_sp<GrGpuBuffer> dst,
+                                           size_t dstOffset,
+                                           size_t size) {
+    auto glSrc = static_cast<const GrGLBuffer*>(src.get());
+    auto glDst = static_cast<const GrGLBuffer*>(dst.get());
+
+    // If we refactored bindBuffer() to use something other than GrGpuBufferType to indicate the
+    // binding target then we could use the COPY_READ and COPY_WRITE targets here. But
+    // CopyBufferSubData is documented to work with all the targets so it's not clear it's worth it.
+    this->bindBuffer(GrGpuBufferType::kXferCpuToGpu, glSrc);
+    this->bindBuffer(GrGpuBufferType::kXferGpuToCpu, glDst);
+
+    GL_CALL(CopyBufferSubData(GR_GL_PIXEL_UNPACK_BUFFER,
+                              GR_GL_PIXEL_PACK_BUFFER,
+                              srcOffset,
+                              dstOffset,
+                              size));
+    return true;
 }
 
 bool GrGLGpu::onTransferPixelsTo(GrTexture* texture,
@@ -3130,7 +3159,7 @@ bool GrGLGpu::createCopyProgram(GrTexture* srcTex) {
                                                    sizeof(vdata),
                                                    GrGpuBufferType::kVertex,
                                                    kStatic_GrAccessPattern);
-        fCopyProgramArrayBuffer->updateData(vdata, sizeof(vdata));
+        fCopyProgramArrayBuffer->updateData(vdata, /*offset=*/0, sizeof(vdata), /*preserve=*/false);
     }
     if (!fCopyProgramArrayBuffer) {
         return false;
@@ -3568,7 +3597,10 @@ bool GrGLGpu::onRegenerateMipMapLevels(GrTexture* texture) {
                                                      sizeof(vdata),
                                                      GrGpuBufferType::kVertex,
                                                      kStatic_GrAccessPattern);
-        fMipmapProgramArrayBuffer->updateData(vdata, sizeof(vdata));
+        fMipmapProgramArrayBuffer->updateData(vdata, /*offset=*/0,
+
+                                              sizeof(vdata),
+                                              /*preserve=*/false);
     }
     if (!fMipmapProgramArrayBuffer) {
         return false;

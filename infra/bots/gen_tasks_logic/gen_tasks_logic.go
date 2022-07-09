@@ -918,6 +918,7 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 					"IntelIris540":  "8086:1926-26.20.100.7463",
 					"IntelIris6100": "8086:162b-20.19.15.4963",
 					"IntelIris655":  "8086:3ea5-26.20.100.7463",
+					"IntelIrisXe":   "8086:9a49-30.0.101.1340",
 					"RadeonHD7770":  "1002:683d-26.20.13031.18002",
 					"RadeonR9M470X": "1002:6646-26.20.13031.18002",
 					"QuadroP400":    "10de:1cb3-30.0.15.1179",
@@ -928,6 +929,10 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 					log.Fatalf("Entry %q not found in Win GPU mapping.", b.parts["cpu_or_gpu_value"])
 				}
 				d["gpu"] = gpu
+				if b.parts["cpu_or_gpu_value"] == "IntelIrisXe" {
+					// The Intel Iris Xe devices have not updated.
+					d["os"] = "Windows-10-19043"
+				}
 			} else if b.isLinux() {
 				gpu, ok := map[string]string{
 					// Intel drivers come from CIPD, so no need to specify the version here.
@@ -2103,7 +2108,7 @@ func (b *jobBuilder) bazelBuild() {
 			b.cipd(b.MustGetCipdPackageFromAsset("bazel_build_task_driver"))
 
 			// We want all Linux Bazel Builds to use RBE
-			cmd = append(cmd, "--bazel_arg=--config=linux_rbe")
+			cmd = append(cmd, "--bazel_arg=--config=for_linux_x64_with_rbe")
 			cmd = append(cmd, "--bazel_arg=--jobs=100")
 			cmd = append(cmd, "--bazel_arg=--remote_download_minimal")
 		} else {

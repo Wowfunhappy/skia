@@ -82,6 +82,10 @@ static bool angle_backend_is_d3d(GrGLANGLEBackend backend) {
     return backend == GrGLANGLEBackend::kD3D9 || backend == GrGLANGLEBackend::kD3D11;
 }
 
+static bool angle_backend_is_metal(GrGLANGLEBackend backend) {
+    return backend == GrGLANGLEBackend::kMetal;
+}
+
 void GrGLCaps::init(const GrContextOptions& contextOptions,
                     const GrGLContextInfo& ctxInfo,
                     const GrGLInterface* gli) {
@@ -514,6 +518,11 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
         fMapBufferFlags = kNone_MapFlags;
     }
 
+    // Buffers have more restrictions in WebGL than GLES. For example,
+    // https://www.khronos.org/registry/webgl/specs/latest/2.0/#BUFFER_OBJECT_BINDING
+    // We therefore haven't attempted to support mapping or transfers between buffers and surfaces
+    // or between buffers.
+
     if (GR_IS_GR_GL(standard)) {
         if (version >= GR_GL_VER(2, 1) || ctxInfo.hasExtension("GL_ARB_pixel_buffer_object") ||
             ctxInfo.hasExtension("GL_EXT_pixel_buffer_object")) {
@@ -539,9 +548,14 @@ void GrGLCaps::init(const GrContextOptions& contextOptions,
 //            fTransferFromSurfaceToBufferSupport = false;
 //            fTransferBufferType = TransferBufferType::kChromium;
         }
-    } else if (GR_IS_GR_WEBGL(standard)) {
-        fTransferFromBufferToTextureSupport = false;
-        fTransferFromSurfaceToBufferSupport = false;
+    }
+
+    if (GR_IS_GR_GL(standard) &&
+        (version >= GR_GL_VER(3, 1) || ctxInfo.hasExtension("GL_ARB_copy_buffer"))) {
+        fTransferFromBufferToBufferSupport = true;
+    } else if (GR_IS_GR_GL_ES(standard) &&
+               (version >= GR_GL_VER(3, 0) || ctxInfo.hasExtension("GL_NV_copy_buffer"))) {
+        fTransferFromBufferToBufferSupport = true;
     }
 
     // On many GPUs, map memory is very expensive, so we effectively disable it here by setting the
@@ -933,9 +947,11 @@ void GrGLCaps::initGLSL(const GrGLContextInfo& ctxInfo, const GrGLInterface* gli
     // Flat interpolation appears to be slow on Qualcomm GPUs (tested Adreno 405 and 530).
     // Avoid on ANGLE too, it inserts a geometry shader into the pipeline to implement flat interp.
     // Is this only true on ANGLE's D3D backends or also on the GL backend?
+    // Flat interpolation is slow with ANGLE's Metal backend.
     shaderCaps->fPreferFlatInterpolation = shaderCaps->fFlatInterpolationSupport &&
                                            ctxInfo.vendor() != GrGLVendor::kQualcomm &&
-                                           !angle_backend_is_d3d(ctxInfo.angleBackend());
+                                           !angle_backend_is_d3d(ctxInfo.angleBackend()) &&
+                                           !angle_backend_is_metal(ctxInfo.angleBackend());
     if (GR_IS_GR_GL(standard)) {
         shaderCaps->fNoPerspectiveInterpolationSupport =
             ctxInfo.glslGeneration() >= SkSL::GLSLGeneration::k130;
@@ -3375,7 +3391,7 @@ void GrGLCaps::setupSampleCounts(const GrGLContextInfo& ctxInfo, const GrGLInter
                 maxSampleCnt = std::max(1, maxSampleCnt);
 
                 static constexpr int kDefaultSamples[] = {1, 2, 4, 8};
-                int count = SK_ARRAY_COUNT(kDefaultSamples);
+                int count = std::size(kDefaultSamples);
                 for (; count > 0; --count) {
                     if (kDefaultSamples[count - 1] <= maxSampleCnt) {
                         break;
@@ -3683,7 +3699,17 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     // http://anglebug.com/6030
     if (fMSFBOType == kES_EXT_MsToTexture_MSFBOType &&
         ctxInfo.angleBackend() == GrGLANGLEBackend::kD3D11) {
-        fDisallowDynamicMSAA = true;
+        // As GL_EXT_multisampled_render_to_texture supporting issue,
+        // fall back to default dmsaa path
+        if ((ctxInfo.vendor()  == GrGLVendor::kIntel ||
+             ctxInfo.angleVendor() == GrGLVendor::kIntel) &&
+             ctxInfo.renderer() >= GrGLRenderer::kIntelIceLake) {
+            fMSFBOType = kStandard_MSFBOType;
+            fMSAAResolvesAutomatically = false;
+        }
+        else {
+            fDisallowDynamicMSAA = true;
+        }
     }
 
     // http://skbug.com/12081
@@ -3691,6 +3717,10 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         fDisallowDynamicMSAA = true;
     }
 
+    // Below we are aggressive about turning off all mapping/transfer functionality together. This
+    // could be finer grained if code paths and tests were adjusted to check more specific caps.
+    // For example it might be possible to support buffer to buffer transfers even if buffer mapping
+    // or buffer to surface transfers don't work.
 #if defined(__has_feature)
 #if defined(SK_BUILD_FOR_MAC) && __has_feature(thread_sanitizer)
     // See skbug.com/7058
@@ -3698,6 +3728,7 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     fMapBufferFlags = kNone_MapFlags;
     fTransferFromBufferToTextureSupport = false;
     fTransferFromSurfaceToBufferSupport = false;
+    fTransferFromBufferToBufferSupport  = false;
     fTransferBufferType = TransferBufferType::kNone;
 #endif
 #endif
@@ -3712,6 +3743,7 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         fMapBufferFlags = kNone_MapFlags;
         fTransferFromBufferToTextureSupport = false;
         fTransferFromSurfaceToBufferSupport = false;
+        fTransferFromBufferToBufferSupport  = false;
         fTransferBufferType = TransferBufferType::kNone;
     }
 

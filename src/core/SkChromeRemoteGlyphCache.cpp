@@ -7,6 +7,7 @@
 
 #include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 
+#include <algorithm>
 #include <bitset>
 #include <iterator>
 #include <memory>
@@ -22,6 +23,7 @@
 #include "src/core/SkDevice.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkEnumerate.h"
+#include "src/core/SkGlyph.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkScalerCache.h"
 #include "src/core/SkStrikeCache.h"
@@ -35,6 +37,8 @@
 #include "include/gpu/GrContextOptions.h"
 #include "src/gpu/ganesh/GrDrawOpAtlas.h"
 #include "src/text/gpu/SDFTControl.h"
+#include "src/text/gpu/SubRunAllocator.h"
+#include "src/text/gpu/SubRunContainer.h"
 #include "src/text/gpu/TextBlob.h"
 #endif
 
@@ -186,6 +190,8 @@ public:
     void prepareForDrawableDrawing(
             SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected) override;
 
+    SkScalar findMaximumGlyphDimension(SkSpan<const SkGlyphID> glyphs) override;
+
     void onAboutToExitScope() override {}
 
     sk_sp<SkStrike> getUnderlyingStrike() const override { return nullptr; }
@@ -197,6 +203,8 @@ public:
     void resetScalerContext();
 
 private:
+    SkGlyphDigest digest(SkPackedGlyphID);
+
     template <typename Rejector>
     void commonMaskLoop(
             SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected, Rejector&& reject);
@@ -399,24 +407,38 @@ void RemoteStrike::writeGlyphDrawable(const SkGlyph& glyph, Serializer* serializ
     memcpy(serializer->allocate(data->size(), kDrawableAlignment), data->data(), data->size());
 }
 
+SkGlyphDigest RemoteStrike::digest(SkPackedGlyphID packedID) {
+    SkGlyphDigest* digest = fSentGlyphs.find(packedID);
+    if (digest == nullptr) {
+        // Put the new SkGlyph in the glyphs to send.
+        this->ensureScalerContext();
+        fMasksToSend.emplace_back(fContext->makeGlyph(packedID, &fAlloc));
+        SkGlyph* glyph = &fMasksToSend.back();
+
+        SkGlyphDigest newDigest{0, *glyph};
+        digest = fSentGlyphs.set(packedID, newDigest);
+    }
+    return *digest;
+}
+
+SkScalar RemoteStrike::findMaximumGlyphDimension(SkSpan<const SkGlyphID> glyphs) {
+    SkScalar maxDimension = 0;
+    for (SkGlyphID glyphID : glyphs) {
+        SkGlyphDigest digest = this->digest(SkPackedGlyphID{glyphID});
+        maxDimension = std::max(static_cast<SkScalar>(digest.maxDimension()), maxDimension);
+    }
+
+    return maxDimension;
+}
+
 template <typename Rejector>
 void RemoteStrike::commonMaskLoop(
         SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected, Rejector&& reject) {
     accepted->forEachInput(
             [&](size_t i, SkPackedGlyphID packedID, SkPoint position) {
-                SkGlyphDigest* digest = fSentGlyphs.find(packedID);
-                if (digest == nullptr) {
-                    // Put the new SkGlyph in the glyphs to send.
-                    this->ensureScalerContext();
-                    fMasksToSend.emplace_back(fContext->makeGlyph(packedID, &fAlloc));
-                    SkGlyph* glyph = &fMasksToSend.back();
-
-                    SkGlyphDigest newDigest{0, *glyph};
-                    digest = fSentGlyphs.set(packedID, newDigest);
-                }
-
+                SkGlyphDigest digest = this->digest(packedID);
                 // Reject things that are too big.
-                if (reject(*digest)) {
+                if (reject(digest)) {
                     rejected->reject(i);
                 }
             });
@@ -427,23 +449,12 @@ void RemoteStrike::prepareForMaskDrawing(
     for (auto [i, variant, _] : SkMakeEnumerate(accepted->input())) {
         SkPackedGlyphID packedID = variant.packedID();
 
-        SkGlyphDigest* digest = fSentGlyphs.find(packedID);
-        if (digest == nullptr) {
-
-            // Put the new SkGlyph in the glyphs to send.
-            this->ensureScalerContext();
-            fMasksToSend.emplace_back(fContext->makeGlyph(packedID, &fAlloc));
-            SkGlyph* glyph = &fMasksToSend.back();
-
-            SkGlyphDigest newDigest{0, *glyph};
-
-            digest = fSentGlyphs.set(packedID, newDigest);
-        }
+        SkGlyphDigest digest = this->digest(packedID);
 
         // Reject things that are too big.
         // N.B. this must have the same behavior as SkScalerCache::prepareForMaskDrawing.
-        if (!digest->canDrawAsMask()) {
-            rejected->reject(i, digest->maxDimension());
+        if (!digest.canDrawAsMask()) {
+            rejected->reject(i);
         }
     }
 }
@@ -477,7 +488,7 @@ void RemoteStrike::prepareForPathDrawing(
                 }
 
                 if (summary->maxDimensionOrPath != PathSummary::kIsPath) {
-                    rejected->reject(i, (int)summary->maxDimensionOrPath);
+                    rejected->reject(i);
                 }
             });
 }
@@ -506,7 +517,7 @@ void RemoteStrike::prepareForDrawableDrawing(
                 }
 
                 if (summary->maxDimensionOrDrawable != DrawableSummary::kIsDrawable) {
-                    rejected->reject(i, (int)summary->maxDimensionOrDrawable);
+                    rejected->reject(i);
                 }
             });
 }
@@ -769,13 +780,17 @@ protected:
 
         // Just ignore the resulting SubRunContainer. Since we're passing in a null SubRunAllocator
         // no SubRuns will be produced.
-        SubRunContainer::MakeInAlloc(glyphRunList,
-                                     drawMatrix,
-                                     drawingPaint,
-                                     this->strikeDeviceInfo(),
-                                     fStrikeServerImpl,
-                                     nullptr,
-                                     "Cache Diff");
+        STSubRunAllocator<sizeof(SubRunContainer), alignof(SubRunContainer)> tempAlloc;
+        auto [_, container] = SubRunContainer::MakeInAlloc(glyphRunList,
+                                                           drawMatrix,
+                                                           drawingPaint,
+                                                           this->strikeDeviceInfo(),
+                                                           fStrikeServerImpl,
+                                                           &tempAlloc,
+                                                           SubRunContainer::kStrikeCalculationsOnly,
+                                                           "Cache Diff");
+        // Calculations only. No SubRuns.
+        SkASSERT(container->isEmpty());
     }
 
     sk_sp<sktext::gpu::Slug> convertGlyphRunListToSlug(const sktext::GlyphRunList& glyphRunList,
@@ -791,13 +806,17 @@ protected:
         // Use the lightweight strike cache provided by SkRemoteGlyphCache through fPainter to do
         // the analysis. Just ignore the resulting SubRunContainer. Since we're passing in a null
         // SubRunAllocator no SubRuns will be produced.
-        SubRunContainer::MakeInAlloc(glyphRunList,
-                                     positionMatrix,
-                                     drawingPaint,
-                                     this->strikeDeviceInfo(),
-                                     fStrikeServerImpl,
-                                     nullptr,
-                                     "Convert Slug Analysis");
+        STSubRunAllocator<sizeof(SubRunContainer), alignof(SubRunContainer)> tempAlloc;
+        auto [_, container] = SubRunContainer::MakeInAlloc(glyphRunList,
+                                                           positionMatrix,
+                                                           drawingPaint,
+                                                           this->strikeDeviceInfo(),
+                                                           fStrikeServerImpl,
+                                                           &tempAlloc,
+                                                           SubRunContainer::kStrikeCalculationsOnly,
+                                                           "Convert Slug Analysis");
+        // Calculations only. No SubRuns.
+        SkASSERT(container->isEmpty());
 
         // Use the glyph strike cache to get actual glyph information.
         return skgpu::v1::MakeSlug(this->localToDevice(),
@@ -869,6 +888,7 @@ public:
 
     ~DiscardableStrikePinner() override = default;
     bool canDelete() override { return fManager->deleteHandle(fDiscardableHandleId); }
+    void assertValid() override { fManager->assertHandleValid(fDiscardableHandleId); }
 
 private:
     const SkDiscardableHandleId fDiscardableHandleId;
@@ -981,7 +1001,7 @@ bool SkStrikeClientImpl::readStrikeData(const volatile void* memory, size_t memo
         SkAutoDescriptor ad;
         if (!deserializer.readDescriptor(&ad)) READ_FAILURE
         #if defined(SK_TRACE_GLYPH_RUN_PROCESS)
-            msg.appendf("  Received descriptor:\n%s", sourceAd.getDesc()->dumpRec().c_str());
+            msg.appendf("  Received descriptor:\n%s", ad.getDesc()->dumpRec().c_str());
         #endif
 
         bool fontMetricsInitialized;

@@ -20,6 +20,7 @@ skia_graphite_public = [
 ]
 
 skia_graphite_sources = [
+  "$_src/AttachmentTypes.h",
   "$_src/Attribute.h",
   "$_src/BackendTexture.cpp",
   "$_src/Buffer.cpp",
@@ -73,10 +74,13 @@ skia_graphite_sources = [
   "$_src/PaintParams.cpp",
   "$_src/PaintParams.h",
   "$_src/PipelineDataCache.h",
+  "$_src/QueueManager.cpp",
+  "$_src/QueueManager.h",
   "$_src/Recorder.cpp",
   "$_src/RecorderPriv.cpp",
   "$_src/RecorderPriv.h",
   "$_src/Recording.cpp",
+  "$_src/RecordingPriv.h",
   "$_src/RenderPassTask.cpp",
   "$_src/RenderPassTask.h",
   "$_src/Renderer.h",
@@ -117,6 +121,7 @@ skia_graphite_sources = [
   "$_src/geom/Rect.h",
   "$_src/geom/Shape.cpp",
   "$_src/geom/Shape.h",
+  "$_src/geom/SubRunData.h",
   "$_src/geom/Transform.cpp",
   "$_src/geom/Transform_graphite.h",
   "$_src/render/CoverBoundsRenderStep.cpp",
@@ -156,6 +161,8 @@ skia_graphite_mtl_sources = [
   "$_src/mtl/MtlGpu.mm",
   "$_src/mtl/MtlGraphicsPipeline.h",
   "$_src/mtl/MtlGraphicsPipeline.mm",
+  "$_src/mtl/MtlQueueManager.h",
+  "$_src/mtl/MtlQueueManager.mm",
   "$_src/mtl/MtlRenderCommandEncoder.h",
   "$_src/mtl/MtlResourceProvider.h",
   "$_src/mtl/MtlResourceProvider.mm",

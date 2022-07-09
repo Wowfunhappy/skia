@@ -1,7 +1,6 @@
 // This file is type-checked by the Typescript definitions. It is not actually executed.
 // Test it by running `npm run dtslint` in the parent directory.
-import {
-    CanvasKitInit,
+import CanvasKitInit, {
     AnimatedImage,
     Canvas,
     CanvasKit,
@@ -21,6 +20,7 @@ import {
     TextBlob,
     Typeface,
     Vertices,
+    WebGPUDeviceContext,
 } from "canvaskit-wasm";
 
 CanvasKitInit({locateFile: (file: string) => '/node_modules/canvaskit/bin/' + file}).then((CK: CanvasKit) => {
@@ -54,6 +54,7 @@ CanvasKitInit({locateFile: (file: string) => '/node_modules/canvaskit/bin/' + fi
     typefaceTests(CK);
     vectorTests(CK);
     verticesTests(CK);
+    webGPUTest(CK);
 });
 
 function animatedImageTests(CK: CanvasKit) {
@@ -268,6 +269,12 @@ function imageTests(CK: CanvasKit, imgElement?: HTMLImageElement) {
       alphaType: CK.AlphaType.Premul,
       colorType: CK.ColorType.RGBA_8888,
     });
+    const img6 = CK.MakeLazyImageFromTextureSource(imgElement, {
+      width: 1,
+      height: 1,
+      alphaType: CK.AlphaType.Premul,
+      colorType: CK.ColorType.RGBA_8888,
+    }, true);
     if (!img) return;
     const dOne = img.encodeToBytes(); // $ExpectType Uint8Array | null
     const dTwo = img.encodeToBytes(CK.ImageFormat.JPEG, 97);
@@ -512,8 +519,8 @@ function paragraphTests(CK: CanvasKit, p?: Paragraph) {
     const g = p.getMaxIntrinsicWidth(); // $ExpectType number
     const h = p.getMaxWidth(); // $ExpectType number
     const i = p.getMinIntrinsicWidth(); // $ExpectType number
-    const j = p.getRectsForPlaceholders(); // $ExpectType Float32Array
-    const k = p.getRectsForRange(2, 10, CK.RectHeightStyle.Max,  // $ExpectType Float32Array
+    const j = p.getRectsForPlaceholders(); // $ExpectType Float32Array[]
+    const k = p.getRectsForRange(2, 10, CK.RectHeightStyle.Max,  // $ExpectType Float32Array[]
         CK.RectWidthStyle.Tight);
     const l = p.getWordBoundary(10); // $ExpectType URange
     p.layout(300);
@@ -887,7 +894,12 @@ function surfaceTests(CK: CanvasKit, gl?: WebGLRenderingContext) {
       alphaType: CK.AlphaType.Unpremul,
     });
     const img6 = surfaceFour.makeImageFromTextureSource(new ImageData(40, 80)); // $ExpectType Image | null
-
+    const img7 = surfaceFour.makeImageFromTextureSource(videoEle, {
+      height: 40,
+      width: 80,
+      colorType: CK.ColorType.RGBA_8888,
+      alphaType: CK.AlphaType.Premul,
+    }, true);
     surfaceSeven.delete();
 
     const ctx = CK.GetWebGLContext(canvasEl); // $ExpectType number
@@ -912,6 +924,7 @@ function surfaceTests(CK: CanvasKit, gl?: WebGLRenderingContext) {
     surfaceFour.drawOnce(drawFrame);
 
     surfaceFour.updateTextureFromSource(img5!, videoEle);
+    surfaceFour.updateTextureFromSource(img5!, videoEle, true);
 }
 
 function textBlobTests(CK: CanvasKit, font?: Font, path?: Path) {
@@ -979,4 +992,28 @@ function verticesTests(CK: CanvasKit) {
     const rect = vertices.bounds(); // $ExpectType Float32Array
     vertices.bounds(rect);
     const id = vertices.uniqueID(); // $ExpectType number
+}
+
+function webGPUTest(CK: CanvasKit, device?: GPUDevice, canvas?: HTMLCanvasElement, texture?: GPUTexture) {
+    if (!device || !canvas || !texture) {
+        return;
+    }
+
+    const gpuContext: WebGPUDeviceContext = CK.MakeGPUDeviceContext(device)!; // $ExpectType GrDirectContext
+
+    // Texture surface.
+    const surface1 = CK.MakeGPUTextureSurface(gpuContext, texture, 800, 600, // $ExpectType Surface | null
+                                              CK.ColorSpace.SRGB);
+
+    // Canvas surfaces.
+    const canvasContext = CK.MakeGPUCanvasContext(gpuContext, canvas, { // $ExpectType WebGPUCanvasContext
+        format: "bgra8unorm",
+        alphaMode: "premultiplied",
+    })!;
+    canvasContext.requestAnimationFrame((canvas: Canvas) => {
+        canvas.clear([0, 0, 0, 0]);
+    });
+
+    const surface2 = CK.MakeGPUCanvasSurface(canvasContext, CK.ColorSpace.SRGB); // $ExpectType Surface | null
+    const surface3 = CK.MakeGPUCanvasSurface(canvasContext, CK.ColorSpace.SRGB, 10, 10); // $ExpectType Surface | null
 }

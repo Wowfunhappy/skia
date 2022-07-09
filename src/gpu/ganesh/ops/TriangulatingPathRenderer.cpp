@@ -134,7 +134,10 @@ public:
         if (fCanMapVB) {
             fVertexBuffer->unmap();
         } else {
-            fVertexBuffer->updateData(fVertices, actualCount * fLockStride);
+            fVertexBuffer->updateData(fVertices,
+                                      /*offset=*/0,
+                                      /*size=*/actualCount*fLockStride,
+                                      /*preserve=*/false);
             sk_free(fVertices);
         }
 
@@ -554,7 +557,7 @@ GR_DRAW_OP_TEST_DEFINE(TriangulatingPathOp) {
     static constexpr GrAAType kAATypes[] = {GrAAType::kNone, GrAAType::kMSAA, GrAAType::kCoverage};
     GrAAType aaType;
     do {
-        aaType = kAATypes[random->nextULessThan(SK_ARRAY_COUNT(kAATypes))];
+        aaType = kAATypes[random->nextULessThan(std::size(kAATypes))];
     } while(GrAAType::kMSAA == aaType && numSamples <= 1);
     GrStyle style;
     do {

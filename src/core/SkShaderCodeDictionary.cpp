@@ -7,14 +7,18 @@
 
 #include "src/core/SkShaderCodeDictionary.h"
 
-#include "include/core/SkCombinationBuilder.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/private/SkSLString.h"
 #include "src/core/SkOpts.h"
+#include "src/core/SkRuntimeEffectPriv.h"
 #include "src/sksl/SkSLUtil.h"
 
 #ifdef SK_GRAPHITE_ENABLED
 #include "include/gpu/graphite/Context.h"
+#endif
+
+#ifdef SK_ENABLE_PRECOMPILE
+#include "include/core/SkCombinationBuilder.h"
 #endif
 
 using DataPayloadField = SkPaintParamsKey::DataPayloadField;
@@ -22,7 +26,7 @@ using DataPayloadType = SkPaintParamsKey::DataPayloadType;
 
 namespace {
 
-std::string get_mangled_local_var_name(const char* baseName, int manglingSuffix) {
+std::string get_mangled_name(const char* baseName, int manglingSuffix) {
     return std::string(baseName) + "_" + std::to_string(manglingSuffix);
 }
 
@@ -45,7 +49,7 @@ std::string generate_default_before_children_glue_code(int entryIndex,
 
         std::string localMatrixUniformName = reader.entry()->getMangledUniformName(0, entryIndex);
 
-        std::string preLocalMatrixVarName = get_mangled_local_var_name("preLocal", entryIndex);
+        std::string preLocalMatrixVarName = get_mangled_name("preLocal", entryIndex);
 
         add_indent(&result, indent);
         SkSL::String::appendf(&result,
@@ -104,7 +108,7 @@ std::string SkShaderInfo::emitGlueCodeForEntry(int* entryIndex,
     const SkPaintParamsKey::BlockReader& reader = fBlockReaders[*entryIndex];
     int curEntryIndex = *entryIndex;
 
-    std::string scopeOutputVar = get_mangled_local_var_name("outColor", curEntryIndex);
+    std::string scopeOutputVar = get_mangled_name("outColor", curEntryIndex);
 
     add_indent(mainBody, indent);
     SkSL::String::appendf(mainBody,
@@ -120,7 +124,7 @@ std::string SkShaderInfo::emitGlueCodeForEntry(int* entryIndex,
     // TODO: this could be returned by generate_default_before_children_glue_code
     std::string currentPreLocalName;
     if (reader.entry()->needsLocalCoords()) {
-        currentPreLocalName = get_mangled_local_var_name("preLocal", curEntryIndex);
+        currentPreLocalName = get_mangled_name("preLocal", curEntryIndex);
     } else {
         currentPreLocalName = parentPreLocalName;
     }
@@ -208,8 +212,12 @@ SkShaderCodeDictionary::Entry* SkShaderCodeDictionary::makeEntry(
 #endif
 }
 
-size_t SkShaderCodeDictionary::Hash::operator()(const SkPaintParamsKey* key) const {
-    return SkOpts::hash_fn(key->data(), key->sizeInBytes(), 0);
+size_t SkShaderCodeDictionary::SkPaintParamsKeyPtr::Hash::operator()(SkPaintParamsKeyPtr p) const {
+    return SkOpts::hash_fn(p.fKey->data(), p.fKey->sizeInBytes(), 0);
+}
+
+size_t SkShaderCodeDictionary::RuntimeEffectKey::Hash::operator()(RuntimeEffectKey k) const {
+    return SkOpts::hash_fn(&k, sizeof(k), 0);
 }
 
 const SkShaderCodeDictionary::Entry* SkShaderCodeDictionary::findOrCreate(
@@ -218,10 +226,10 @@ const SkShaderCodeDictionary::Entry* SkShaderCodeDictionary::findOrCreate(
 
     SkAutoSpinlock lock{fSpinLock};
 
-    auto iter = fHash.find(&key);
-    if (iter != fHash.end()) {
-        SkASSERT(fEntryVector[iter->second->uniqueID().asUInt()] == iter->second);
-        return iter->second;
+    Entry** existingEntry = fHash.find(SkPaintParamsKeyPtr{&key});
+    if (existingEntry) {
+        SkASSERT(fEntryVector[(*existingEntry)->uniqueID().asUInt()] == *existingEntry);
+        return *existingEntry;
     }
 
 #ifdef SK_GRAPHITE_ENABLED
@@ -230,7 +238,7 @@ const SkShaderCodeDictionary::Entry* SkShaderCodeDictionary::findOrCreate(
     Entry* newEntry = this->makeEntry(key);
 #endif
     newEntry->setUniqueID(fEntryVector.size());
-    fHash.insert(std::make_pair(&newEntry->paintParamsKey(), newEntry));
+    fHash.set(SkPaintParamsKeyPtr{&newEntry->paintParamsKey()}, newEntry);
     fEntryVector.push_back(newEntry);
 
     return newEntry;
@@ -275,10 +283,6 @@ const SkShaderSnippet* SkShaderCodeDictionary::getEntry(int codeSnippetID) const
     }
 
     return nullptr;
-}
-
-const SkShaderSnippet* SkShaderCodeDictionary::getEntry(SkBlenderID id) const {
-    return this->getEntry(id.asUInt());
 }
 
 void SkShaderCodeDictionary::getShaderInfo(SkUniquePaintParamsID uniqueID, SkShaderInfo* info) {
@@ -328,7 +332,7 @@ void GenerateDefaultGlueCode(const std::string& resultName,
         separator = ", ";
 
         if (i == 0 && reader.entry()->needsLocalCoords()) {
-            *mainBody += get_mangled_local_var_name("preLocal", entryIndex);
+            *mainBody += get_mangled_name("preLocal", entryIndex);
             *mainBody += " * dev2LocalUni";
         } else {
             *mainBody += entry->getMangledUniformName(i, entryIndex);
@@ -354,9 +358,6 @@ static constexpr SkUniform kLinearGradientUniforms4[] = {
         { "point0",      SkSLType::kFloat2 },
         { "point1",      SkSLType::kFloat2 },
         { "tilemode",    SkSLType::kInt },
-        { "padding1",    SkSLType::kFloat }, // TODO: add automatic uniform padding
-        { "padding2",    SkSLType::kFloat },
-        { "padding3",    SkSLType::kFloat },
 };
 static constexpr SkUniform kLinearGradientUniforms8[] = {
         { "localMatrix", SkSLType::kFloat4x4 },
@@ -365,9 +366,6 @@ static constexpr SkUniform kLinearGradientUniforms8[] = {
         { "point0",      SkSLType::kFloat2 },
         { "point1",      SkSLType::kFloat2 },
         { "tilemode",    SkSLType::kInt },
-        { "padding1",    SkSLType::kFloat }, // TODO: add automatic uniform padding
-        { "padding2",    SkSLType::kFloat },
-        { "padding3",    SkSLType::kFloat },
 };
 
 static constexpr SkUniform kRadialGradientUniforms4[] = {
@@ -395,9 +393,6 @@ static constexpr SkUniform kSweepGradientUniforms4[] = {
         { "bias",        SkSLType::kFloat },
         { "scale",       SkSLType::kFloat },
         { "tilemode",    SkSLType::kInt },
-        { "padding1",    SkSLType::kFloat }, // TODO: add automatic uniform padding
-        { "padding2",    SkSLType::kFloat },
-        { "padding3",    SkSLType::kFloat },
 };
 static constexpr SkUniform kSweepGradientUniforms8[] = {
         { "localMatrix", SkSLType::kFloat4x4 },
@@ -407,9 +402,6 @@ static constexpr SkUniform kSweepGradientUniforms8[] = {
         { "bias",        SkSLType::kFloat },
         { "scale",       SkSLType::kFloat },
         { "tilemode",    SkSLType::kInt },
-        { "padding1",    SkSLType::kFloat }, // TODO: add automatic uniform padding
-        { "padding2",    SkSLType::kFloat },
-        { "padding3",    SkSLType::kFloat },
 };
 
 static constexpr SkUniform kConicalGradientUniforms4[] = {
@@ -421,7 +413,6 @@ static constexpr SkUniform kConicalGradientUniforms4[] = {
         { "radius0",     SkSLType::kFloat },
         { "radius1",     SkSLType::kFloat },
         { "tilemode",    SkSLType::kInt },
-        { "padding",     SkSLType::kFloat }, // TODO: add automatic uniform padding
 };
 static constexpr SkUniform kConicalGradientUniforms8[] = {
         { "localMatrix", SkSLType::kFloat4x4 },
@@ -432,7 +423,6 @@ static constexpr SkUniform kConicalGradientUniforms8[] = {
         { "radius0",     SkSLType::kFloat },
         { "radius1",     SkSLType::kFloat },
         { "tilemode",    SkSLType::kInt },
-        { "padding",     SkSLType::kFloat }, // TODO: add automatic uniform padding
 };
 
 static constexpr char kLinearGradient4Name[] = "sk_linear_grad_4_shader";
@@ -497,7 +487,7 @@ void GenerateImageShaderGlueCode(const std::string& resultName,
     SkASSERT(childNames.empty());
 
     std::string samplerVarName = std::string("sampler_") + std::to_string(entryIndex) + "_0";
-    std::string preLocalMatrixVarName = get_mangled_local_var_name("preLocal", entryIndex);
+    std::string preLocalMatrixVarName = get_mangled_name("preLocal", entryIndex);
 
     // Uniform slot 0 is being used for the localMatrix but is handled in
     // generate_default_before_children_glue_code.
@@ -528,9 +518,6 @@ void GenerateImageShaderGlueCode(const std::string& resultName,
 //--------------------------------------------------------------------------------------------------
 static constexpr SkUniform kBlendShaderUniforms[] = {
         { "blendMode", SkSLType::kInt },
-        { "padding1",  SkSLType::kInt }, // TODO: add automatic uniform padding
-        { "padding2",  SkSLType::kInt },
-        { "padding3",  SkSLType::kInt },
 };
 
 static constexpr int kNumBlendShaderChildren = 2;
@@ -538,17 +525,41 @@ static constexpr int kNumBlendShaderChildren = 2;
 static constexpr char kBlendShaderName[] = "sk_blend_shader";
 
 //--------------------------------------------------------------------------------------------------
-static constexpr char kRuntimeShaderName[] = "sk_runtime_placeholder";
+static constexpr char kRuntimeShaderName[] = "RuntimeEffect";
 
-static constexpr SkUniform kRuntimeShaderUniforms[] = {
-        {"localMatrix", SkSLType::kFloat4x4},
-};
+void GenerateRuntimeShaderGlueCode(const std::string& resultName,
+                                   int entryIndex,
+                                   const SkPaintParamsKey::BlockReader& reader,
+                                   const std::string& priorStageOutputName,
+                                   const std::vector<std::string>& childOutputVarNames,
+                                   std::string* preamble,
+                                   std::string* mainBody,
+                                   int indent) {
+    const SkShaderSnippet* entry = reader.entry();
 
-static constexpr DataPayloadField kRuntimeShaderDataPayload[] = {
-        {"runtime effect hash", DataPayloadType::kByte, 4},
-        {"uniform data size (bytes)", DataPayloadType::kByte, 4},
-        {"SkRuntimeEffect pointer", DataPayloadType::kPointerIndex, 1},
-};
+    // We prepend a preLocalMatrix as the first uniform, ahead of the runtime effect's uniforms.
+    // TODO: we can eliminate this uniform entirely if it's the identity matrix.
+    // TODO: if we could inherit the parent's transform, this could be removed entirely.
+    SkASSERT(entry->needsLocalCoords());
+    SkASSERT(reader.entry()->fUniforms[0].type() == SkSLType::kFloat4x4);
+
+    SkSL::String::appendf(preamble, R"(
+half4 %s_%d(float2 coords, half4 color) {
+    // TODO: Runtime effect code goes here
+    return half4(0.75, 0.0, 1.0, 1.0);
+}
+)", entry->fName, entryIndex);
+
+    std::string preLocalMatrixVarName = get_mangled_name("preLocal", entryIndex);
+
+    add_indent(mainBody, indent);
+    SkSL::String::appendf(mainBody,
+                          "%s = %s_%d((%s * dev2LocalUni * sk_FragCoord).xy, (%s));\n",
+                          resultName.c_str(),
+                          entry->fName, entryIndex,
+                          preLocalMatrixVarName.c_str(),
+                          priorStageOutputName.c_str());
+}
 
 //--------------------------------------------------------------------------------------------------
 static constexpr char kErrorName[] = "sk_error";
@@ -580,9 +591,6 @@ void GenerateFixedFunctionBlenderGlueCode(const std::string& resultName,
 //--------------------------------------------------------------------------------------------------
 static constexpr SkUniform kShaderBasedBlenderUniforms[] = {
         { "blendMode", SkSLType::kInt },
-        { "padding1",  SkSLType::kInt }, // TODO: add automatic uniform padding
-        { "padding2",  SkSLType::kInt },
-        { "padding3",  SkSLType::kInt },
 };
 
 static constexpr char kBlendHelperName[] = "sk_blend";
@@ -600,7 +608,7 @@ void GenerateShaderBasedBlenderGlueCode(const std::string& resultName,
                                         std::string* mainBody,
                                         int indent) {
     SkASSERT(childNames.empty());
-    SkASSERT(reader.entry()->fUniforms.size() == 4); // actual blend uniform + 3 padding int
+    SkASSERT(reader.entry()->fUniforms.size() == 1);
     SkASSERT(reader.numDataPayloadFields() == 0);
 
     std::string uniformName = reader.entry()->getMangledUniformName(0, entryIndex);
@@ -639,28 +647,45 @@ bool SkShaderCodeDictionary::isValidID(int snippetID) const {
 
 static constexpr int kNoChildren = 0;
 
-// TODO: this version needs to be removed
 int SkShaderCodeDictionary::addUserDefinedSnippet(
         const char* name,
-        SkSpan<const DataPayloadField> dataPayloadExpectations) {
-
-    std::unique_ptr<SkShaderSnippet> entry(new SkShaderSnippet("UserDefined",
-                                                               {}, // no uniforms
-                                                               SnippetRequirementFlags::kNone,
-                                                               {}, // no samplers
-                                                               name,
-                                                               GenerateDefaultGlueCode,
-                                                               kNoChildren,
-                                                               dataPayloadExpectations));
-
+        SkSpan<const SkUniform> uniforms,
+        SnippetRequirementFlags snippetRequirementFlags,
+        SkSpan<const SkTextureAndSampler> texturesAndSamplers,
+        const char* functionName,
+        SkShaderSnippet::GenerateGlueCodeForEntry glueCodeGenerator,
+        int numChildren,
+        SkSpan<const SkPaintParamsKey::DataPayloadField> dataPayloadExpectations) {
     // TODO: the memory for user-defined entries could go in the dictionary's arena but that
     // would have to be a thread safe allocation since the arena also stores entries for
     // 'fHash' and 'fEntryVector'
-    fUserDefinedCodeSnippets.push_back(std::move(entry));
+    fUserDefinedCodeSnippets.push_back(std::make_unique<SkShaderSnippet>(name,
+                                                                         uniforms,
+                                                                         snippetRequirementFlags,
+                                                                         texturesAndSamplers,
+                                                                         functionName,
+                                                                         glueCodeGenerator,
+                                                                         numChildren,
+                                                                         dataPayloadExpectations));
 
     return kBuiltInCodeSnippetIDCount + fUserDefinedCodeSnippets.size() - 1;
 }
 
+// TODO: this version needs to be removed
+int SkShaderCodeDictionary::addUserDefinedSnippet(
+        const char* name,
+        SkSpan<const DataPayloadField> dataPayloadExpectations) {
+    return this->addUserDefinedSnippet("UserDefined",
+                                       {},  // no uniforms
+                                       SnippetRequirementFlags::kNone,
+                                       {},  // no samplers
+                                       name,
+                                       GenerateDefaultGlueCode,
+                                       kNoChildren,
+                                       dataPayloadExpectations);
+}
+
+#ifdef SK_ENABLE_PRECOMPILE
 SkBlenderID SkShaderCodeDictionary::addUserDefinedBlender(sk_sp<SkRuntimeEffect> effect) {
     if (!effect) {
         return {};
@@ -670,22 +695,123 @@ SkBlenderID SkShaderCodeDictionary::addUserDefinedBlender(sk_sp<SkRuntimeEffect>
     // from the runtime effect in order to create a real SkShaderSnippet
     // Additionally, we need to hash the provided code to deduplicate the runtime effects in case
     // the client keeps giving us different rtEffects w/ the same backing SkSL.
+    int codeSnippetID = this->addUserDefinedSnippet("UserDefined",
+                                                    {},  // missing uniforms
+                                                    SnippetRequirementFlags::kNone,
+                                                    {},  // missing samplers
+                                                    "foo",
+                                                    GenerateDefaultGlueCode,
+                                                    kNoChildren,
+                                                    /*dataPayloadExpectations=*/{});
+    return SkBlenderID(codeSnippetID);
+}
 
-    std::unique_ptr<SkShaderSnippet> entry(new SkShaderSnippet("UserDefined",
-                                                               {}, // missing uniforms
-                                                               SnippetRequirementFlags::kNone,
-                                                               {}, // missing samplers
-                                                               "foo",
-                                                               GenerateDefaultGlueCode,
-                                                               kNoChildren,
-                                                               /*dataPayloadExpectations=*/{}));
+const SkShaderSnippet* SkShaderCodeDictionary::getEntry(SkBlenderID id) const {
+    return this->getEntry(id.asUInt());
+}
 
-    // TODO: the memory for user-defined entries could go in the dictionary's arena but that
-    // would have to be a thread safe allocation since the arena also stores entries for
-    // 'fHash' and 'fEntryVector'
-    fUserDefinedCodeSnippets.push_back(std::move(entry));
+#endif // SK_ENABLE_PRECOMPILE
 
-    return SkBlenderID(kBuiltInCodeSnippetIDCount + fUserDefinedCodeSnippets.size() - 1);
+static SkSLType uniform_type_to_sksl_type(const SkRuntimeEffect::Uniform& u) {
+    using Type = SkRuntimeEffect::Uniform::Type;
+    if (u.flags & SkRuntimeEffect::Uniform::kHalfPrecision_Flag) {
+        switch (u.type) {
+            case Type::kFloat:    return SkSLType::kHalf;
+            case Type::kFloat2:   return SkSLType::kHalf2;
+            case Type::kFloat3:   return SkSLType::kHalf3;
+            case Type::kFloat4:   return SkSLType::kHalf4;
+            case Type::kFloat2x2: return SkSLType::kHalf2x2;
+            case Type::kFloat3x3: return SkSLType::kHalf3x3;
+            case Type::kFloat4x4: return SkSLType::kHalf4x4;
+            case Type::kInt:      return SkSLType::kShort;
+            case Type::kInt2:     return SkSLType::kShort2;
+            case Type::kInt3:     return SkSLType::kShort3;
+            case Type::kInt4:     return SkSLType::kShort4;
+        }
+    } else {
+        switch (u.type) {
+            case Type::kFloat:    return SkSLType::kFloat;
+            case Type::kFloat2:   return SkSLType::kFloat2;
+            case Type::kFloat3:   return SkSLType::kFloat3;
+            case Type::kFloat4:   return SkSLType::kFloat4;
+            case Type::kFloat2x2: return SkSLType::kFloat2x2;
+            case Type::kFloat3x3: return SkSLType::kFloat3x3;
+            case Type::kFloat4x4: return SkSLType::kFloat4x4;
+            case Type::kInt:      return SkSLType::kInt;
+            case Type::kInt2:     return SkSLType::kInt2;
+            case Type::kInt3:     return SkSLType::kInt3;
+            case Type::kInt4:     return SkSLType::kInt4;
+        }
+    }
+    SkUNREACHABLE;
+}
+
+const char* SkShaderCodeDictionary::addTextToArena(std::string_view text) {
+    char* textInArena = fArena.makeArrayDefault<char>(text.size() + 1);
+    memcpy(textInArena, text.data(), text.size());
+    textInArena[text.size()] = '\0';
+    return textInArena;
+}
+
+SkSpan<const SkUniform> SkShaderCodeDictionary::convertUniforms(const SkRuntimeEffect* effect) {
+    using Uniform = SkRuntimeEffect::Uniform;
+    SkSpan<const Uniform> uniforms = effect->uniforms();
+
+    // Convert the SkRuntimeEffect::Uniform array into its SkUniform equivalent.
+    int numUniforms = uniforms.size() + 1;
+    SkUniform* uniformArray = fArena.makeInitializedArray<SkUniform>(numUniforms, [&](int index) {
+        // Graphite wants a `localMatrix` float4x4 uniform at the front of the uniform list.
+        if (index == 0) {
+            return SkUniform("localMatrix", SkSLType::kFloat4x4);
+        }
+        const Uniform& u = uniforms[index - 1];
+
+        // The existing uniform names are in SkStrings and may disappear. Copy them into fArena.
+        // (It's safe to do this within makeInitializedArray; the entire array is allocated in one
+        // big slab before any initialization calls are done.)
+        const char* name = this->addTextToArena(std::string_view(u.name.c_str(), u.name.size()));
+
+        // Add one SkUniform to our array.
+        SkSLType type = uniform_type_to_sksl_type(u);
+        return (u.flags & Uniform::kArray_Flag) ? SkUniform(name, type, u.count)
+                                                : SkUniform(name, type);
+    });
+
+    return SkSpan<const SkUniform>(uniformArray, numUniforms);
+}
+
+int SkShaderCodeDictionary::findOrCreateRuntimeEffectSnippet(const SkRuntimeEffect* effect) {
+    // Use the combination of {SkSL program hash, uniform size} as our key.
+    // In the unfortunate event of a hash collision, at least we'll have the right amount of
+    // uniform data available.
+    RuntimeEffectKey key;
+    key.fHash = SkRuntimeEffectPriv::Hash(*effect);
+    key.fUniformSize = effect->uniformSize();
+
+    SkAutoSpinlock lock{fSpinLock};
+
+    int32_t* existingCodeSnippetID = fRuntimeEffectMap.find(key);
+    if (existingCodeSnippetID) {
+        return *existingCodeSnippetID;
+    }
+
+    // TODO(skia:13405): consider removing these data fields, they don't seem to add value anymore
+    static constexpr DataPayloadField kRuntimeShaderDataPayload[] = {
+            {"runtime effect hash", DataPayloadType::kInt, 1},
+            {"uniform data size (bytes)", DataPayloadType::kInt, 1},
+    };
+
+    // TODO(skia:13405): arguments to `addUserDefinedSnippet` here are placeholder
+    int newCodeSnippetID = this->addUserDefinedSnippet("RuntimeEffect",
+                                                       this->convertUniforms(effect),
+                                                       SnippetRequirementFlags::kLocalCoords,
+                                                       /*texturesAndSamplers=*/{},
+                                                       kRuntimeShaderName,
+                                                       GenerateRuntimeShaderGlueCode,
+                                                       /*numChildren=*/0,
+                                                       SkSpan(kRuntimeShaderDataPayload));
+    fRuntimeEffectMap.set(key, newCodeSnippetID);
+    return newCodeSnippetID;
 }
 
 SkShaderCodeDictionary::SkShaderCodeDictionary() {
@@ -821,16 +947,6 @@ SkShaderCodeDictionary::SkShaderCodeDictionary() {
             GenerateDefaultGlueCode,
             kNumBlendShaderChildren,
             { }
-    };
-    fBuiltInCodeSnippets[(int) SkBuiltInCodeSnippetID::kRuntimeShader] = {
-            "RuntimeShader",
-            SkSpan(kRuntimeShaderUniforms),
-            SnippetRequirementFlags::kLocalCoords,
-            { },     // no samplers
-            kRuntimeShaderName,
-            GenerateDefaultGlueCode,
-            kNoChildren,
-            SkSpan(kRuntimeShaderDataPayload)
     };
     fBuiltInCodeSnippets[(int) SkBuiltInCodeSnippetID::kFixedFunctionBlender] = {
             "FixedFunctionBlender",

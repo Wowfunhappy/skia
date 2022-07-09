@@ -291,6 +291,7 @@ CORE_FILES = [
     "SkRegion_path.cpp",
     "SkResourceCache.cpp",
     "SkResourceCache.h",
+    "SkRuntimeEffectDictionary.h",
     "SkRuntimeEffectPriv.h",
     "SkSafeMath.h",
     "SkSafeRange.h",
@@ -404,13 +405,13 @@ split_srcs_and_hdrs(
 
 # These files are only needed if SkSL is enabled (GPU backend or SkVM).
 SKSL_FILES = [
-    "SkCombinationBuilder.cpp",
     "SkKeyContext.h",
     "SkKeyHelpers.cpp",
     "SkKeyHelpers.h",
     "SkPaintParamsKey.cpp",
     "SkPaintParamsKey.h",
     "SkRuntimeEffect.cpp",
+    "SkSLTypeShared.cpp",
     "SkSLTypeShared.h",
     "SkScopeExit.h",
     "SkShaderCodeDictionary.cpp",

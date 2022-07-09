@@ -10,9 +10,11 @@
 
 #include "include/core/SkRefCnt.h"
 #include "include/private/SingleOwner.h"
+#include "include/private/SkTHash.h"
 
 #include <vector>
 
+class SkRuntimeEffect;
 class SkTextureDataBlock;
 class SkUniformDataBlock;
 class SkUniformDataBlockPassThrough;  // TODO: remove

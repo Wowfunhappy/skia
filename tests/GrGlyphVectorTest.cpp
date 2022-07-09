@@ -5,6 +5,7 @@
 * found in the LICENSE file.
  */
 
+#include "src/core/SkDescriptor.h"
 #include "src/core/SkGlyph.h"
 #include "src/gpu/ganesh/GrResourceProvider.h"
 
@@ -22,10 +23,17 @@ using SubRunAllocator = sktext::gpu::SubRunAllocator;
 
 namespace sktext::gpu {
 
-class TestingPeer {
+class StrikeRefTestingPeer {
+public:
+    static const SkDescriptor& GetDescriptor(const StrikeRef& strikeRef) {
+        return std::get<sk_sp<SkStrike>>(strikeRef.fStrike)->getDescriptor();
+    }
+};
+
+class GlyphVectorTestingPeer {
 public:
     static const SkDescriptor& GetDescriptor(const GlyphVector& v) {
-        return v.fSkStrike->getDescriptor();
+        return StrikeRefTestingPeer::GetDescriptor(v.fStrikeRef);
     }
     static SkSpan<GlyphVector::Variant> GetGlyphs(const GlyphVector& v) {
         return v.fGlyphs;
@@ -55,10 +63,12 @@ DEF_TEST(GlyphVector_Serialization, r) {
     SkReadBuffer rBuffer{data->data(), data->size()};
     auto dst = GlyphVector::MakeFromBuffer(rBuffer, nullptr, &alloc);
     REPORTER_ASSERT(r, dst.has_value());
-    REPORTER_ASSERT(r, TestingPeer::GetDescriptor(src) == TestingPeer::GetDescriptor(*dst));
+    REPORTER_ASSERT(r,
+                    GlyphVectorTestingPeer::GetDescriptor(src) ==
+                            GlyphVectorTestingPeer::GetDescriptor(*dst));
 
-    auto srcGlyphs = TestingPeer::GetGlyphs(src);
-    auto dstGlyphs = TestingPeer::GetGlyphs(*dst);
+    auto srcGlyphs = GlyphVectorTestingPeer::GetGlyphs(src);
+    auto dstGlyphs = GlyphVectorTestingPeer::GetGlyphs(*dst);
     for (auto [srcGlyphID, dstGlyphID] : SkMakeZip(srcGlyphs, dstGlyphs)) {
         REPORTER_ASSERT(r, srcGlyphID.packedGlyphID == dstGlyphID.packedGlyphID);
     }

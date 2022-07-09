@@ -26,20 +26,6 @@ SkPaintParamsKey create_key_with_data(SkPaintParamsKeyBuilder* builder,
     return builder->lockAsKey();
 }
 
-SkPaintParamsKey create_key_with_ptr(SkPaintParamsKeyBuilder* builder,
-                                     int snippetID,
-                                     SkSpan<const uint8_t> dataPayload,
-                                     void* pointerData) {
-    SkDEBUGCODE(builder->checkReset());
-
-    builder->beginBlock(snippetID);
-    builder->addBytes(dataPayload.size(), dataPayload.data());
-    builder->addPointer(pointerData);
-    builder->endBlock();
-
-    return builder->lockAsKey();
-}
-
 SkPaintParamsKey create_key(SkPaintParamsKeyBuilder* builder, int snippetID, int size) {
     SkASSERT(size <= 1024);
     static constexpr uint8_t kDummyData[1024] = {};
@@ -149,38 +135,6 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyEqualityChecksData, reporter, context) {
     REPORTER_ASSERT(reporter, !(keyA != keyB));
 }
 
-DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyEqualityDoesNotCheckPointers, reporter, context) {
-
-    SkShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
-    static const int kBlockDataSize = 4;
-    static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
-            {"data",     SkPaintParamsKey::DataPayloadType::kByte, kBlockDataSize},
-            {"ptrIndex", SkPaintParamsKey::DataPayloadType::kPointerIndex, 1},
-    };
-
-    int userSnippetID = dict->addUserDefinedSnippet("key", SkSpan(kDataFields));
-
-    static constexpr uint8_t kData[kBlockDataSize] = {1, 2, 3, 4};
-    int arbitraryData1 = 1;
-    int arbitraryData2 = 2;
-
-    SkPaintParamsKeyBuilder builderA(dict, SkBackend::kGraphite);
-    SkPaintParamsKeyBuilder builderB(dict, SkBackend::kGraphite);
-    SkPaintParamsKeyBuilder builderC(dict, SkBackend::kGraphite);
-    SkPaintParamsKey keyA = create_key_with_ptr(&builderA, userSnippetID, SkSpan(kData),
-                                                &arbitraryData1);
-    SkPaintParamsKey keyB = create_key_with_ptr(&builderB, userSnippetID, SkSpan(kData),
-                                                &arbitraryData2);
-    SkPaintParamsKey keyC = create_key_with_ptr(&builderC, userSnippetID, SkSpan(kData),
-                                                nullptr);
-
-    // Verify that keyA, keyB, and keyC all match, even though the pointer data does not.
-    REPORTER_ASSERT(reporter, keyA == keyB);
-    REPORTER_ASSERT(reporter, keyB == keyC);
-    REPORTER_ASSERT(reporter, !(keyA != keyB));
-    REPORTER_ASSERT(reporter, !(keyB != keyC));
-}
-
 DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyBlockReaderWorks, reporter, context) {
 
     SkShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
@@ -190,20 +144,20 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyBlockReaderWorks, reporter, context) {
     static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
             {"ByteX",   SkPaintParamsKey::DataPayloadType::kByte,   kCountX},
             {"Float4Y", SkPaintParamsKey::DataPayloadType::kFloat4, kCountY},
-            {"ByteZ",   SkPaintParamsKey::DataPayloadType::kByte,   kCountZ},
+            {"IntZ",    SkPaintParamsKey::DataPayloadType::kInt,    kCountZ},
     };
 
     int userSnippetID = dict->addUserDefinedSnippet("key", kDataFields);
 
     static constexpr uint8_t   kDataX[kCountX] = {1, 2, 3};
     static constexpr SkColor4f kDataY[kCountY] = {{4, 5, 6, 7}, {8, 9, 10, 11}};
-    static constexpr uint8_t   kDataZ[kCountZ] = {12, 13, 14, 15, 16, 17, 18};
+    static constexpr int32_t   kDataZ[kCountZ] = {-1234567, 13, 14, 15, 16, 17, 7654321};
 
     SkPaintParamsKeyBuilder builder(dict, SkBackend::kGraphite);
     builder.beginBlock(userSnippetID);
     builder.addBytes(kCountX, kDataX);
     builder.add     (kCountY, kDataY);
-    builder.addBytes(kCountZ, kDataZ);
+    builder.addInts (kCountZ, kDataZ);
     builder.endBlock();
 
     SkPaintParamsKey key = builder.lockAsKey();
@@ -222,48 +176,7 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyBlockReaderWorks, reporter, context) {
     REPORTER_ASSERT(reporter, readerDataY.size() == kCountY);
     REPORTER_ASSERT(reporter, 0 == memcmp(readerDataY.data(), kDataY, sizeof(kDataY)));
 
-    SkSpan<const uint8_t> readerBytesZ = reader.bytes(2);
+    SkSpan<const int32_t> readerBytesZ = reader.ints(2);
     REPORTER_ASSERT(reporter, readerBytesZ.size() == kCountZ);
     REPORTER_ASSERT(reporter, 0 == memcmp(readerBytesZ.data(), kDataZ, sizeof(kDataZ)));
-}
-
-DEF_GRAPHITE_TEST_FOR_CONTEXTS(KeyBlockReaderPointersWork, reporter, context) {
-
-    SkShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
-    static const int kCountX = 3;
-    static constexpr SkPaintParamsKey::DataPayloadField kDataFields[] = {
-            {"PtrIndexA", SkPaintParamsKey::DataPayloadType::kPointerIndex, 1},
-            {"DataX",     SkPaintParamsKey::DataPayloadType::kByte,         kCountX},
-            {"PtrIndexB", SkPaintParamsKey::DataPayloadType::kPointerIndex, 1},
-    };
-
-    int userSnippetID = dict->addUserDefinedSnippet("key", kDataFields);
-    int arbitraryDataA = 123;
-    int arbitraryDataB = 456;
-
-    static constexpr uint8_t kDataX[kCountX] = {1, 2, 3};
-    SkPaintParamsKeyBuilder builder(dict, SkBackend::kGraphite);
-
-    builder.beginBlock(userSnippetID);
-    builder.addPointer(&arbitraryDataA);
-    builder.addBytes(sizeof(kDataX), kDataX);
-    builder.addPointer(&arbitraryDataB);
-    builder.endBlock();
-
-    SkPaintParamsKey key = builder.lockAsKey();
-
-    // Verify that the block reader can extract out our data from the SkPaintParamsKey.
-    SkPaintParamsKey::BlockReader reader = key.reader(dict, /*headerOffset=*/0);
-    REPORTER_ASSERT(reporter, reader.blockSize() == (sizeof(SkPaintParamsKey::Header) +
-                                                     1 + sizeof(kDataX) + 1));
-
-    const void* readerPtrA = reader.pointer(0);
-    REPORTER_ASSERT(reporter, readerPtrA == &arbitraryDataA);
-
-    SkSpan<const uint8_t> readerDataX = reader.bytes(1);
-    REPORTER_ASSERT(reporter, readerDataX.size() == kCountX);
-    REPORTER_ASSERT(reporter, 0 == memcmp(readerDataX.data(), kDataX, sizeof(kDataX)));
-
-    const void* readerPtrB = reader.pointer(2);
-    REPORTER_ASSERT(reporter, readerPtrB == &arbitraryDataB);
 }
