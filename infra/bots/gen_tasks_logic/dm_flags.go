@@ -279,6 +279,23 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			// These GMs only differ in the low bits
 			skip("gltestthreading", "gm", ALL, "stroketext")
 			skip("gltestthreading", "gm", ALL, "draw_image_set")
+
+			// Fail on Iris Xe.
+			skip("gltestthreading", "gm", ALL, "anisotropic_image_scale_mip")
+			skip("gltestthreading", "gm", ALL, "bleed_downscale")
+			skip("gltestthreading", "gm", ALL, "degeneratesegments")
+			skip("gltestthreading", "gm", ALL, "mipmap_srgb")
+			skip("gltestthreading", "gm", ALL, "mipmap")
+			skip("gltestthreading", "gm", ALL, "ovals")
+			skip("gltestthreading", "gm", ALL, "persp_images")
+			skip("gltestthreading", "gm", ALL, "persp_shaders_aa")
+			skip("gltestthreading", "gm", ALL, "rtif_distort")
+			skip("gltestthreading", "gm", ALL, "skbug_8664")
+			skip("gltestthreading", "gm", ALL, "texel_subset_linear_mipmap_nearest_down")
+			skip("gltestthreading", "gm", ALL, "yuv420_odd_dim_repeat")
+
+			skip("gltestthreading", "svg", ALL, "masking-filter-01-f.svg")
+
 		}
 
 		// Dawn bot *only* runs the dawn config
@@ -865,6 +882,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 	// skia:6189
 	badSerializeGMs = append(badSerializeGMs, "shadow_utils")
+	badSerializeGMs = append(badSerializeGMs, "graphitestart")
 
 	// skia:7938
 	badSerializeGMs = append(badSerializeGMs, "persp_images")
@@ -1011,7 +1029,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 
 	if b.matchGpu("Adreno6") && !b.extraConfig("Vulkan") { // disable broken tests on Adreno 6xx GLSL
-		skip(ALL, "tests", ALL, "SkSLIntrinsicIsInf_GPU")     // skia:12377
+		skip(ALL, "tests", ALL, "SkSLIntrinsicIsInf_GPU") // skia:12377
 	}
 
 	if b.matchGpu("Adreno[56]") && !b.extraConfig("Vulkan") { // disable broken tests on Adreno 5/6xx GLSL
@@ -1027,6 +1045,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 	if (b.matchGpu("Adreno3") || b.matchGpu("Mali400")) && !b.extraConfig("Vulkan") {
 		skip(ALL, "tests", ALL, "SkSLMatrices") // skia:12456
+		skip(ALL, "tests", ALL, "SkSLMatrixNoOpFolding_GPU")
 	}
 
 	if b.gpu("QuadroP400") {
@@ -1037,11 +1056,14 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLMatrixScalarMath") // skia:12681
 	}
 
-	if b.gpu("IntelIris6100", "IntelHD4400") && b.matchOs("Win") && !b.extraConfig("Vulkan") {
-		skip(ALL, "tests", ALL, "SkSLVectorToMatrixCast_GPU") // skia:12179, vec4(mat2) crash
+	if b.gpu("IntelIris6100", "IntelHD4400") && b.matchOs("Win") && b.extraConfig("ANGLE") {
+		skip(ALL, "tests", ALL, "SkSLVectorToMatrixCast_GPU")             // skia:12179, vec4(mat2) crash
 		skip(ALL, "tests", ALL, "SkSLTrivialArgumentsInlineDirectly_GPU") // skia:12179 again
-		skip(ALL, "tests", ALL, "SkSLVectorScalarMath_GPU")   // skia:11919
-		skip(ALL, "tests", ALL, "SkSLMatrixFoldingES2_GPU")   // skia:11919
+	}
+
+	if b.gpu("IntelIris6100", "IntelHD4400") && b.matchOs("Win") && !b.extraConfig("Vulkan") {
+		skip(ALL, "tests", ALL, "SkSLVectorScalarMath_GPU")               // skia:11919
+		skip(ALL, "tests", ALL, "SkSLMatrixFoldingES2_GPU")               // skia:11919
 	}
 
 	if b.matchGpu("Intel") && b.matchOs("Win") && !b.extraConfig("Vulkan") {
@@ -1084,6 +1106,19 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		}
 	}
 
+	if !b.extraConfig("Vulkan") && (b.gpu("RTX3060") ||
+									b.gpu("QuadroP400") ||
+									b.matchGpu("GTX[6-9]60") ||
+									b.matchGpu("Mali400") ||
+									b.matchGpu("Tegra3") ||
+									b.matchGpu("Radeon(R9|HD)")) {
+		skip(ALL, "tests", ALL, "SkSLMatrixScalarNoOpFolding_GPU")  // skia:13556
+	}
+
+	if b.matchOs("Mac") && b.extraConfig("ANGLE") {
+		skip(ALL, "tests", ALL, "SkSLMatrixScalarNoOpFolding_GPU")  // https://anglebug.com/7525
+	}
+
 	if b.gpu("RTX3060") && b.extraConfig("Vulkan") {
 		skip(ALL, "gm", ALL, "blurcircles2") // skia:13342
 	}
@@ -1117,8 +1152,12 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLMatrixConstructorsES3_GPU")
 	}
 
+	if b.extraConfig("Vulkan") && b.gpu("RadeonVega6") {
+		skip(ALL, "gm", ALL, "ycbcrimage")                                 // skia:13265
+		skip(ALL, "test", ALL, "VkYCbcrSampler_DrawImageWithYcbcrSampler") // skia:13265
+	}
 
-	if b.matchGpu("Intel") { // some Intel GPUs don't return zero for the derivative of a uniform
+	if b.matchGpu("Intel") || b.matchGpu("RadeonVega6") { // some Intel and AMD GPUs don't return zero for the derivative of a uniform
 		skip(ALL, "tests", ALL, "SkSLIntrinsicDFdy_GPU")
 		skip(ALL, "tests", ALL, "SkSLIntrinsicDFdx_GPU")
 		skip(ALL, "tests", ALL, "SkSLIntrinsicFwidth_GPU")
@@ -1143,6 +1182,10 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		match = append(match, "~PremulAlphaRoundTrip_Gpu")                // skia:7501
 		match = append(match, "~ReimportImageTextureWithMipLevels")       // skia:8090
 		match = append(match, "~MorphologyFilterRadiusWithMirrorCTM_Gpu") // skia:10383
+	}
+
+	if b.gpu("IntelIrisXe") {
+		match = append(match, "~ReimportImageTextureWithMipLevels")
 	}
 
 	if b.extraConfig("MSAN") {

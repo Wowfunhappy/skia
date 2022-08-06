@@ -18,11 +18,11 @@ class SkMatrixProvider;
 class SkPaint;
 class SkReadBuffer;
 class SkStrikeClient;
-class SkStrikeForGPUCacheInterface;
 class SkWriteBuffer;
 
 namespace sktext {
 class GlyphRunList;
+class StrikeForGPUCacheInterface;
     namespace gpu {
     class Glyph;
     class StrikeCache;
@@ -44,6 +44,10 @@ namespace skgpu::v1 { class SurfaceDrawContext; }
 #include "src/gpu/graphite/geom/Rect.h"
 #include "src/gpu/graphite/geom/SubRunData.h"
 #include "src/gpu/graphite/geom/Transform_graphite.h"
+
+namespace skgpu {
+enum class MaskFormat : int;
+}
 
 namespace skgpu::graphite {
 class DrawWriter;
@@ -111,9 +115,10 @@ public:
     virtual void fillVertexData(
             skgpu::graphite::DrawWriter*,
             int offset, int count,
-            SkColor color,
             SkScalar depth,
             const skgpu::graphite::Transform& transform) const = 0;
+
+    virtual skgpu::MaskFormat maskFormat() const = 0;
 #endif
 
     virtual void testingOnly_packedGlyphIDToGlyph(StrikeCache* cache) const = 0;
@@ -242,7 +247,7 @@ public:
             const SkMatrix& positionMatrix,
             const SkPaint& runPaint,
             SkStrikeDeviceInfo strikeDeviceInfo,
-            SkStrikeForGPUCacheInterface* strikeCache,
+            StrikeForGPUCacheInterface* strikeCache,
             sktext::gpu::SubRunAllocator* alloc,
             SubRunCreationBehavior creationBehavior,
             const char* tag);

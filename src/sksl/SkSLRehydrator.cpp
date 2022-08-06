@@ -98,10 +98,13 @@ private:
     std::shared_ptr<SymbolTable> fOldSymbols;
 };
 
+Rehydrator::Rehydrator(Compiler& compiler, const uint8_t* src, size_t length)
+        : Rehydrator(compiler, src, length, compiler.makeRootSymbolTableWithPublicTypes()) {}
+
 Rehydrator::Rehydrator(Compiler& compiler, const uint8_t* src, size_t length,
-        std::shared_ptr<SymbolTable> symbols)
+                       std::shared_ptr<SymbolTable> symbols)
     : fCompiler(compiler)
-    , fSymbolTable(symbols ? std::move(symbols) : compiler.makeGLSLRootSymbolTable())
+    , fSymbolTable(std::move(symbols))
     SkDEBUGCODE(, fEnd(src + length)) {
     SkASSERT(fSymbolTable);
     SkASSERT(fSymbolTable->isBuiltin());
@@ -194,7 +197,7 @@ const Symbol* Rehydrator::symbol() {
             std::vector<const Variable*> parameters;
             parameters.reserve(parameterCount);
             for (int i = 0; i < parameterCount; ++i) {
-                parameters.push_back(this->symbolRef<Variable>());
+                parameters.push_back(&this->symbol()->as<Variable>());
             }
             const Type* returnType = this->type();
             const FunctionDeclaration* result =
@@ -287,7 +290,7 @@ std::unique_ptr<Program> Rehydrator::program() {
     auto config = std::make_unique<ProgramConfig>();
     config->fKind = (ProgramKind)this->readU8();
     config->fRequiredSkSLVersion = (SkSL::Version)this->readU8();
-    config->fSettings.fEnforceES2Restrictions = false;
+    config->fSettings.fMaxVersionAllowed = SkSL::Version::k300;
 
     Context& context = this->context();
     ProgramConfig* oldConfig = context.fConfig;

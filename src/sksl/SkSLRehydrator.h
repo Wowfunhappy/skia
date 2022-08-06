@@ -41,7 +41,7 @@ struct Program;
  */
 class Rehydrator {
 public:
-    static constexpr uint16_t kVersion = 12;
+    static constexpr uint16_t kVersion = 13;
 
     // see binary_format.md for a description of the command data
     enum Command {
@@ -107,8 +107,10 @@ public:
     };
 
     // src must remain in memory as long as the objects created from it do
+    Rehydrator(Compiler& compiler, const uint8_t* src, size_t length);
+
     Rehydrator(Compiler& compiler, const uint8_t* src, size_t length,
-            std::shared_ptr<SymbolTable> base = nullptr);
+               std::shared_ptr<SymbolTable> base);
 
 #ifdef SK_DEBUG
     ~Rehydrator();

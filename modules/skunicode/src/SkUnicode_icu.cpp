@@ -4,17 +4,24 @@
 * Use of this source code is governed by a BSD-style license that can be
 * found in the LICENSE file.
 */
+#include "modules/skunicode/src/SkUnicode_icu.h"
+
 #include "include/core/SkString.h"
+#include "include/core/SkTypes.h"
 #include "include/private/SkMutex.h"
 #include "include/private/SkOnce.h"
 #include "include/private/SkTFitsIn.h"
 #include "include/private/SkTHash.h"
 #include "include/private/SkTemplates.h"
+#include "include/private/SkTo.h"
 #include "modules/skunicode/include/SkUnicode.h"
-#include "modules/skunicode/src/SkUnicode_icu.h"
 #include "src/utils/SkUTF.h"
-#include <vector>
+
 #include <functional>
+#include <string>
+#include <unicode/umachine.h>
+#include <utility>
+#include <vector>
 
 #if defined(SK_USING_THIRD_PARTY_ICU)
 #include "SkLoadICU.h"
@@ -223,25 +230,6 @@ class SkIcuBreakIteratorCache {
     }
 };
 
-class SkScriptIterator_icu : public SkScriptIterator {
- public:
-   bool getScript(SkUnichar u, ScriptID* script) override {
-        UErrorCode status = U_ZERO_ERROR;
-        UScriptCode scriptCode = sk_uscript_getScript(u, &status);
-        if (U_FAILURE (status)) {
-            return false;
-        }
-        if (script) {
-            *script = (ScriptID)scriptCode;
-        }
-        return true;
-   }
-
-   static std::unique_ptr<SkScriptIterator> makeScriptIterator() {
-        return std::unique_ptr<SkScriptIterator>(new SkScriptIterator_icu());
-   }
-};
-
 class SkUnicode_icu : public SkUnicode {
     static bool extractBidi(const char utf8[],
                             int utf8Units,
@@ -366,10 +354,10 @@ class SkUnicode_icu : public SkUnicode {
         auto iter = iterator.get();
         int32_t pos = sk_ubrk_first(iter);
         while (pos != UBRK_DONE) {
-            auto status = type == SkUnicode::BreakType::kLines
-                              ? UBRK_LINE_SOFT
-                              : sk_ubrk_getRuleStatus(iter);
-            setBreak(pos, status);
+            int s = type == SkUnicode::BreakType::kLines
+                        ? UBRK_LINE_SOFT
+                        : sk_ubrk_getRuleStatus(iter);
+            setBreak(pos, s);
             pos = sk_ubrk_next(iter);
         }
 
@@ -414,9 +402,6 @@ public:
     }
     std::unique_ptr<SkBreakIterator> makeBreakIterator(BreakType breakType) override {
         return makeBreakIterator(sk_uloc_getDefault(), breakType);
-    }
-    std::unique_ptr<SkScriptIterator> makeScriptIterator() override {
-        return SkScriptIterator_icu::makeScriptIterator();
     }
 
     static bool isHardLineBreak(SkUnichar utf8) {

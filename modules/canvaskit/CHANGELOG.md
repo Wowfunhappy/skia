@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+ - The following path methods: `addCircle`, `Path::CanInterpolate`, and `Path::MakeFromPathInterpolation`.
+ - The following ImageFilter factory methods: `MakeBlend`, `MakeDilate`, `MakeDisplacementMap`, 
+   `MakeDropShadow`, `MakeDropShadowOnly`, `MakeErode`, `MakeImage`, `MakeOffset`, and `MakeShader`.
+ - The `MakeLuma` ColorFilter factory method.
+ - The `fontVariations` TextStyle property.
+
+### Changed
+ - Updated `dtslint`, `typescript`, and `@webgpu/types` versions, used for testing index.d.ts types.
+
+### Known Issues
+ - `ImageFilter.MakeDisplacementMap` is not behaving as expected in certain circumstances.
+
 ## [0.35.0] - 2022-06-30
 
 ### Fixed

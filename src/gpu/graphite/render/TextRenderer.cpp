@@ -13,21 +13,19 @@
 
 namespace skgpu::graphite {
 
-const Renderer& Renderer::TextDirect(MaskFormat maskFormat) {
-    static const TextDirectRenderStep kMask{true};
-    static const TextDirectRenderStep kBitmap{false};
+const Renderer& Renderer::TextDirect(bool isA8) {
+    static const TextDirectRenderStep kDirectA8{true};
+    static const TextDirectRenderStep kDirectColor{false};
 
-    static const Renderer kTextMaskRenderer{"TextMaskRenderer",
-                                            &kMask};
-    static const Renderer kTextBitmapRenderer{"TextBitmapRenderer",
-                                              &kBitmap};
-
-    switch(maskFormat) {
-        case MaskFormat::kA8: return kTextMaskRenderer;
-        case MaskFormat::kA565: return kTextBitmapRenderer;
-        case MaskFormat::kARGB: return kTextBitmapRenderer;
+    static const Renderer kTextDirectA8Renderer{"TextDirectA8Renderer",
+                                                &kDirectA8};
+    static const Renderer kTextDirectColorRenderer{"TextDirectColorRenderer",
+                                                   &kDirectColor};
+    if (isA8) {
+        return kTextDirectA8Renderer;
+    } else {
+        return kTextDirectColorRenderer;
     }
-    SkUNREACHABLE;
 }
 
 const Renderer& Renderer::TextSDF(bool useLCDText) {

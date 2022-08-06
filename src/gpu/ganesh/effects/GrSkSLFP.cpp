@@ -22,6 +22,7 @@
 #include "src/gpu/ganesh/glsl/GrGLSLProgramBuilder.h"
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
+#include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 
 class GrSkSLFP::Impl : public ProgramImpl {
@@ -398,7 +399,7 @@ void GrSkSLFP::onAddToKey(const GrShaderCaps& caps, skgpu::KeyBuilder* b) const 
         bool specialize = specialized[i] == Specialized::kYes;
         b->addBool(specialize, "specialize");
         if (specialize) {
-            b->addBytes(iter->sizeInBytes(), uniformData + iter->offset, iter->name.c_str());
+            b->addBytes(iter->sizeInBytes(), uniformData + iter->offset, iter->name);
         }
     }
 }

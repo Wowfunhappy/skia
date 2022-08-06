@@ -14,16 +14,19 @@ namespace skgpu::graphite {
 
 class TextDirectRenderStep final : public RenderStep {
 public:
-    TextDirectRenderStep(bool isMask);
+    TextDirectRenderStep(bool isA8);
 
     ~TextDirectRenderStep() override;
 
     const char* vertexSkSL() const override;
+    std::string texturesAndSamplersSkSL(int startBinding) const override;
+    const char* fragmentCoverageSkSL() const override;
+
     void writeVertices(DrawWriter*, const DrawParams&) const override;
-    void writeUniforms(const DrawParams&, SkPipelineDataGatherer*) const override;
+    void writeUniformsAndTextures(const DrawParams&, SkPipelineDataGatherer*) const override;
 
 private:
-    [[maybe_unused]] bool fIsMask;
+    bool fIsA8;
 };
 
 }  // namespace skgpu::graphite

@@ -82,7 +82,7 @@ const char* TessellateStrokesRenderStep::vertexSkSL() const {
         if ((sk_VertexID & 1) != 0) {
             edgeID = -edgeID;
         }
-        float2x2 affine = float2x2(affineMatrix);
+        float2x2 affine = float2x2(affineMatrix.xy, affineMatrix.zw);
         float4 devPosition = float4(
                 tessellate_stroked_curve(edgeID, 16383, affine, translate,
                                          maxScale, p01, p23, prevPoint, stroke),
@@ -105,7 +105,7 @@ void TessellateStrokesRenderStep::writeVertices(DrawWriter* dw, const DrawParams
     // more accurately compute how many *parametric* segments are needed.
     // getMaxScale() returns -1 if it can't compute a scale factor (e.g. perspective), taking the
     // absolute value automatically converts that to an identity scale factor for our purposes.
-    writer.setShaderTransform(wangs_formula::VectorXform{params.transform()},
+    writer.setShaderTransform(wangs_formula::VectorXform{params.transform().matrix()},
                               params.transform().maxScaleFactor());
 
     SkASSERT(params.isStroke());
@@ -211,8 +211,8 @@ void TessellateStrokesRenderStep::writeVertices(DrawWriter* dw, const DrawParams
     }
 }
 
-void TessellateStrokesRenderStep::writeUniforms(const DrawParams& params,
-                                                SkPipelineDataGatherer* gatherer) const {
+void TessellateStrokesRenderStep::writeUniformsAndTextures(const DrawParams& params,
+                                                           SkPipelineDataGatherer* gatherer) const {
     SkASSERT(params.transform().type() < Transform::Type::kProjection); // TODO: Implement perspective
 
     SkDEBUGCODE(UniformExpectationsValidator uev(gatherer, this->uniforms());)

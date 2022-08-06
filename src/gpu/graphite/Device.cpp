@@ -35,6 +35,7 @@
 #include "include/core/SkPathEffect.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/private/SkImageInfoPriv.h"
+#include "src/core/SkVerticesPriv.h"
 
 #include "src/core/SkConvertPixels.h"
 #include "src/core/SkMatrixPriv.h"
@@ -65,9 +66,9 @@ bool paint_depends_on_dst(const PaintParams& paintParams) {
         return false;
     } else if (bm.value() == SkBlendMode::kSrcOver) {
         // src-over does not depend on dst if src is opaque (a = 1)
-        // TODO: This will get more complicated when PaintParams has color filters and blenders
         return !paintParams.color().isOpaque() ||
-               (paintParams.shader() && !paintParams.shader()->isOpaque());
+               (paintParams.shader() && !paintParams.shader()->isOpaque()) ||
+               (paintParams.colorFilter() && !paintParams.colorFilter()->isAlphaUnchanged());
     } else {
         // TODO: Are their other modes that don't depend on dst that can be trivially detected?
         return true;
@@ -450,6 +451,18 @@ void Device::drawRect(const SkRect& r, const SkPaint& paint) {
                        paint, SkStrokeRec(paint));
 }
 
+void Device::drawVertices(const SkVertices* vertices, sk_sp<SkBlender> blender,
+                          const SkPaint& paint, bool skipColorXform)  {
+  // TODO - Handle the skipColorXform bool. Create a wrapper around SkVertices to store that bool
+  // so VerticesRenderStep can set a uniform to tell the GPU whether to skip color transformations.
+  // TODO - Add blender to PaintParams.
+  this->drawGeometry(this->localToDeviceTransform(),
+                     Geometry(sk_ref_sp(vertices)),
+                     paint,
+                     kFillStyle,
+                     DrawFlags::kIgnorePathEffect | DrawFlags::kIgnoreMaskFilter);
+}
+
 void Device::drawOval(const SkRect& oval, const SkPaint& paint) {
     // TODO: This has wasted effort from the SkCanvas level since it instead converts rrects that
     // happen to be ovals into this, only for us to go right back to rrect.
@@ -579,7 +592,8 @@ void Device::drawAtlasSubRun(const sktext::gpu::AtlasSubRun* subRun,
                                                    this->localToDeviceTransform(), drawOrigin);
             this->drawGeometry(localToDevice,
                                Geometry(SubRunData(subRun, std::move(subRunStorage),
-                                                   bounds, subRunCursor, glyphsRegenerated)),
+                                                   bounds, subRunCursor, glyphsRegenerated,
+                                                   fRecorder)),
                                paint,
                                kFillStyle,
                                DrawFlags::kIgnorePathEffect | DrawFlags::kIgnoreMaskFilter);
@@ -686,6 +700,22 @@ void Device::drawGeometry(const Transform& localToDevice,
         return;
     }
 
+#if defined(SK_DEBUG)
+    // Renderers and their component RenderSteps have flexibility in defining their
+    // DepthStencilSettings. However, the clipping and ordering managed between Device and ClipStack
+    // requires that only GREATER or GEQUAL depth tests are used for draws recorded through the
+    // client-facing, painters-order-oriented API. We assert here vs. in Renderer's constructor to
+    // allow internal-oriented Renderers that are never selected for a "regular" draw call to have
+    // more flexibility in their settings.
+    for (const RenderStep* step : renderer->steps()) {
+        auto dss = step->depthStencilSettings();
+        SkASSERT((!step->performsShading() || dss.fDepthTestEnabled) &&
+                 (!dss.fDepthTestEnabled ||
+                  dss.fDepthCompareOp == CompareOp::kGreater ||
+                  dss.fDepthCompareOp == CompareOp::kGEqual));
+    }
+#endif
+
     // A draw's order always depends on the clips that must be drawn before it
     order.dependsOnPaintersOrder(clipOrder);
 
@@ -693,7 +723,7 @@ void Device::drawGeometry(const Transform& localToDevice,
     // order to blend correctly. We always query the most recent draw (even when opaque) because it
     // also lets Device easily track whether or not there are any overlapping draws.
     PaintParams shading{paint};
-    const bool dependsOnDst = paint_depends_on_dst(shading); // TODO: || renderer->usesCoverageAA();
+    const bool dependsOnDst = renderer->emitsCoverage() || paint_depends_on_dst(shading);
     CompressedPaintersOrder prevDraw =
             fColorDepthBoundsManager->getMostRecentDraw(clip.drawBounds());
     if (dependsOnDst) {
@@ -768,6 +798,11 @@ void Device::drawClipShape(const Transform& localToDevice,
     } else {
         fDC->recordDraw(*renderer, localToDevice, geometry, clip, order, nullptr, nullptr);
     }
+    // This ensures that draws recorded after this clip shape has been popped off the stack will
+    // be unaffected by the Z value the clip shape wrote to the depth attachment.
+    if (order.depth() > fCurrentDepth) {
+        fCurrentDepth = order.depth();
+    }
 }
 
 const Renderer* Device::ChooseRenderer(const Geometry& geometry,
@@ -777,6 +812,9 @@ const Renderer* Device::ChooseRenderer(const Geometry& geometry,
 
     if (geometry.isSubRun()) {
         return geometry.subRunData().subRun()->renderer();
+    } else if (geometry.isVertices()) {
+        SkVerticesPriv info(geometry.vertices()->priv());
+        return &Renderer::Vertices(info.mode(), info.hasColors(), info.hasTexCoords());
     }
 
     if (!geometry.isShape()) {

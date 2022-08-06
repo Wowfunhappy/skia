@@ -204,8 +204,6 @@ CORE_FILES = [
     "SkMesh.cpp",
     "SkMeshPriv.h",
     "SkMessageBus.h",
-    "SkMiniRecorder.cpp",
-    "SkMiniRecorder.h",
     "SkMipmap.cpp",
     "SkMipmap.h",
     "SkMipmapAccessor.cpp",
@@ -234,7 +232,6 @@ CORE_FILES = [
     "SkPathRef.cpp",
     "SkPath_serial.cpp",
     "SkPicture.cpp",
-    "SkPictureCommon.h",
     "SkPictureData.cpp",
     "SkPictureData.h",
     "SkPictureFlat.cpp",
@@ -310,6 +307,7 @@ CORE_FILES = [
     "SkScan_Antihair.cpp",
     "SkScan_Hairline.cpp",
     "SkScan_Path.cpp",
+    "SkScopeExit.h",
     "SkSemaphore.cpp",
     "SkSharedMutex.cpp",
     "SkSharedMutex.h",
@@ -325,8 +323,6 @@ CORE_FILES = [
     "SkStreamPriv.h",
     "SkStrikeCache.cpp",
     "SkStrikeCache.h",
-    "SkStrikeForGPU.cpp",
-    "SkStrikeForGPU.h",
     "SkStrikeSpec.cpp",
     "SkStrikeSpec.h",
     "SkString.cpp",
@@ -413,7 +409,6 @@ SKSL_FILES = [
     "SkRuntimeEffect.cpp",
     "SkSLTypeShared.cpp",
     "SkSLTypeShared.h",
-    "SkScopeExit.h",
     "SkShaderCodeDictionary.cpp",
     "SkShaderCodeDictionary.h",
     "SkUniform.h",
@@ -427,7 +422,7 @@ split_srcs_and_hdrs(
 filegroup(
     name = "srcs",
     srcs = [":core_srcs"] + select({
-        "//bazel/common_config_settings:needs_sksl": [
+        "//src/sksl:needs_sksl": [
             ":sksl_srcs",
         ],
         "//conditions:default": [],
@@ -438,7 +433,7 @@ filegroup(
 filegroup(
     name = "private_hdrs",
     srcs = [":core_hdrs"] + select({
-        "//bazel/common_config_settings:needs_sksl": [
+        "//src/sksl:needs_sksl": [
             ":sksl_hdrs",
         ],
         "//conditions:default": [],

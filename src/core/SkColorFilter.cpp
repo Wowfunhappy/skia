@@ -29,6 +29,11 @@
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #endif
 
+#ifdef SK_ENABLE_SKSL
+#include "src/core/SkKeyHelpers.h"
+#include "src/core/SkPaintParamsKey.h"
+#endif
+
 bool SkColorFilter::asAColorMode(SkColor* color, SkBlendMode* mode) const {
     return as_CFB(this)->onAsAColorMode(color, mode);
 }
@@ -140,6 +145,16 @@ SkPMColor4f SkColorFilterBase::onFilterColor4f(const SkPMColor4f& color,
     return SkPMColor4f{0,0,0,0};
 }
 
+#ifdef SK_ENABLE_SKSL
+void SkColorFilterBase::addToKey(const SkKeyContext& keyContext,
+                                 SkPaintParamsKeyBuilder* builder,
+                                 SkPipelineDataGatherer* gatherer) const {
+    // Return the input color as-is.
+    PassthroughShaderBlock::BeginBlock(keyContext, builder, gatherer);
+    builder->endBlock();
+}
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 class SkComposeColorFilter : public SkColorFilterBase {
@@ -188,6 +203,19 @@ public:
         return GrFPSuccess(std::move(outerFP));
     }
 #endif
+
+#ifdef SK_ENABLE_SKSL
+    void addToKey(const SkKeyContext& keyContext,
+                  SkPaintParamsKeyBuilder* builder,
+                  SkPipelineDataGatherer* gatherer) const override {
+        ComposeColorFilterBlock::BeginBlock(keyContext, builder, gatherer);
+
+        as_CFB(fInner)->addToKey(keyContext, builder, gatherer);
+        as_CFB(fOuter)->addToKey(keyContext, builder, gatherer);
+
+        builder->endBlock();
+    }
+#endif // SK_ENABLE_SKSL
 
     SK_FLATTENABLE_HOOKS(SkComposeColorFilter)
 
@@ -471,7 +499,7 @@ sk_sp<SkColorFilter> SkColorFilters::Lerp(float weight, sk_sp<SkColorFilter> cf0
         return cf1;
     }
 
-    sk_sp<SkRuntimeEffect> effect = SkMakeCachedRuntimeEffect(
+    static const SkRuntimeEffect* effect = SkMakeCachedRuntimeEffect(
         SkRuntimeEffect::MakeForColorFilter,
         "uniform colorFilter cf0;"
         "uniform colorFilter cf1;"
@@ -479,7 +507,7 @@ sk_sp<SkColorFilter> SkColorFilters::Lerp(float weight, sk_sp<SkColorFilter> cf0
         "half4 main(half4 color) {"
             "return mix(cf0.eval(color), cf1.eval(color), weight);"
         "}"
-    );
+    ).release();
     SkASSERT(effect);
 
     sk_sp<SkColorFilter> inputs[] = {cf0,cf1};

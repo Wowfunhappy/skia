@@ -107,6 +107,13 @@ bool AtlasPathRenderer::IsSupported(GrRecordingContext* rContext) {
         return false;
     }
 #endif
+#ifdef SK_BUILD_FOR_WIN
+    // http://skbug.com/13519 There is a bug with the atlas path renderer on Direct3D, running on
+    // Radeon hardware and possibly others. Disable until we can investigate.
+    if (rContext->backend() == GrBackendApi::kDirect3D) {
+        return false;
+    }
+#endif
     const GrCaps& caps = *rContext->priv().caps();
     auto atlasFormat = caps.getDefaultBackendFormat(kAtlasAlpha8Type, GrRenderable::kYes);
     return rContext->asDirectContext() &&  // The atlas doesn't support DDL yet.
@@ -329,8 +336,10 @@ GrFPResult AtlasPathRenderer::makeAtlasClipEffect(const SurfaceDrawContext* sdc,
 
     const SkRect pathDevBounds = viewMatrix.mapRect(path.getBounds());
     if (!is_visible(pathDevBounds, drawBounds)) {
-        // The path is empty or outside the drawBounds. No mask is needed.
-        return path.isInverseFillType() ? GrFPSuccess(std::move(inputFP))
+        // The path is empty or outside the drawBounds. No mask is needed. We explicitly allow the
+        // returned successful "fp" to be null in case this bypassed atlas clip effect was the first
+        // clip to be processed by the clip stack (at which point inputFP is null).
+        return path.isInverseFillType() ? GrFPNullableSuccess(std::move(inputFP))
                                         : GrFPFailure(std::move(inputFP));
     }
 

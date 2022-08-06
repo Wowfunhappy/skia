@@ -21,8 +21,11 @@ public:
     ~TextSDFRenderStep() override;
 
     const char* vertexSkSL() const override;
+    std::string texturesAndSamplersSkSL(int startBinding) const override;
+    const char* fragmentCoverageSkSL() const override;
+
     void writeVertices(DrawWriter*, const DrawParams&) const override;
-    void writeUniforms(const DrawParams&, SkPipelineDataGatherer*) const override;
+    void writeUniformsAndTextures(const DrawParams&, SkPipelineDataGatherer*) const override;
 };
 
 }  // namespace skgpu::graphite

@@ -84,6 +84,20 @@ public:
      */
     const Symbol* operator[](std::string_view name);
 
+    /**
+     * Returns true if the name refers to a type (user or built-in) in the current symbol table.
+     */
+    bool isType(std::string_view name) const;
+
+    /**
+     * Returns true if the name refers to a builtin type.
+     */
+    bool isBuiltinType(std::string_view name) const;
+
+    /**
+     * Adds a symbol to this symbol table, without conferring ownership. The caller is responsible
+     * for keeping the Symbol alive throughout the lifetime of the program/module.
+     */
     void addWithoutOwnership(const Symbol* symbol);
 
     template <typename T>
@@ -124,15 +138,14 @@ public:
         return fBuiltin;
     }
 
-    /**
-     * Returns the built-in symbol table that this SymbolTable rests upon.
-     * If this symbol table is already a built-in, it will be returned as-is.
-     */
-    SkSL::SymbolTable* builtinParent() {
-        return this->isBuiltin() ? this : fParent->builtinParent();
-    }
-
     const std::string* takeOwnershipOfString(std::string n);
+
+    /**
+     * Indicates that this symbol table's parent is in a different module than this one.
+     */
+    void markModuleBoundary() {
+        fAtModuleBoundary = true;
+    }
 
     std::shared_ptr<SymbolTable> fParent;
 
@@ -154,14 +167,20 @@ private:
         return SymbolKey{name, SkOpts::hash_fn(name.data(), name.size(), 0)};
     }
 
-    const Symbol* lookup(SymbolTable* writableSymbolTable, const SymbolKey& key);
+    const Symbol* lookup(SymbolTable* writableSymbolTable,
+                         bool encounteredModuleBoundary,
+                         const SymbolKey& key);
 
     const Symbol* buildOverloadSet(SymbolTable* writableSymbolTable,
+                                   bool encounteredModuleBoundary,
                                    const SymbolKey& key,
                                    const Symbol* symbol,
                                    SkSpan<const FunctionDeclaration* const> overloadSet);
 
+    bool isType(const SymbolKey& key) const;
+
     bool fBuiltin = false;
+    bool fAtModuleBoundary = false;
     std::forward_list<std::string> fOwnedStrings;
     SkTHashMap<SymbolKey, const Symbol*, SymbolKey::Hash> fSymbols;
     const Context& fContext;

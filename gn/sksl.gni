@@ -93,6 +93,7 @@ skia_sksl_sources = [
   "$_src/sksl/analysis/SkSLIsTrivialExpression.cpp",
   "$_src/sksl/analysis/SkSLNoOpErrorReporter.h",
   "$_src/sksl/analysis/SkSLProgramUsage.cpp",
+  "$_src/sksl/analysis/SkSLProgramUsage.h",
   "$_src/sksl/analysis/SkSLProgramVisitor.h",
   "$_src/sksl/analysis/SkSLSwitchCaseContainsExit.cpp",
   "$_src/sksl/codegen/SkSLVMCodeGenerator.cpp",
@@ -204,12 +205,14 @@ skia_sksl_sources = [
   "$_src/sksl/spirv.h",
   "$_src/sksl/tracing/SkVMDebugTrace.cpp",
   "$_src/sksl/tracing/SkVMDebugTrace.h",
-  "$_src/sksl/transform/SkSLBuiltinVariableScanner.cpp",
+  "$_src/sksl/transform/SkSLAddConstToVarModifiers.cpp",
   "$_src/sksl/transform/SkSLEliminateDeadFunctions.cpp",
   "$_src/sksl/transform/SkSLEliminateDeadGlobalVariables.cpp",
   "$_src/sksl/transform/SkSLEliminateDeadLocalVariables.cpp",
   "$_src/sksl/transform/SkSLEliminateEmptyStatements.cpp",
   "$_src/sksl/transform/SkSLEliminateUnreachableCode.cpp",
+  "$_src/sksl/transform/SkSLFindAndDeclareBuiltinFunctions.cpp",
+  "$_src/sksl/transform/SkSLFindAndDeclareBuiltinVariables.cpp",
   "$_src/sksl/transform/SkSLTransform.h",
 ]
 

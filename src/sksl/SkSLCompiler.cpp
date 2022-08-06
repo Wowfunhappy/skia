@@ -7,7 +7,6 @@
 
 #include "src/sksl/SkSLCompiler.h"
 
-#include "include/private/SkSLLayout.h"
 #include "include/private/SkSLModifiers.h"
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkSLSymbol.h"
@@ -24,8 +23,6 @@
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLRehydrator.h"
 #include "src/sksl/SkSLStringStream.h"
-#include "src/sksl/SkSLThreadContext.h"
-#include "src/sksl/SkSLUtil.h"
 #include "src/sksl/codegen/SkSLGLSLCodeGenerator.h"
 #include "src/sksl/codegen/SkSLMetalCodeGenerator.h"
 #include "src/sksl/codegen/SkSLSPIRVCodeGenerator.h"
@@ -40,6 +37,7 @@
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLFunctionReference.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
+#include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLTypeReference.h"
@@ -73,14 +71,17 @@
 #if REHYDRATE
 
 // At runtime, we load the dehydrated sksl data files. The data is a (pointer, size) pair.
+#include "src/sksl/generated/sksl_shared.dehydrated.sksl"
 #include "src/sksl/generated/sksl_compute.dehydrated.sksl"
 #include "src/sksl/generated/sksl_frag.dehydrated.sksl"
-#include "src/sksl/generated/sksl_graphite_frag.dehydrated.sksl"
-#include "src/sksl/generated/sksl_graphite_vert.dehydrated.sksl"
 #include "src/sksl/generated/sksl_gpu.dehydrated.sksl"
 #include "src/sksl/generated/sksl_public.dehydrated.sksl"
 #include "src/sksl/generated/sksl_rt_shader.dehydrated.sksl"
 #include "src/sksl/generated/sksl_vert.dehydrated.sksl"
+#if defined(SK_GRAPHITE_ENABLED)
+#include "src/sksl/generated/sksl_graphite_frag.dehydrated.sksl"
+#include "src/sksl/generated/sksl_graphite_vert.dehydrated.sksl"
+#endif
 
 #define MODULE_DATA(name) MakeModuleData(SKSL_INCLUDE_sksl_##name,\
                                          SKSL_INCLUDE_sksl_##name##_LENGTH)
@@ -94,6 +95,8 @@
 #endif
 
 namespace SkSL {
+
+class ProgramUsage;
 
 // These flags allow tools like Viewer or Nanobench to override the compiler's ProgramSettings.
 Compiler::OverrideFlag Compiler::sOptimizer = OverrideFlag::kDefault;
@@ -153,7 +156,6 @@ Compiler::Compiler(const ShaderCaps* caps)
         , fInliner(fContext.get()) {
     SkASSERT(caps);
     fRootModule.fSymbols = this->makeRootSymbolTable();
-    fPrivateModule.fSymbols = this->makePrivateSymbolTable(fRootModule.fSymbols);
 }
 
 Compiler::~Compiler() {}
@@ -201,11 +203,8 @@ inline static constexpr BuiltinTypePtr kRootTypes[] = {
 };
 
 inline static constexpr BuiltinTypePtr kPrivateTypes[] = {
-    TYPE(Sampler1D), TYPE(Sampler2D), TYPE(Sampler3D),
-    TYPE(SamplerExternalOES),
-    TYPE(Sampler2DRect),
+    TYPE(Sampler2D), TYPE(SamplerExternalOES), TYPE(Sampler2DRect),
 
-    TYPE(ISampler2D),
     TYPE(SubpassInput), TYPE(SubpassInputMS),
 
     TYPE(Sampler),
@@ -214,38 +213,41 @@ inline static constexpr BuiltinTypePtr kPrivateTypes[] = {
 
 #undef TYPE
 
-std::shared_ptr<SymbolTable> Compiler::makeRootSymbolTable() const {
+std::shared_ptr<SymbolTable> Compiler::makeRootSymbolTable() {
     auto rootSymbolTable = std::make_shared<SymbolTable>(*fContext, /*builtin=*/true);
 
     for (BuiltinTypePtr rootType : kRootTypes) {
         rootSymbolTable->addWithoutOwnership((fContext->fTypes.*rootType).get());
     }
 
-    return rootSymbolTable;
-}
-
-std::shared_ptr<SymbolTable> Compiler::makePrivateSymbolTable(std::shared_ptr<SymbolTable> parent) {
-    auto privateSymbolTable = std::make_shared<SymbolTable>(parent, /*builtin=*/true);
-
     for (BuiltinTypePtr privateType : kPrivateTypes) {
-        privateSymbolTable->addWithoutOwnership((fContext->fTypes.*privateType).get());
+        rootSymbolTable->addWithoutOwnership((fContext->fTypes.*privateType).get());
     }
 
     // sk_Caps is "builtin", but all references to it are resolved to Settings, so we don't need to
     // treat it as builtin (ie, no need to clone it into the Program).
-    privateSymbolTable->add(std::make_unique<Variable>(/*pos=*/Position(),
-                                                       /*modifiersPosition=*/Position(),
-                                                       fCoreModifiers.add(Modifiers{}),
-                                                       "sk_Caps",
-                                                       fContext->fTypes.fSkCaps.get(),
-                                                       /*builtin=*/false,
-                                                       Variable::Storage::kGlobal));
-    return privateSymbolTable;
+    rootSymbolTable->add(std::make_unique<Variable>(/*pos=*/Position(),
+                                                    /*modifiersPosition=*/Position(),
+                                                    fCoreModifiers.add(Modifiers{}),
+                                                    "sk_Caps",
+                                                    fContext->fTypes.fSkCaps.get(),
+                                                    /*builtin=*/false,
+                                                    Variable::Storage::kGlobal));
+    return rootSymbolTable;
+}
+
+const ParsedModule& Compiler::loadSharedModule() {
+    if (!fSharedModule.fSymbols) {
+        fSharedModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(shared),
+                                          fRootModule);
+    }
+    return fSharedModule;
 }
 
 const ParsedModule& Compiler::loadGPUModule() {
     if (!fGPUModule.fSymbols) {
-        fGPUModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(gpu), fPrivateModule);
+        fGPUModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(gpu),
+                                       this->loadSharedModule());
     }
     return fGPUModule;
 }
@@ -275,24 +277,32 @@ const ParsedModule& Compiler::loadComputeModule() {
 }
 
 const ParsedModule& Compiler::loadGraphiteFragmentModule() {
+#if defined(SK_GRAPHITE_ENABLED)
     if (!fGraphiteFragmentModule.fSymbols) {
         fGraphiteFragmentModule = this->parseModule(ProgramKind::kGraphiteFragment,
                                                     MODULE_DATA(graphite_frag),
                                                     this->loadFragmentModule());
     }
     return fGraphiteFragmentModule;
+#else
+    return this->loadFragmentModule();
+#endif
 }
 
 const ParsedModule& Compiler::loadGraphiteVertexModule() {
+#if defined(SK_GRAPHITE_ENABLED)
     if (!fGraphiteVertexModule.fSymbols) {
         fGraphiteVertexModule = this->parseModule(ProgramKind::kGraphiteVertex,
                                                   MODULE_DATA(graphite_vert),
                                                   this->loadVertexModule());
     }
     return fGraphiteVertexModule;
+#else
+    return this->loadVertexModule();
+#endif
 }
 
-static void add_glsl_type_aliases(SkSL::SymbolTable* symbols, const SkSL::BuiltinTypes& types) {
+static void add_public_type_aliases(SkSL::SymbolTable* symbols, const SkSL::BuiltinTypes& types) {
     // Add some aliases to the runtime effect modules so that it's friendlier, and more like GLSL.
     symbols->addWithoutOwnership(types.fVec2.get());
     symbols->addWithoutOwnership(types.fVec3.get());
@@ -320,23 +330,25 @@ static void add_glsl_type_aliases(SkSL::SymbolTable* symbols, const SkSL::Builti
     symbols->addWithoutOwnership(types.fMat4x3.get());
     symbols->addWithoutOwnership(types.fMat4x4.get());
 
-    // Alias every private type to "invalid". This will prevent code from using built-in names like
-    // `sampler2D` as variable names.
+    // Hide all the private symbols by aliasing them all to "invalid". This will prevent code from
+    // using built-in names like `sampler2D` as variable names.
     for (BuiltinTypePtr privateType : kPrivateTypes) {
         symbols->add(Type::MakeAliasType((types.*privateType)->name(), *types.fInvalid));
     }
+    symbols->add(Type::MakeAliasType("sk_Caps", *types.fInvalid));
 }
 
-std::shared_ptr<SymbolTable> Compiler::makeGLSLRootSymbolTable() const {
+std::shared_ptr<SymbolTable> Compiler::makeRootSymbolTableWithPublicTypes() {
     auto result = this->makeRootSymbolTable();
-    add_glsl_type_aliases(result.get(), fContext->fTypes);
+    add_public_type_aliases(result.get(), fContext->fTypes);
     return result;
 }
 
 const ParsedModule& Compiler::loadPublicModule() {
     if (!fPublicModule.fSymbols) {
-        fPublicModule = this->parseModule(ProgramKind::kGeneric, MODULE_DATA(public), fRootModule);
-        add_glsl_type_aliases(fPublicModule.fSymbols.get(), fContext->fTypes);
+        fPublicModule = this->parseModule(ProgramKind::kGeneric, MODULE_DATA(public),
+                                          this->loadSharedModule());
+        add_public_type_aliases(fPublicModule.fSymbols.get(), fContext->fTypes);
     }
     return fPublicModule;
 }
@@ -372,13 +384,11 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
                                   std::shared_ptr<SymbolTable> base,
                                   bool dehydrate) {
     if (dehydrate) {
-        // NOTE: This is a workaround. When dehydrating includes, skslc doesn't know which module
-        // it's preparing, nor what the correct base module is. We can't use 'Root', because many
-        // GPU intrinsics reference private types, like samplers or textures. Today, 'Private' does
-        // contain the union of all known types, so this is safe. If we ever have types that only
-        // exist in 'Public' (for example), this logic needs to be smarter (by choosing the correct
-        // base for the module we're compiling).
-        base = fPrivateModule.fSymbols;
+        // sksl-precompile passes `true` when dehydrating the lowest-level module to indicate that
+        // we should use the root module. Child modules that depend on the earlier module will pass
+        // `false` and pass the lower-level module's symbol table in `base`.
+        SkASSERT(base == nullptr);
+        base = fRootModule.fSymbols;
     }
     SkASSERT(base);
 
@@ -386,7 +396,7 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
     AutoModifiersPool autoPool(fContext, &fCoreModifiers);
 
     // Built-in modules always use default program settings.
-    Program::Settings settings;
+    ProgramSettings settings;
     settings.fReplaceSettings = !dehydrate;
 
 #if REHYDRATE
@@ -471,7 +481,7 @@ ParsedModule Compiler::parseModule(ProgramKind kind, ModuleData data, const Pars
 
 std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
                                                   std::string text,
-                                                  Program::Settings settings) {
+                                                  ProgramSettings settings) {
     TRACE_EVENT0("skia.shaders", "SkSL::Compiler::convertProgram");
 
     SkASSERT(!settings.fExternalFunctions || (kind == ProgramKind::kGeneric));
@@ -521,21 +531,6 @@ std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
     fInliner.reset();
 
     return DSLParser(this, settings, kind, std::move(text)).program();
-}
-
-void Compiler::updateInputsForBuiltinVariable(const Variable& var) {
-    switch (var.modifiers().fLayout.fBuiltin) {
-        case SK_FRAGCOORD_BUILTIN:
-            if (fContext->fCaps.fCanUseFragCoord) {
-                ThreadContext::Inputs().fUseFlipRTUniform =
-                        !fContext->fConfig->fSettings.fForceNoRTFlip;
-            }
-            break;
-        case SK_CLOCKWISE_BUILTIN:
-            ThreadContext::Inputs().fUseFlipRTUniform =
-                    !fContext->fConfig->fSettings.fForceNoRTFlip;
-            break;
-    }
 }
 
 std::unique_ptr<Expression> Compiler::convertIdentifier(Position pos, std::string_view name) {
@@ -649,16 +644,16 @@ bool Compiler::optimize(Program& program) {
         this->runInliner(program.fOwnedElements, program.fSymbols, usage);
 
         // Unreachable code can confuse some drivers, so it's worth removing. (skia:12012)
-        Transform::EliminateUnreachableCode(program, usage);
+        Transform::EliminateUnreachableCode(program);
 
-        while (Transform::EliminateDeadFunctions(program, usage)) {
+        while (Transform::EliminateDeadFunctions(program)) {
             // Removing dead functions may cause more functions to become unreferenced. Try again.
         }
-        while (Transform::EliminateDeadLocalVariables(program, usage)) {
+        while (Transform::EliminateDeadLocalVariables(program)) {
             // Removing dead variables may cause more variables to become unreferenced. Try again.
         }
 
-        Transform::EliminateDeadGlobalVariables(program, usage);
+        Transform::EliminateDeadGlobalVariables(program);
     }
 
     return this->errorCount() == 0;
@@ -685,6 +680,12 @@ bool Compiler::runInliner(const std::vector<std::unique_ptr<ProgramElement>>& el
 }
 
 bool Compiler::finalize(Program& program) {
+    // Copy all referenced built-in functions into the Program.
+    Transform::FindAndDeclareBuiltinFunctions(program);
+
+    // Variables defined in the pre-includes need their declaring elements added to the program.
+    Transform::FindAndDeclareBuiltinVariables(program);
+
     // Do one last correctness-check pass. This looks for @if/@switch statements that didn't
     // optimize away, or dangling FunctionReference or TypeReference expressions, and reports them
     // as errors.

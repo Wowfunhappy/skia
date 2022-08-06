@@ -19,6 +19,7 @@
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
 #include "src/sksl/codegen/SkSLVMCodeGenerator.h"
+#include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLUnresolvedFunction.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/tracing/SkVMDebugTrace.h"
@@ -32,8 +33,6 @@
 #include <optional>
 #include <stdarg.h>
 #include <stdio.h>
-
-extern bool gSkVMAllowJIT;
 
 void SkDebugf(const char format[], ...) {
     va_list args;
@@ -88,7 +87,7 @@ static bool consume_suffix(std::string* str, const char suffix[]) {
 //    /*#pragma settings Default Sharpen*/
 // The passed-in Settings object will be updated accordingly. Any number of options can be provided.
 static bool detect_shader_settings(const std::string& text,
-                                   SkSL::Program::Settings* settings,
+                                   SkSL::ProgramSettings* settings,
                                    const SkSL::ShaderCaps** caps,
                                    std::unique_ptr<SkSL::SkVMDebugTrace>* debugTrace) {
     using Factory = SkSL::ShaderCapsFactory;
@@ -321,7 +320,7 @@ ResultCode processCommand(const std::vector<std::string>& args) {
         return ResultCode::kInputError;
     }
 
-    SkSL::Program::Settings settings;
+    SkSL::ProgramSettings settings;
     auto standaloneCaps = SkSL::ShaderCapsFactory::Standalone();
     const SkSL::ShaderCaps* caps = standaloneCaps.get();
     std::unique_ptr<SkSL::SkVMDebugTrace> debugTrace;
@@ -519,7 +518,6 @@ ResultCode processCommand(const std::vector<std::string>& args) {
         settings.fAllowTraceVarInSkVMDebugTrace = false;
 
         SkCpu::CacheRuntimeFeatures();
-        gSkVMAllowJIT = true;
         return compileProgramForSkVM(
             [&](SkSL::Compiler&, SkSL::Program& program, SkSL::OutputStream& out) {
                 if (!debugTrace) {
@@ -534,16 +532,8 @@ ResultCode processCommand(const std::vector<std::string>& args) {
 
                 std::unique_ptr<SkWStream> redirect = as_SkWStream(out);
                 skvm::Program p = builder.done(
-                        /*debug_name=*/nullptr, /*allow_jit=*/true, std::move(visualizer));
-#if defined(SKVM_JIT)
-                SkDynamicMemoryWStream asmFile;
-                p.disassemble(&asmFile);
-                auto dumpData = asmFile.detachAsData();
-                std::string dumpString(static_cast<const char*>(dumpData->data()),dumpData->size());
-                p.visualize(redirect.get(), dumpString.c_str());
-#else
-                p.visualize(redirect.get(), nullptr);
-#endif
+                        /*debug_name=*/nullptr, /*allow_jit=*/false, std::move(visualizer));
+                p.visualize(redirect.get());
                 return true;
             });
     } else {
