@@ -7,31 +7,34 @@
 
 #include "src/core/SkShaderCodeDictionary.h"
 
+#include "include/core/SkTileMode.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/private/SkSLString.h"
-#include "src/core/SkOpts.h"
-#include "src/core/SkRuntimeEffectDictionary.h"
+#include "include/private/SkOpts_spi.h"
 #include "src/core/SkRuntimeEffectPriv.h"
-#include "src/sksl/SkSLUtil.h"
-#include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
-#include "src/sksl/ir/SkSLVarDeclarations.h"
+#include "src/core/SkSLTypeShared.h"
 
 #ifdef SK_GRAPHITE_ENABLED
 #include "include/gpu/graphite/Context.h"
+#include "include/private/SkSLString.h"
+#include "src/core/SkRuntimeEffectDictionary.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/Renderer.h"
+#include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
+#include "src/sksl/ir/SkSLVarDeclarations.h"
 #endif
 
 #ifdef SK_ENABLE_PRECOMPILE
 #include "include/core/SkCombinationBuilder.h"
 #endif
 
+#include <new>
+
 using DataPayloadField = SkPaintParamsKey::DataPayloadField;
 using DataPayloadType = SkPaintParamsKey::DataPayloadType;
 
 namespace {
 
-#if defined(SK_GRAPHITE_ENABLED) && defined(SK_METAL)
+#if defined(SK_GRAPHITE_ENABLED) && defined(SK_ENABLE_SKSL)
 std::string get_mangled_name(const std::string& baseName, int manglingSuffix) {
     return baseName + "_" + std::to_string(manglingSuffix);
 }
@@ -52,9 +55,7 @@ std::string SkShaderSnippet::getMangledSamplerName(int samplerIdx, int mangleId)
     return result;
 }
 
-// TODO: SkShaderInfo::toSkSL needs to work outside of both just graphite and metal. To do
-// so we'll need to switch over to using SkSL's uniform capabilities.
-#if defined(SK_GRAPHITE_ENABLED) && defined(SK_METAL)
+#if defined(SK_GRAPHITE_ENABLED) && defined(SK_ENABLE_SKSL)
 
 // Returns an expression to invoke this entry, passing along an updated pre-local matrix.
 static std::string emit_expression_for_entry(const SkShaderInfo& shaderInfo,
@@ -272,7 +273,8 @@ const SkShaderSnippet* SkShaderCodeDictionary::getEntry(int codeSnippetID) const
     return nullptr;
 }
 
-void SkShaderCodeDictionary::getShaderInfo(SkUniquePaintParamsID uniqueID, SkShaderInfo* info) {
+void SkShaderCodeDictionary::getShaderInfo(SkUniquePaintParamsID uniqueID,
+                                           SkShaderInfo* info) const {
     auto entry = this->lookup(uniqueID);
 
     entry->paintParamsKey().toShaderInfo(this, info);

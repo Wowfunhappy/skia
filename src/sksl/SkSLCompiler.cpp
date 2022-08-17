@@ -23,11 +23,6 @@
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLRehydrator.h"
 #include "src/sksl/SkSLStringStream.h"
-#include "src/sksl/codegen/SkSLGLSLCodeGenerator.h"
-#include "src/sksl/codegen/SkSLMetalCodeGenerator.h"
-#include "src/sksl/codegen/SkSLSPIRVCodeGenerator.h"
-#include "src/sksl/codegen/SkSLSPIRVtoHLSL.h"
-#include "src/sksl/codegen/SkSLWGSLCodeGenerator.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExternalFunction.h"
 #include "src/sksl/ir/SkSLExternalFunctionReference.h"
@@ -41,7 +36,6 @@
 #include "src/sksl/ir/SkSLSymbolTable.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLTypeReference.h"
-#include "src/sksl/ir/SkSLUnresolvedFunction.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
@@ -52,6 +46,14 @@
 #include <memory>
 #include <stdio.h>
 #include <utility>
+
+#if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || defined(SK_GRAPHITE_ENABLED)
+#include "src/sksl/codegen/SkSLGLSLCodeGenerator.h"
+#include "src/sksl/codegen/SkSLMetalCodeGenerator.h"
+#include "src/sksl/codegen/SkSLSPIRVCodeGenerator.h"
+#include "src/sksl/codegen/SkSLSPIRVtoHLSL.h"
+#include "src/sksl/codegen/SkSLWGSLCodeGenerator.h"
+#endif
 
 #ifdef SK_ENABLE_SPIRV_VALIDATION
 #include "spirv-tools/libspirv.hpp"
@@ -541,14 +543,8 @@ std::unique_ptr<Expression> Compiler::convertIdentifier(Position pos, std::strin
     }
     switch (result->kind()) {
         case Symbol::Kind::kFunctionDeclaration: {
-            std::vector<const FunctionDeclaration*> f = {
-                &result->as<FunctionDeclaration>()
-            };
-            return std::make_unique<FunctionReference>(*fContext, pos, f);
-        }
-        case Symbol::Kind::kUnresolvedFunction: {
-            const UnresolvedFunction* f = &result->as<UnresolvedFunction>();
-            return std::make_unique<FunctionReference>(*fContext, pos, f->functions());
+            return std::make_unique<FunctionReference>(*fContext, pos,
+                                                       &result->as<FunctionDeclaration>());
         }
         case Symbol::Kind::kVariable: {
             const Variable* var = &result->as<Variable>();

@@ -11,10 +11,10 @@
 #include "src/gpu/ganesh/GrGpu.h"
 #include "src/gpu/ganesh/GrGpuBuffer.h"
 #include "src/gpu/ganesh/GrResourceProvider.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/glsl/GrGLSLFragmentShaderBuilder.h"
 #include "src/gpu/ganesh/ops/GrMeshDrawOp.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelper.h"
-#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
 #include "tests/Test.h"
 #include "tools/gpu/GrContextFactory.h"
 
@@ -250,10 +250,6 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrGpuBufferTransferTest,
             dm->newBufferTransferTask(srcBuffer, srcOffset, vb, vbOffset, kTotalSize);
         } else {
             gpu->transferFromBufferToBuffer(srcBuffer, srcOffset, vb, vbOffset, kTotalSize);
-        }
-        if (useTask) {
-            // Buffer update tasks can be arbitrarily reordered currently so we insert a flush.
-            dc->flush();
         }
         return vb;
     };

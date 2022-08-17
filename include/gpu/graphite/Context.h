@@ -12,6 +12,7 @@
 #include "include/core/SkShader.h"
 #include "include/gpu/graphite/ContextOptions.h"
 #include "include/gpu/graphite/GraphiteTypes.h"
+#include "include/gpu/graphite/Recorder.h"
 #include "include/private/SingleOwner.h"
 
 #include <memory>
@@ -26,15 +27,14 @@ class BackendTexture;
 class Context;
 class ContextPriv;
 class GlobalCache;
-class Gpu;
 struct MtlBackendContext;
 class QueueManager;
-class Recorder;
 class Recording;
 class ResourceProvider;
+class SharedContext;
 class TextureInfo;
 
-class Context final {
+class SK_API Context final {
 public:
     Context(const Context&) = delete;
     Context(Context&&) = delete;
@@ -49,7 +49,7 @@ public:
 
     BackendApi backend() const { return fBackend; }
 
-    std::unique_ptr<Recorder> makeRecorder();
+    std::unique_ptr<Recorder> makeRecorder(const RecorderOptions& = {});
 
     void insertRecording(const InsertRecordingInfo&);
     void submit(SyncToCpu = SyncToCpu::kNo);
@@ -93,14 +93,14 @@ public:
     const ContextPriv priv() const;  // NOLINT(readability-const-return-type)
 
 protected:
-    Context(sk_sp<Gpu>, std::unique_ptr<QueueManager>, BackendApi);
+    Context(sk_sp<SharedContext>, std::unique_ptr<QueueManager>, BackendApi);
 
 private:
     friend class ContextPriv;
 
     SingleOwner* singleOwner() const { return &fSingleOwner; }
 
-    sk_sp<Gpu> fGpu;
+    sk_sp<SharedContext> fSharedContext;
     std::unique_ptr<ResourceProvider> fResourceProvider;
     std::unique_ptr<QueueManager> fQueueManager;
     sk_sp<GlobalCache> fGlobalCache;

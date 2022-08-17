@@ -195,6 +195,8 @@ public:
     void prepareForDrawableDrawing(
             SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected) override;
 
+    sktext::SkStrikePromise strikePromise() override;
+
     SkScalar findMaximumGlyphDimension(SkSpan<const SkGlyphID> glyphs) override;
 
     void onAboutToExitScope() override {}
@@ -466,7 +468,9 @@ void RemoteStrike::prepareForPathDrawing(
                     hasPath = fSentPaths.set(packedID.glyphID(), markAsPath);
                 }
 
-                if (!(*hasPath)) {
+                if (*hasPath) {
+                    accepted->accept(packedID, position);
+                } else {
                     rejected->reject(i);
                 }
             });
@@ -492,10 +496,16 @@ void RemoteStrike::prepareForDrawableDrawing(
                     hasDrawable = fSentDrawables.set(glyphID, makeAsDrawable);
                 }
 
-                if (!(*hasDrawable)) {
+                if (*hasDrawable) {
+                    accepted->accept(packedID, position);
+                } else {
                     rejected->reject(i);
                 }
             });
+}
+
+sktext::SkStrikePromise RemoteStrike::strikePromise() {
+    return sktext::SkStrikePromise{*this->fStrikeSpec};
 }
 
 // -- WireTypeface ---------------------------------------------------------------------------------
@@ -763,14 +773,14 @@ protected:
         // Just ignore the resulting SubRunContainer. Since we're passing in a null SubRunAllocator
         // no SubRuns will be produced.
         STSubRunAllocator<sizeof(SubRunContainer), alignof(SubRunContainer)> tempAlloc;
-        auto [_, container] = SubRunContainer::MakeInAlloc(glyphRunList,
-                                                           drawMatrix,
-                                                           drawingPaint,
-                                                           this->strikeDeviceInfo(),
-                                                           fStrikeServerImpl,
-                                                           &tempAlloc,
-                                                           SubRunContainer::kStrikeCalculationsOnly,
-                                                           "Cache Diff");
+        auto container = SubRunContainer::MakeInAlloc(glyphRunList,
+                                                      drawMatrix,
+                                                      drawingPaint,
+                                                      this->strikeDeviceInfo(),
+                                                      fStrikeServerImpl,
+                                                      &tempAlloc,
+                                                      SubRunContainer::kStrikeCalculationsOnly,
+                                                      "Cache Diff");
         // Calculations only. No SubRuns.
         SkASSERT(container->isEmpty());
     }
@@ -789,14 +799,14 @@ protected:
         // the analysis. Just ignore the resulting SubRunContainer. Since we're passing in a null
         // SubRunAllocator no SubRuns will be produced.
         STSubRunAllocator<sizeof(SubRunContainer), alignof(SubRunContainer)> tempAlloc;
-        auto [_, container] = SubRunContainer::MakeInAlloc(glyphRunList,
-                                                           positionMatrix,
-                                                           drawingPaint,
-                                                           this->strikeDeviceInfo(),
-                                                           fStrikeServerImpl,
-                                                           &tempAlloc,
-                                                           SubRunContainer::kStrikeCalculationsOnly,
-                                                           "Convert Slug Analysis");
+        auto container = SubRunContainer::MakeInAlloc(glyphRunList,
+                                                      positionMatrix,
+                                                      drawingPaint,
+                                                      this->strikeDeviceInfo(),
+                                                      fStrikeServerImpl,
+                                                      &tempAlloc,
+                                                      SubRunContainer::kStrikeCalculationsOnly,
+                                                      "Convert Slug Analysis");
         // Calculations only. No SubRuns.
         SkASSERT(container->isEmpty());
 

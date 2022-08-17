@@ -22,12 +22,13 @@
 
 namespace skgpu::graphite {
 class MtlBlitCommandEncoder;
-class MtlGpu;
+class MtlComputeCommandEncoder;
 class MtlRenderCommandEncoder;
+class MtlSharedContext;
 
 class MtlCommandBuffer final : public CommandBuffer {
 public:
-    static sk_sp<MtlCommandBuffer> Make(const MtlGpu*);
+    static sk_sp<MtlCommandBuffer> Make(id<MTLCommandQueue>, const MtlSharedContext*);
     ~MtlCommandBuffer() override;
 
     bool isFinished() {
@@ -35,7 +36,7 @@ public:
                (*fCommandBuffer).status == MTLCommandBufferStatusError;
 
     }
-    void waitUntilFinished() {
+    void waitUntilFinished(const SharedContext*) {
         // TODO: it's not clear what do to if status is Enqueued. Commit and then wait?
         if ((*fCommandBuffer).status == MTLCommandBufferStatusScheduled ||
             (*fCommandBuffer).status == MTLCommandBufferStatusCommitted) {
@@ -50,14 +51,18 @@ public:
     bool commit();
 
 private:
-    MtlCommandBuffer(sk_cfp<id<MTLCommandBuffer>> cmdBuffer, const MtlGpu* gpu);
+    MtlCommandBuffer(sk_cfp<id<MTLCommandBuffer>> cmdBuffer, const MtlSharedContext* sharedContext);
 
     bool onAddRenderPass(const RenderPassDesc&,
                          const Texture* colorTexture,
                          const Texture* resolveTexture,
                          const Texture* depthStencilTexture,
                          const std::vector<std::unique_ptr<DrawPass>>& drawPasses) override;
+    bool onAddComputePass(const ComputePassDesc&,
+                          const ComputePipeline*,
+                          const std::vector<ResourceBinding>& bindings) override;
 
+    // Methods for populating a MTLRenderCommandEncoder:
     bool beginRenderPass(const RenderPassDesc&,
                          const Texture* colorTexture,
                          const Texture* resolveTexture,
@@ -94,6 +99,14 @@ private:
                               unsigned int indexCount, unsigned int baseVertex,
                               unsigned int baseInstance, unsigned int instanceCount);
 
+    // Methods for populating a MTLComputeCommandEncoder:
+    void beginComputePass();
+    void bindComputePipeline(const ComputePipeline*);
+    void bindBuffer(const Buffer* buffer, unsigned int offset, unsigned int index);
+    void dispatchThreadgroups(const WorkgroupSize& globalSize, const WorkgroupSize& localSize);
+    void endComputePass();
+
+    // Methods for populating a MTLBlitCommandEncoder:
     bool onCopyTextureToBuffer(const Texture*,
                                SkIRect srcRect,
                                const Buffer*,
@@ -109,6 +122,7 @@ private:
 
     sk_cfp<id<MTLCommandBuffer>> fCommandBuffer;
     sk_sp<MtlRenderCommandEncoder> fActiveRenderCommandEncoder;
+    sk_sp<MtlComputeCommandEncoder> fActiveComputeCommandEncoder;
     sk_sp<MtlBlitCommandEncoder> fActiveBlitCommandEncoder;
 
     size_t fCurrentVertexStride = 0;
@@ -116,7 +130,7 @@ private:
     id<MTLBuffer> fCurrentIndexBuffer;
     size_t fCurrentIndexBufferOffset = 0;
 
-    const MtlGpu* fGpu;
+    const MtlSharedContext* fSharedContext;
 };
 
 } // namespace skgpu::graphite

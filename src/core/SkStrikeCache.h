@@ -174,6 +174,15 @@ public:
         this->updateDelta(increase);
     }
 
+    void glyphIDsToDrawables(SkSpan<sktext::IDOrDrawable> idsOrDrawables) {
+        size_t increase = fScalerCache.glyphIDsToDrawables(idsOrDrawables);
+        this->updateDelta(increase);
+    }
+
+    sktext::SkStrikePromise strikePromise() override {
+        return sktext::SkStrikePromise(sk_ref_sp<SkStrike>(this));
+    }
+
     SkScalar findMaximumGlyphDimension(SkSpan<const SkGlyphID> glyphs) override {
         auto [maxDimension, increase] = fScalerCache.findMaximumGlyphDimension(glyphs);
         this->updateDelta(increase);

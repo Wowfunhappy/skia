@@ -8,6 +8,8 @@
 #include "include/gpu/graphite/Recorder.h"
 
 #include "include/effects/SkRuntimeEffect.h"
+#include "include/gpu/graphite/GraphiteTypes.h"
+#include "include/gpu/graphite/ImageProvider.h"
 #include "include/gpu/graphite/Recording.h"
 #include "src/core/SkPipelineData.h"
 #include "src/gpu/AtlasTypes.h"
@@ -17,12 +19,13 @@
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/DrawBufferManager.h"
 #include "src/gpu/graphite/GlobalCache.h"
-#include "src/gpu/graphite/Gpu.h"
 #include "src/gpu/graphite/PipelineDataCache.h"
 #include "src/gpu/graphite/ResourceProvider.h"
+#include "src/gpu/graphite/SharedContext.h"
 #include "src/gpu/graphite/TaskGraph.h"
 #include "src/gpu/graphite/UploadBufferManager.h"
 #include "src/gpu/graphite/text/AtlasManager.h"
+#include "src/image/SkImage_Base.h"
 #include "src/text/gpu/StrikeCache.h"
 #include "src/text/gpu/TextBlobRedrawCoordinator.h"
 
@@ -30,6 +33,32 @@ namespace skgpu::graphite {
 
 #define ASSERT_SINGLE_OWNER SKGPU_ASSERT_SINGLE_OWNER(this->singleOwner())
 
+/*
+ * The default image provider doesn't perform any conversion so, by default, Graphite won't
+ * draw any non-Graphite-backed images.
+ */
+class DefaultImageProvider final : public ImageProvider {
+public:
+    static sk_sp<DefaultImageProvider> Make() {
+        return sk_ref_sp(new DefaultImageProvider);
+    }
+
+    sk_sp<SkImage> findOrCreate(Recorder* recorder,
+                                const SkImage* image,
+                                SkImage::RequiredImageProperties) override {
+        SkASSERT(!as_IB(image)->isGraphiteBacked());
+
+        return nullptr;
+    }
+
+private:
+    DefaultImageProvider() {}
+};
+
+/**************************************************************************************************/
+RecorderOptions::~RecorderOptions() = default;
+
+/**************************************************************************************************/
 static int32_t next_id() {
     static std::atomic<int32_t> nextID{1};
     int32_t id;
@@ -39,8 +68,10 @@ static int32_t next_id() {
     return id;
 }
 
-Recorder::Recorder(sk_sp<Gpu> gpu, sk_sp<GlobalCache> globalCache)
-        : fGpu(std::move(gpu))
+Recorder::Recorder(sk_sp<SharedContext> sharedContext,
+                   sk_sp<GlobalCache> globalCache,
+                   const RecorderOptions& options)
+        : fSharedContext(std::move(sharedContext))
         , fGraph(new TaskGraph)
         , fUniformDataCache(new UniformDataCache)
         , fTextureDataCache(new TextureDataCache)
@@ -50,9 +81,17 @@ Recorder::Recorder(sk_sp<Gpu> gpu, sk_sp<GlobalCache> globalCache)
         , fStrikeCache(std::make_unique<sktext::gpu::StrikeCache>())
         , fTextBlobCache(std::make_unique<sktext::gpu::TextBlobRedrawCoordinator>(fRecorderID)) {
 
-    fResourceProvider = fGpu->makeResourceProvider(std::move(globalCache), this->singleOwner());
-    fDrawBufferManager.reset(new DrawBufferManager(fResourceProvider.get(),
-                                                   fGpu->caps()->requiredUniformBufferAlignment()));
+    fClientImageProvider = options.fImageProvider;
+    if (!fClientImageProvider) {
+        fClientImageProvider = DefaultImageProvider::Make();
+    }
+
+    fResourceProvider = fSharedContext->makeResourceProvider(std::move(globalCache),
+                                                             this->singleOwner());
+    fDrawBufferManager.reset(
+            new DrawBufferManager(fResourceProvider.get(),
+                                  fSharedContext->caps()->requiredUniformBufferAlignment(),
+                                  fSharedContext->caps()->requiredStorageBufferAlignment()));
     fUploadBufferManager.reset(new UploadBufferManager(fResourceProvider.get()));
     SkASSERT(fResourceProvider);
 }
@@ -79,8 +118,10 @@ std::unique_ptr<Recording> Recorder::snap() {
     if (!fGraph->prepareResources(fResourceProvider.get())) {
         // Leaving 'fTrackedDevices' alone since they were flushed earlier and could still be
         // attached to extant SkSurfaces.
-        size_t requiredAlignment = fGpu->caps()->requiredUniformBufferAlignment();
-        fDrawBufferManager.reset(new DrawBufferManager(fResourceProvider.get(), requiredAlignment));
+        fDrawBufferManager.reset(
+                new DrawBufferManager(fResourceProvider.get(),
+                                      fSharedContext->caps()->requiredUniformBufferAlignment(),
+                                      fSharedContext->caps()->requiredStorageBufferAlignment()));
         fTextureDataCache = std::make_unique<TextureDataCache>();
         // We leave the UniformDataCache alone
         fGraph->reset();

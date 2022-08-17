@@ -48,21 +48,19 @@ SI void* load_and_inc(void**& program) {
 #endif
 }
 
-// Lazily resolved on first cast.  Does nothing if cast to Ctx::None.
 struct Ctx {
     struct None {};
 
-    void*   ptr;
     void**& program;
-
-    explicit Ctx(void**& p) : ptr(nullptr), program(p) {}
 
     template <typename T>
     operator T*() {
-        if (!ptr) { ptr = load_and_inc(program); }
-        return (T*)ptr;
+        return (T*)load_and_inc(program);
     }
-    operator None() { return None{}; }
+    operator None() {
+        load_and_inc(program);
+        return None{};
+    }
 };
 
 
@@ -1468,11 +1466,7 @@ BLEND_MODE(softlight) {
     //    3. light src, light dst?
     F darkSrc = d*(sa + (s2 - sa)*(1.0f - m)),     // Used in case 1.
       darkDst = (m4*m4 + m4)*(m - 1.0f) + 7.0f*m,  // Used in case 2.
-    #if defined(SK_RASTER_PIPELINE_LEGACY_RCP_RSQRT)
-      liteDst = rcp_fast(rsqrt(m)) - m,                 // Used in case 3.
-    #else
       liteDst = sqrt_(m) - m,
-    #endif
       liteSrc = d*sa + da*(s2 - sa) * if_then_else(two(two(d)) <= da, darkDst, liteDst); // 2 or 3?
     return s*inv(da) + d*inv(sa) + if_then_else(s2 <= sa, darkSrc, liteSrc);      // 1 or (2 or 3)?
 }
@@ -4117,8 +4111,6 @@ STAGE_GP(evenly_spaced_2_stop_gradient, const SkRasterPipeline_EvenlySpaced2Stop
                    &r,&g,&b,&a);
 }
 
-SI F   cast  (U32 v) { return      __builtin_convertvector((I32)v,   F); }
-#if !defined(SK_SUPPORT_LEGACY_BILERP_HIGHP)
 STAGE_GP(bilerp_clamp_8888, const SkRasterPipeline_GatherCtx* ctx) {
     // Quantize sample point and transform into lerp coordinates converting them to 16.16 fixed
     // point number.
@@ -4214,7 +4206,6 @@ STAGE_GP(bilerp_clamp_8888, const SkRasterPipeline_GatherCtx* ctx) {
     b = lerpY(topB, bottomB);
     a = lerpY(topA, bottomA);
 }
-#endif  // SK_SUPPORT_LEGACY_BILERP_HIGHP
 
 STAGE_GG(xy_to_unit_angle, Ctx::None) {
     F xabs = abs_(x),
@@ -4346,9 +4337,6 @@ STAGE_PP(swizzle, void* ctx) {
     NOT_IMPLEMENTED(repeat_y)
     NOT_IMPLEMENTED(negate_x)
     NOT_IMPLEMENTED(bilinear)
-#if defined(SK_SUPPORT_LEGACY_BILERP_HIGHP)
-    NOT_IMPLEMENTED(bilerp_clamp_8888)
-#endif
     NOT_IMPLEMENTED(bicubic)
     NOT_IMPLEMENTED(bicubic_clamp_8888)
     NOT_IMPLEMENTED(bilinear_nx)

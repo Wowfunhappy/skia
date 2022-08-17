@@ -1,4 +1,6 @@
 """
+THIS IS THE EXTERNAL-ONLY VERSION OF THIS FILE. G3 HAS ITS OWN.
+
 This file contains flags for the C++ compiler, referred to by Bazel as copts.
 
 The copts in a cc_library to not flow to the children (dependencies) nor the parents
@@ -35,7 +37,7 @@ CORE_COPTS = [
     "-fno-rtti",  # Reduces code size
 ] + select({
     # SkRawCodec catches any exceptions thrown by dng_sdk, insulating the rest of Skia.
-    "//bazel/common_config_settings:raw_decode_codec": [],
+    "//src/codec:raw_decode_codec": [],
     "//conditions:default": ["-fno-exceptions"],
 })
 

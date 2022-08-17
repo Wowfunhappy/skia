@@ -1,4 +1,6 @@
 """
+THIS IS THE EXTERNAL-ONLY VERSION OF THIS FILE. G3 HAS ITS OWN.
+
 This file contains a way to set flags from BUILD.bazel instead of requiring users to set them from
 the CLI.
 
@@ -26,8 +28,8 @@ _string_flags = [
 
 _string_list_flags = [
     "//src/gpu:gpu_backend",
-    "//bazel/common_config_settings:include_decoder",
-    "//bazel/common_config_settings:include_encoder",
+    "//src/codec:include_decoder",
+    "//src/images:include_encoder",
     "//bazel/common_config_settings:include_fontmgr",
 ]
 
