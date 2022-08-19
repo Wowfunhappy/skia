@@ -538,7 +538,6 @@ public:
     void writeStrikeData(std::vector<uint8_t>* memory);
 
     sktext::ScopedStrikeForGPU findOrCreateScopedStrike(const SkStrikeSpec& strikeSpec) override;
-    sktext::StrikeRef findOrCreateStrikeRef(const SkStrikeSpec& strikeSpec) override;
 
     // Methods for testing
     void setMaxEntriesInDescriptorMapForTesting(size_t count);
@@ -654,10 +653,6 @@ void SkStrikeServerImpl::writeStrikeData(std::vector<uint8_t>* memory) {
 sktext::ScopedStrikeForGPU SkStrikeServerImpl::findOrCreateScopedStrike(
         const SkStrikeSpec& strikeSpec) {
     return sktext::ScopedStrikeForGPU{this->getOrCreateCache(strikeSpec)};
-}
-
-sktext::StrikeRef SkStrikeServerImpl::findOrCreateStrikeRef(const SkStrikeSpec& strikeSpec) {
-    return sktext::StrikeRef{this->getOrCreateCache(strikeSpec)};
 }
 
 void SkStrikeServerImpl::checkForDeletedEntries() {
@@ -792,6 +787,7 @@ protected:
         SkMatrix positionMatrix = this->localToDevice();
         positionMatrix.preTranslate(glyphRunList.origin().x(), glyphRunList.origin().y());
 
+#ifdef SK_SUPPORT_LEGACY_SLUG_CONVERT
         // TODO these two passes can be converted into one when the SkRemoteGlyphCache's strike
         //  cache is fortified with enough information for supporting slug creation.
 
@@ -817,6 +813,15 @@ protected:
                                    drawingPaint,
                                    this->strikeDeviceInfo(),
                                    SkStrikeCache::GlobalStrikeCache());
+#else
+        // Use the SkStrikeServer's strike cache to generate the Slug.
+        return skgpu::v1::MakeSlug(this->localToDevice(),
+                                   glyphRunList,
+                                   initialPaint,
+                                   drawingPaint,
+                                   this->strikeDeviceInfo(),
+                                   fStrikeServerImpl);
+#endif
     }
 
 private:

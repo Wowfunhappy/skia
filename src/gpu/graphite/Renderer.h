@@ -70,11 +70,11 @@ public:
     // although we could go as far as allowing RenderStep to handle composing the final SkSL if
     // given the paint combination's SkSL.
 
-    // Returns the body of a vertex function, which must define a float4 devPosition variable.
-    // It has access to the variables declared by vertexAttributes(), instanceAttributes(),
-    // and uniforms(). The 'devPosition' variable's z must store the PaintDepth normalized to a
-    // float from [0, 1], for each processed draw although the RenderStep can choose to upload it
-    // as attributes or uniforms.
+    // Returns the body of a vertex function, which must define a float4 devPosition variable and
+    // can optionally define a float2 stepLocalCoords variable. It has access to the variables
+    // declared by vertexAttributes(), instanceAttributes(), and uniforms(). The 'devPosition'
+    // variable's z must store the PaintDepth normalized to a float from [0, 1], for each processed
+    // draw although the RenderStep can choose to upload it as attributes or uniforms.
     //
     // NOTE: The above contract is mainly so that the entire SkSL program can be created by just str
     // concatenating struct definitions generated from the RenderStep and paint Combination
@@ -90,14 +90,20 @@ public:
     // coverage splatted out into all four channels.
     virtual const char* fragmentCoverageSkSL() const { return R"()"; }
 
+    // Emits code to set up a primitive color value. Should only be defined if emitsPrimitiveColor
+    // is true. When implemented, the returned SkSL fragment should write its color into a
+    // 'half4 primitiveColor' variable (defined in the calling code).
+    virtual const char* fragmentColorSkSL() const { return R"()"; }
+
     // Returns a name formatted as "Subclass[variant]", where "Subclass" matches the C++ class name
     // and variant is a unique term describing instance's specific configuration.
     const char* name() const { return fName.c_str(); }
 
-    bool requiresMSAA()    const { return fFlags & Flags::kRequiresMSAA;    }
-    bool performsShading() const { return fFlags & Flags::kPerformsShading; }
-    bool hasTextures()     const { return fFlags & Flags::kHasTextures;     }
-    bool emitsCoverage()   const { return fFlags & Flags::kEmitsCoverage;   }
+    bool requiresMSAA()          const { return fFlags & Flags::kRequiresMSAA;          }
+    bool performsShading()       const { return fFlags & Flags::kPerformsShading;       }
+    bool hasTextures()           const { return fFlags & Flags::kHasTextures;           }
+    bool emitsCoverage()         const { return fFlags & Flags::kEmitsCoverage;         }
+    bool emitsPrimitiveColor()   const { return fFlags & Flags::kEmitsPrimitiveColor;   }
 
     PrimitiveType primitiveType()  const { return fPrimitiveType;  }
     size_t        vertexStride()   const { return fVertexStride;   }
@@ -123,6 +129,7 @@ public:
                (fDepthStencilSettings.fDepthTestEnabled || fDepthStencilSettings.fDepthWriteEnabled
                         ? DepthStencilFlags::kDepth : DepthStencilFlags::kNone);
     }
+
     // TODO: Actual API to do things
     // 6. Some Renderers benefit from being able to share vertices between RenderSteps. Must find a
     //    way to support that. It may mean that RenderSteps get state per draw.
@@ -132,11 +139,12 @@ public:
     //    - Does each DrawList::Draw have extra space (e.g. 8 bytes) that steps can cache data in?
 protected:
     enum class Flags : unsigned {
-        kNone            = 0b0000,
-        kRequiresMSAA    = 0b0001,
-        kPerformsShading = 0b0010,
-        kHasTextures     = 0b0100,
-        kEmitsCoverage   = 0b1000,
+        kNone                  = 0b00000,
+        kRequiresMSAA          = 0b00001,
+        kPerformsShading       = 0b00010,
+        kHasTextures           = 0b00100,
+        kEmitsCoverage         = 0b01000,
+        kEmitsPrimitiveColor   = 0b10000,
     };
     SK_DECL_BITMASK_OPS_FRIENDS(Flags);
 
@@ -249,10 +257,11 @@ public:
         return {&fSteps.front(), static_cast<size_t>(fStepCount) };
     }
 
-    const char* name()           const { return fName.c_str();  }
-    int         numRenderSteps() const { return fStepCount;     }
-    bool        requiresMSAA()   const { return fRequiresMSAA;  }
-    bool        emitsCoverage()  const { return fEmitsCoverage; }
+    const char* name()                const { return fName.c_str();        }
+    int         numRenderSteps()      const { return fStepCount;           }
+    bool        requiresMSAA()        const { return fRequiresMSAA;        }
+    bool        emitsCoverage()       const { return fEmitsCoverage;       }
+    bool        emitsPrimitiveColor() const { return fEmitsPrimitiveColor; }
 
     SkEnumBitMask<DepthStencilFlags> depthStencilFlags() const { return fDepthStencilFlags; }
 
@@ -282,6 +291,7 @@ private:
             fRequiresMSAA |= fSteps[i]->requiresMSAA();
             fEmitsCoverage |= fSteps[i]->emitsCoverage();
             fDepthStencilFlags |= fSteps[i]->depthStencilFlags();
+            fEmitsPrimitiveColor |= fSteps[i]->emitsPrimitiveColor();
             SkDEBUGCODE(performsShading |= fSteps[i]->performsShading());
         }
         SkASSERT(performsShading); // at least one step needs to actually shade
@@ -297,6 +307,7 @@ private:
     int      fStepCount;
     bool     fRequiresMSAA = false;
     bool     fEmitsCoverage = false;
+    bool     fEmitsPrimitiveColor = false;
 
     SkEnumBitMask<DepthStencilFlags> fDepthStencilFlags = DepthStencilFlags::kNone;
 };
