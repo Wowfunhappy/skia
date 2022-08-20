@@ -103,9 +103,7 @@ void Context::checkAsyncWorkCompletion() {
 #ifdef SK_ENABLE_PRECOMPILE
 
 SkBlenderID Context::addUserDefinedBlender(sk_sp<SkRuntimeEffect> effect) {
-    auto dict = this->priv().shaderCodeDictionary();
-
-    return dict->addUserDefinedBlender(std::move(effect));
+    return fSharedContext->shaderCodeDictionary()->addUserDefinedBlender(std::move(effect));
 }
 
 void Context::precompile(SkCombinationBuilder* combinationBuilder) {
@@ -122,10 +120,8 @@ void Context::precompile(SkCombinationBuilder* combinationBuilder) {
             &Renderer::StencilTessellatedWedges(SkPathFillType::kInverseEvenOdd)
     };
 
-    SkShaderCodeDictionary* dict = fGlobalCache->shaderCodeDictionary();
-
     combinationBuilder->buildCombinations(
-            dict,
+            fSharedContext->shaderCodeDictionary(),
             [&](SkUniquePaintParamsID uniqueID) {
                 GraphicsPipelineDesc desc;
 
@@ -146,6 +142,8 @@ void Context::precompile(SkCombinationBuilder* combinationBuilder) {
     // shading, and just use ShaderType::kNone.
 }
 
+#endif // SK_ENABLE_PRECOMPILE
+
 void Context::deleteBackendTexture(BackendTexture& texture) {
     ASSERT_SINGLE_OWNER
 
@@ -154,7 +152,5 @@ void Context::deleteBackendTexture(BackendTexture& texture) {
     }
     fResourceProvider->deleteBackendTexture(texture);
 }
-
-#endif // SK_ENABLE_PRECOMPILE
 
 } // namespace skgpu::graphite

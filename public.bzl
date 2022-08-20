@@ -483,8 +483,6 @@ BASE_SRCS_ALL = [
     "src/core/SkMath.cpp",
     "src/core/SkMathPriv.h",
     "src/core/SkMatrix.cpp",
-    "src/core/SkMatrixImageFilter.cpp",
-    "src/core/SkMatrixImageFilter.h",
     "src/core/SkMatrixInvert.cpp",
     "src/core/SkMatrixInvert.h",
     "src/core/SkMatrixPriv.h",
@@ -726,6 +724,7 @@ BASE_SRCS_ALL = [
     "src/effects/imagefilters/SkLightingImageFilter.cpp",
     "src/effects/imagefilters/SkMagnifierImageFilter.cpp",
     "src/effects/imagefilters/SkMatrixConvolutionImageFilter.cpp",
+    "src/effects/imagefilters/SkMatrixTransformImageFilter.cpp",
     "src/effects/imagefilters/SkMergeImageFilter.cpp",
     "src/effects/imagefilters/SkMorphologyImageFilter.cpp",
     "src/effects/imagefilters/SkOffsetImageFilter.cpp",
@@ -782,6 +781,8 @@ BASE_SRCS_ALL = [
     "src/gpu/ganesh/GrBufferAllocPool.h",
     "src/gpu/ganesh/GrBufferTransferRenderTask.cpp",
     "src/gpu/ganesh/GrBufferTransferRenderTask.h",
+    "src/gpu/ganesh/GrBufferUpdateRenderTask.cpp",
+    "src/gpu/ganesh/GrBufferUpdateRenderTask.h",
     "src/gpu/ganesh/GrCaps.cpp",
     "src/gpu/ganesh/GrCaps.h",
     "src/gpu/ganesh/GrClientMappedBufferManager.cpp",
@@ -1438,7 +1439,6 @@ BASE_SRCS_ALL = [
     "src/sksl/analysis/SkSLCanExitWithoutReturningValue.cpp",
     "src/sksl/analysis/SkSLCheckProgramStructure.cpp",
     "src/sksl/analysis/SkSLFinalizationChecks.cpp",
-    "src/sksl/analysis/SkSLGetComputeShaderMainParams.cpp",
     "src/sksl/analysis/SkSLGetLoopUnrollInfo.cpp",
     "src/sksl/analysis/SkSLIsConstantExpression.cpp",
     "src/sksl/analysis/SkSLIsSameExpressionTree.cpp",
@@ -1754,7 +1754,6 @@ PORTS_SRCS_UNIX = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 GL_SRCS_ANDROID = base_gl_srcs + [
@@ -1783,7 +1782,6 @@ PORTS_SRCS_ANDROID = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 PORTS_SRCS_ANDROID_NO_FONT = [
@@ -1797,7 +1795,6 @@ PORTS_SRCS_ANDROID_NO_FONT = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 GL_SRCS_IOS = base_gl_srcs + [
@@ -1822,7 +1819,6 @@ PORTS_SRCS_IOS = [
     "src/ports/SkOSLibrary_posix.cpp",
     "src/ports/SkScalerContext_mac_ct.cpp",
     "src/ports/SkScalerContext_mac_ct.h",
-    "src/ports/SkTLS_pthread.cpp",
     "src/ports/SkTypeface_mac_ct.cpp",
     "src/ports/SkTypeface_mac_ct.h",
     "src/utils/mac/SkCreateCGImageRef.cpp",
@@ -1846,7 +1842,6 @@ PORTS_SRCS_FUCHSIA = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 GL_SRCS_MACOS = base_gl_srcs + [
@@ -1871,7 +1866,6 @@ PORTS_SRCS_WASM = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 GL_SRCS_WASM = GL_SRCS_UNIX_EGL
 
@@ -2294,6 +2288,7 @@ SKOTTIE_SHAPER_SRCS = [
 # Stubs, pending SkUnicode fission
 SKUNICODE_ICU_BUILTIN_SRCS = [
     "modules/skunicode/src/SkUnicode.cpp",
+    "modules/skunicode/src/SkUnicode_client.cpp",
     "modules/skunicode/src/SkUnicode_icu.cpp",
     "modules/skunicode/src/SkUnicode_icu.h",
     "modules/skunicode/src/SkUnicode_icu_builtin.cpp",
@@ -2301,9 +2296,15 @@ SKUNICODE_ICU_BUILTIN_SRCS = [
 
 SKUNICODE_ICU_RUNTIME_SRCS = [
     "modules/skunicode/src/SkUnicode.cpp",
+    "modules/skunicode/src/SkUnicode_client.cpp",
     "modules/skunicode/src/SkUnicode_icu.cpp",
     "modules/skunicode/src/SkUnicode_icu.h",
     "modules/skunicode/src/SkUnicode_icu_runtime.cpp",
+]
+
+SKUNICODE_NO_ICU_SRCS = [
+    "modules/skunicode/src/SkUnicode.cpp",
+    "modules/skunicode/src/SkUnicode_client.cpp",
 ]
 
 SKUNICODE_HDRS = [
