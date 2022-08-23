@@ -885,6 +885,10 @@ optional("gpu_shared") {
   }
 
   sources = skia_shared_gpu_sources + skia_sksl_gpu_sources
+
+  if (skia_use_vulkan) {
+    sources += skia_shared_vk_sources
+  }
 }
 
 optional("gpu") {
@@ -1149,6 +1153,11 @@ optional("graphite") {
   public_defines = [ "SK_GRAPHITE_ENABLED" ]
   public = skia_graphite_public
   sources = skia_graphite_sources
+
+  if (skia_use_piet) {
+    sources += skia_graphite_piet_sources
+  }
+
   if (skia_use_metal) {
     public_defines += [ "SK_METAL" ]
     sources += skia_graphite_mtl_sources
@@ -2481,6 +2490,7 @@ if (skia_enable_tools) {
       "fuzz/FuzzTriangulation.cpp",
       "fuzz/oss_fuzz/FuzzAndroidCodec.cpp",
       "fuzz/oss_fuzz/FuzzAnimatedImage.cpp",
+      "fuzz/oss_fuzz/FuzzCOLRv1.cpp",
       "fuzz/oss_fuzz/FuzzImage.cpp",
       "fuzz/oss_fuzz/FuzzImageFilterDeserialize.cpp",
       "fuzz/oss_fuzz/FuzzIncrementalImage.cpp",
@@ -3376,6 +3386,11 @@ if (skia_enable_tools) {
 
     libfuzzer_app("skp") {
       sources = [ "fuzz/oss_fuzz/FuzzSKP.cpp" ]
+      deps = []
+    }
+
+    libfuzzer_app("colrv1") {
+      sources = [ "fuzz/oss_fuzz/FuzzCOLRv1.cpp" ]
       deps = []
     }
   }
