@@ -51,7 +51,6 @@ class PostfixExpression;
 class PrefixExpression;
 class ProgramElement;
 class ReturnStatement;
-class Setting;
 class Statement;
 class StructDefinition;
 class SwitchStatement;
@@ -115,6 +114,8 @@ protected:
     void writeInterfaceBlocks();
 
     void writeStructDefinitions();
+
+    void writeConstantVariables();
 
     void writeFields(const std::vector<Type::Field>& fields, Position pos,
                      const InterfaceBlock* parentIntf = nullptr);
@@ -258,8 +259,6 @@ protected:
     void writePostfixExpression(const PostfixExpression& p, Precedence parentPrecedence);
 
     void writeLiteral(const Literal& f);
-
-    void writeSetting(const Setting& s);
 
     void writeStatement(const Statement& s);
 

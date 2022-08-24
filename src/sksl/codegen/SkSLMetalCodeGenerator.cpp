@@ -82,17 +82,18 @@ static const char* operator_name(Operator op) {
 class MetalCodeGenerator::GlobalStructVisitor {
 public:
     virtual ~GlobalStructVisitor() = default;
-    virtual void visitInterfaceBlock(const InterfaceBlock& block, std::string_view blockName) = 0;
+    virtual void visitInterfaceBlock(const InterfaceBlock& block, std::string_view blockName) {}
     virtual void visitTexture(const Type& type, const Modifiers& modifiers,
-                              std::string_view name) = 0;
-    virtual void visitSampler(const Type& type, std::string_view name) = 0;
-    virtual void visitVariable(const Variable& var, const Expression* value) = 0;
+                              std::string_view name) {}
+    virtual void visitSampler(const Type& type, std::string_view name) {}
+    virtual void visitConstantVariable(const VarDeclaration& decl) {}
+    virtual void visitNonconstantVariable(const Variable& var, const Expression* value) {}
 };
 
 class MetalCodeGenerator::ThreadgroupStructVisitor {
 public:
     virtual ~ThreadgroupStructVisitor() = default;
-    virtual void visitVariable(const Variable& var) = 0;
+    virtual void visitNonconstantVariable(const Variable& var) = 0;
 };
 
 void MetalCodeGenerator::write(std::string_view s) {
@@ -241,7 +242,7 @@ void MetalCodeGenerator::writeExpression(const Expression& expr, Precedence pare
             this->writePostfixExpression(expr.as<PostfixExpression>(), parentPrecedence);
             break;
         case Expression::Kind::kSetting:
-            this->writeSetting(expr.as<Setting>());
+            this->writeExpression(*expr.as<Setting>().toLiteral(fContext), parentPrecedence);
             break;
         case Expression::Kind::kSwizzle:
             this->writeSwizzle(expr.as<Swizzle>());
@@ -1430,6 +1431,7 @@ void MetalCodeGenerator::writeFragCoord() {
 
 // true if the var is part of the Inputs struct
 static bool is_input(const Variable& var) {
+    SkASSERT(var.storage() == VariableStorage::kGlobal);
     return var.modifiers().fFlags & Modifiers::kIn_Flag &&
             (var.modifiers().fLayout.fBuiltin == -1 ||
              var.modifiers().fLayout.fBuiltin == SK_THREADPOSITION) &&
@@ -1438,6 +1440,7 @@ static bool is_input(const Variable& var) {
 
 // true if the var is part of the Outputs struct
 static bool is_output(const Variable& var) {
+    SkASSERT(var.storage() == VariableStorage::kGlobal);
     // inout vars get written into the Inputs struct, so we exclude them from Outputs
     return (var.modifiers().fFlags & Modifiers::kOut_Flag) &&
             !(var.modifiers().fFlags & Modifiers::kIn_Flag) &&
@@ -1445,9 +1448,23 @@ static bool is_output(const Variable& var) {
             var.type().typeKind() != Type::TypeKind::kTexture;
 }
 
+// true if the var is part of the Uniforms struct
+static bool is_uniforms(const Variable& var) {
+    SkASSERT(var.storage() == VariableStorage::kGlobal);
+    return var.modifiers().fFlags & Modifiers::kUniform_Flag &&
+           var.type().typeKind() != Type::TypeKind::kSampler;
+}
+
 // true if the var is part of the Threadgroups struct
 static bool is_threadgroup(const Variable& var) {
+    SkASSERT(var.storage() == VariableStorage::kGlobal);
     return var.modifiers().fFlags & Modifiers::kThreadgroup_Flag;
+}
+
+// true if the var is part of the Globals struct
+static bool is_in_globals(const Variable& var) {
+    SkASSERT(var.storage() == VariableStorage::kGlobal);
+    return !(var.modifiers().fFlags & Modifiers::kConst_Flag);
 }
 
 void MetalCodeGenerator::writeVariableReference(const VariableReference& ref) {
@@ -1488,12 +1505,11 @@ void MetalCodeGenerator::writeVariableReference(const VariableReference& ref) {
                     this->write("_in.");
                 } else if (is_output(var)) {
                     this->write("_out.");
-                } else if (var.modifiers().fFlags & Modifiers::kUniform_Flag &&
-                           var.type().typeKind() != Type::TypeKind::kSampler) {
+                } else if (is_uniforms(var)) {
                     this->write("_uniforms.");
                 } else if (is_threadgroup(var)) {
                     this->write("_threadgroups.");
-                } else {
+                } else if (is_in_globals(var)) {
                     this->write("_globals.");
                 }
             }
@@ -1905,10 +1921,6 @@ void MetalCodeGenerator::writeLiteral(const Literal& l) {
     }
     SkASSERT(type.isBoolean());
     this->write(l.boolValue() ? "true" : "false");
-}
-
-void MetalCodeGenerator::writeSetting(const Setting& s) {
-    SK_ABORT("internal error; setting was not folded to a constant during compilation\n");
 }
 
 void MetalCodeGenerator::writeFunctionRequirementArgs(const FunctionDeclaration& f,
@@ -2537,13 +2549,6 @@ void MetalCodeGenerator::writeHeader() {
 void MetalCodeGenerator::writeSampler2DPolyfill() {
     class : public GlobalStructVisitor {
     public:
-        void visitInterfaceBlock(const InterfaceBlock& block,
-                                 std::string_view blockName) override {}
-
-        void visitTexture(const Type& type,
-                          const Modifiers& modifiers,
-                          std::string_view name) override {}
-
         void visitSampler(const Type&, std::string_view) override {
             if (fWrotePolyfill) {
                 return;
@@ -2563,8 +2568,6 @@ half4 sample(sampler2D i, float3 p, float b=%g) { return i.tex.sample(i.smp, p.x
                                                         fTextureBias);
             fCodeGen->write(polyfill.c_str());
         }
-
-        void visitVariable(const Variable& var, const Expression* value) override {}
 
         MetalCodeGenerator* fCodeGen = nullptr;
         float fTextureBias = 0.0f;
@@ -2717,6 +2720,22 @@ void MetalCodeGenerator::writeStructDefinitions() {
     }
 }
 
+void MetalCodeGenerator::writeConstantVariables() {
+    class : public GlobalStructVisitor {
+    public:
+        void visitConstantVariable(const VarDeclaration& decl) override {
+            fCodeGen->write("constant ");
+            fCodeGen->writeVarDeclaration(decl);
+            fCodeGen->finishLine();
+        }
+
+        MetalCodeGenerator* fCodeGen = nullptr;
+    } visitor;
+
+    visitor.fCodeGen = this;
+    this->visitGlobalStruct(&visitor);
+}
+
 void MetalCodeGenerator::visitGlobalStruct(GlobalStructVisitor* visitor) {
     for (const ProgramElement* element : fProgram.elements()) {
         if (element->is<InterfaceBlock>()) {
@@ -2742,8 +2761,14 @@ void MetalCodeGenerator::visitGlobalStruct(GlobalStructVisitor* visitor) {
         }
         if (!(var.modifiers().fFlags & ~Modifiers::kConst_Flag) &&
             var.modifiers().fLayout.fBuiltin == -1) {
-            // Visit a regular variable.
-            visitor->visitVariable(var, decl.value().get());
+            if (is_in_globals(var)) {
+                // Visit a regular global variable.
+                visitor->visitNonconstantVariable(var, decl.value().get());
+            } else {
+                // Visit a constant-expression variable.
+                SkASSERT(var.modifiers().fFlags & Modifiers::kConst_Flag);
+                visitor->visitConstantVariable(decl);
+            }
         }
     }
 }
@@ -2779,7 +2804,10 @@ void MetalCodeGenerator::writeGlobalStruct() {
             fCodeGen->writeName(name);
             fCodeGen->write(";\n");
         }
-        void visitVariable(const Variable& var, const Expression* value) override {
+        void visitConstantVariable(const VarDeclaration& decl) override {
+            // Constants aren't added to the global struct.
+        }
+        void visitNonconstantVariable(const Variable& var, const Expression* value) override {
             this->addElement();
             fCodeGen->write("    ");
             fCodeGen->writeModifiers(var.modifiers());
@@ -2833,7 +2861,10 @@ void MetalCodeGenerator::writeGlobalInit() {
             fCodeGen->write(kSamplerSuffix);
             fCodeGen->write("}");
         }
-        void visitVariable(const Variable& var, const Expression* value) override {
+        void visitConstantVariable(const VarDeclaration& decl) override {
+            // Constant-expression variables aren't put in the global struct.
+        }
+        void visitNonconstantVariable(const Variable& var, const Expression* value) override {
             this->addElement();
             if (value) {
                 fCodeGen->writeVarInitializer(var, *value);
@@ -2874,7 +2905,8 @@ void MetalCodeGenerator::visitThreadgroupStruct(ThreadgroupStructVisitor* visito
         const Variable& var = decl.var();
         if (var.modifiers().fFlags & Modifiers::kThreadgroup_Flag) {
             SkASSERT(!decl.value());
-            visitor->visitVariable(var);
+            SkASSERT(!(var.modifiers().fFlags & Modifiers::kConst_Flag));
+            visitor->visitNonconstantVariable(var);
         }
     }
 }
@@ -2882,7 +2914,7 @@ void MetalCodeGenerator::visitThreadgroupStruct(ThreadgroupStructVisitor* visito
 void MetalCodeGenerator::writeThreadgroupStruct() {
     class : public ThreadgroupStructVisitor {
     public:
-        void visitVariable(const Variable& var) override {
+        void visitNonconstantVariable(const Variable& var) override {
             this->addElement();
             fCodeGen->write("    ");
             fCodeGen->writeModifiers(var.modifiers());
@@ -2916,7 +2948,7 @@ void MetalCodeGenerator::writeThreadgroupStruct() {
 void MetalCodeGenerator::writeThreadgroupInit() {
     class : public ThreadgroupStructVisitor {
     public:
-        void visitVariable(const Variable& var) override {
+        void visitNonconstantVariable(const Variable& var) override {
             this->addElement();
             fCodeGen->write("{}");
         }
@@ -2992,22 +3024,20 @@ MetalCodeGenerator::Requirements MetalCodeGenerator::requirements(const Statemen
                     break;
                 }
                 case Expression::Kind::kVariableReference: {
-                    const VariableReference& v = e.as<VariableReference>();
-                    const Modifiers& modifiers = v.variable()->modifiers();
+                    const Variable& var = *e.as<VariableReference>().variable();
 
-                    if (modifiers.fLayout.fBuiltin == SK_FRAGCOORD_BUILTIN) {
+                    if (var.modifiers().fLayout.fBuiltin == SK_FRAGCOORD_BUILTIN) {
                         fRequirements |= kGlobals_Requirement | kFragCoord_Requirement;
-                    } else if (Variable::Storage::kGlobal == v.variable()->storage()) {
-                        if (modifiers.fFlags & Modifiers::kIn_Flag) {
+                    } else if (var.storage() == Variable::Storage::kGlobal) {
+                        if (is_input(var)) {
                             fRequirements |= kInputs_Requirement;
-                        } else if (modifiers.fFlags & Modifiers::kOut_Flag) {
+                        } else if (is_output(var)) {
                             fRequirements |= kOutputs_Requirement;
-                        } else if (modifiers.fFlags & Modifiers::kUniform_Flag &&
-                                   v.variable()->type().typeKind() != Type::TypeKind::kSampler) {
+                        } else if (is_uniforms(var)) {
                             fRequirements |= kUniforms_Requirement;
-                        } else if (modifiers.fFlags & Modifiers::kThreadgroup_Flag) {
+                        } else if (is_threadgroup(var)) {
                             fRequirements |= kThreadgroups_Requirement;
-                        } else {
+                        } else if (is_in_globals(var)) {
                             fRequirements |= kGlobals_Requirement;
                         }
                     }
@@ -3058,6 +3088,7 @@ bool MetalCodeGenerator::generateCode() {
     {
         AutoOutputStream outputToHeader(this, &header, &fIndentation);
         this->writeHeader();
+        this->writeConstantVariables();
         this->writeSampler2DPolyfill();
         this->writeStructDefinitions();
         this->writeUniformStruct();
