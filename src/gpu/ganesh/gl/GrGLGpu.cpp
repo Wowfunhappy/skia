@@ -238,6 +238,9 @@ public:
     }
 
     void bindSampler(int unitIdx, GrSamplerState state) {
+        if (unitIdx >= fNumTextureUnits) {
+            return;
+        }
         // In GL the max aniso value is specified in addition to min/mag filters and the driver
         // is encouraged to consider the other filter settings when doing aniso.
         uint32_t key = state.asKey(/*anisoIsOrthogonal=*/true);
@@ -911,6 +914,9 @@ bool GrGLGpu::onTransferFromBufferToBuffer(sk_sp<GrGpuBuffer> src,
                                            sk_sp<GrGpuBuffer> dst,
                                            size_t dstOffset,
                                            size_t size) {
+    SkASSERT(!src->isMapped());
+    SkASSERT(!dst->isMapped());
+
     auto glSrc = static_cast<const GrGLBuffer*>(src.get());
     auto glDst = static_cast<const GrGLBuffer*>(dst.get());
 
@@ -1463,7 +1469,7 @@ sk_sp<GrTexture> GrGLGpu::onCreateTexture(SkISize dimensions,
     SkASSERT(!GrGLFormatIsCompressed(texDesc.fFormat));
 
     texDesc.fID = this->createTexture(dimensions, texDesc.fFormat, texDesc.fTarget, renderable,
-                                      &initialState, mipLevelCount, isProtected);
+                                      &initialState, mipLevelCount, isProtected, label);
 
     if (!texDesc.fID) {
         return return_null_texture();
@@ -1679,7 +1685,11 @@ int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
         int firstWorkingStencilFormatIndex = -1;
 
         GrGLuint colorID = this->createTexture({kSize, kSize}, format, GR_GL_TEXTURE_2D,
-                                               GrRenderable::kYes, nullptr, 1, GrProtected::kNo);
+                                               GrRenderable::kYes,
+                                               nullptr,
+                                               1,
+                                               GrProtected::kNo,
+                                               /*label=*/"Skia");
         if (!colorID) {
             return -1;
         }
@@ -1746,10 +1756,10 @@ int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
     return this->glCaps().getStencilFormatIndexForFormat(format);
 }
 
-static void set_khr_debug_label(GrGLGpu* gpu, const GrGLuint id) {
+static void set_khr_debug_label(GrGLGpu* gpu, const GrGLuint id, std::string_view label) {
+    const std::string khr_debug_label = label.empty() ? "Skia" : std::string(label);
     if (gpu->glCaps().debugSupport()) {
-        const char* label = "Skia";
-        GR_GL_CALL(gpu->glInterface(), ObjectLabel(GR_GL_TEXTURE, id, -1, label));
+        GR_GL_CALL(gpu->glInterface(), ObjectLabel(GR_GL_TEXTURE, id, -1, khr_debug_label.c_str()));
     }
 }
 
@@ -1770,7 +1780,7 @@ GrGLuint GrGLGpu::createCompressedTexture2D(
 
     this->bindTextureToScratchUnit(GR_GL_TEXTURE_2D, id);
 
-    set_khr_debug_label(this, id);
+    set_khr_debug_label(this, id, /*label=*/"Skia");
 
     *initialState = set_initial_texture_params(this->glInterface(),
                                                this->glCaps(),
@@ -1785,7 +1795,8 @@ GrGLuint GrGLGpu::createTexture(SkISize dimensions,
                                 GrRenderable renderable,
                                 GrGLTextureParameters::SamplerOverriddenState* initialState,
                                 int mipLevelCount,
-                                GrProtected isProtected) {
+                                GrProtected isProtected,
+                                std::string_view label) {
     SkASSERT(format != GrGLFormat::kUnknown);
     SkASSERT(!GrGLFormatIsCompressed(format));
 
@@ -1798,7 +1809,7 @@ GrGLuint GrGLGpu::createTexture(SkISize dimensions,
 
     this->bindTextureToScratchUnit(target, id);
 
-    set_khr_debug_label(this, id);
+    set_khr_debug_label(this, id, label);
 
     if (GrRenderable::kYes == renderable && this->glCaps().textureUsageSupport()) {
         // provides a hint about how this texture will be used
@@ -3711,7 +3722,8 @@ GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,
                                                  const GrBackendFormat& format,
                                                  GrRenderable renderable,
                                                  GrMipmapped mipmapped,
-                                                 GrProtected isProtected) {
+                                                 GrProtected isProtected,
+                                                 std::string_view label) {
     this->handleDirtyContext();
 
     GrGLFormat glFormat = format.asGLFormat();
@@ -3749,7 +3761,7 @@ GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,
     }
     info.fFormat = GrGLFormatToEnum(glFormat);
     info.fID = this->createTexture(dimensions, glFormat, info.fTarget, renderable, &initialState,
-                                   numMipLevels, isProtected);
+                                   numMipLevels, isProtected, label);
     if (!info.fID) {
         return {};
     }
@@ -3763,7 +3775,7 @@ GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,
                     fResetTimestampForTextureParameters);
 
     return GrBackendTexture(dimensions.width(), dimensions.height(), mipmapped, info,
-                            std::move(parameters));
+                            std::move(parameters), label);
 }
 
 bool GrGLGpu::onClearBackendTexture(const GrBackendTexture& backendTexture,
@@ -3932,7 +3944,10 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(SkISize dime
     if (useTexture) {
         GrGLTextureParameters::SamplerOverriddenState initialState;
         colorID = this->createTexture(dimensions, format, GR_GL_TEXTURE_2D, GrRenderable::kYes,
-                                      &initialState, 1, isProtected);
+                                      &initialState,
+                                      1,
+                                      isProtected,
+                                      /*label=*/"Skia");
         if (!colorID) {
             deleteIDs();
             return {};

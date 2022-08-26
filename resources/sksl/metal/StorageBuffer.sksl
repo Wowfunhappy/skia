@@ -1,4 +1,5 @@
-// TODO: Move this test to shared once storage buffers are supported in other backends
+// TODO(b/243079493, b/243078879, b/243077639): Move this test to shared/ once storage buffers are
+// supported in other backends
 struct SomeData {
     float4 a;
     float2 b;
