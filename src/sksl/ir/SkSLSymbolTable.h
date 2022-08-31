@@ -13,6 +13,8 @@
 #include "include/private/SkSLSymbol.h"
 #include "include/private/SkTHash.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <forward_list>
 #include <memory>
 #include <string>
@@ -20,6 +22,8 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+template <typename T> class SkSpan;
 
 namespace SkSL {
 
@@ -152,7 +156,10 @@ private:
 
     const Symbol* lookup(SymbolTable* writableSymbolTable, const SymbolKey& key);
 
-    static std::vector<const FunctionDeclaration*> GetFunctions(const Symbol& s);
+    const Symbol* buildOverloadSet(SymbolTable* writableSymbolTable,
+                                   const SymbolKey& key,
+                                   const Symbol* symbol,
+                                   SkSpan<const FunctionDeclaration* const> overloadSet);
 
     bool fBuiltin = false;
     std::forward_list<std::string> fOwnedStrings;

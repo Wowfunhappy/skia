@@ -106,6 +106,10 @@ public:
         return fTargetType.isArray();
     }
 
+    bool isUnsizedArray() const override {
+        return fTargetType.isUnsizedArray();
+    }
+
     bool isStruct() const override {
         return fTargetType.isStruct();
     }
@@ -139,6 +143,10 @@ public:
 
     bool isArray() const override {
         return true;
+    }
+
+    bool isUnsizedArray() const override {
+        return fCount == kUnsizedArray;
     }
 
     const Type& componentType() const override {
@@ -960,18 +968,17 @@ bool Type::checkForOutOfRangeLiteral(const Context& context, const Expression& e
 
 bool Type::checkForOutOfRangeLiteral(const Context& context, double value, Position pos) const {
     SkASSERT(this->isScalar());
-    if (this->isInteger()) {
-        if (value < this->minimumValue() || value > this->maximumValue()) {
-            // We found a value that can't fit in the type. Flag it as an error.
-            context.fErrors->error(
-                    pos,
-                    SkSL::String::printf("integer is out of range for type '%s': %.0f",
-                                         this->displayName().c_str(),
-                                         std::floor(value)));
-            return true;
-        }
+    if (!this->isInteger()) {
+        return false;
     }
-    return false;
+    if (value >= this->minimumValue() && value <= this->maximumValue()) {
+        return false;
+    }
+    // We found a value that can't fit in our integral type. Flag it as an error.
+    context.fErrors->error(pos, SkSL::String::printf("integer is out of range for type '%s': %.0f",
+                                                     this->displayName().c_str(),
+                                                     std::floor(value)));
+    return true;
 }
 
 bool Type::checkIfUsableInArray(const Context& context, Position arrayPos) const {

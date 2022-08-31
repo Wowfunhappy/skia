@@ -24,7 +24,6 @@
 #include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 #include "include/private/chromium/Slug.h"
 #include "src/core/SkFontPriv.h"
-#include "src/core/SkGlyphRun.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkPaintPriv.h"
@@ -32,6 +31,7 @@
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkStrikeCache.h"
 #include "src/core/SkWriteBuffer.h"
+#include "src/text/GlyphRun.h"
 #include "src/text/gpu/SubRunAllocator.h"
 #include "src/text/gpu/SubRunContainer.h"
 
@@ -103,11 +103,11 @@ public:
     ~SlugImpl() override = default;
 
     static sk_sp<SlugImpl> Make(const SkMatrixProvider& viewMatrix,
-                                const SkGlyphRunList& glyphRunList,
+                                const sktext::GlyphRunList& glyphRunList,
                                 const SkPaint& initialPaint,
                                 const SkPaint& drawingPaint,
                                 SkStrikeDeviceInfo strikeDeviceInfo,
-                                SkStrikeForGPUCacheInterface* strikeCache);
+                                sktext::StrikeForGPUCacheInterface* strikeCache);
     static sk_sp<Slug> MakeFromBuffer(SkReadBuffer& buffer,
                                       const SkStrikeClient* client);
     void doFlatten(SkWriteBuffer& buffer) const override;
@@ -191,11 +191,11 @@ sk_sp<Slug> SlugImpl::MakeFromBuffer(SkReadBuffer& buffer, const SkStrikeClient*
 }
 
 sk_sp<SlugImpl> SlugImpl::Make(const SkMatrixProvider& viewMatrix,
-                               const SkGlyphRunList& glyphRunList,
+                               const sktext::GlyphRunList& glyphRunList,
                                const SkPaint& initialPaint,
                                const SkPaint& drawingPaint,
                                SkStrikeDeviceInfo strikeDeviceInfo,
-                               SkStrikeForGPUCacheInterface* strikeCache) {
+                               sktext::StrikeForGPUCacheInterface* strikeCache) {
     size_t subRunSizeHint = SubRunContainer::EstimateAllocSize(glyphRunList);
     auto [initializer, _, alloc] =
             SubRunAllocator::AllocateClassMemoryAndArena<SlugImpl>(subRunSizeHint);
@@ -209,6 +209,7 @@ sk_sp<SlugImpl> SlugImpl::Make(const SkMatrixProvider& viewMatrix,
                                                       strikeDeviceInfo,
                                                       strikeCache,
                                                       &alloc,
+                                                      SubRunContainer::kAddSubRuns,
                                                       "Make Slug");
 
     sk_sp<SlugImpl> slug = sk_sp<SlugImpl>(initializer.initialize(
@@ -228,7 +229,7 @@ sk_sp<SlugImpl> SlugImpl::Make(const SkMatrixProvider& viewMatrix,
 
 namespace sktext::gpu {
 // -- TextBlob::Key ------------------------------------------------------------------------------
-auto TextBlob::Key::Make(const SkGlyphRunList& glyphRunList,
+auto TextBlob::Key::Make(const GlyphRunList& glyphRunList,
                          const SkPaint& paint,
                          const SkMatrix& drawMatrix,
                          const SkStrikeDeviceInfo& strikeDevice) -> std::tuple<bool, Key> {
@@ -340,18 +341,18 @@ void* TextBlob::operator new(size_t, void* p) { return p; }
 
 TextBlob::~TextBlob() = default;
 
-sk_sp<TextBlob> TextBlob::Make(const SkGlyphRunList& glyphRunList,
+sk_sp<TextBlob> TextBlob::Make(const GlyphRunList& glyphRunList,
                                const SkPaint& paint,
                                const SkMatrix& positionMatrix,
                                SkStrikeDeviceInfo strikeDeviceInfo,
-                               SkStrikeForGPUCacheInterface* strikeCache) {
+                               StrikeForGPUCacheInterface* strikeCache) {
     size_t subRunSizeHint = SubRunContainer::EstimateAllocSize(glyphRunList);
     auto [initializer, totalMemoryAllocated, alloc] =
             SubRunAllocator::AllocateClassMemoryAndArena<TextBlob>(subRunSizeHint);
 
     auto [someGlyphExcluded, container] = SubRunContainer::MakeInAlloc(
             glyphRunList, positionMatrix, paint,
-            strikeDeviceInfo, strikeCache, &alloc, "TextBlob");
+            strikeDeviceInfo, strikeCache, &alloc, SubRunContainer::kAddSubRuns, "TextBlob");
 
     SkColor initialLuminance = SkPaintPriv::ComputeLuminanceColor(paint);
     sk_sp<TextBlob> blob = sk_sp<TextBlob>(initializer.initialize(std::move(alloc),
@@ -397,12 +398,21 @@ const TextBlob::Key& TextBlob::key() const { return fKey; }
 
 #if SK_SUPPORT_GPU
 void TextBlob::draw(SkCanvas* canvas,
-                      const GrClip* clip,
-                      const SkMatrixProvider& viewMatrix,
-                      SkPoint drawOrigin,
-                      const SkPaint& paint,
-                      skgpu::v1::SurfaceDrawContext* sdc) {
+                    const GrClip* clip,
+                    const SkMatrixProvider& viewMatrix,
+                    SkPoint drawOrigin,
+                    const SkPaint& paint,
+                    skgpu::v1::SurfaceDrawContext* sdc) {
     fSubRuns->draw(canvas, clip, viewMatrix, drawOrigin, paint, this, sdc);
+}
+#endif
+
+#if defined(SK_GRAPHITE_ENABLED)
+void TextBlob::draw(SkCanvas* canvas,
+                    SkPoint drawOrigin,
+                    const SkPaint& paint,
+                    skgpu::graphite::Device* device) {
+    fSubRuns->draw(canvas, drawOrigin, paint, this, device);
 }
 #endif
 
@@ -442,7 +452,7 @@ sk_sp<Slug> SkMakeSlugFromBuffer(SkReadBuffer& buffer, const SkStrikeClient* cli
 #if SK_SUPPORT_GPU
 namespace skgpu::v1 {
 sk_sp<Slug>
-Device::convertGlyphRunListToSlug(const SkGlyphRunList& glyphRunList,
+Device::convertGlyphRunListToSlug(const sktext::GlyphRunList& glyphRunList,
                                   const SkPaint& initialPaint,
                                   const SkPaint& drawingPaint) {
     return SlugImpl::Make(this->asMatrixProvider(),
@@ -472,11 +482,11 @@ void Device::drawSlug(SkCanvas* canvas, const Slug* slug, const SkPaint& drawing
 }
 
 sk_sp<Slug> MakeSlug(const SkMatrixProvider& drawMatrix,
-                     const SkGlyphRunList& glyphRunList,
+                     const sktext::GlyphRunList& glyphRunList,
                      const SkPaint& initialPaint,
                      const SkPaint& drawingPaint,
                      SkStrikeDeviceInfo strikeDeviceInfo,
-                     SkStrikeForGPUCacheInterface* strikeCache) {
+                     sktext::StrikeForGPUCacheInterface* strikeCache) {
     return SlugImpl::Make(
             drawMatrix, glyphRunList, initialPaint, drawingPaint, strikeDeviceInfo, strikeCache);
 }

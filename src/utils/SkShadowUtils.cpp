@@ -51,12 +51,12 @@ class GrColorInfo;
 class GrRecordingContext;
 #endif
 
-#include <string.h>
 #include <algorithm>
-#include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <new>
+#include <string>
 #include <utility>
 
 class SkArenaAlloc;
@@ -65,12 +65,14 @@ class SkRRect;
 class SkReadBuffer;
 class SkWriteBuffer;
 
+#ifdef SK_ENABLE_SKSL
+class SkPipelineDataGatherer;
+#endif
+
 /**
-*  Gaussian color filter -- produces a Gaussian ramp based on the color's B value,
-*                           then blends with the color's G value.
-*                           Final result is black with alpha of Gaussian(B)*G.
-*                           The assumption is that the original color's alpha is 1.
-*/
+ * Remaps the input color's alpha to a Gaussian ramp and then outputs premul white using the
+ * remapped alpha.
+ */
 class SkGaussianColorFilter : public SkColorFilterBase {
 public:
     SkGaussianColorFilter() : INHERITED() {}
@@ -78,6 +80,12 @@ public:
 #if SK_SUPPORT_GPU
     GrFPResult asFragmentProcessor(std::unique_ptr<GrFragmentProcessor> inputFP,
                                    GrRecordingContext*, const GrColorInfo&) const override;
+#endif
+
+#ifdef SK_ENABLE_SKSL
+    void addToKey(const SkKeyContext& keyContext,
+                  SkPaintParamsKeyBuilder* builder,
+                  SkPipelineDataGatherer* gatherer) const override;
 #endif
 
 protected:
@@ -116,7 +124,8 @@ sk_sp<SkFlattenable> SkGaussianColorFilter::CreateProc(SkReadBuffer&) {
 GrFPResult SkGaussianColorFilter::asFragmentProcessor(std::unique_ptr<GrFragmentProcessor> inputFP,
                                                       GrRecordingContext*,
                                                       const GrColorInfo&) const {
-    static auto effect = SkMakeRuntimeEffect(SkRuntimeEffect::MakeForColorFilter, R"(
+    static const SkRuntimeEffect* effect = SkMakeRuntimeEffect(SkRuntimeEffect::MakeForColorFilter,
+    R"(
         half4 main(half4 inColor) {
             half factor = 1 - inColor.a;
             factor = exp(-factor * factor * 4) - 0.018;
@@ -124,9 +133,24 @@ GrFPResult SkGaussianColorFilter::asFragmentProcessor(std::unique_ptr<GrFragment
         }
     )");
     SkASSERT(SkRuntimeEffectPriv::SupportsConstantOutputForConstantInput(effect));
-    return GrFPSuccess(
-            GrSkSLFP::Make(effect, "gaussian_fp", std::move(inputFP), GrSkSLFP::OptFlags::kNone));
+    return GrFPSuccess(GrSkSLFP::Make(effect, "gaussian_fp", std::move(inputFP),
+                                      GrSkSLFP::OptFlags::kNone));
 }
+#endif
+
+#ifdef SK_ENABLE_SKSL
+
+#include "src/core/SkKeyContext.h"
+#include "src/core/SkKeyHelpers.h"
+#include "src/core/SkPaintParamsKey.h"
+
+void SkGaussianColorFilter::addToKey(const SkKeyContext& keyContext,
+                                     SkPaintParamsKeyBuilder* builder,
+                                     SkPipelineDataGatherer* gatherer) const {
+    GaussianColorFilterBlock::BeginBlock(keyContext, builder, gatherer);
+    builder->endBlock();
+}
+
 #endif
 
 sk_sp<SkColorFilter> SkColorFilterPriv::MakeGaussian() {

@@ -644,7 +644,7 @@ sk_sp<SkTextBlob> make_blob_causing_fallback(
     SkRect glyphBounds;
     font.getWidths(runBuffer.glyphs, 1, nullptr, &glyphBounds);
 
-    REPORTER_ASSERT(reporter, glyphBounds.width() > SkStrikeCommon::kSkSideTooBigForAtlas);
+    REPORTER_ASSERT(reporter, glyphBounds.width() > SkGlyphDigest::kSkSideTooBigForAtlas);
 
     for (int i = 0; i < runSize; i++) {
         runBuffer.pos[i] = i * 10;
@@ -727,13 +727,13 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsSDFTWithAllARGBF
 
         SkTextBlobBuilder builder;
         SkRect bounds = SkRect::MakeIWH(100, 100);
-        const auto& runBuffer = builder.allocRunPosH(font, SK_ARRAY_COUNT(glyphs), 100, &bounds);
+        const auto& runBuffer = builder.allocRunPosH(font, std::size(glyphs), 100, &bounds);
         SkASSERT(runBuffer.utf8text == nullptr);
         SkASSERT(runBuffer.clusters == nullptr);
 
         std::copy(std::begin(glyphs), std::end(glyphs), runBuffer.glyphs);
 
-        for (size_t i = 0; i < SK_ARRAY_COUNT(glyphs); i++) {
+        for (size_t i = 0; i < std::size(glyphs); i++) {
             runBuffer.pos[i] = i * 100;
         }
 

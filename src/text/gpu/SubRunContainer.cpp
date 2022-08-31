@@ -7,18 +7,25 @@
 
 #include "src/text/gpu/SubRunContainer.h"
 
+#include "include/core/SkScalar.h"
+#include "include/private/SkMutex.h"
 #include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 #include "src/core/SkDescriptor.h"
 #include "src/core/SkDistanceFieldGen.h"
+#include "src/core/SkEnumerate.h"
+#include "src/core/SkGlyph.h"
 #include "src/core/SkGlyphBuffer.h"
-#include "src/core/SkGlyphRun.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkStrikeCache.h"
 #include "src/gpu/AtlasTypes.h"
+#include "src/text/GlyphRun.h"
+#include "src/text/StrikeForGPU.h"
 #include "src/text/gpu/Glyph.h"
 #include "src/text/gpu/GlyphVector.h"
 #include "src/text/gpu/SubRunAllocator.h"
+
+#include <optional>
 
 #if SK_SUPPORT_GPU  // Ganesh Support
 #include "src/gpu/ganesh/GrClip.h"
@@ -28,6 +35,12 @@
 #include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
 using AtlasTextOp = skgpu::v1::AtlasTextOp;
 #endif  // SK_SUPPORT_GPU
+
+#ifdef SK_GRAPHITE_ENABLED
+#include "src/gpu/graphite/Device.h"
+#include "src/gpu/graphite/DrawWriter.h"
+#include "src/gpu/graphite/Renderer.h"
+#endif
 
 #include <cinttypes>
 
@@ -46,7 +59,18 @@ enum SubRun::SubRunType : int {
 
 using MaskFormat = skgpu::MaskFormat;
 
+using namespace sktext;
 using namespace sktext::gpu;
+
+#if defined(SK_GRAPHITE_ENABLED)
+using Device = skgpu::graphite::Device;
+using DrawWriter = skgpu::graphite::DrawWriter;
+using Rect = skgpu::graphite::Rect;
+using Recorder = skgpu::graphite::Recorder;
+using Renderer = skgpu::graphite::Renderer;
+using TextureProxy = skgpu::graphite::TextureProxy;
+using Transform = skgpu::graphite::Transform;
+#endif
 
 namespace {
 // Use the following in your args.gn to dump telemetry for diagnosing chrome Renderer/GPU
@@ -107,6 +131,15 @@ public:
 
     AtlasTextOp::MaskType opMaskType() const;
 #endif  // SK_SUPPORT_GPU
+#if defined(SK_GRAPHITE_ENABLED)
+    SkRect localRect() const { return fSourceBounds; }
+
+    void fillVertexData(DrawWriter* dw,
+                        int offset, int count,
+                        SkSpan<const Glyph*> glyphs,
+                        SkScalar depth,
+                        const skgpu::graphite::Transform& toDevice) const;
+#endif
     SkRect deviceRect(const SkMatrix& drawMatrix, SkPoint drawOrigin) const;
     MaskFormat grMaskType() const {return fMaskType;}
     int count() const { return SkCount(fLeftTop); }
@@ -212,15 +245,15 @@ std::optional<TransformedMaskVertexFiller> TransformedMaskVertexFiller::MakeFrom
         SkReadBuffer& buffer, SubRunAllocator* alloc) {
     int checkingMaskType = buffer.readInt();
     if (!buffer.validate(0 <= checkingMaskType && checkingMaskType < skgpu::kMaskFormatCount)) {
-        return {};
+        return std::nullopt;
     }
     MaskFormat maskType = (MaskFormat)checkingMaskType;
     SkScalar strikeToSourceScale = buffer.readScalar();
-    if (!buffer.validate(0 < strikeToSourceScale)) { return {}; }
+    if (!buffer.validate(0 < strikeToSourceScale)) { return std::nullopt; }
     SkRect sourceBounds = buffer.readRect();
 
     int glyphCount = buffer.readInt();
-    if (!buffer.validate(check_glyph_count(buffer, glyphCount))) { return {}; }
+    if (!buffer.validate(check_glyph_count(buffer, glyphCount))) { return std::nullopt; }
     SkPoint* leftTopStorage =
             alloc->makePODArray<SkPoint>(glyphCount);
     for (int i = 0; i < glyphCount; ++i) {
@@ -346,6 +379,44 @@ AtlasTextOp::MaskType TransformedMaskVertexFiller::opMaskType() const {
 }
 #endif  // SK_SUPPORT_GPU
 
+#if defined(SK_GRAPHITE_ENABLED)
+void TransformedMaskVertexFiller::fillVertexData(DrawWriter* dw,
+                                                 int offset, int count,
+                                                 SkSpan<const Glyph*> glyphs,
+                                                 SkScalar depth,
+                                                 const Transform& toDevice) const {
+    auto quadData = [&]() {
+        return SkMakeZip(glyphs.subspan(offset, count),
+                         fLeftTop.subspan(offset, count));
+    };
+
+    // TODO: can't handle perspective right now
+    if (toDevice.type() == Transform::Type::kProjection) {
+        return;
+    }
+
+    DrawWriter::Vertices verts{*dw};
+    for (auto [glyph, leftTop]: quadData()) {
+        auto[al, at, ar, ab] = glyph->fAtlasLocator.getUVs();
+        SkPoint widthHeight = SkPoint::Make(glyph->fAtlasLocator.width() * fStrikeToSourceScale,
+                                            glyph->fAtlasLocator.height() * fStrikeToSourceScale);
+        auto [l, t] = leftTop;
+        auto [r, b] = leftTop + widthHeight;
+        SkV2 localCorners[4] = {{l, t}, {r, t}, {r, b}, {l, b}};
+        SkV4 devOut[4];
+        toDevice.mapPoints(localCorners, devOut, 4);
+        // TODO: Ganesh uses indices but that's not available with dynamic vertex data
+        // TODO: we should really use instances as well.
+        verts.append(6) << SkPoint{devOut[0].x, devOut[0].y} << depth << AtlasPt{al, at}  // L,T
+                        << SkPoint{devOut[3].x, devOut[3].y} << depth << AtlasPt{al, ab}  // L,B
+                        << SkPoint{devOut[1].x, devOut[1].y} << depth << AtlasPt{ar, at}  // R,T
+                        << SkPoint{devOut[3].x, devOut[3].y} << depth << AtlasPt{al, ab}  // L,B
+                        << SkPoint{devOut[2].x, devOut[2].y} << depth << AtlasPt{ar, ab}  // R,B
+                        << SkPoint{devOut[1].x, devOut[1].y} << depth << AtlasPt{ar, at}; // R,T
+    }
+}
+#endif
+
 
 struct AtlasPt {
     uint16_t u;
@@ -431,22 +502,39 @@ std::tuple<bool, SkVector> can_use_direct(
 }
 
 // -- PathOpSubmitter ------------------------------------------------------------------------------
-// Shared code for submitting GPU ops for drawing glyphs as paths.
+// PathOpSubmitter holds glyph ids until ready to draw. During drawing, the glyph ids are
+// converted to SkPaths. PathOpSubmitter can only be serialized when it is holding glyph ids;
+// it can only be serialized before submitDraws has been called.
 class PathOpSubmitter {
-    union Variant;
-
 public:
+    PathOpSubmitter() = delete;
+    PathOpSubmitter(const PathOpSubmitter&) = delete;
+    const PathOpSubmitter& operator=(const PathOpSubmitter&) = delete;
+    PathOpSubmitter(PathOpSubmitter&& that)
+            // Transfer ownership of fIDsOrPaths from that to this.
+            : fIDsOrPaths{std::exchange(
+                      const_cast<SkSpan<IDOrPath>&>(that.fIDsOrPaths), SkSpan<IDOrPath>{})}
+            , fPositions{that.fPositions}
+            , fStrikeToSourceScale{that.fStrikeToSourceScale}
+            , fIsAntiAliased{that.fIsAntiAliased}
+            , fStrikeRef{std::move(that.fStrikeRef)} {}
+    PathOpSubmitter& operator=(PathOpSubmitter&& that) {
+        this->~PathOpSubmitter();
+        new (this) PathOpSubmitter{std::move(that)};
+        return *this;
+    }
     PathOpSubmitter(bool isAntiAliased,
                     SkScalar strikeToSourceScale,
                     SkSpan<SkPoint> positions,
-                    SkSpan<SkGlyphID> glyphIDs,
-                    std::unique_ptr<SkPath[], SubRunAllocator::ArrayDestroyer> paths,
-                    const SkDescriptor& descriptor);
+                    SkSpan<IDOrPath> idsOrPaths,
+                    StrikeRef&& strikeRef);
 
-    static PathOpSubmitter Make(const SkZip<SkGlyphVariant, SkPoint>& accepted,
+    ~PathOpSubmitter();
+
+    static PathOpSubmitter Make(const SkZip<SkPackedGlyphID, SkPoint>& accepted,
                                 bool isAntiAliased,
                                 SkScalar strikeToSourceScale,
-                                const SkDescriptor& descriptor,
+                                StrikeRef&& strikeRef,
                                 SubRunAllocator* alloc);
 
     int unflattenSize() const;
@@ -455,142 +543,140 @@ public:
                                                          SubRunAllocator* alloc,
                                                          const SkStrikeClient* client);
 
-#if SK_SUPPORT_GPU
-    void submitOps(SkCanvas*,
-                   const GrClip* clip,
-                   const SkMatrixProvider& viewMatrix,
-                   SkPoint drawOrigin,
-                   const SkPaint& paint,
-                   skgpu::v1::SurfaceDrawContext* sdc) const;
-#endif  // SK_SUPPORT_GPU
+    // submitDraws is not thread safe. It only occurs the single thread drawing portion of the GPU
+    // rendering.
+    void submitDraws(SkCanvas*,
+                     SkPoint drawOrigin,
+                     const SkPaint& paint) const;
 
 private:
-    const bool fIsAntiAliased;
-    const SkScalar fStrikeToSourceScale;
+    // When PathOpSubmitter is created only the glyphIDs are needed, during the submitDraws call,
+    // the glyphIDs are converted to SkPaths.
+    const SkSpan<IDOrPath> fIDsOrPaths;
     const SkSpan<const SkPoint> fPositions;
-    const SkSpan<const SkGlyphID> fGlyphIDs;
-    std::unique_ptr<SkPath[], SubRunAllocator::ArrayDestroyer> fPaths;
-    const SkAutoDescriptor fDescriptor;
+    const SkScalar fStrikeToSourceScale;
+    const bool fIsAntiAliased;
+
+    // If fStrikeRef.getStrikeAndSetToNullptr() is nullptr, then fIDsOrPaths holds SkPaths.
+    mutable StrikeRef fStrikeRef;
 };
 
 int PathOpSubmitter::unflattenSize() const {
-    return fPositions.size_bytes() + fGlyphIDs.size_bytes() + SkCount(fGlyphIDs) * sizeof(SkPath);
+    return fPositions.size_bytes() + fIDsOrPaths.size_bytes();
 }
 
 void PathOpSubmitter::flatten(SkWriteBuffer& buffer) const {
+    fStrikeRef.flatten(buffer);
+
     buffer.writeInt(fIsAntiAliased);
     buffer.writeScalar(fStrikeToSourceScale);
     buffer.writeInt(SkCount(fPositions));
     for (auto pos : fPositions) {
         buffer.writePoint(pos);
     }
-    for (SkGlyphID glyphID : fGlyphIDs) {
-        buffer.writeInt(glyphID);
+    for (IDOrPath& idOrPath : fIDsOrPaths) {
+        buffer.writeInt(idOrPath.fGlyphID);
     }
-    fDescriptor.getDesc()->flatten(buffer);
 }
 
 std::optional<PathOpSubmitter> PathOpSubmitter::MakeFromBuffer(SkReadBuffer& buffer,
                                                                SubRunAllocator* alloc,
                                                                const SkStrikeClient* client) {
+    std::optional<StrikeRef> strikeRef = StrikeRef::MakeFromBuffer(buffer, client);
+    if (!buffer.validate(strikeRef.has_value())) {
+        return std::nullopt;
+    }
+
     bool isAntiAlias = buffer.readInt();
     SkScalar strikeToSourceScale = buffer.readScalar();
 
     int glyphCount = buffer.readInt();
-    if (!buffer.validate(check_glyph_count(buffer, glyphCount))) { return {}; }
-    if (!buffer.validateCanReadN<SkPoint>(glyphCount)) { return {}; }
+    if (!buffer.validate(check_glyph_count(buffer, glyphCount))) { return std::nullopt; }
+    if (!buffer.validateCanReadN<SkPoint>(glyphCount)) { return std::nullopt; }
     SkPoint* positions = alloc->makePODArray<SkPoint>(glyphCount);
     for (int i = 0; i < glyphCount; ++i) {
         positions[i] = buffer.readPoint();
     }
 
     // Remember, we stored an int for glyph id.
-    if (!buffer.validateCanReadN<int>(glyphCount)) { return {}; }
-    SkGlyphID* glyphIDs = alloc->makePODArray<SkGlyphID>(glyphCount);
-    for (int i = 0; i < glyphCount; ++i) {
-        glyphIDs[i] = SkTo<SkGlyphID>(buffer.readInt());
+    if (!buffer.validateCanReadN<int>(glyphCount)) { return std::nullopt; }
+    auto idsOrPaths = SkSpan(alloc->makeUniqueArray<IDOrPath>(glyphCount).release(), glyphCount);
+    for (auto& idOrPath : idsOrPaths) {
+        idOrPath.fGlyphID = SkTo<SkGlyphID>(buffer.readInt());
     }
 
-    auto descriptor = SkAutoDescriptor::MakeFromBuffer(buffer);
-    if (!buffer.validate(descriptor.has_value())) { return {}; }
-
-    // Translate the TypefaceID if this was transferred from the GPU process.
-    if (client != nullptr) {
-        if (!client->translateTypefaceID(&descriptor.value())) { return {}; }
+    if (!buffer.isValid()) {
+        return std::nullopt;
     }
 
-    auto strike = SkStrikeCache::GlobalStrikeCache()->findStrike(*descriptor->getDesc());
-    if (!buffer.validate(strike != nullptr)) { return {}; }
-
-    auto paths = alloc->makeUniqueArray<SkPath>(glyphCount);
-    SkBulkGlyphMetricsAndPaths pathGetter{std::move(strike)};
-
-    for (auto [i, glyphID] : SkMakeEnumerate(SkMakeSpan(glyphIDs, glyphCount))) {
-        const SkPath* path = pathGetter.glyph(glyphID)->path();
-        // There should never be missing paths in a sub run.
-        if (path == nullptr) { return {}; }
-        paths[i] = *path;
-    }
-
-    SkASSERT(buffer.isValid());
-    return {PathOpSubmitter{isAntiAlias,
-                            strikeToSourceScale,
-                            SkMakeSpan(positions, glyphCount),
-                            SkMakeSpan(glyphIDs, glyphCount),
-                            std::move(paths),
-                            *descriptor->getDesc()}};
+    return PathOpSubmitter{isAntiAlias,
+                           strikeToSourceScale,
+                           SkSpan(positions, glyphCount),
+                           idsOrPaths,
+                           std::move(strikeRef.value())};
 }
 
 PathOpSubmitter::PathOpSubmitter(
         bool isAntiAliased,
         SkScalar strikeToSourceScale,
         SkSpan<SkPoint> positions,
-        SkSpan<SkGlyphID> glyphIDs,
-        std::unique_ptr<SkPath[], SubRunAllocator::ArrayDestroyer> paths,
-        const SkDescriptor& descriptor)
-        : fIsAntiAliased{isAntiAliased}
-        , fStrikeToSourceScale{strikeToSourceScale}
+        SkSpan<IDOrPath> idsOrPaths,
+        StrikeRef&& strikeRef)
+        : fIDsOrPaths{idsOrPaths}
         , fPositions{positions}
-        , fGlyphIDs{glyphIDs}
-        , fPaths{std::move(paths)}
-        , fDescriptor{descriptor} {
+        , fStrikeToSourceScale{strikeToSourceScale}
+        , fIsAntiAliased{isAntiAliased}
+        , fStrikeRef{std::move(strikeRef)} {
     SkASSERT(!fPositions.empty());
 }
 
-PathOpSubmitter PathOpSubmitter::Make(const SkZip<SkGlyphVariant, SkPoint>& accepted,
+PathOpSubmitter::~PathOpSubmitter() {
+    // If we have converted glyph IDs to paths, then clean up the SkPaths.
+    if (fStrikeRef.getStrikeAndSetToNullptr() == nullptr) {
+        for (auto& idOrPath : fIDsOrPaths) {
+            idOrPath.fPath.~SkPath();
+        }
+    }
+}
+
+PathOpSubmitter PathOpSubmitter::Make(const SkZip<SkPackedGlyphID, SkPoint>& accepted,
                                       bool isAntiAliased,
                                       SkScalar strikeToSourceScale,
-                                      const SkDescriptor& descriptor,
+                                      StrikeRef&& strikeRef,
                                       SubRunAllocator* alloc) {
     int glyphCount = SkCount(accepted);
     SkPoint* positions = alloc->makePODArray<SkPoint>(glyphCount);
-    SkGlyphID* glyphIDs = alloc->makePODArray<SkGlyphID>(glyphCount);
-    auto paths = alloc->makeUniqueArray<SkPath>(glyphCount);
+    IDOrPath* idsOrPaths = alloc->makeUniqueArray<IDOrPath>(glyphCount).release();
 
-    for (auto [i, variant, pos] : SkMakeEnumerate(accepted)) {
-        positions[i] = pos;
-        glyphIDs[i] = variant.glyph()->getGlyphID();
-        paths[i] = *variant.glyph()->path();
+    for (auto [dstIdOrPath, dstPosition, srcPackedGlyphID, srcPosition] :
+            SkMakeZip(idsOrPaths, positions, accepted.get<0>(), accepted.get<1>())) {
+        dstPosition = srcPosition;
+        dstIdOrPath.fGlyphID = srcPackedGlyphID.glyphID();
     }
 
     return PathOpSubmitter{isAntiAliased,
                            strikeToSourceScale,
-                           SkMakeSpan(positions, glyphCount),
-                           SkMakeSpan(glyphIDs, glyphCount),
-                           std::move(paths),
-                           descriptor};
+                           SkSpan(positions, glyphCount),
+                           SkSpan(idsOrPaths, glyphCount),
+                           std::move(strikeRef)};
 }
 
-#if SK_SUPPORT_GPU
-void PathOpSubmitter::submitOps(SkCanvas* canvas,
-                                const GrClip* clip,
-                                const SkMatrixProvider& viewMatrix,
-                                SkPoint drawOrigin,
-                                const SkPaint& paint,
-                                skgpu::v1::SurfaceDrawContext* sdc) const {
+void PathOpSubmitter::submitDraws(SkCanvas* canvas,
+                                  SkPoint drawOrigin,
+                                  const SkPaint& paint) const {
+    {
+        // Add a mutex to get trough DDL testing. If this ends up being a problem we can change
+        // over to using atomic pointers on the object.
+        static SkMutex mu;
+        SkAutoMutexExclusive lock{mu};
+        // Convert all the SkGlyphIDs to SkPaths
+        if (sk_sp<SkStrike> strike = fStrikeRef.getStrikeAndSetToNullptr()) {
+            strike->glyphIDsToPaths(fIDsOrPaths);
+        }
+    }
+
     SkPaint runPaint{paint};
     runPaint.setAntiAlias(fIsAntiAliased);
-
 
     SkMaskFilterBase* maskFilter = as_MFB(runPaint.getMaskFilter());
 
@@ -601,9 +687,10 @@ void PathOpSubmitter::submitOps(SkCanvas* canvas,
 
     // If there are shaders, non-blur mask filters or styles, the path must be scaled into source
     // space independently of the CTM. This allows the CTM to be correct for the different effects.
-    GrStyle style(runPaint);
+    SkStrokeRec style(runPaint);
     bool needsExactCTM = runPaint.getShader()
-                         || style.applies()
+                         || runPaint.getPathEffect()
+                         || (!style.isFillStyle() && !style.isHairlineStyle())
                          || (maskFilter != nullptr && !maskFilter->asABlur(nullptr));
     if (!needsExactCTM) {
         SkMaskFilterBase::BlurRec blurRec;
@@ -614,58 +701,66 @@ void PathOpSubmitter::submitOps(SkCanvas* canvas,
             runPaint.setMaskFilter(
                     SkMaskFilter::MakeBlur(blurRec.fStyle, blurRec.fSigma / fStrikeToSourceScale));
         }
-        for (auto [path, pos] : SkMakeZip(fPaths.get(), fPositions)) {
+        for (auto [idOrPath, pos] : SkMakeZip(fIDsOrPaths, fPositions)) {
             // Transform the glyph to source space.
             SkMatrix pathMatrix = strikeToSource;
             pathMatrix.postTranslate(pos.x(), pos.y());
 
             SkAutoCanvasRestore acr(canvas, true);
             canvas->concat(pathMatrix);
-            canvas->drawPath(path, runPaint);
+            canvas->drawPath(idOrPath.fPath, runPaint);
         }
     } else {
         // Transform the path to device because the deviceMatrix must be unchanged to
         // draw effect, filter or shader paths.
-        for (auto [path, pos] : SkMakeZip(fPaths.get(), fPositions)) {
+        for (auto [idOrPath, pos] : SkMakeZip(fIDsOrPaths, fPositions)) {
             // Transform the glyph to source space.
             SkMatrix pathMatrix = strikeToSource;
             pathMatrix.postTranslate(pos.x(), pos.y());
 
             SkPath deviceOutline;
-            path.transform(pathMatrix, &deviceOutline);
+            idOrPath.fPath.transform(pathMatrix, &deviceOutline);
             deviceOutline.setIsVolatile(true);
             canvas->drawPath(deviceOutline, runPaint);
         }
     }
 }
-#endif  // SK_SUPPORT_GPU
 
 // -- PathSubRun -----------------------------------------------------------------------------------
 class PathSubRun final : public SubRun {
 public:
     PathSubRun(PathOpSubmitter&& pathDrawing) : fPathDrawing(std::move(pathDrawing)) {}
 
-    static SubRunOwner Make(const SkZip<SkGlyphVariant, SkPoint>& accepted,
+    static SubRunOwner Make(const SkZip<SkPackedGlyphID, SkPoint>& accepted,
                             bool isAntiAliased,
                             SkScalar strikeToSourceScale,
-                            const SkDescriptor& descriptor,
+                            StrikeRef&& strikeRef,
                             SubRunAllocator* alloc) {
         return alloc->makeUnique<PathSubRun>(
                 PathOpSubmitter::Make(
-                        accepted, isAntiAliased, strikeToSourceScale, descriptor, alloc));
+                        accepted, isAntiAliased, strikeToSourceScale, std::move(strikeRef), alloc));
     }
 
 #if SK_SUPPORT_GPU
     void draw(SkCanvas* canvas,
-              const GrClip* clip,
-              const SkMatrixProvider& viewMatrix,
+              const GrClip*,
+              const SkMatrixProvider&,
+              SkPoint drawOrigin,
+              const SkPaint& paint,
+              sk_sp<SkRefCnt>,
+              skgpu::v1::SurfaceDrawContext*) const override {
+        fPathDrawing.submitDraws(canvas, drawOrigin, paint);
+    }
+#endif  // SK_SUPPORT_GPU
+#if defined(SK_GRAPHITE_ENABLED)
+    void draw(SkCanvas* canvas,
               SkPoint drawOrigin,
               const SkPaint& paint,
               sk_sp<SkRefCnt> subRunStorage,
-              skgpu::v1::SurfaceDrawContext* sdc) const override {
-        fPathDrawing.submitOps(canvas, clip, viewMatrix, drawOrigin, paint, sdc);
+              Device* device) const override {
+        fPathDrawing.submitDraws(canvas, drawOrigin, paint);
     }
-#endif  // SK_SUPPORT_GPU
+#endif  // SK_GRAPHITE_ENABLED
 
     int unflattenSize() const override;
 
@@ -766,34 +861,34 @@ std::optional<DrawableOpSubmitter> DrawableOpSubmitter::MakeFromBuffer(
     SkScalar strikeToSourceScale = buffer.readScalar();
 
     int glyphCount = buffer.readInt();
-    if (!buffer.validate(check_glyph_count(buffer, glyphCount))) { return {}; }
-    if (!buffer.validateCanReadN<SkPoint>(glyphCount)) { return {}; }
+    if (!buffer.validate(check_glyph_count(buffer, glyphCount))) { return std::nullopt; }
+    if (!buffer.validateCanReadN<SkPoint>(glyphCount)) { return std::nullopt; }
     SkPoint* positions = alloc->makePODArray<SkPoint>(glyphCount);
     for (int i = 0; i < glyphCount; ++i) {
         positions[i] = buffer.readPoint();
     }
 
     // Remember, we stored an int for glyph id.
-    if (!buffer.validateCanReadN<int>(glyphCount)) { return {}; }
+    if (!buffer.validateCanReadN<int>(glyphCount)) { return std::nullopt; }
     SkGlyphID* glyphIDs = alloc->makePODArray<SkGlyphID>(glyphCount);
     for (int i = 0; i < glyphCount; ++i) {
         glyphIDs[i] = SkTo<SkGlyphID>(buffer.readInt());
     }
 
     auto descriptor = SkAutoDescriptor::MakeFromBuffer(buffer);
-    if (!buffer.validate(descriptor.has_value())) { return {}; }
+    if (!buffer.validate(descriptor.has_value())) { return std::nullopt; }
 
     // Translate the TypefaceID if this was transferred from the GPU process.
     if (client != nullptr) {
-        if (!client->translateTypefaceID(&descriptor.value())) { return {}; }
+        if (!client->translateTypefaceID(&descriptor.value())) { return std::nullopt; }
     }
 
     auto strike = SkStrikeCache::GlobalStrikeCache()->findStrike(*descriptor->getDesc());
-    if (!buffer.validate(strike != nullptr)) { return {}; }
+    if (!buffer.validate(strike != nullptr)) { return std::nullopt; }
 
     auto drawables = alloc->makePODArray<SkDrawable*>(glyphCount);
     SkBulkGlyphMetricsAndDrawables drawableGetter(sk_sp<SkStrike>{strike});
-    auto glyphs = drawableGetter.glyphs(SkMakeSpan(glyphIDs, glyphCount));
+    auto glyphs = drawableGetter.glyphs(SkSpan(glyphIDs, glyphCount));
 
     for (auto [i, glyph] : SkMakeEnumerate(glyphs)) {
         drawables[i] = glyph->drawable();
@@ -801,9 +896,9 @@ std::optional<DrawableOpSubmitter> DrawableOpSubmitter::MakeFromBuffer(
 
     SkASSERT(buffer.isValid());
     return {DrawableOpSubmitter{strikeToSourceScale,
-                                SkMakeSpan(positions, glyphCount),
-                                SkMakeSpan(glyphIDs, glyphCount),
-                                SkMakeSpan(drawables, glyphCount),
+                                SkSpan(positions, glyphCount),
+                                SkSpan(glyphIDs, glyphCount),
+                                SkSpan(drawables, glyphCount),
                                 std::move(strike),
                                 *descriptor->getDesc()}};
 }
@@ -840,9 +935,9 @@ DrawableOpSubmitter DrawableOpSubmitter::Make(const SkZip<SkGlyphVariant, SkPoin
     }
 
     return DrawableOpSubmitter{strikeToSourceScale,
-                               SkMakeSpan(positions, glyphCount),
-                               SkMakeSpan(glyphIDs, glyphCount),
-                               SkMakeSpan(drawables, glyphCount),
+                               SkSpan(positions, glyphCount),
+                               SkSpan(glyphIDs, glyphCount),
+                               SkSpan(drawables, glyphCount),
                                std::move(strike),
                                descriptor};
 }
@@ -908,6 +1003,15 @@ public:
         fDrawingDrawing.submitOps(canvas, clip, viewMatrix, drawOrigin, paint, sdc);
     }
 #endif  // SK_SUPPORT_GPU
+#if defined(SK_GRAPHITE_ENABLED)
+    void draw(SkCanvas* canvas,
+              SkPoint drawOrigin,
+              const SkPaint& paint,
+              sk_sp<SkRefCnt> subRunStorage,
+              Device* device) const override {
+        // TODO
+    }
+#endif  // SK_SUPPORT_GPU
 
     int unflattenSize() const override;
 
@@ -940,15 +1044,13 @@ SubRunOwner DrawableSubRun::MakeFromBuffer(const SkMatrix&,
     return alloc->makeUnique<DrawableSubRun>(std::move(*drawableOpSubmitter));
 }
 
-bool DrawableSubRun::canReuse( const SkPaint& paint, const SkMatrix& positionMatrix) const {
+bool DrawableSubRun::canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const {
     return true;
 }
 
 const AtlasSubRun* DrawableSubRun::testingOnly_atlasSubRun() const {
     return nullptr;
 }
-
-using DevicePosition = skvx::Vec<2, int16_t>;
 
 #if SK_SUPPORT_GPU
 enum ClipMethod {
@@ -1005,8 +1107,8 @@ void generalized_direct_2D(SkZip<Quad, const Glyph*, const VertexData> quadData,
         auto[al, at, ar, ab] = glyph->fAtlasLocator.getUVs();
         uint16_t w = ar - al,
                  h = ab - at;
-        SkScalar l = (SkScalar)leftTop[0] + originOffset.x(),
-                 t = (SkScalar)leftTop[1] + originOffset.y();
+        SkScalar l = leftTop.x() + originOffset.x(),
+                 t = leftTop.y() + originOffset.y();
         if (clip == nullptr) {
             auto[dl, dt, dr, db] = SkRect::MakeLTRB(l, t, l + w, t + h);
             quad[0] = {{dl, dt}, color, {al, at}};  // L,T
@@ -1042,13 +1144,13 @@ void generalized_direct_2D(SkZip<Quad, const Glyph*, const VertexData> quadData,
 // The 99% case. No clip. Non-color only.
 void direct_2D(SkZip<Mask2DVertex[4],
                      const Glyph*,
-                     const DevicePosition> quadData,
+                     const SkPoint> quadData,
                GrColor color,
                SkPoint originOffset) {
     for (auto[quad, glyph, leftTop] : quadData) {
         auto[al, at, ar, ab] = glyph->fAtlasLocator.getUVs();
-        SkScalar dl = leftTop[0] + originOffset.x(),
-                 dt = leftTop[1] + originOffset.y(),
+        SkScalar dl = leftTop.x() + originOffset.x(),
+                 dt = leftTop.y() + originOffset.y(),
                  dr = dl + (ar - al),
                  db = dt + (ab - at);
 
@@ -1066,9 +1168,8 @@ public:
     DirectMaskSubRun(MaskFormat format,
                      const SkMatrix& initialPositionMatrix,
                      SkGlyphRect deviceBounds,
-                     SkSpan<const DevicePosition> devicePositions,
-                     GlyphVector&& glyphs,
-                     bool glyphsOutOfBounds);
+                     SkSpan<const SkPoint> devicePositions,
+                     GlyphVector&& glyphs);
 
     static SubRunOwner Make(const SkZip<SkGlyphVariant, SkPoint>& accepted,
                             const SkMatrix& initialPositionMatrix,
@@ -1090,11 +1191,19 @@ public:
               skgpu::v1::SurfaceDrawContext* sdc) const override;
 #endif  // SK_SUPPORT_GPU
 
+#ifdef SK_GRAPHITE_ENABLED
+    void draw(SkCanvas*,
+              SkPoint drawOrigin,
+              const SkPaint&,
+              sk_sp<SkRefCnt> subRunStorage,
+              Device*) const override;
+#endif
+
     int unflattenSize() const override;
 
     int glyphCount() const override;
 
-    void testingOnly_packedGlyphIDToGlyph(StrikeCache *cache) const override;
+    void testingOnly_packedGlyphIDToGlyph(StrikeCache* cache) const override;
 
 #if SK_SUPPORT_GPU
     size_t vertexStride(const SkMatrix& drawMatrix) const override;
@@ -1116,6 +1225,23 @@ public:
                         SkIRect clip) const override;
 #endif  // SK_SUPPORT_GPU
 
+#if defined(SK_GRAPHITE_ENABLED)
+    std::tuple<bool, int>
+    regenerateAtlas(int begin, int end, Recorder*) const override;
+
+    std::tuple<Rect, Transform> boundsAndDeviceMatrix(const Transform&,
+                                                      SkPoint drawOrigin) const override;
+
+    const Renderer* renderer() const override { return &Renderer::TextDirect(); }
+
+    void fillVertexData(DrawWriter*,
+                        int offset, int count,
+                        SkScalar depth,
+                        const skgpu::graphite::Transform& transform) const override;
+
+    MaskFormat maskFormat() const override { return fMaskFormat; }
+#endif
+
     bool canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const override;
 
     const AtlasSubRun* testingOnly_atlasSubRun() const override;
@@ -1135,8 +1261,7 @@ private:
 
     // The vertex bounds in device space. The bounds are the joined rectangles of all the glyphs.
     const SkGlyphRect fGlyphDeviceBounds;
-    const SkSpan<const DevicePosition> fLeftTopDevicePos;
-    const bool fSomeGlyphsExcluded;
+    const SkSpan<const SkPoint> fLeftTopDevicePos;
 
     // The regenerateAtlas method mutates fGlyphs. It should be called from onPrepare which must
     // be single threaded.
@@ -1146,72 +1271,39 @@ private:
 DirectMaskSubRun::DirectMaskSubRun(MaskFormat format,
                                    const SkMatrix& initialPositionMatrix,
                                    SkGlyphRect deviceBounds,
-                                   SkSpan<const DevicePosition> devicePositions,
-                                   GlyphVector&& glyphs,
-                                   bool glyphsOutOfBounds)
+                                   SkSpan<const SkPoint> devicePositions,
+                                   GlyphVector&& glyphs)
         : fMaskFormat{format}
         , fInitialPositionMatrix{initialPositionMatrix}
         , fGlyphDeviceBounds{deviceBounds}
         , fLeftTopDevicePos{devicePositions}
-        , fSomeGlyphsExcluded{glyphsOutOfBounds}
-        , fGlyphs{std::move(glyphs)} { }
+        , fGlyphs{std::move(glyphs)} {}
 
 SubRunOwner DirectMaskSubRun::Make(const SkZip<SkGlyphVariant, SkPoint>& accepted,
                                    const SkMatrix& initialPositionMatrix,
                                    sk_sp<SkStrike>&& strike,
                                    MaskFormat format,
                                    SubRunAllocator* alloc) {
-    auto glyphLeftTop = alloc->makePODArray<DevicePosition>(accepted.size());
+    auto glyphLeftTop = alloc->makePODArray<SkPoint>(accepted.size());
     auto glyphIDs = alloc->makePODArray<GlyphVector::Variant>(accepted.size());
 
-    // Because this is the direct case, the maximum width or height is the size that fits in the
-    // atlas. This boundary is checked below to ensure that the call to SkGlyphRect below will
-    // not overflow.
-    constexpr SkScalar kMaxPos =
-            std::numeric_limits<int16_t>::max() - SkStrikeCommon::kSkSideTooBigForAtlas;
     SkGlyphRect runBounds = skglyph::empty_rect();
-    size_t goodPosCount = 0;
-    for (auto [variant, pos] : accepted) {
-        auto [x, y] = pos;
-        // Ensure that the .offset() call below does not overflow. And, at this point none of the
-        // rectangles are empty because they were culled before the run was created. Basically,
-        // cull all the glyphs that can't appear on the screen.
-        if (-kMaxPos < x && x < kMaxPos && -kMaxPos  < y && y < kMaxPos) {
-            const SkGlyph* const skGlyph = variant;
-            const SkGlyphRect deviceBounds =
-                    skGlyph->glyphRect().offset(SkScalarRoundToInt(x), SkScalarRoundToInt(y));
-            runBounds = skglyph::rect_union(runBounds, deviceBounds);
-            glyphLeftTop[goodPosCount] = deviceBounds.leftTop();
-            glyphIDs[goodPosCount].packedGlyphID = skGlyph->getPackedID();
-            goodPosCount += 1;
-        }
+    for (auto [i, variant, pos] : SkMakeEnumerate(accepted)) {
+        const SkGlyph* const skGlyph = variant;
+        const SkGlyphRect deviceBounds = skGlyph->glyphRect().offset(pos.x(), pos.y());
+        runBounds = skglyph::rect_union(runBounds, deviceBounds);
+        glyphLeftTop[i] = deviceBounds.leftTop();
+        glyphIDs[i].packedGlyphID = skGlyph->getPackedID();
     }
 
-    // Wow! no glyphs are in bounds and had non-empty bounds.
-    if (goodPosCount == 0) {
-        return nullptr;
-    }
-
-    // If some glyphs were excluded by the bounds, then this subrun can't be generally be used
-    // for other draws. Mark the subrun as not general.
-    bool glyphsExcluded = goodPosCount != accepted.size();
-    SkSpan<const DevicePosition> leftTop{glyphLeftTop, goodPosCount};
+    SkSpan<const SkPoint> leftTop{glyphLeftTop, accepted.size()};
     return alloc->makeUnique<DirectMaskSubRun>(
             format, initialPositionMatrix, runBounds, leftTop,
-            GlyphVector{std::move(strike), {glyphIDs, goodPosCount}},
-            glyphsExcluded);
+            GlyphVector{std::move(strike), {glyphIDs, accepted.size()}});
 }
 
 bool DirectMaskSubRun::canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const {
-    auto [reuse, translation] =
-            can_use_direct(fInitialPositionMatrix, positionMatrix);
-
-    // If glyphs were excluded because of position bounds, then this subrun can only be reused if
-    // there is no change in position.
-    if (fSomeGlyphsExcluded) {
-        return translation.x() == 0 && translation.y() == 0;
-    }
-
+    auto [reuse, _] = can_use_direct(fInitialPositionMatrix, positionMatrix);
     return reuse;
 }
 
@@ -1225,12 +1317,12 @@ SubRunOwner DirectMaskSubRun::MakeFromBuffer(const SkMatrix& initialPositionMatr
 
     int glyphCount = buffer.readInt();
     if (!buffer.validate(check_glyph_count(buffer, glyphCount))) { return nullptr; }
-    if (!buffer.validateCanReadN<DevicePosition>(glyphCount)) { return nullptr; }
-    DevicePosition* positionsData = alloc->makePODArray<DevicePosition>(glyphCount);
+    if (!buffer.validateCanReadN<SkPoint>(glyphCount)) { return nullptr; }
+    SkPoint* positionsData = alloc->makePODArray<SkPoint>(glyphCount);
     for (int i = 0; i < glyphCount; ++i) {
         pun_read(buffer, &positionsData[i]);
     }
-    SkSpan<DevicePosition> positions(positionsData, glyphCount);
+    SkSpan<SkPoint> positions(positionsData, glyphCount);
 
     auto glyphVector = GlyphVector::MakeFromBuffer(buffer, client, alloc);
     if (!buffer.validate(glyphVector.has_value())) { return nullptr; }
@@ -1238,7 +1330,7 @@ SubRunOwner DirectMaskSubRun::MakeFromBuffer(const SkMatrix& initialPositionMatr
     SkASSERT(buffer.isValid());
     return alloc->makeUnique<DirectMaskSubRun>(
             maskType, initialPositionMatrix, runBounds, positions,
-            std::move(glyphVector.value()), false);
+            std::move(glyphVector.value()));
 }
 
 void DirectMaskSubRun::doFlatten(SkWriteBuffer& buffer) const {
@@ -1255,7 +1347,7 @@ void DirectMaskSubRun::doFlatten(SkWriteBuffer& buffer) const {
 int DirectMaskSubRun::unflattenSize() const {
     return sizeof(DirectMaskSubRun) +
            fGlyphs.unflattenSize() +
-           sizeof(DevicePosition) * fGlyphs.glyphs().size();
+           sizeof(SkPoint) * fGlyphs.glyphs().size();
 }
 
 const AtlasSubRun* DirectMaskSubRun::testingOnly_atlasSubRun() const {
@@ -1363,6 +1455,17 @@ std::tuple<const GrClip*, GrOp::Owner> DirectMaskSubRun::makeAtlasTextOp(
 }
 #endif  // SK_SUPPORT_GPU
 
+#ifdef SK_GRAPHITE_ENABLED
+void DirectMaskSubRun::draw(SkCanvas*,
+                            SkPoint drawOrigin,
+                            const SkPaint& paint,
+                            sk_sp<SkRefCnt> subRunStorage,
+                            Device* device) const {
+    // TODO: see makeAtlasTextOp for Geometry set up
+    device->drawAtlasSubRun(this, drawOrigin, paint, std::move(subRunStorage));
+}
+#endif
+
 void DirectMaskSubRun::testingOnly_packedGlyphIDToGlyph(StrikeCache *cache) const {
     fGlyphs.packedGlyphIDToGlyph(cache);
 }
@@ -1379,8 +1482,8 @@ void transformed_direct_2D(SkZip<Quad, const Glyph*, const VertexData> quadData,
                            const SkMatrix& matrix) {
     for (auto[quad, glyph, leftTop] : quadData) {
         auto[al, at, ar, ab] = glyph->fAtlasLocator.getUVs();
-        SkScalar dl = leftTop[0],
-                 dt = leftTop[1],
+        SkScalar dl = leftTop.x(),
+                 dt = leftTop.y(),
                  dr = dl + (ar - al),
                  db = dt + (ab - at);
         SkPoint lt = matrix.mapXY(dl, dt),
@@ -1406,8 +1509,8 @@ void transformed_direct_3D(SkZip<Quad, const Glyph*, const VertexData> quadData,
     };
     for (auto[quad, glyph, leftTop] : quadData) {
         auto[al, at, ar, ab] = glyph->fAtlasLocator.getUVs();
-        SkScalar dl = leftTop[0],
-                 dt = leftTop[1],
+        SkScalar dl = leftTop.x(),
+                 dt = leftTop.y(),
                  dr = dl + (ar - al),
                  db = dt + (ab - at);
         SkPoint3 lt = mapXYZ(dl, dt),
@@ -1484,6 +1587,116 @@ void DirectMaskSubRun::fillVertexData(void* vertexDst, int offset, int count,
 }
 #endif  // SK_SUPPORT_GPU
 
+#if defined(SK_GRAPHITE_ENABLED)
+std::tuple<bool, int> DirectMaskSubRun::regenerateAtlas(int begin, int end,
+                                                        Recorder* recorder) const {
+    return fGlyphs.regenerateAtlas(begin, end, fMaskFormat, 0, recorder);
+}
+
+std::tuple<Rect, Transform> DirectMaskSubRun::boundsAndDeviceMatrix(const Transform& localToDevice,
+                                                                    SkPoint drawOrigin) const {
+    // The baked-in matrix differs from the current localToDevice by a translation if the upper 2x2
+    // remains the same, and there's no perspective. Since there's no projection, Z is irrelevant
+    // so it's okay that fInitialPositionMatrix is an SkMatrix and has discarded the 3rd row/col,
+    // and can ignore those values in localToDevice.
+    const SkM44& positionMatrix = localToDevice.matrix();
+    const bool compatibleMatrix = positionMatrix.rc(0,0) == fInitialPositionMatrix.rc(0,0) &&
+                                  positionMatrix.rc(0,1) == fInitialPositionMatrix.rc(0,1) &&
+                                  positionMatrix.rc(1,0) == fInitialPositionMatrix.rc(1,0) &&
+                                  positionMatrix.rc(1,1) == fInitialPositionMatrix.rc(1,1) &&
+                                  localToDevice.type() != Transform::Type::kProjection &&
+                                  !fInitialPositionMatrix.hasPerspective();
+
+    if (compatibleMatrix) {
+        const SkV4 mappedOrigin = positionMatrix.map(drawOrigin.x(), drawOrigin.y(), 0.f, 1.f);
+        const SkV2 offset = {mappedOrigin.x - fInitialPositionMatrix.getTranslateX(),
+                             mappedOrigin.y - fInitialPositionMatrix.getTranslateY()};
+        if (SkScalarIsInt(offset.x) && SkScalarIsInt(offset.y)) {
+            // The offset is an integer (but make sure), which means the generated mask can be
+            // accessed without changing how texels would be sampled.
+            return {Rect(fGlyphDeviceBounds.rect()),
+                    Transform(SkM44::Translate(SkScalarRoundToInt(offset.x),
+                                               SkScalarRoundToInt(offset.y)))};
+        }
+    }
+
+    // Otherwise compute the relative transformation from fInitialPositionMatrix to localToDevice,
+    // with the drawOrigin applied. If fInitialPositionMatrix or the concatenation is not invertible
+    // the returned Transform is marked invalid and the draw will be automatically dropped.
+    return {Rect(fGlyphDeviceBounds.rect()),
+            localToDevice.preTranslate(drawOrigin.x(), drawOrigin.y())
+                         .concatInverse(SkM44(fInitialPositionMatrix))};
+}
+
+template<typename VertexData>
+void direct_dw(DrawWriter* dw,
+               SkZip<const Glyph*, const VertexData> quadData,
+               SkScalar depth) {
+    DrawWriter::Vertices verts{*dw};
+    for (auto [glyph, leftTop]: quadData) {
+        auto[al, at, ar, ab] = glyph->fAtlasLocator.getUVs();
+        SkScalar dl = leftTop.x(),
+                 dt = leftTop.y(),
+                 dr = dl + (ar - al),
+                 db = dt + (ab - at);
+        // TODO: Ganesh uses indices but that's not available with dynamic vertex data
+        // TODO: we should really use instances as well.
+        verts.append(6) << SkPoint{dl, dt} << depth << AtlasPt{al, at}  // L,T
+                        << SkPoint{dl, db} << depth << AtlasPt{al, ab}  // L,B
+                        << SkPoint{dr, dt} << depth << AtlasPt{ar, at}  // R,T
+                        << SkPoint{dl, db} << depth << AtlasPt{al, ab}  // L,B
+                        << SkPoint{dr, db} << depth << AtlasPt{ar, ab}  // R,B
+                        << SkPoint{dr, dt} << depth << AtlasPt{ar, at}; // R,T
+    }
+}
+
+template<typename VertexData>
+void transformed_direct_dw(DrawWriter* dw,
+                           SkZip<const Glyph*, const VertexData> quadData,
+                           SkScalar depth, const Transform& transform) {
+    DrawWriter::Vertices verts{*dw};
+    for (auto [glyph, leftTop]: quadData) {
+        auto[al, at, ar, ab] = glyph->fAtlasLocator.getUVs();
+        SkScalar dl = leftTop.x(),
+                 dt = leftTop.y(),
+                 dr = dl + (ar - al),
+                 db = dt + (ab - at);
+        SkV2 localCorners[4] = {{dl, dt}, {dr, dt}, {dr, db}, {dl, db}};
+        SkV4 devOut[4];
+        transform.mapPoints(localCorners, devOut, 4);
+        // TODO: Ganesh uses indices but that's not available with dynamic vertex data
+        // TODO: we should really use instances as well.
+        verts.append(6) << SkPoint{devOut[0].x, devOut[0].y} << depth << AtlasPt{al, at}  // L,T
+                        << SkPoint{devOut[3].x, devOut[3].y} << depth << AtlasPt{al, ab}  // L,B
+                        << SkPoint{devOut[1].x, devOut[1].y} << depth << AtlasPt{ar, at}  // R,T
+                        << SkPoint{devOut[3].x, devOut[3].y} << depth << AtlasPt{al, ab}  // L,B
+                        << SkPoint{devOut[2].x, devOut[2].y} << depth << AtlasPt{ar, ab}  // R,B
+                        << SkPoint{devOut[1].x, devOut[1].y} << depth << AtlasPt{ar, at}; // R,T
+    }
+}
+
+void DirectMaskSubRun::fillVertexData(DrawWriter* dw,
+                                      int offset, int count,
+                                      SkScalar depth,
+                                      const skgpu::graphite::Transform& toDevice) const {
+    auto quadData = [&]() {
+        return SkMakeZip(fGlyphs.glyphs().subspan(offset, count),
+                         fLeftTopDevicePos.subspan(offset, count));
+    };
+
+    // TODO: Can't handle perspective right now
+    if (toDevice.type() == Transform::Type::kProjection) {
+        return;
+    }
+    bool noTransformNeeded = (toDevice.type() == Transform::Type::kIdentity);
+    if (noTransformNeeded) {
+        direct_dw(dw, quadData(), depth);
+    } else {
+        transformed_direct_dw(dw, quadData(), depth, toDevice);
+    }
+}
+#endif
+
 // true if only need to translate by integer amount, device rect.
 std::tuple<bool, SkRect> DirectMaskSubRun::deviceRectAndCheckTransform(
         const SkMatrix& positionMatrix) const {
@@ -1498,12 +1711,8 @@ std::tuple<bool, SkRect> DirectMaskSubRun::deviceRectAndCheckTransform(
                                   !initialMatrix.hasPerspective();
 
     if (compatibleMatrix && SkScalarIsInt(offset.x()) && SkScalarIsInt(offset.y())) {
-        // Handle the integer offset case.
-        // The offset should be integer, but make sure.
-        SkIVector iOffset = {SkScalarRoundToInt(offset.x()), SkScalarRoundToInt(offset.y())};
-
-        SkIRect outBounds = fGlyphDeviceBounds.iRect();
-        return {true, SkRect::Make(outBounds.makeOffset(iOffset))};
+        SkRect outBounds = fGlyphDeviceBounds.rect();
+        return {true, outBounds.makeOffset(offset)};
     } else if (SkMatrix inverse; fInitialPositionMatrix.invert(&inverse)) {
         SkMatrix viewDifference = SkMatrix::Concat(positionMatrix, inverse);
         return {false, viewDifference.mapRect(fGlyphDeviceBounds.rect())};
@@ -1548,6 +1757,13 @@ public:
                     sk_sp<SkRefCnt>&& subRunStorage,
                     skgpu::v1::SurfaceDrawContext*) const override;
 #endif  // SK_SUPPORT_GPU
+#if defined(SK_GRAPHITE_ENABLED)
+    void draw(SkCanvas*,
+              SkPoint drawOrigin,
+              const SkPaint&,
+              sk_sp<SkRefCnt> subRunStorage,
+              Device*) const override;
+#endif
 
     int unflattenSize() const override;
 
@@ -1568,6 +1784,23 @@ public:
 
     size_t vertexStride(const SkMatrix& drawMatrix) const override;
 #endif  // SK_SUPPORT_GPU
+#if defined(SK_GRAPHITE_ENABLED)
+    std::tuple<bool, int> regenerateAtlas(int begin, int end, Recorder*) const override;
+
+    std::tuple<Rect, Transform> boundsAndDeviceMatrix(const Transform&,
+                                                      SkPoint drawOrigin) const override;
+
+    const Renderer* renderer() const override {
+        return &Renderer::TextDirect();
+    }
+
+    void fillVertexData(DrawWriter*,
+                        int offset, int count,
+                        SkScalar depth,
+                        const skgpu::graphite::Transform& transform) const override;
+
+    MaskFormat maskFormat() const override { return fVertexFiller.grMaskType(); }
+#endif
 
     int glyphCount() const override;
 
@@ -1615,11 +1848,13 @@ SubRunOwner TransformedMaskSubRun::MakeFromBuffer(const SkMatrix& initialPositio
                                                   SubRunAllocator* alloc,
                                                   const SkStrikeClient* client) {
     auto vertexFiller = TransformedMaskVertexFiller::MakeFromBuffer(buffer, alloc);
-    if (!buffer.validate(vertexFiller.has_value())) { return {}; }
+    if (!buffer.validate(vertexFiller.has_value())) { return nullptr; }
 
     auto glyphVector = GlyphVector::MakeFromBuffer(buffer, client, alloc);
-    if (!buffer.validate(glyphVector.has_value())) { return {}; }
-    if (!buffer.validate(SkCount(glyphVector->glyphs()) == vertexFiller->count())) { return {}; }
+    if (!buffer.validate(glyphVector.has_value())) { return nullptr; }
+    if (!buffer.validate(SkCount(glyphVector->glyphs()) == vertexFiller->count())) {
+        return nullptr;
+    }
     return alloc->makeUnique<TransformedMaskSubRun>(
             initialPositionMatrix, std::move(*vertexFiller), std::move(*glyphVector));
 }
@@ -1683,6 +1918,16 @@ TransformedMaskSubRun::makeAtlasTextOp(const GrClip* clip,
 }
 #endif  // SK_SUPPORT_GPU
 
+#if defined(SK_GRAPHITE_ENABLED)
+void TransformedMaskSubRun::draw(SkCanvas*,
+                                 SkPoint drawOrigin,
+                                 const SkPaint& paint,
+                                 sk_sp<SkRefCnt> subRunStorage,
+                                 Device* device) const {
+    // TODO: see makeAtlasTextOp for Geometry set up
+    device->drawAtlasSubRun(this, drawOrigin, paint, std::move(subRunStorage));
+}
+#endif
 // If we are not scaling the cache entry to be larger, than a cache with smaller glyphs may be
 // better.
 bool TransformedMaskSubRun::canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const {
@@ -1719,6 +1964,30 @@ size_t TransformedMaskSubRun::vertexStride(const SkMatrix& drawMatrix) const {
     return fVertexFiller.vertexStride(drawMatrix);
 }
 #endif  // SK_SUPPORT_GPU
+
+#if defined(SK_GRAPHITE_ENABLED)
+std::tuple<bool, int> TransformedMaskSubRun::regenerateAtlas(int begin, int end,
+                                                             Recorder* recorder) const {
+    return fGlyphs.regenerateAtlas(begin, end, fVertexFiller.grMaskType(), 1, recorder);
+}
+
+std::tuple<Rect, Transform> TransformedMaskSubRun::boundsAndDeviceMatrix(
+        const Transform& localToDevice, SkPoint drawOrigin) const {
+    return {Rect(fVertexFiller.localRect()),
+            localToDevice.preTranslate(drawOrigin.x(), drawOrigin.y())};
+}
+
+void TransformedMaskSubRun::fillVertexData(DrawWriter* dw,
+                                           int offset, int count,
+                                           SkScalar depth,
+                                           const Transform& transform) const {
+    fVertexFiller.fillVertexData(dw,
+                                 offset, count,
+                                 fGlyphs.glyphs(),
+                                 depth,
+                                 transform);
+}
+#endif
 
 int TransformedMaskSubRun::glyphCount() const {
     return SkCount(fGlyphs.glyphs());
@@ -1769,6 +2038,13 @@ public:
                     sk_sp<SkRefCnt>&& subRunStorage,
                     skgpu::v1::SurfaceDrawContext*) const override;
 #endif  // SK_SUPPORT_GPU
+#if defined(SK_GRAPHITE_ENABLED)
+    void draw(SkCanvas*,
+              SkPoint drawOrigin,
+              const SkPaint&,
+              sk_sp<SkRefCnt> subRunStorage,
+              Device*) const override;
+#endif
 
     int unflattenSize() const override;
 
@@ -1789,6 +2065,21 @@ public:
 
     size_t vertexStride(const SkMatrix& drawMatrix) const override;
 #endif  // SK_SUPPORT_GPU
+#if defined(SK_GRAPHITE_ENABLED)
+    std::tuple<bool, int> regenerateAtlas(int begin, int end, Recorder*) const override;
+
+    std::tuple<Rect, Transform> boundsAndDeviceMatrix(const Transform&,
+                                                      SkPoint drawOrigin) const override;
+
+    const Renderer* renderer() const override { return &Renderer::TextSDF(fUseLCDText); }
+
+    void fillVertexData(DrawWriter*,
+                        int offset, int count,
+                        SkScalar depth,
+                        const skgpu::graphite::Transform& transform) const override;
+
+    MaskFormat maskFormat() const override { return fVertexFiller.grMaskType(); }
+#endif
 
     int glyphCount() const override;
 
@@ -1802,7 +2093,7 @@ private:
 
     const bool fUseLCDText;
     const bool fAntiAliased;
-    const sktext::gpu::SDFTMatrixRange fMatrixRange;
+    const SDFTMatrixRange fMatrixRange;
 
     const TransformedMaskVertexFiller fVertexFiller;
 
@@ -1859,10 +2150,12 @@ SubRunOwner SDFTSubRun::MakeFromBuffer(const SkMatrix&,
     int isAntiAliased = buffer.readInt();
     SDFTMatrixRange matrixRange = SDFTMatrixRange::MakeFromBuffer(buffer);
     auto vertexFiller = TransformedMaskVertexFiller::MakeFromBuffer(buffer, alloc);
-    if (!buffer.validate(vertexFiller.has_value())) { return {}; }
+    if (!buffer.validate(vertexFiller.has_value())) { return nullptr; }
     auto glyphVector = GlyphVector::MakeFromBuffer(buffer, client, alloc);
-    if (!buffer.validate(glyphVector.has_value())) { return {}; }
-    if (!buffer.validate(SkCount(glyphVector->glyphs()) == vertexFiller->count())) { return {}; }
+    if (!buffer.validate(glyphVector.has_value())) { return nullptr; }
+    if (!buffer.validate(SkCount(glyphVector->glyphs()) == vertexFiller->count())) {
+        return nullptr;
+    }
     return alloc->makeUnique<SDFTSubRun>(useLCD,
                                          isAntiAliased,
                                          matrixRange,
@@ -1967,6 +2260,17 @@ SDFTSubRun::makeAtlasTextOp(const GrClip* clip,
 }
 #endif  // SK_SUPPORT_GPU
 
+#ifdef SK_GRAPHITE_ENABLED
+void SDFTSubRun::draw(SkCanvas*,
+                      SkPoint drawOrigin,
+                      const SkPaint& paint,
+                      sk_sp<SkRefCnt> subRunStorage,
+                      Device* device) const {
+    // TODO: see makeAtlasTextOp for Geometry set up
+    device->drawAtlasSubRun(this, drawOrigin, paint, std::move(subRunStorage));
+}
+#endif
+
 bool SDFTSubRun::canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const {
     return fMatrixRange.matrixInRange(positionMatrix);
 }
@@ -2001,6 +2305,31 @@ void SDFTSubRun::fillVertexData(
                                  vertexDst);
 }
 #endif  // SK_SUPPORT_GPU
+
+#if defined(SK_GRAPHITE_ENABLED)
+std::tuple<bool, int>
+SDFTSubRun::regenerateAtlas(int begin, int end, Recorder *recorder) const {
+    return fGlyphs.regenerateAtlas(begin, end, MaskFormat::kA8, SK_DistanceFieldInset,
+                                   recorder);
+}
+
+std::tuple<Rect, Transform> SDFTSubRun::boundsAndDeviceMatrix(const Transform& localToDevice,
+                                                              SkPoint drawOrigin) const {
+    return {Rect(fVertexFiller.localRect()),
+            localToDevice.preTranslate(drawOrigin.x(), drawOrigin.y())};
+}
+
+void SDFTSubRun::fillVertexData(DrawWriter* dw,
+                                int offset, int count,
+                                SkScalar depth,
+                                const skgpu::graphite::Transform& transform) const {
+    fVertexFiller.fillVertexData(dw,
+                                 offset, count,
+                                 fGlyphs.glyphs(),
+                                 depth,
+                                 transform);
+}
+#endif
 
 int SDFTSubRun::glyphCount() const {
     return fVertexFiller.count();
@@ -2133,26 +2462,28 @@ SubRunContainerOwner SubRunContainer::MakeFromBufferInAlloc(SkReadBuffer& buffer
     return container;
 }
 
-size_t SubRunContainer::EstimateAllocSize(const SkGlyphRunList& glyphRunList) {
+size_t SubRunContainer::EstimateAllocSize(const GlyphRunList& glyphRunList) {
     // The difference in alignment from the per-glyph data to the SubRun;
-    constexpr size_t alignDiff = alignof(DirectMaskSubRun) - alignof(DevicePosition);
+    constexpr size_t alignDiff = alignof(DirectMaskSubRun) - alignof(SkPoint);
     constexpr size_t vertexDataToSubRunPadding = alignDiff > 0 ? alignDiff : 0;
     size_t totalGlyphCount = glyphRunList.totalGlyphCount();
     // This is optimized for DirectMaskSubRun which is by far the most common case.
-    return totalGlyphCount * sizeof(DevicePosition)
+    return totalGlyphCount * sizeof(SkPoint)
            + GlyphVector::GlyphVectorSize(totalGlyphCount)
            + glyphRunList.runCount() * (sizeof(DirectMaskSubRun) + vertexDataToSubRunPadding)
            + sizeof(SubRunContainer);
 }
 
 std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
-        const SkGlyphRunList& glyphRunList,
+        const GlyphRunList& glyphRunList,
         const SkMatrix& positionMatrix,
         const SkPaint& runPaint,
         SkStrikeDeviceInfo strikeDeviceInfo,
-        SkStrikeForGPUCacheInterface* strikeCache,
+        StrikeForGPUCacheInterface* strikeCache,
         SubRunAllocator* alloc,
+        SubRunCreationBehavior creationBehavior,
         const char* tag) {
+    SkASSERT(alloc != nullptr);
     [[maybe_unused]] SkString msg;
     if constexpr (kTrace) {
         const uint64_t uniqueID = glyphRunList.uniqueID();
@@ -2169,23 +2500,34 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                     positionMatrix[3], positionMatrix[4], positionMatrix[5]);
     }
 
+    SubRunContainerOwner container = alloc->makeUnique<SubRunContainer>(positionMatrix);
     SkASSERT(strikeDeviceInfo.fSDFTControl != nullptr);
     if (strikeDeviceInfo.fSDFTControl == nullptr) {
-        return {true, nullptr};
-    }
-
-    SubRunContainerOwner container{nullptr};
-    if (alloc != nullptr) {
-        container = alloc->makeUnique<SubRunContainer>(positionMatrix);
+        // Return empty container.
+        return {true, std::move(container)};
     }
 
     const SkSurfaceProps deviceProps = strikeDeviceInfo.fSurfaceProps;
     const SkScalerContextFlags scalerContextFlags = strikeDeviceInfo.fScalerContextFlags;
-    const sktext::gpu::SDFTControl SDFTControl = *strikeDeviceInfo.fSDFTControl;
+    const SDFTControl SDFTControl = *strikeDeviceInfo.fSDFTControl;
 
     auto bufferScope = SkSubRunBuffers::EnsureBuffers(glyphRunList);
     auto [accepted, rejected] = bufferScope.buffers();
     bool someGlyphExcluded = false;
+    std::vector<SkPackedGlyphID> packedGlyphIDs;
+    SkSpan<SkPoint> positions;
+    // This rearranging of arrays is temporary until the updated buffer system is
+    // in place.
+    auto convertToGlyphIDs = [&](SkZip<SkGlyphVariant, SkPoint> good)
+            -> SkZip<SkPackedGlyphID, SkPoint> {
+        positions = good.get<1>();
+        packedGlyphIDs.resize(positions.size());
+
+        for (auto [packedGlyphID, variant] : SkMakeZip(packedGlyphIDs, good.get<0>())) {
+            packedGlyphID = variant.glyph()->getPackedID();
+        }
+        return SkMakeZip(packedGlyphIDs, positions);
+    };
     for (auto& glyphRun : glyphRunList) {
         rejected->setSource(glyphRun.source());
         const SkFont& runFont = glyphRun.font();
@@ -2207,7 +2549,7 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                 }
 
                 if (!SkScalarNearlyZero(strikeToSourceScale)) {
-                    SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                    ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                     accepted->startSource(rejected->source());
                     if constexpr (kTrace) {
@@ -2216,7 +2558,7 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                     strike->prepareForSDFTDrawing(accepted, rejected);
                     rejected->flipRejectsToSource();
 
-                    if (container && !accepted->empty()) {
+                    if (creationBehavior == kAddSubRuns && !accepted->empty()) {
                         container->fSubRuns.append(SDFTSubRun::Make(
                                 accepted->accepted(),
                                 runFont,
@@ -2227,7 +2569,7 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                 }
             }
 
-            if (!rejected->source().empty()) {
+            if (!rejected->source().empty() && !SDFTControl.forcePaths()) {
                 // Process masks including ARGB - this should be the 99.99% case.
                 // This will handle medium size emoji that are sharing the run with SDFT drawn text.
                 // If things are too big they will be passed along to the drawing of last resort
@@ -2239,7 +2581,7 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                     msg.appendf("  Mask case:\n%s", strikeSpec.dump().c_str());
                 }
 
-                SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                 accepted->startDevicePositioning(
                         rejected->source(), positionMatrix, strike->roundingSpec());
@@ -2249,7 +2591,7 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                 strike->prepareForMaskDrawing(accepted, rejected);
                 rejected->flipRejectsToSource();
 
-                if (container && !accepted->empty()) {
+                if (creationBehavior == kAddSubRuns && !accepted->empty()) {
                     auto addGlyphsWithSameFormat =
                             [&](const SkZip<SkGlyphVariant, SkPoint>& acceptedGlyphsAndLocations,
                                 MaskFormat format,
@@ -2273,11 +2615,6 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
             }
         }
 
-        // Glyphs are generated in different scales relative to the source space. Masks are drawn
-        // in device space, and SDFT and Paths are draw in a fixed constant space. The
-        // maxDimensionInSourceSpace is used to calculate the factor from strike space to source
-        // space.
-        SkScalar maxDimensionInSourceSpace = 0.0;
         if (!rejected->source().empty()) {
             // Drawable case - handle big things with that have a drawable.
             auto [strikeSpec, strikeToSourceScale] =
@@ -2288,7 +2625,7 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
             }
 
             if (!SkScalarNearlyZero(strikeToSourceScale)) {
-                SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                 accepted->startSource(rejected->source());
                 if constexpr (kTrace) {
@@ -2296,8 +2633,6 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                 }
                 strike->prepareForDrawableDrawing(accepted, rejected);
                 rejected->flipRejectsToSource();
-                auto [minHint, maxHint] = rejected->maxDimensionHint();
-                maxDimensionInSourceSpace = SkScalarCeilToScalar(maxHint * strikeToSourceScale);
 
                 if (container && !accepted->empty()) {
                     container->fSubRuns.append(
@@ -2319,41 +2654,115 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
             }
 
             if (!SkScalarNearlyZero(strikeToSourceScale)) {
-                SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                StrikeRef strikeRef = strikeCache->findOrCreateStrikeRef(strikeSpec);
 
                 accepted->startSource(rejected->source());
                 if constexpr (kTrace) {
                     msg.appendf("    glyphs:(x,y):\n      %s\n", accepted->dumpInput().c_str());
                 }
-                strike->prepareForPathDrawing(accepted, rejected);
-                rejected->flipRejectsToSource();
-                auto [minHint, maxHint] = rejected->maxDimensionHint();
-                maxDimensionInSourceSpace = SkScalarCeilToScalar(maxHint * strikeToSourceScale);
 
-                if (container && !accepted->empty()) {
-                    container->fSubRuns.append(PathSubRun::Make(accepted->accepted(),
-                                                                has_some_antialiasing(runFont),
-                                                                strikeToSourceScale,
-                                                                strikeSpec.descriptor(),
-                                                                alloc));
+                strikeRef.asStrikeForGPU()->prepareForPathDrawing(accepted, rejected);
+                rejected->flipRejectsToSource();
+
+                if (creationBehavior == kAddSubRuns && !accepted->empty()) {
+                    container->fSubRuns.append(
+                            PathSubRun::Make(convertToGlyphIDs(accepted->accepted()),
+                                             has_some_antialiasing(runFont),
+                                             strikeToSourceScale,
+                                             std::move(strikeRef),
+                                             alloc));
                 }
             }
         }
 
-        if (!rejected->source().empty() && maxDimensionInSourceSpace != 0) {
-            // Draw of last resort. Scale the bitmap to the screen.
-            auto [strikeSpec, strikeToSourceScaleTemp] = SkStrikeSpec::MakeSourceFallback(
-                    runFont, runPaint, deviceProps,
-                    scalerContextFlags, maxDimensionInSourceSpace);
+        if (!rejected->source().empty()) {
+            // Drawing of last resort - Scale masks that fit in the atlas to the screen using
+            // bilerp.
 
-            if constexpr (kTrace) {
-                msg.appendf("Transformed case:\n%s", strikeSpec.dump().c_str());
+            const SkMatrix* gaugingMatrix = &positionMatrix;
+            if (positionMatrix.hasPerspective()) {
+                // The Scaler can't take perspective matrices, so use I as our best guess.
+                gaugingMatrix = &SkMatrix::I();
             }
-            // Get around fake binding from structural decomposition. Bad c++.
-            auto strikeToSourceScale = strikeToSourceScaleTemp;
+
+            // Remember, this will be an integer. Reduce to make a one pixel border for the
+            // bilerp padding.
+            static const constexpr SkScalar kMaxBilerpAtlasDimension =
+                    SkGlyphDigest::kSkSideTooBigForAtlas - 2;
+
+            // Get the raw glyph IDs to simulate device drawing to figure the maximum device
+            // dimension.
+            const SkSpan<const SkGlyphID> glyphs = rejected->source().get<0>();
+
+            // It could be that this font produces glyphs that won't fit in the atlas. Find the
+            // largest glyph dimension for the glyph run.
+            SkStrikeSpec gaugingStrikeSpec = SkStrikeSpec::MakeTransformMask(
+                    runFont, runPaint, deviceProps, scalerContextFlags, *gaugingMatrix);
+            ScopedStrikeForGPU gaugingStrike =
+                    gaugingStrikeSpec.findOrCreateScopedStrike(strikeCache);
+
+            // Remember, this will be an integer.
+            const SkScalar originalMaxGlyphDimension =
+                    gaugingStrike->findMaximumGlyphDimension(glyphs);
+
+            if (originalMaxGlyphDimension == 0) {
+                // Nothing to draw here. Skip this SubRun.
+                continue;
+            }
+
+            SkScalar strikeToSourceScale = 1;
+            SkFont reducedFont = runFont;
+            if (originalMaxGlyphDimension > kMaxBilerpAtlasDimension) {
+                // For glyphs that won't fit in the atlas, calculating the amount to reduce the
+                // size can't be done using simple ratios. This is because the SkScaler forces
+                // glyph width and height to integer amounts causing the ratio to be too high if
+                // it rounds up. If it does round up, you need to try again to find the maximum
+                // glyph dimensions and scale factor.
+                SkScalar maxGlyphDimension = originalMaxGlyphDimension;
+                SkScalar reductionFactor = kMaxBilerpAtlasDimension / maxGlyphDimension;
+
+                // Find a new reducedFont that produces a maximum glyph dimension that is
+                // <= kMaxBilerpAtlasDimension.
+                do {
+                    // Make a smaller font that will hopefully fit in the atlas.
+                    reducedFont.setSize(runFont.getSize() * reductionFactor);
+
+                    // Create a strike to calculate the new reduced maximum glyph dimension.
+                    SkStrikeSpec reducingStrikeSpec = SkStrikeSpec::MakeTransformMask(
+                            reducedFont, runPaint, deviceProps, scalerContextFlags, *gaugingMatrix);
+                    ScopedStrikeForGPU reducingStrike =
+                            reducingStrikeSpec.findOrCreateScopedStrike(strikeCache);
+
+                    // Remember, this will be an integer.
+                    maxGlyphDimension = reducingStrike->findMaximumGlyphDimension(glyphs);
+                    if (maxGlyphDimension == 0) {
+                        // Avoid the divide by zero below.
+                        goto skipSubRun;
+                    }
+
+                    // The largest reduction factor allowed for each iteration. Smaller reduction
+                    // factors reduce the font size faster.
+                    static constexpr SkScalar kMaximumReduction =
+                            1.0f - 1.0f / kMaxBilerpAtlasDimension;
+
+                    // Make the reduction smaller by at least kMaximumReduction in case the
+                    // maximum glyph dimension is too big.
+                    reductionFactor *=
+                            std::min(kMaximumReduction, kMaxBilerpAtlasDimension/maxGlyphDimension);
+                } while (maxGlyphDimension > kMaxBilerpAtlasDimension);
+
+                // Calculate the factor to make the maximum dimension of the reduced font be the
+                // same size as the maximum dimension from the original runFont.
+                strikeToSourceScale = originalMaxGlyphDimension / maxGlyphDimension;
+            }
 
             if (!SkScalarNearlyZero(strikeToSourceScale)) {
-                SkScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                SkStrikeSpec strikeSpec = SkStrikeSpec::MakeTransformMask(
+                        reducedFont, runPaint, deviceProps, scalerContextFlags, *gaugingMatrix);
+                if constexpr (kTrace) {
+                    msg.appendf("Transformed case:\n%s", strikeSpec.dump().c_str());
+                }
+                ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                 accepted->startSource(rejected->source());
                 if constexpr (kTrace) {
@@ -2363,7 +2772,7 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                 rejected->flipRejectsToSource();
                 SkASSERT(rejected->source().empty());
 
-                if (container && !accepted->empty()) {
+                if (creationBehavior == kAddSubRuns && !accepted->empty()) {
                     auto addGlyphsWithSameFormat =
                             [&](const SkZip<SkGlyphVariant, SkPoint>& acceptedGlyphsAndLocations,
                                 MaskFormat format,
@@ -2387,7 +2796,11 @@ std::tuple<bool, SubRunContainerOwner> SubRunContainer::MakeInAlloc(
                 }
             }
         }
+
+    skipSubRun:
+        ;
     }
+
     if constexpr (kTrace) {
         msg.appendf("End glyph run processing");
         if (tag != nullptr) {
@@ -2412,6 +2825,18 @@ void SubRunContainer::draw(SkCanvas* canvas,
 }
 #endif  // SK_SUPPORT_GPU
 
+#if defined(SK_GRAPHITE_ENABLED)
+void SubRunContainer::draw(SkCanvas* canvas,
+                           SkPoint drawOrigin,
+                           const SkPaint& paint,
+                           const SkRefCnt* subRunStorage,
+                           skgpu::graphite::Device* device) const {
+    for (auto& subRun : fSubRuns) {
+        subRun.draw(canvas, drawOrigin, paint, sk_ref_sp(subRunStorage), device);
+    }
+}
+#endif
+
 bool SubRunContainer::canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const {
     for (const SubRun& subRun : fSubRuns) {
         if (!subRun.canReuse(paint, positionMatrix)) {
@@ -2420,5 +2845,4 @@ bool SubRunContainer::canReuse(const SkPaint& paint, const SkMatrix& positionMat
     }
     return true;
 }
-
 }  // namespace sktext::gpu

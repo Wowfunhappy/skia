@@ -10,10 +10,10 @@ cc_library(
     hdrs = ["//modules/skparagraph/include:hdrs"],
     visibility = ["//:__subpackages__"],
     deps = [
-        "//:skia_public",
+        "//:skia_internal",
         "//modules/skshaper",
         "//modules/skunicode",
-        "//third_party:harfbuzz",
-        "//third_party:icu",
+        "@harfbuzz",
+        "@icu",
     ],
 )

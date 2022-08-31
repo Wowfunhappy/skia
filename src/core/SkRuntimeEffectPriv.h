@@ -17,23 +17,33 @@
 #ifdef SK_ENABLE_SKSL
 
 namespace SkSL {
-class Variable;
 class Context;
+class Variable;
+struct Program;
 }
 
+class SkCapabilities;
 struct SkColorSpaceXformSteps;
 
 class SkRuntimeEffectPriv {
 public:
     // Helper function when creating an effect for a GrSkSLFP that verifies an effect will
     // implement the constant output for constant input optimization flag.
-    static bool SupportsConstantOutputForConstantInput(sk_sp<SkRuntimeEffect> effect) {
+    static bool SupportsConstantOutputForConstantInput(const SkRuntimeEffect* effect) {
         return effect->getFilterColorProgram();
+    }
+
+    static uint32_t Hash(const SkRuntimeEffect& effect) {
+        return effect.hash();
+    }
+
+    static const SkSL::Program& Program(const SkRuntimeEffect& effect) {
+        return *effect.fBaseProgram;
     }
 
     static SkRuntimeEffect::Options ES3Options() {
         SkRuntimeEffect::Options options;
-        options.enforceES2Restrictions = false;
+        options.maxVersionAllowed = SkSL::Version::k300;
         return options;
     }
 
@@ -53,6 +63,9 @@ public:
     static sk_sp<const SkData> TransformUniforms(SkSpan<const SkRuntimeEffect::Uniform> uniforms,
                                                  sk_sp<const SkData> originalData,
                                                  const SkColorSpace* dstCS);
+
+    static bool CanDraw(const SkCapabilities*, const SkSL::Program*);
+    static bool CanDraw(const SkCapabilities*, const SkRuntimeEffect*);
 };
 
 // These internal APIs for creating runtime effects vary from the public API in two ways:
@@ -72,15 +85,16 @@ inline sk_sp<SkRuntimeEffect> SkMakeCachedRuntimeEffect(SkRuntimeEffect::Result 
 }
 
 // Internal API that assumes (and asserts) that the shader code is valid, but does no internal
-// caching. Used when the caller will cache the result in a static variable.
-inline sk_sp<SkRuntimeEffect> SkMakeRuntimeEffect(
+// caching. Used when the caller will cache the result in a static variable. Ownership is passed to
+// the caller; the effect will be leaked if it the pointer is not stored or explicitly deleted.
+inline SkRuntimeEffect* SkMakeRuntimeEffect(
         SkRuntimeEffect::Result (*make)(SkString, const SkRuntimeEffect::Options&),
         const char* sksl,
         SkRuntimeEffect::Options options = SkRuntimeEffect::Options{}) {
     SkRuntimeEffectPriv::UsePrivateRTShaderModule(&options);
     auto result = make(SkString{sksl}, options);
     SkASSERTF(result.effect, "%s", result.errorText.c_str());
-    return result.effect;
+    return result.effect.release();
 }
 
 // This is mostly from skvm's rgb->hsl code, with some GPU-related finesse pulled from

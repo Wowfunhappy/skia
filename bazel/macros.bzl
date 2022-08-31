@@ -8,13 +8,16 @@ load("@rules_python//python:defs.bzl", _py_binary = "py_binary")
 load("@py_deps//:requirements.bzl", _requirement = "requirement")
 load("@bazel_gazelle//:def.bzl", _gazelle = "gazelle")
 load("@emsdk//emscripten_toolchain:wasm_rules.bzl", _wasm_cc_binary = "wasm_cc_binary")
+load("@io_bazel_rules_go//go:def.bzl", _go_binary = "go_binary", _go_library = "go_library")
 
 # re-export symbols that are commonly used or that are not supported in G3
 # (and thus we need to stub out)
-selects = _selects
+gazelle = _gazelle
+go_binary = _go_binary
+go_library = _go_library
 py_binary = _py_binary
 requirement = _requirement
-gazelle = _gazelle
+selects = _selects
 wasm_cc_binary = _wasm_cc_binary
 
 def select_multi(values_map, default):
@@ -65,9 +68,32 @@ def select_multi(values_map, default):
     return rv
 
 # buildifier: disable=unnamed-macro
+def cc_binary(**kwargs):
+    """A shim around cc_binary that lets us tweak settings for G3 if necessary."""
+    native.cc_binary(**kwargs)
+
+# buildifier: disable=unnamed-macro
 def cc_library(**kwargs):
     """A shim around cc_library that lets us tweak settings for G3 if necessary."""
     native.cc_library(**kwargs)
+
+# buildifier: disable=unnamed-macro
+def objc_library(**kwargs):
+    """A shim around objc_library that lets us tweak settings for G3 if necessary.
+
+    Args:
+          **kwargs: Normal arguments to objc_library
+    """
+
+    # Internally, we need to combine sdk_frameworks and deps, but we can only
+    # do that if both are lists
+    # https://github.com/bazelbuild/bazel/issues/14157
+    sdks = kwargs.get("sdk_frameworks", None)
+    deps = kwargs.get("deps", [])
+    if type(sdks) != "NoneType":
+        if type(sdks) != "list" or type(deps) != "list":
+            fail("skd_frameworks and deps must both be normal lists, not selects")
+    native.objc_library(**kwargs)
 
 # buildifier: disable=unnamed-macro
 def exports_files_legacy(label_list = None, visibility = None):

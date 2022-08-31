@@ -135,9 +135,9 @@ static const Varying kValidVaryings[] = {
 static void test_good(skiatest::Reporter* r) {
     for (const auto& validFS : kValidFSes) {
         if (!check_for_success(r,
-                               SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                               kValidAttrs,
                                kValidStride,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                kValidVS,
                                validFS)) {
             return;
@@ -184,9 +184,9 @@ static void test_bad_sig(skiatest::Reporter* r) {
         invalidVS.appendf("%s %s", vsSig, kVSBody);
         for (const auto& validFS : kValidFSes) {
             if (!check_for_failure(r,
-                                   SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                                   kValidAttrs,
                                    kValidStride,
-                                   SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                                   kValidVaryings,
                                    invalidVS,
                                    validFS)) {
                 return;
@@ -198,9 +198,9 @@ static void test_bad_sig(skiatest::Reporter* r) {
         SkString invalidFS;
         invalidFS.appendf("%s %s", noColorFSSig, kNoColorFSBody);
         if (!check_for_failure(r,
-                               SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                               kValidAttrs,
                                kValidStride,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                kValidVS,
                                invalidFS)) {
             return;
@@ -211,9 +211,9 @@ static void test_bad_sig(skiatest::Reporter* r) {
         SkString invalidFS;
         invalidFS.appendf("%s %s", colorFSSig, kColorFSBody);
         if (!check_for_failure(r,
-                               SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                               kValidAttrs,
                                kValidStride,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                kValidVS,
                                invalidFS)) {
             return;
@@ -231,9 +231,9 @@ static void test_float4_color(skiatest::Reporter* r) {
         )"
     };
     check_for_success(r,
-                      SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                      kValidAttrs,
                       kValidStride,
-                      SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                      kValidVaryings,
                       kValidVS,
                       kFloat4FS);
 }
@@ -247,9 +247,9 @@ static void test_bad_globals(skiatest::Reporter* r) {
         SkString badVS = kValidVS;
         badVS.prepend(global);
         if (!check_for_failure(r,
-                               SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                               kValidAttrs,
                                kValidStride,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                badVS,
                                kValidFSes[0])) {
             return;
@@ -259,9 +259,9 @@ static void test_bad_globals(skiatest::Reporter* r) {
         SkString badFS = kValidFSes[0];
         badFS.prepend(global);
         if (!check_for_failure(r,
-                               SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                               kValidAttrs,
                                kValidStride,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                kValidVS,
                                badFS)) {
             return;
@@ -277,13 +277,18 @@ static void test_good_uniforms(skiatest::Reporter* r) {
     constexpr Flags kVS    = Uniform::kVertex_Flag;
     constexpr Flags kFS    = Uniform::kFragment_Flag;
     constexpr Flags kColor = Uniform::kColor_Flag;
+    constexpr Flags kHalfP = Uniform::kHalfPrecision_Flag;
 
-    auto make_uni = [](Type type, const char* name, size_t offset, uint32_t flags, int count = 0) {
+    auto make_uni = [](Type type,
+                       std::string_view name,
+                       size_t offset,
+                       uint32_t flags,
+                       int count = 0) {
         if (count) {
-            return Uniform{SkString(name), offset, type, count, flags | Uniform::kArray_Flag};
+            return Uniform{name, offset, type, count, flags | Uniform::kArray_Flag};
         } else {
             SkASSERT(!(flags & Uniform::kArray_Flag));
-            return Uniform{SkString(name), offset, type, 1, flags};
+            return Uniform{name, offset, type, 1, flags};
         }
     };
 
@@ -354,8 +359,8 @@ static void test_good_uniforms(skiatest::Reporter* r) {
                         "uniform half x[2];",
                 },
                 {
-                        make_uni(Type::kFloat, "x",  0, kVS|kFS, 2),
-                        make_uni(Type::kInt,   "y",  8, kVS    , 0)
+                        make_uni(Type::kFloat, "x",  0, kVS|kFS|kHalfP, 2),
+                        make_uni(Type::kInt,   "y",  8, kVS           , 0)
                 }
             },
 
@@ -384,8 +389,8 @@ static void test_good_uniforms(skiatest::Reporter* r) {
                             "uniform int3    i3[1];",
                     },
                     {
-                            make_uni(Type::kFloat4x4, "m",    0, kVS|kFS, 4),
-                            make_uni(Type::kInt3,     "i3", 256, kFS    , 1)
+                            make_uni(Type::kFloat4x4, "m",    0, kVS|kFS|kHalfP, 4),
+                            make_uni(Type::kInt3,     "i3", 256, kFS           , 1)
                     }
             },
 
@@ -406,14 +411,14 @@ static void test_good_uniforms(skiatest::Reporter* r) {
                              "uniform int     i;"
                     },
                     {
-                             make_uni(Type::kFloat,    "x" ,   0, kVS    , 0),
-                             make_uni(Type::kFloat4x4, "m" ,   4, kVS|kFS, 4),
-                             make_uni(Type::kInt2,     "i2", 260, kVS    , 2),
-                             make_uni(Type::kFloat3,   "v" , 276, kVS|kFS, 8),
-                             make_uni(Type::kInt3,     "i3", 372, kVS    , 0),
-                             make_uni(Type::kFloat,    "y" , 384, kFS    , 0),
-                             make_uni(Type::kInt4,     "i4", 388, kFS    , 2),
-                             make_uni(Type::kInt,      "i" , 420, kFS    , 0),
+                             make_uni(Type::kFloat,    "x" ,   0, kVS           , 0),
+                             make_uni(Type::kFloat4x4, "m" ,   4, kVS|kFS|kHalfP, 4),
+                             make_uni(Type::kInt2,     "i2", 260, kVS           , 2),
+                             make_uni(Type::kFloat3,   "v" , 276, kVS|kFS       , 8),
+                             make_uni(Type::kInt3,     "i3", 372, kVS           , 0),
+                             make_uni(Type::kFloat,    "y" , 384, kFS           , 0),
+                             make_uni(Type::kInt4,     "i4", 388, kFS           , 2),
+                             make_uni(Type::kInt,      "i" , 420, kFS           , 0),
                     }
             },
     };
@@ -433,14 +438,14 @@ static void test_good_uniforms(skiatest::Reporter* r) {
         }
         fs.prepend(unis);
 
-        auto attrs = SkMakeSpan(kValidAttrs   , SK_ARRAY_COUNT(kValidAttrs)   );
-        auto varys = SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings));
+        auto attrs = SkSpan(kValidAttrs);
+        auto varys = SkSpan(kValidVaryings);
         sk_sp<SkMeshSpecification> spec;
         if (!check_for_success(r, attrs, kValidStride, varys, vs, fs, &spec)) {
             return;
         }
         SkString desc = make_description(attrs, kValidStride, varys, vs, fs);
-        auto uniforms = spec->uniforms();
+        SkSpan<const Uniform> uniforms = spec->uniforms();
         if (uniforms.size() != c.expectations.size()) {
             ERRORF(r,
                    "Expected %zu uniforms but actually %zu:\n%s",
@@ -450,18 +455,18 @@ static void test_good_uniforms(skiatest::Reporter* r) {
             return;
         }
         for (const auto& [actual, expected] : SkMakeZip(uniforms, c.expectations)) {
-            if (actual.name != expected.name) {
+            std::string name = std::string(actual.name);
+            if (name != expected.name) {
                 ERRORF(r,
-                       "Actual uniform name (%s) does not match expected name (%s)",
-                       actual.name.c_str(),
-                       expected.name.c_str());
+                       "Actual uniform name (%s) does not match expected name (%.*s)",
+                       name.c_str(),
+                       (int)expected.name.size(), expected.name.data());
                 return;
             }
-            const char* name = actual.name.c_str();
             if (actual.type != expected.type) {
                 ERRORF(r,
                        "Uniform %s: Actual type (%d) does not match expected type (%d)",
-                       name,
+                       name.c_str(),
                        static_cast<int>(actual.type),
                        static_cast<int>(expected.type));
                 return;
@@ -469,7 +474,7 @@ static void test_good_uniforms(skiatest::Reporter* r) {
             if (actual.count != expected.count) {
                 ERRORF(r,
                        "Uniform %s: Actual count (%d) does not match expected count (%d)",
-                       name,
+                       name.c_str(),
                        actual.count,
                        expected.count);
                 return;
@@ -477,7 +482,7 @@ static void test_good_uniforms(skiatest::Reporter* r) {
             if (actual.flags != expected.flags) {
                 ERRORF(r,
                        "Uniform %s: Actual flags (0x%04x) do not match expected flags (0x%04x)",
-                       name,
+                       name.c_str(),
                        actual.flags,
                        expected.flags);
                 return;
@@ -485,7 +490,7 @@ static void test_good_uniforms(skiatest::Reporter* r) {
             if (actual.offset != expected.offset) {
                 ERRORF(r,
                        "Uniform %s: Actual offset (%zu) does not match expected offset (%zu)",
-                       name,
+                       name.c_str(),
                        actual.offset,
                        expected.offset);
                 return;
@@ -524,8 +529,8 @@ static void test_bad_uniforms(skiatest::Reporter* r) {
             SkString fs = kValidFSes[0];
             fs.prepend(u2);
 
-            auto attrs = SkMakeSpan(kValidAttrs   , SK_ARRAY_COUNT(kValidAttrs)   );
-            auto varys = SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings));
+            auto attrs = SkSpan(kValidAttrs);
+            auto varys = SkSpan(kValidVaryings);
             if (!check_for_failure(r, attrs, kValidStride, varys, vs, fs)) {
                 return;
             }
@@ -538,9 +543,9 @@ static void test_no_main(skiatest::Reporter* r) {
 
     // Empty VS
     if (!check_for_failure(r,
-                           SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                           kValidAttrs,
                            kValidStride,
-                           SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                           kValidVaryings,
                            SkString{},
                            kValidFSes[0])) {
         return;
@@ -548,9 +553,9 @@ static void test_no_main(skiatest::Reporter* r) {
 
     // VS with helper function but no main
     if (!check_for_failure(r,
-                           SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                           kValidAttrs,
                            kValidStride,
-                           SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                           kValidVaryings,
                            kHelper,
                            kValidFSes[0])) {
         return;
@@ -558,9 +563,9 @@ static void test_no_main(skiatest::Reporter* r) {
 
     // Empty FS
     if (!check_for_failure(r,
-                           SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                           kValidAttrs,
                            kValidStride,
-                           SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                           kValidVaryings,
                            kValidVS,
                            SkString{})) {
         return;
@@ -568,9 +573,9 @@ static void test_no_main(skiatest::Reporter* r) {
 
     // VS with helper function but no main
     if (!check_for_failure(r,
-                           SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                           kValidAttrs,
                            kValidStride,
-                           SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                           kValidVaryings,
                            kValidVS,
                            kHelper)) {
         return;
@@ -582,7 +587,7 @@ static void test_zero_attrs(skiatest::Reporter* r) {
     check_for_failure(r,
                       SkSpan<Attribute>(),
                       kValidStride,
-                      SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                      kValidVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -590,7 +595,7 @@ static void test_zero_attrs(skiatest::Reporter* r) {
 static void test_zero_varyings(skiatest::Reporter* r) {
     // Varyings are not required.
     check_for_success(r,
-                      SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                      kValidAttrs,
                       kValidStride,
                       SkSpan<Varying>(),
                       kValidVS,
@@ -600,9 +605,9 @@ static void test_zero_varyings(skiatest::Reporter* r) {
 static void test_bad_strides(skiatest::Reporter* r) {
     // Zero stride
     if (!check_for_failure(r,
-                           SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                           kValidAttrs,
                            0,
-                           SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                           kValidVaryings,
                            kValidVS,
                            kValidFSes[0])) {
         return;
@@ -610,9 +615,9 @@ static void test_bad_strides(skiatest::Reporter* r) {
 
     // Unaligned
     if (!check_for_failure(r,
-                           SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                           kValidAttrs,
                            kValidStride + 1,
-                           SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                           kValidVaryings,
                            kValidVS,
                            kValidFSes[0])) {
         return;
@@ -620,9 +625,9 @@ static void test_bad_strides(skiatest::Reporter* r) {
 
     // Too large
     if (!check_for_failure(r,
-                           SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                           kValidAttrs,
                            1 << 20,
-                           SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                           kValidVaryings,
                            kValidVS,
                            kValidFSes[0])) {
         return;
@@ -635,9 +640,9 @@ static void test_bad_offsets(skiatest::Reporter* r) {
                 {Attribute::Type::kFloat4,  1, SkString{"var"}},
         };
         if (!check_for_failure(r,
-                               SkMakeSpan(kAttributes, SK_ARRAY_COUNT(kAttributes)),
+                               kAttributes,
                                32,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                kValidVS,
                                kValidFSes[0])) {
             return;
@@ -649,9 +654,9 @@ static void test_bad_offsets(skiatest::Reporter* r) {
                 {Attribute::Type::kFloat2,  16, SkString{"var"}},
         };
         if (!check_for_failure(r,
-                               SkMakeSpan(kAttributes, SK_ARRAY_COUNT(kAttributes)),
+                               kAttributes,
                                20,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                kValidVS,
                                kValidFSes[0])) {
             return;
@@ -662,9 +667,9 @@ static void test_bad_offsets(skiatest::Reporter* r) {
                 {Attribute::Type::kFloat, std::numeric_limits<size_t>::max() - 3, SkString{"var"}},
         };
         if (!check_for_failure(r,
-                               SkMakeSpan(kAttributes, SK_ARRAY_COUNT(kAttributes)),
+                               kAttributes,
                                4,
-                               SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                               kValidVaryings,
                                kValidVS,
                                kValidFSes[0])) {
             return;
@@ -680,9 +685,9 @@ static void test_too_many_attrs(skiatest::Reporter* r) {
         attrs.push_back({Attribute::Type::kFloat4, 0, SkStringPrintf("attr%zu", i)});
     }
     check_for_failure(r,
-                      SkMakeSpan(attrs),
+                      attrs,
                       4*4,
-                      SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                      kValidVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -695,9 +700,9 @@ static void test_too_many_varyings(skiatest::Reporter* r) {
         varyings.push_back({Varying::Type::kFloat4, SkStringPrintf("varying%zu", i)});
     }
     check_for_failure(r,
-                      SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                      kValidAttrs,
                       kValidStride,
-                      SkMakeSpan(varyings),
+                      SkSpan(varyings),
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -708,9 +713,9 @@ static void test_duplicate_attribute_names(skiatest::Reporter* r) {
             {Attribute::Type::kFloat2, 16, SkString{"var"}}
     };
     check_for_failure(r,
-                      SkMakeSpan(kAttributes, SK_ARRAY_COUNT(kAttributes)),
+                      kAttributes,
                       24,
-                      SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                      kValidVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -721,9 +726,9 @@ static void test_duplicate_varying_names(skiatest::Reporter* r) {
         {Varying::Type::kFloat3, SkString{"var"}}
     };
     check_for_failure(r,
-                      SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                      kValidAttrs,
                       kValidStride,
-                      SkMakeSpan(kVaryings, SK_ARRAY_COUNT(kVaryings)),
+                      kVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -735,9 +740,9 @@ static void test_sneaky_attribute_name(skiatest::Reporter* r) {
             {Attribute::Type::kFloat4, 0, SkString{kSneakyName}},
     };
     check_for_failure(r,
-                      SkMakeSpan(kAttributes, SK_ARRAY_COUNT(kAttributes)),
+                      kAttributes,
                       16,
-                      SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                      kValidVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -747,9 +752,9 @@ static void test_sneaky_varying_name(skiatest::Reporter* r) {
             {Varying::Type::kFloat4, SkString{kSneakyName}},
     };
     check_for_failure(r,
-                      SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                      kValidAttrs,
                       kValidStride,
-                      SkMakeSpan(kVaryings, SK_ARRAY_COUNT(kVaryings)),
+                      kVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -759,9 +764,9 @@ static void test_empty_attribute_name(skiatest::Reporter* r) {
             {Attribute::Type::kFloat4, 0, SkString{}},
     };
     check_for_failure(r,
-                      SkMakeSpan(kAttributes, SK_ARRAY_COUNT(kAttributes)),
+                      kAttributes,
                       16,
-                      SkMakeSpan(kValidVaryings, SK_ARRAY_COUNT(kValidVaryings)),
+                      kValidVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }
@@ -771,9 +776,9 @@ static void test_empty_varying_name(skiatest::Reporter* r) {
             {Varying::Type::kFloat4, SkString{}},
     };
     check_for_failure(r,
-                      SkMakeSpan(kValidAttrs, SK_ARRAY_COUNT(kValidAttrs)),
+                      kValidAttrs,
                       kValidStride,
-                      SkMakeSpan(kVaryings, SK_ARRAY_COUNT(kVaryings)),
+                      kVaryings,
                       kValidVS,
                       kValidFSes[0]);
 }

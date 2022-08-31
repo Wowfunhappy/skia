@@ -15,6 +15,8 @@
 #include "include/sksl/SkSLPosition.h"
 #include "src/sksl/spirv.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -455,6 +457,10 @@ public:
     }
 
     virtual bool isArray() const {
+        return false;
+    }
+
+    virtual bool isUnsizedArray() const {
         return false;
     }
 

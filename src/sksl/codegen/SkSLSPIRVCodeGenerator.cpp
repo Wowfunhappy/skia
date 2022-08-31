@@ -68,6 +68,7 @@
 
 #include <cmath>
 #include <set>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -761,7 +762,7 @@ SpvId SPIRVCodeGenerator::writeOpCompositeConstruct(const Type& type,
     // If this is a vector composed entirely of literals, write a constant-composite instead.
     if (type.isVector()) {
         SkSTArray<4, SpvId> constants;
-        if (this->toConstants(SkMakeSpan(values), &constants)) {
+        if (this->toConstants(SkSpan(values), &constants)) {
             // Create a vector from literals.
             return this->writeOpConstantComposite(type, constants);
         }
@@ -770,7 +771,7 @@ SpvId SPIRVCodeGenerator::writeOpCompositeConstruct(const Type& type,
     // If this is a matrix composed entirely of literals, constant-composite them instead.
     if (type.isMatrix()) {
         SkSTArray<16, SpvId> constants;
-        if (this->toConstants(SkMakeSpan(values), &constants)) {
+        if (this->toConstants(SkSpan(values), &constants)) {
             // Create each matrix column.
             SkASSERT(type.isMatrix());
             const Type& vecType = type.componentType().toCompound(fContext,
@@ -3654,9 +3655,9 @@ void SPIRVCodeGenerator::writeDoStatement(const DoStatement& d, OutputStream& ou
     this->writeStatement(*d.statement(), out);
     if (fCurrentBlock) {
         this->writeInstruction(SpvOpBranch, next, out);
+        this->writeLabel(next, kBranchIsOnPreviousLine, out);
+        this->writeInstruction(SpvOpBranch, continueTarget, out);
     }
-    this->writeLabel(next, kBranchIsOnPreviousLine, out);
-    this->writeInstruction(SpvOpBranch, continueTarget, out);
     this->writeLabel(continueTarget, kBranchIsAbove, conditionalOps, out);
     SpvId test = this->writeExpression(*d.test(), out);
     this->writeInstruction(SpvOpBranchConditional, test, header, end, out);

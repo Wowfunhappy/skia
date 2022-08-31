@@ -28,6 +28,7 @@
 #include "src/sksl/ir/SkSLUnresolvedFunction.h"
 #include "src/sksl/ir/SkSLVariable.h"
 
+#include <cstddef>
 #include <initializer_list>
 #include <utility>
 
@@ -129,7 +130,7 @@ static bool check_parameters(const Context& context,
                     m.fLayout.fBuiltin = SK_MAIN_COORDS_BUILTIN;
                     modifiersChanged = true;
                 } else if (typeIsValidForColor(type) &&
-                           builtinColorIndex < SK_ARRAY_COUNT(kBuiltinColorIDs)) {
+                           builtinColorIndex < std::size(kBuiltinColorIDs)) {
                     m.fLayout.fBuiltin = kBuiltinColorIDs[builtinColorIndex++];
                     modifiersChanged = true;
                 }
@@ -292,6 +293,11 @@ static bool check_main_signature(const Context& context, Position pos, const Typ
         }
         case ProgramKind::kVertex:
         case ProgramKind::kGraphiteVertex:
+        case ProgramKind::kCompute:
+            if (!returnType.matches(*context.fTypes.fVoid)) {
+                errors.error(pos, "'main' must return 'void'");
+                return false;
+            }
             if (parameters.size()) {
                 errors.error(pos, "shader 'main' must have zero parameters");
                 return false;
@@ -335,11 +341,11 @@ static bool find_existing_declaration(const Context& context,
         const FunctionDeclaration* declPtr;
         switch (entry->kind()) {
             case Symbol::Kind::kUnresolvedFunction:
-                functions = SkMakeSpan(entry->as<UnresolvedFunction>().functions());
+                functions = SkSpan(entry->as<UnresolvedFunction>().functions());
                 break;
             case Symbol::Kind::kFunctionDeclaration:
                 declPtr = &entry->as<FunctionDeclaration>();
-                functions = SkMakeSpan(&declPtr, 1);
+                functions = SkSpan(&declPtr, 1);
                 break;
             default:
                 errors.error(pos, "symbol '" + std::string(name) + "' was already defined");

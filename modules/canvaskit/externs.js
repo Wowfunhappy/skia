@@ -54,6 +54,10 @@ var CanvasKit = {
   MakeParticles: function() {},
   MakeVertices: function() {},
   MakeSurface: function() {},
+  MakeGPUDeviceContext: function() {},
+  MakeGPUCanvasContext: function() {},
+  MakeGPUCanvasSurface: function() {},
+  MakeGPUTextureSurface: function() {},
   MakeRasterDirectSurface: function() {},
   MakeWebGLCanvasSurface: function() {},
   Malloc: function() {},
@@ -422,12 +426,24 @@ var CanvasKit = {
   },
 
   ImageFilter: {
+    MakeBlend: function() {},
     MakeBlur: function() {},
     MakeColorFilter: function() {},
     MakeCompose: function() {},
+    MakeDilate: function() {},
+    MakeDisplacementMap: function() {},
+    MakeDropShadow: function() {},
+    MakeDropShadowOnly: function() {},
+    MakeErode: function() {},
+    MakeImage: function() {},
     MakeMatrixTransform: function() {},
+    MakeOffset: function() {},
 
     // private API
+    _MakeDropShadow: function() {},
+    _MakeDropShadowOnly: function() {},
+    _MakeImageCubic: function() {},
+    _MakeImageOptions: function() {},
     _MakeMatrixTransformCubic: function() {},
     _MakeMatrixTransformOptions: function() {},
   },
@@ -541,7 +557,9 @@ var CanvasKit = {
 
   Path: {
     // public API (from C++ and JS bindings)
+    CanInterpolate: function() {},
     MakeFromCmds: function() {},
+    MakeFromPathInterpolation: function() {},
     MakeFromSVGString: function() {},
     MakeFromOp: function() {},
     MakeFromVerbsPointsWeights: function() {},
@@ -563,6 +581,7 @@ var CanvasKit = {
 
     prototype: {
       addArc: function() {},
+      addCircle: function() {},
       addOval: function() {},
       addPath: function() {},
       addPoly: function() {},
@@ -601,6 +620,7 @@ var CanvasKit = {
     _MakeFromCmds: function() {},
     _MakeFromVerbsPointsWeights: function() {},
     _addArc: function() {},
+    _addCircle: function() {},
     _addOval: function() {},
     _addPath: function() {},
     _addPoly: function() {},

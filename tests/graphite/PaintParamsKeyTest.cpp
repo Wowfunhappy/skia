@@ -7,17 +7,21 @@
 
 #include "tests/Test.h"
 
+#ifdef SK_GRAPHITE_ENABLED
+
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCombinationBuilder.h"
 #include "include/core/SkM44.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkShader.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/private/SkUniquePaintParamsID.h"
 #include "src/core/SkKeyContext.h"
 #include "src/core/SkKeyHelpers.h"
 #include "src/core/SkPipelineData.h"
+#include "src/core/SkRuntimeEffectPriv.h"
 #include "src/core/SkShaderCodeDictionary.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/ContextUtils.h"
@@ -26,6 +30,7 @@
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/ResourceProvider.h"
 #include "src/shaders/SkImageShader.h"
+#include "tests/graphite/CombinationBuilderTestAccess.h"
 
 using namespace skgpu::graphite;
 
@@ -98,6 +103,50 @@ std::tuple<SkPaint, int> create_paint(Recorder* recorder,
     return { p, numTextures };
 }
 
+SkUniquePaintParamsID create_key(Context* context,
+                                 SkPaintParamsKeyBuilder* keyBuilder,
+                                 SkShaderType shaderType,
+                                 SkTileMode tileMode,
+                                 SkBlendMode blendMode) {
+    SkShaderCodeDictionary* dict = context->priv().shaderCodeDictionary();
+
+    SkCombinationBuilder combinationBuilder(context->priv().shaderCodeDictionary());
+
+    switch (shaderType) {
+        case SkShaderType::kSolidColor:
+            combinationBuilder.addOption(shaderType);
+            break;
+        case SkShaderType::kLinearGradient:         [[fallthrough]];
+        case SkShaderType::kRadialGradient:         [[fallthrough]];
+        case SkShaderType::kSweepGradient:          [[fallthrough]];
+        case SkShaderType::kConicalGradient:
+            combinationBuilder.addOption(shaderType, 2, 2);
+            break;
+        case SkShaderType::kLocalMatrix: {
+            SkCombinationOption option = combinationBuilder.addOption(shaderType);
+            option.addChildOption(0, SkShaderType::kSolidColor);
+        } break;
+        case SkShaderType::kImage: {
+            SkTileModePair tilingOptions[] = { { tileMode,  tileMode } };
+
+            combinationBuilder.addOption(shaderType, tilingOptions);
+        } break;
+        case SkShaderType::kBlendShader: {
+            SkCombinationOption option = combinationBuilder.addOption(shaderType);
+            option.addChildOption(0, SkShaderType::kSolidColor);
+            option.addChildOption(1, SkShaderType::kSolidColor);
+        } break;
+    }
+
+    combinationBuilder.addOption(blendMode);
+
+    std::vector<SkUniquePaintParamsID> uniqueIDs = CombinationBuilderTestAccess::BuildCombinations(
+            dict, &combinationBuilder);
+
+    SkASSERT(uniqueIDs.size() == 1);
+    return uniqueIDs[0];
+}
+
 } // anonymous namespace
 
 // This is intended to be a smoke test for the agreement between the two ways of creating a
@@ -128,7 +177,6 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(PaintParamsKeyTest, reporter, context) {
                     SkShaderType::kLocalMatrix,
                     SkShaderType::kImage,
                     SkShaderType::kBlendShader }) {
-
         for (auto tm: { SkTileMode::kClamp,
                         SkTileMode::kRepeat,
                         SkTileMode::kMirror,
@@ -147,7 +195,7 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(PaintParamsKeyTest, reporter, context) {
                 auto [ uniqueID1, uIndex, tIndex] = ExtractPaintData(recorder.get(), &gatherer,
                                                                      &builder, {}, PaintParams(p));
 
-                SkUniquePaintParamsID uniqueID2 = CreateKey(keyContext, &builder, s, bm);
+                SkUniquePaintParamsID uniqueID2 = create_key(context, &builder, s, tm, bm);
                 // ExtractPaintData and CreateKey agree
                 REPORTER_ASSERT(reporter, uniqueID1 == uniqueID2);
 
@@ -165,3 +213,5 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(PaintParamsKeyTest, reporter, context) {
         }
     }
 }
+
+#endif // SK_GRAPHITE_ENABLED

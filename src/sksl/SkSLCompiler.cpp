@@ -73,13 +73,16 @@
 #if REHYDRATE
 
 // At runtime, we load the dehydrated sksl data files. The data is a (pointer, size) pair.
+#include "src/sksl/generated/sksl_compute.dehydrated.sksl"
 #include "src/sksl/generated/sksl_frag.dehydrated.sksl"
-#include "src/sksl/generated/sksl_graphite_frag.dehydrated.sksl"
-#include "src/sksl/generated/sksl_graphite_vert.dehydrated.sksl"
 #include "src/sksl/generated/sksl_gpu.dehydrated.sksl"
 #include "src/sksl/generated/sksl_public.dehydrated.sksl"
 #include "src/sksl/generated/sksl_rt_shader.dehydrated.sksl"
 #include "src/sksl/generated/sksl_vert.dehydrated.sksl"
+#if defined(SK_GRAPHITE_ENABLED)
+#include "src/sksl/generated/sksl_graphite_frag.dehydrated.sksl"
+#include "src/sksl/generated/sksl_graphite_vert.dehydrated.sksl"
+#endif
 
 #define MODULE_DATA(name) MakeModuleData(SKSL_INCLUDE_sksl_##name,\
                                          SKSL_INCLUDE_sksl_##name##_LENGTH)
@@ -265,22 +268,38 @@ const ParsedModule& Compiler::loadVertexModule() {
     return fVertexModule;
 }
 
+const ParsedModule& Compiler::loadComputeModule() {
+    if (!fComputeModule.fSymbols) {
+        fComputeModule = this->parseModule(ProgramKind::kCompute, MODULE_DATA(compute),
+                                           this->loadGPUModule());
+    }
+    return fComputeModule;
+}
+
 const ParsedModule& Compiler::loadGraphiteFragmentModule() {
+#if defined(SK_GRAPHITE_ENABLED)
     if (!fGraphiteFragmentModule.fSymbols) {
         fGraphiteFragmentModule = this->parseModule(ProgramKind::kGraphiteFragment,
                                                     MODULE_DATA(graphite_frag),
                                                     this->loadFragmentModule());
     }
     return fGraphiteFragmentModule;
+#else
+    return this->loadFragmentModule();
+#endif
 }
 
 const ParsedModule& Compiler::loadGraphiteVertexModule() {
+#if defined(SK_GRAPHITE_ENABLED)
     if (!fGraphiteVertexModule.fSymbols) {
         fGraphiteVertexModule = this->parseModule(ProgramKind::kGraphiteVertex,
                                                   MODULE_DATA(graphite_vert),
                                                   this->loadVertexModule());
     }
     return fGraphiteVertexModule;
+#else
+    return this->loadVertexModule();
+#endif
 }
 
 static void add_glsl_type_aliases(SkSL::SymbolTable* symbols, const SkSL::BuiltinTypes& types) {
@@ -344,6 +363,7 @@ const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
     switch (kind) {
         case ProgramKind::kVertex:               return this->loadVertexModule();           break;
         case ProgramKind::kFragment:             return this->loadFragmentModule();         break;
+        case ProgramKind::kCompute:              return this->loadComputeModule();          break;
         case ProgramKind::kGraphiteVertex:       return this->loadGraphiteVertexModule();   break;
         case ProgramKind::kGraphiteFragment:     return this->loadGraphiteFragmentModule(); break;
         case ProgramKind::kRuntimeColorFilter:   return this->loadPublicModule();           break;

@@ -22,6 +22,8 @@
 #include "src/sksl/ir/SkSLProgram.h"
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -37,6 +39,7 @@
 #define SK_SECONDARYFRAGCOLOR_BUILTIN  10012
 #define SK_FRAGCOORD_BUILTIN              15
 #define SK_CLOCKWISE_BUILTIN              17
+#define SK_THREADPOSITION                 28
 #define SK_VERTEXID_BUILTIN               42
 #define SK_INSTANCEID_BUILTIN             43
 #define SK_POSITION_BUILTIN                0
@@ -233,6 +236,7 @@ private:
         Compiler& fCompiler;
     };
 
+    const ParsedModule& loadComputeModule();
     const ParsedModule& loadGPUModule();
     const ParsedModule& loadFragmentModule();
     const ParsedModule& loadVertexModule();
@@ -271,6 +275,7 @@ private:
     ParsedModule fGPUModule;                 // [Private] + GPU intrinsics, helper functions
     ParsedModule fVertexModule;              // [GPU] + Vertex stage decls
     ParsedModule fFragmentModule;            // [GPU] + Fragment stage decls
+    ParsedModule fComputeModule;             // [GPU] + Compute stage decls
     ParsedModule fGraphiteVertexModule;      // [Vert] + Graphite vertex helpers
     ParsedModule fGraphiteFragmentModule;    // [Frag] + Graphite fragment helpers
 
