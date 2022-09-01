@@ -44,11 +44,13 @@ public:
     static sk_sp<Device> Make(Recorder*,
                               const SkImageInfo&,
                               SkBudgeted,
-                              const SkSurfaceProps&);
+                              const SkSurfaceProps&,
+                              bool addInitialClear);
     static sk_sp<Device> Make(Recorder*,
                               sk_sp<TextureProxy>,
                               const SkColorInfo&,
-                              const SkSurfaceProps&);
+                              const SkSurfaceProps&,
+                              bool addInitialClear);
 
     Device* asGraphiteDevice() override { return this; }
 
@@ -173,7 +175,7 @@ private:
     };
     SK_DECL_BITMASK_OPS_FRIENDS(DrawFlags);
 
-    Device(Recorder*, sk_sp<DrawContext>);
+    Device(Recorder*, sk_sp<DrawContext>, bool addInitialClear);
 
     // Handles applying path effects, mask filters, stroke-and-fill styles, and hairlines.
     // Ignores geometric style on the paint in favor of explicitly provided SkStrokeRec and flags.
@@ -205,7 +207,7 @@ private:
     // return a retry error code? or does drawGeometry() handle all the fallbacks, knowing that
     // a particular shape type needs to be pre-chopped?
     // TODO: Move this into a RendererSelector object provided by the Context.
-    static const Renderer* ChooseRenderer(const Geometry&, const Clip&, const SkStrokeRec&);
+    const Renderer* chooseRenderer(const Geometry&, const Clip&, const SkStrokeRec&) const;
 
     bool needsFlushBeforeDraw(int numNewDraws) const;
 
