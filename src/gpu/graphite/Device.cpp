@@ -17,6 +17,7 @@
 #include "src/gpu/graphite/DrawList.h"
 #include "src/gpu/graphite/DrawParams.h"
 #include "src/gpu/graphite/ImageUtils.h"
+#include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/Renderer.h"
@@ -80,25 +81,31 @@ SkIRect rect_to_pixelbounds(const Rect& r) {
 }
 
 // TODO: this doesn't support the SrcRectConstraint option.
-sk_sp<SkShader> make_img_shader_for_paint(const SkPaint& paint,
-                                          sk_sp<SkImage> image,
-                                          const SkRect& subset,
-                                          SkTileMode tmx, SkTileMode tmy,
-                                          const SkSamplingOptions& sampling,
-                                          const SkMatrix* localMatrix) {
+bool create_img_shader_paint(sk_sp<SkImage> image,
+                             const SkRect& subset,
+                             const SkSamplingOptions& sampling,
+                             const SkMatrix* localMatrix,
+                             SkPaint* paint) {
     bool imageIsAlphaOnly = SkColorTypeIsAlphaOnly(image->colorType());
 
-    auto s = SkImageShader::MakeSubset(std::move(image), subset, tmx, tmy, sampling, localMatrix);
-    if (!s) {
-        return nullptr;
+    sk_sp<SkShader> imgShader = SkImageShader::MakeSubset(std::move(image), subset,
+                                                          SkTileMode::kClamp, SkTileMode::kClamp,
+                                                          sampling, localMatrix);
+    if (!imgShader) {
+        SKGPU_LOG_W("Couldn't create subset image shader");
+        return false;
     }
-    if (imageIsAlphaOnly && paint.getShader()) {
+    if (imageIsAlphaOnly && paint->getShader()) {
         // Compose the image shader with the paint's shader. Alpha images+shaders should output the
         // texture's alpha multiplied by the shader's color. DstIn (d*sa) will achieve this with
         // the source image and dst shader (MakeBlend takes dst first, src second).
-        s = SkShaders::Blend(SkBlendMode::kDstIn, paint.refShader(), std::move(s));
+        imgShader = SkShaders::Blend(SkBlendMode::kDstIn, paint->refShader(), std::move(imgShader));
     }
-    return s;
+
+    paint->setStyle(SkPaint::kFill_Style);
+    paint->setShader(std::move(imgShader));
+    paint->setPathEffect(nullptr);  // neither drawSpecial nor drawImageRect support path effects
+    return true;
 }
 
 } // anonymous namespace
@@ -563,18 +570,11 @@ void Device::drawImageRect(const SkImage* image, const SkRect* src, const SkRect
         return;
     }
 
-    // construct a shader, so we can call drawRect with the dst
-    auto s = make_img_shader_for_paint(paint, std::move(imageToDraw), tmpSrc,
-                                       SkTileMode::kClamp, SkTileMode::kClamp,
-                                       newSampling, &matrix);
-    if (!s) {
+    SkPaint paintWithShader(paint);
+    if (!create_img_shader_paint(std::move(imageToDraw), tmpSrc, newSampling,
+                                 &matrix, &paintWithShader)) {
         return;
     }
-
-    SkPaint paintWithShader(paint);
-    paintWithShader.setStyle(SkPaint::kFill_Style);
-    paintWithShader.setShader(std::move(s));
-    paintWithShader.setPathEffect(nullptr);  // drawImageRect doesn't support path effects
 
     this->drawRect(tmpDst, paintWithShader);
 }
@@ -944,6 +944,46 @@ bool Device::needsFlushBeforeDraw(int numNewDraws) const {
     return (DrawList::kMaxDraws - fDC->pendingDrawCount()) < numNewDraws;
 }
 
+void Device::drawDevice(SkBaseDevice* device,
+                        const SkSamplingOptions& sampling,
+                        const SkPaint& paint) {
+    this->SkBaseDevice::drawDevice(device, sampling, paint);
+}
+
+void Device::drawSpecial(SkSpecialImage* special,
+                         const SkMatrix& localToDevice,
+                         const SkSamplingOptions& sampling,
+                         const SkPaint& paint) {
+    SkASSERT(!paint.getMaskFilter() && !paint.getImageFilter());
+
+    sk_sp<SkImage> img = special->asImage();
+    if (!img) {
+        SKGPU_LOG_W("Couldn't get Graphite-backed special image as image");
+        return;
+    }
+
+    // TODO: remove this check once Graphite has image filter support.
+    if (!img->isTextureBacked()) {
+        return;
+    }
+
+    SkRect src = SkRect::Make(special->subset());
+    SkRect dst = SkRect::MakeWH(special->width(), special->height());
+    SkMatrix srcToDst = SkMatrix::RectToRect(src, dst);
+    SkASSERT(srcToDst.isTranslate());
+
+    SkPaint paintWithShader(paint);
+    if (!create_img_shader_paint(std::move(img), src, sampling, &srcToDst, &paintWithShader)) {
+        return;
+    }
+
+    this->drawGeometry(Transform(SkM44(localToDevice)),
+                       Geometry(Shape(dst)),
+                       paintWithShader,
+                       kFillStyle,
+                       DrawFlags::kIgnorePathEffect | DrawFlags::kIgnoreMaskFilter);
+}
+
 sk_sp<SkSpecialImage> Device::makeSpecial(const SkBitmap&) {
     return nullptr;
 }
@@ -954,7 +994,21 @@ sk_sp<SkSpecialImage> Device::makeSpecial(const SkImage*) {
 
 sk_sp<SkSpecialImage> Device::snapSpecial(const SkIRect& subset, bool forceCopy) {
     this->flushPendingWorkToRecorder();
-    return nullptr;
+
+    SkIRect finalSubset = subset;
+    TextureProxyView view = fDC->readSurfaceView(fRecorder->priv().caps());
+    if (forceCopy || !view) {
+        // TODO: fill this in. 'forceCopy' is only true for backdrop saveLayers. A non-readable
+        // surface view could happen any time though.
+        return nullptr;
+    }
+
+    return SkSpecialImage::MakeGraphite(fRecorder,
+                                        finalSubset,
+                                        kNeedNewImageUniqueID_SpecialImage,
+                                        std::move(view),
+                                        this->imageInfo().colorInfo(),
+                                        this->surfaceProps());
 }
 
 #if GRAPHITE_TEST_UTILS

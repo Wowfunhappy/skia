@@ -14,15 +14,6 @@
 
 namespace skgpu::graphite {
 
-namespace {
-
-sk_sp<SkImage> wrap_proxy_in_image(TextureProxyView view, const SkColorInfo& colorInfo) {
-    return sk_make_sp<Image>(kNeedNewImageUniqueID, std::move(view), colorInfo);
-}
-
-} // anonymous namespace
-
-
 class SkSpecialImage_Graphite final : public SkSpecialImage {
 public:
     SkSpecialImage_Graphite(Recorder* recorder,
@@ -70,7 +61,9 @@ public:
     bool onGetROPixels(SkBitmap* dst) const override {
         // This should never be called: All GPU image filters are implemented entirely on the GPU,
         // so we never perform read-back.
-        SkASSERT(false);
+        // TODO: re-enabled this assert once Graphite has image filter support. Right now image
+        // filters will fallback to the raster backend in Graphite.
+        //SkASSERT(false);
         return false;
     }
 
@@ -101,7 +94,7 @@ public:
             return nullptr;
         }
 
-        return wrap_proxy_in_image(fTextureProxyView, this->colorInfo());
+        return sk_make_sp<Image>(this->uniqueID(), fTextureProxyView, this->colorInfo());
     }
 
     sk_sp<SkShader> onAsShader(SkTileMode tileMode,
