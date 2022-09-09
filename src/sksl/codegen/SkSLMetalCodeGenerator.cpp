@@ -21,6 +21,7 @@
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLContext.h"
+#include "src/sksl/SkSLIntrinsicList.h"
 #include "src/sksl/SkSLMemoryLayout.h"
 #include "src/sksl/SkSLOutputStream.h"
 #include "src/sksl/SkSLProgramSettings.h"
@@ -3076,10 +3077,6 @@ bool MetalCodeGenerator::generateCode() {
         this->writeInterfaceBlocks();
         this->writeGlobalStruct();
         this->writeThreadgroupStruct();
-    }
-    StringStream body;
-    {
-        AutoOutputStream outputToBody(this, &body, &fIndentation);
 
         // Emit prototypes for every built-in function; these aren't always added in perfect order.
         for (const ProgramElement* e : fProgram.fSharedElements) {
@@ -3088,6 +3085,10 @@ bool MetalCodeGenerator::generateCode() {
                 this->writeLine(";");
             }
         }
+    }
+    StringStream body;
+    {
+        AutoOutputStream outputToBody(this, &body, &fIndentation);
 
         for (const ProgramElement* e : fProgram.elements()) {
             this->writeProgramElement(*e);
