@@ -289,8 +289,42 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/gpu/piet:piet_hdrs",
 				"//src/gpu/piet:piet_srcs",
 			}},
-	},
-	},
+	}},
+	{GNI: "modules/svg/svg.gni", Vars: []exporter.GNIFileListExportDesc{
+		{Var: "skia_svg_public",
+			Rules: []string{"//modules/svg/include:public_hdrs"}},
+		{Var: "skia_svg_sources",
+			Rules: []string{
+				"//modules/svg/src:private_hdrs",
+				"//modules/svg/src:srcs",
+			}},
+	}},
+	{GNI: "modules/skparagraph/skparagraph.gni", Vars: []exporter.GNIFileListExportDesc{
+		{Var: "skparagraph_public",
+			Rules: []string{
+				"//modules/skparagraph/include:hdrs",
+				"//modules/skparagraph/utils:utils_hdrs"}},
+		{Var: "skparagraph_sources",
+			Rules: []string{
+				"//modules/skparagraph/src:srcs",
+				"//modules/skparagraph/utils:utils_srcs"}},
+		{Var: "skparagraph_utils",
+			Rules: []string{
+				"//modules/skparagraph/utils:utils_hdrs",
+				"//modules/skparagraph/utils:utils_srcs",
+			}},
+		{Var: "skparagraph_tests",
+			Rules: []string{
+				"//modules/skparagraph/tests:tests_hdrs",
+				"//modules/skparagraph/tests:tests_srcs",
+			}},
+	}},
+	{GNI: "modules/skresources/skresources.gni", Vars: []exporter.GNIFileListExportDesc{
+		{Var: "skia_skresources_public",
+			Rules: []string{"//modules/skresources/include:hdrs"}},
+		{Var: "skia_skresources_sources",
+			Rules: []string{"//modules/skresources/src:srcs"}},
+	}},
 }
 
 const (

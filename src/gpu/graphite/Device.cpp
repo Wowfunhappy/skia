@@ -38,6 +38,8 @@
 #include "include/private/SkImageInfoPriv.h"
 #include "src/core/SkVerticesPriv.h"
 
+#include "src/core/SkBlenderBase.h"
+#include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkConvertPixels.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPaintPriv.h"
@@ -56,24 +58,51 @@ namespace {
 
 static const SkStrokeRec kFillStyle(SkStrokeRec::kFill_InitStyle);
 
-bool paint_depends_on_dst(const PaintParams& paintParams) {
-    std::optional<SkBlendMode> bm = paintParams.asFinalBlendMode();
+bool paint_depends_on_dst(SkColor4f color,
+                          const SkShader* shader,
+                          const SkColorFilter* colorFilter,
+                          const SkBlender* blender) {
+    std::optional<SkBlendMode> bm = blender ? as_BB(blender)->asBlendMode() : SkBlendMode::kSrcOver;
     if (!bm.has_value()) {
         return true;
     }
-
     if (bm.value() == SkBlendMode::kSrc || bm.value() == SkBlendMode::kClear) {
         // src and clear blending never depends on dst
         return false;
-    } else if (bm.value() == SkBlendMode::kSrcOver) {
-        // src-over does not depend on dst if src is opaque (a = 1)
-        return !paintParams.color().isOpaque() ||
-               (paintParams.shader() && !paintParams.shader()->isOpaque()) ||
-               (paintParams.colorFilter() && !paintParams.colorFilter()->isAlphaUnchanged());
-    } else {
-        // TODO: Are their other modes that don't depend on dst that can be trivially detected?
-        return true;
     }
+    if (bm.value() == SkBlendMode::kSrcOver) {
+        // src-over does not depend on dst if src is opaque (a = 1)
+        return !color.isOpaque() ||
+               (shader && !shader->isOpaque()) ||
+               (colorFilter && !colorFilter->isAlphaUnchanged());
+    }
+    // TODO: Are their other modes that don't depend on dst that can be trivially detected?
+    return true;
+}
+
+bool paint_depends_on_dst(const PaintParams& paintParams) {
+    return paint_depends_on_dst(paintParams.color(), paintParams.shader(),
+                                paintParams.colorFilter(), paintParams.finalBlender());
+}
+
+bool paint_depends_on_dst(const SkPaint& paint) {
+    // CAUTION: getMaskFilter is intentionally ignored here.
+    SkASSERT(!paint.getImageFilter());  // no paints in SkDevice should have an image filter
+    return paint_depends_on_dst(paint.getColor4f(), paint.getShader(),
+                                paint.getColorFilter(), paint.getBlender());
+}
+
+/** If the paint can be reduced to a solid flood-fill, determine the correct color to fill with. */
+std::optional<SkColor4f> extract_paint_color(const SkPaint& paint) {
+    SkASSERT(!paint_depends_on_dst(paint));
+    if (paint.getShader()) {
+        return std::nullopt;
+    }
+    if (SkColorFilter* filter = paint.getColorFilter()) {
+        // TODO: SkColorSpace support
+        return filter->filterColor4f(paint.getColor4f(), sk_srgb_singleton(), sk_srgb_singleton());
+    }
+    return paint.getColor4f();
 }
 
 SkIRect rect_to_pixelbounds(const Rect& r) {
@@ -163,17 +192,26 @@ private:
 sk_sp<Device> Device::Make(Recorder* recorder,
                            const SkImageInfo& ii,
                            SkBudgeted budgeted,
+                           Mipmapped mipmapped,
                            const SkSurfaceProps& props,
                            bool addInitialClear) {
     if (!recorder) {
         return nullptr;
     }
-    auto textureInfo = recorder->priv().caps()->getDefaultSampledTextureInfo(ii.colorType(),
-                                                                             /*levelCount=*/1,
-                                                                             Protected::kNo,
-                                                                             Renderable::kYes);
 
     if (ii.dimensions().width() < 1 || ii.dimensions().height() < 1) {
+        return nullptr;
+    }
+
+    int mipLevelCount = (mipmapped == Mipmapped::kYes)
+                            ? SkMipmap::ComputeLevelCount(ii.width(), ii.height()) + 1
+                            : 1;
+
+    auto textureInfo = recorder->priv().caps()->getDefaultSampledTextureInfo(ii.colorType(),
+                                                                             mipLevelCount,
+                                                                             Protected::kNo,
+                                                                             Renderable::kYes);
+    if (!textureInfo.isValid()) {
         return nullptr;
     }
 
@@ -261,11 +299,12 @@ SkBaseDevice* Device::onCreateDevice(const CreateInfo& info, const SkPaint*) {
     // Skia's convention is to only clear a device if it is non-opaque.
     bool addInitialClear = !info.fInfo.isOpaque();
 
-    return Make(fRecorder, info.fInfo, SkBudgeted::kYes, props, addInitialClear).release();
+    return Make(fRecorder, info.fInfo, SkBudgeted::kYes, Mipmapped::kNo,
+                props, addInitialClear).release();
 }
 
-sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& ii, const SkSurfaceProps& /* props */) {
-    return SkSurface::MakeGraphite(fRecorder, ii);
+sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& ii, const SkSurfaceProps& props) {
+    return SkSurface::MakeGraphite(fRecorder, ii, Mipmapped::kNo, &props);
 }
 
 bool Device::onReadPixels(const SkPixmap& pm, int x, int y) {
@@ -444,11 +483,18 @@ void Device::onReplaceClip(const SkIRect& rect) {
 ///////////////////////////////////////////////////////////////////////////////
 
 void Device::drawPaint(const SkPaint& paint) {
-    // TODO: check paint params as well
-     if (this->clipIsWideOpen()) {
-        // do fullscreen clear
-        fDC->clear(paint.getColor4f());
-        return;
+    if (this->clipIsWideOpen()) {
+        if (!paint_depends_on_dst(paint)) {
+            if (std::optional<SkColor4f> color = extract_paint_color(paint)) {
+                // do fullscreen clear
+                fDC->clear(*color);
+                return;
+            }
+            // TODO(michaelludwig): this paint doesn't depend on the destination, so we can reset
+            // the DrawContext to use a discard load op. The drawPaint will cover anything else
+            // entirely. We still need shader evaluation to get per-pixel colors (since the paint
+            // couldn't be reduced to a solid color).
+        }
     }
 
     const Transform& localToDevice = this->localToDeviceTransform();
