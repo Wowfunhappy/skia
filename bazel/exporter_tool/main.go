@@ -325,6 +325,28 @@ var gniExportDescs = []exporter.GNIExportDesc{
 		{Var: "skia_skresources_sources",
 			Rules: []string{"//modules/skresources/src:srcs"}},
 	}},
+	{GNI: "modules/skshaper/skshaper.gni", Vars: []exporter.GNIFileListExportDesc{
+		{Var: "skia_shaper_public",
+			Rules: []string{"//modules/skshaper/include:hdrs"}},
+		{Var: "skia_shaper_primitive_sources",
+			Rules: []string{"//modules/skshaper/src:srcs"}},
+		{Var: "skia_shaper_harfbuzz_sources",
+			Rules: []string{"//modules/skshaper/src:harfbuzz_srcs"}},
+		{Var: "skia_shaper_coretext_sources",
+			Rules: []string{"//modules/skshaper/src:coretext_srcs"}},
+	}},
+	{GNI: "modules/skunicode/skunicode.gni", Vars: []exporter.GNIFileListExportDesc{
+		{Var: "skia_unicode_public",
+			Rules: []string{"//modules/skunicode/include:hdrs"}},
+		{Var: "skia_unicode_sources",
+			Rules: []string{"//modules/skunicode/src:srcs"}},
+		{Var: "skia_unicode_no_icu",
+			Rules: []string{"//modules/skunicode/src:no_icu"}},
+		{Var: "skia_unicode_builtin_icu_sources",
+			Rules: []string{"//modules/skunicode/src:builtin_srcs"}},
+		{Var: "skia_unicode_runtime_icu_sources",
+			Rules: []string{"//modules/skunicode/src:runtime_srcs"}},
+	}},
 }
 
 const (
