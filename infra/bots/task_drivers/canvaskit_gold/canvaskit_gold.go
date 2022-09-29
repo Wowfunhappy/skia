@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	sk_exec "go.skia.org/infra/go/exec"
+	"go.skia.org/infra/go/skerr"
 	"go.skia.org/infra/task_driver/go/lib/bazel"
 	"go.skia.org/infra/task_driver/go/lib/os_steps"
 	"go.skia.org/infra/task_driver/go/td"
@@ -32,7 +33,7 @@ var (
 	taskId     = flag.String("task_id", "", "ID of this task.")
 	taskName   = flag.String("task_name", "", "Name of the task.")
 	workdir    = flag.String("workdir", ".", "Working directory, the root directory of a full Skia checkout")
-	testConfig = flag.String("test_config", "release", "The config name (defined in //bazel/buildrc), which indicates how CanvasKit should be compiled and tested.")
+	testConfig = flag.String("test_config", "", "The config name (defined in //bazel/buildrc), which indicates how CanvasKit should be compiled and tested.")
 	cross      = flag.String("cross", "", "[not yet supported] For use with cross-compiling.")
 	// goldctl data
 	goldctlPath      = flag.String("goldctl_path", "", "The path to the golctl binary on disk.")
@@ -40,9 +41,15 @@ var (
 	changelistID     = flag.String("changelist_id", "", "Should be non-empty only when run on the CQ.")
 	patchsetOrderStr = flag.String("patchset_order", "", "Should be non-zero only when run on the CQ.")
 	tryjobID         = flag.String("tryjob_id", "", "Should be non-zero only when run on the CQ.")
+	// goldctl keys
+	browser         = flag.String("browser", "Chrome", "The browser running the tests")
+	compilationMode = flag.String("compilation_mode", "Release", "How the binary was compiled")
+	cpuOrGPU        = flag.String("cpu_or_gpu", "GPU", "The render backend")
+	cpuOrGPUValue   = flag.String("cpu_or_gpu_value", "WebGL2", "What variant of the render backend")
 
 	// Optional flags.
 	bazelCacheDir = flag.String("bazel_cache_dir", "/mnt/pd0/bazel_cache", "Override the Bazel cache directory with this path")
+	expungeCache  = flag.Bool("expunge_cache", false, "If set, the Bazel cache will be cleaned with --expunge before execution. We should only have to set this rarely, if something gets messed up.")
 	local         = flag.Bool("local", false, "True if running locally (as opposed to on the CI/CQ)")
 	output        = flag.String("o", "", "If provided, dump a JSON blob of step data to the given file. Prints to stdout if '-' is given.")
 )
@@ -63,6 +70,9 @@ func main() {
 			td.Fatal(ctx, err)
 		}
 	}
+	if *testConfig == "" {
+		td.Fatal(ctx, skerr.Fmt("Must specify --test_config"))
+	}
 
 	opts := bazel.BazelOptions{
 		// We want the cache to be on a bigger disk than default. The root disk, where the home
@@ -74,6 +84,12 @@ func main() {
 	}
 	if *cross != "" {
 		fmt.Println("Saw --cross, but don't know what to do with that yet.")
+	}
+
+	if *expungeCache {
+		if err := bazelClean(ctx, skiaDir); err != nil {
+			td.Fatal(ctx, err)
+		}
 	}
 
 	if err := bazelTest(ctx, skiaDir, "//modules/canvaskit:canvaskit_js_tests", *testConfig,
@@ -89,13 +105,12 @@ func main() {
 		tryjobID:      *tryjobID,
 		corpus:        "canvaskit",
 		keys: map[string]string{
-			"arch":          "wasm32", // https://github.com/bazelbuild/platforms/blob/da5541f26b7de1dc8e04c075c99df5351742a4a2/cpu/BUILD#L109
-			"configuration": *testConfig,
-			// TODO(kjlubick) These should be deduced from testConfig
-			"browser":          "Chrome",
-			"compilation_mode": "Release",
-			"cpu_or_gpu":       "GPU",
-			"cpu_or_gpu_value": "WebGL",
+			"arch":             "wasm32", // https://github.com/bazelbuild/platforms/blob/da5541f26b7de1dc8e04c075c99df5351742a4a2/cpu/BUILD#L109
+			"configuration":    *testConfig,
+			"browser":          *browser,
+			"compilation_mode": *compilationMode,
+			"cpu_or_gpu":       *cpuOrGPU,
+			"cpu_or_gpu_value": *cpuOrGPUValue,
 		},
 	}
 	if err := uploadDataToGold(ctx, skiaDir, conf); err != nil {
@@ -266,4 +281,23 @@ func finalizeGoldctl(ctx context.Context, goldctlPath, workDir string) error {
 		return err
 	}
 	return nil
+}
+
+// bazelClean cleans the bazel cache and the external directory via the --expunge flag.
+func bazelClean(ctx context.Context, checkoutDir string) error {
+	return td.Do(ctx, td.Props("Cleaning cache with --expunge"), func(ctx context.Context) error {
+		runCmd := &sk_exec.Command{
+			Name:       "bazelisk",
+			Args:       append([]string{"clean", "--expunge"}),
+			InheritEnv: true, // Makes sure bazelisk is on PATH
+			Dir:        checkoutDir,
+			LogStdout:  true,
+			LogStderr:  true,
+		}
+		_, err := sk_exec.RunCommand(ctx, runCmd)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
 }

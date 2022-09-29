@@ -127,11 +127,11 @@ private:
     int fCacheMissCount[SkStrikeClient::CacheMissType::kLast + 1u];
 };
 
-sk_sp<SkTextBlob> buildTextBlob(sk_sp<SkTypeface> tf, int glyphCount) {
+sk_sp<SkTextBlob> buildTextBlob(sk_sp<SkTypeface> tf, int glyphCount, int textSize = 1) {
     SkFont font;
     font.setTypeface(tf);
     font.setHinting(SkFontHinting::kNormal);
-    font.setSize(1u);
+    font.setSize(textSize);
     font.setEdging(SkFont::Edging::kAntiAlias);
     font.setSubpixel(true);
 
@@ -242,7 +242,10 @@ DEF_TEST(SkRemoteGlyphCache_TypefaceSerialization, reporter) {
     discardableManager->unlockAndDeleteAll();
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_StrikeSerialization, reporter, ctxInfo) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_StrikeSerialization,
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto dContext = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -284,7 +287,10 @@ static void use_padding_options(GrContextOptions* options) {
 
 DEF_GPUTEST_FOR_CONTEXTS(SkRemoteGlyphCache_StrikeSerializationSlug,
                          sk_gpu_test::GrContextFactory::IsRenderingContext,
-                         reporter, ctxInfo, use_padding_options) {
+                         reporter,
+                         ctxInfo,
+                         use_padding_options,
+                         CtsEnforcement::kNever) {
     auto dContext = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -322,9 +328,55 @@ DEF_GPUTEST_FOR_CONTEXTS(SkRemoteGlyphCache_StrikeSerializationSlug,
     discardableManager->unlockAndDeleteAll();
 }
 
+DEF_GPUTEST_FOR_CONTEXTS(SkRemoteGlyphCache_StrikeSerializationSlugForcePath,
+                         sk_gpu_test::GrContextFactory::IsRenderingContext,
+                         reporter,
+                         ctxInfo,
+                         use_padding_options,
+                         CtsEnforcement::kNever) {
+    auto dContext = ctxInfo.directContext();
+    sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
+    SkStrikeServer server(discardableManager.get());
+    SkStrikeClient client(discardableManager, false);
+    const SkPaint paint;
+
+    // Server.
+    auto serverTf = SkTypeface::MakeFromName("monospace", SkFontStyle());
+    auto serverTfData = server.serializeTypeface(serverTf.get());
+
+    int glyphCount = 10;
+    auto serverBlob = buildTextBlob(serverTf, glyphCount, 360);
+    auto props = FindSurfaceProps(dContext);
+    std::unique_ptr<SkCanvas> analysisCanvas = server.makeAnalysisCanvas(
+            10, 10, props, nullptr, dContext->supportsDistanceFieldText());
+
+    // Generate strike updates.
+    (void)Slug::ConvertBlob(analysisCanvas.get(), *serverBlob, {0, 0}, paint);
+
+    std::vector<uint8_t> serverStrikeData;
+    server.writeStrikeData(&serverStrikeData);
+
+    // Client.
+    auto clientTf = client.deserializeTypeface(serverTfData->data(), serverTfData->size());
+    REPORTER_ASSERT(reporter,
+                    client.readStrikeData(serverStrikeData.data(), serverStrikeData.size()));
+    auto clientBlob = buildTextBlob(clientTf, glyphCount, 360);
+
+    SkBitmap expected = RasterBlobThroughSlug(serverBlob, 10, 10, paint, dContext);
+    SkBitmap actual = RasterBlobThroughSlug(clientBlob, 10, 10, paint, dContext);
+    compare_blobs(expected, actual, reporter);
+    REPORTER_ASSERT(reporter, !discardableManager->hasCacheMiss());
+
+    // Must unlock everything on termination, otherwise valgrind complains about memory leaks.
+    discardableManager->unlockAndDeleteAll();
+}
+
 DEF_GPUTEST_FOR_CONTEXTS(SkRemoteGlyphCache_SlugSerialization,
                          sk_gpu_test::GrContextFactory::IsRenderingContext,
-                         reporter, ctxInfo, use_padding_options) {
+                         reporter,
+                         ctxInfo,
+                         use_padding_options,
+                         CtsEnforcement::kNever) {
     auto dContext = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -363,7 +415,10 @@ DEF_GPUTEST_FOR_CONTEXTS(SkRemoteGlyphCache_SlugSerialization,
     discardableManager->unlockAndDeleteAll();
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_ReleaseTypeFace, reporter, ctxInfo) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_ReleaseTypeFace,
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
     SkStrikeClient client(discardableManager, false);
@@ -578,7 +633,10 @@ DEF_TEST(SkRemoteGlyphCache_PurgesServerEntries, reporter) {
     discardableManager->unlockAndDeleteAll();
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsPath, reporter, ctxInfo) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsPath,
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto direct = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -654,7 +712,9 @@ sk_sp<SkTextBlob> make_blob_causing_fallback(
 }
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsMaskWithPathFallback,
-        reporter, ctxInfo) {
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto direct = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -699,7 +759,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsMaskWithPathFall
 // TODO: turn this one when I figure out how to deal with the pixel variance from linear
 //  interpolation from GPU to GPU.
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsSDFTWithAllARGBFallback,
-                                   reporter, ctxInfo) {
+                                   reporter, ctxInfo, CtsEnforcement::kNever) {
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
     SkStrikeClient client(discardableManager, false);
@@ -770,7 +830,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsSDFTWithAllARGBF
 }
 #endif
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextXY, reporter, ctxInfo) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextXY,
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto direct = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -807,7 +870,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextXY, reporter, ctxI
     discardableManager->unlockAndDeleteAll();
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsDFT, reporter, ctxInfo) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsDFT,
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto direct = ctxInfo.directContext();
     if (!direct->priv().caps()->shaderCaps()->supportsDistanceFieldText()) {
         return;
@@ -855,7 +921,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_DrawTextAsDFT, reporter, c
     discardableManager->unlockAndDeleteAll();
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_CacheMissReporting, reporter, ctxInfo) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_CacheMissReporting,
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
     SkStrikeClient client(discardableManager, false);
@@ -909,7 +978,10 @@ sk_sp<SkTextBlob> MakeEmojiBlob(sk_sp<SkTypeface> serverTf, SkScalar textSize,
     return SkTextBlob::Deserialize(serialized->data(), serialized->size(), d_procs);
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_TypefaceWithNoPaths, reporter, ctxInfo) {
+DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_TypefaceWithNoPaths,
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto direct = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -981,7 +1053,9 @@ class SkRemoteGlyphCacheTest {
     }
 };
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_TypefaceWithPaths_MaskThenPath,
-                                   reporter, ctxInfo) {
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto direct = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());
@@ -1035,7 +1109,9 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_TypefaceWithPaths_MaskThen
 }
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRemoteGlyphCache_TypefaceWithPaths_PathThenMask,
-                                   reporter, ctxInfo) {
+                                   reporter,
+                                   ctxInfo,
+                                   CtsEnforcement::kNever) {
     auto direct = ctxInfo.directContext();
     sk_sp<DiscardableManager> discardableManager = sk_make_sp<DiscardableManager>();
     SkStrikeServer server(discardableManager.get());

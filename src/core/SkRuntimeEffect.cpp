@@ -33,8 +33,10 @@
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLSharedCompiler.h"
 #include "src/sksl/SkSLUtil.h"
+#include "src/sksl/analysis/SkSLProgramUsage.h"
 #include "src/sksl/codegen/SkSLVMCodeGenerator.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
+#include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/tracing/SkVMDebugTrace.h"
 
@@ -326,7 +328,7 @@ SkRuntimeEffect::Result SkRuntimeEffect::MakeFromSource(SkString sksl,
         // calling the Make overload at the end, which creates its own (non-reentrant)
         // SharedCompiler instance
         SkSL::SharedCompiler compiler;
-        SkSL::Program::Settings settings = MakeSettings(options);
+        SkSL::ProgramSettings settings = MakeSettings(options);
         program = compiler->convertProgram(kind, std::string(sksl.c_str(), sksl.size()), settings);
 
         if (!program) {
@@ -479,7 +481,7 @@ sk_sp<SkRuntimeEffect> SkRuntimeEffect::makeUnoptimizedClone() {
         // calling MakeInternal at the end, which creates its own (non-reentrant) SharedCompiler
         // instance.
         SkSL::SharedCompiler compiler;
-        SkSL::Program::Settings settings = MakeSettings(options);
+        SkSL::ProgramSettings settings = MakeSettings(options);
         program = compiler->convertProgram(kind, *fBaseProgram->fSource, settings);
 
         if (!program) {
@@ -887,7 +889,8 @@ static GrFPResult make_effect_fp(sk_sp<SkRuntimeEffect> effect,
             auto [success, childFP] = as_CFB(child.colorFilter())
                                               ->asFragmentProcessor(/*inputFP=*/nullptr,
                                                                     childArgs.fContext,
-                                                                    *childArgs.fDstColorInfo);
+                                                                    *childArgs.fDstColorInfo,
+                                                                    childArgs.fSurfaceProps);
             if (!success) {
                 return GrFPFailure(std::move(inputFP));
             }
@@ -1019,7 +1022,8 @@ public:
 #if SK_SUPPORT_GPU
     GrFPResult asFragmentProcessor(std::unique_ptr<GrFragmentProcessor> inputFP,
                                    GrRecordingContext* context,
-                                   const GrColorInfo& colorInfo) const override {
+                                   const GrColorInfo& colorInfo,
+                                   const SkSurfaceProps& props) const override {
         sk_sp<const SkData> uniforms = SkRuntimeEffectPriv::TransformUniforms(
                 fEffect->uniforms(),
                 fUniforms,
@@ -1027,7 +1031,7 @@ public:
         SkASSERT(uniforms);
 
         SkOverrideDeviceMatrixProvider matrixProvider(SkMatrix::I());
-        GrFPArgs childArgs(context, matrixProvider, &colorInfo);
+        GrFPArgs childArgs(context, matrixProvider, &colorInfo, props);
         return make_effect_fp(fEffect,
                               "runtime_color_filter",
                               std::move(uniforms),
@@ -1198,13 +1202,16 @@ public:
                 args.fDstColorInfo->colorSpace());
         SkASSERT(uniforms);
 
+        // We handle the pre-local matrix at this level so strip it out.
+        GrFPArgs fpArgs = args;
+        fpArgs.fPreLocalMatrix = nullptr;
         auto [success, fp] = make_effect_fp(fEffect,
                                             "runtime_shader",
                                             std::move(uniforms),
                                             /*inputFP=*/nullptr,
                                             /*destColorFP=*/nullptr,
                                             SkSpan(fChildren),
-                                            args);
+                                            fpArgs);
         if (!success) {
             return nullptr;
         }
@@ -1492,7 +1499,8 @@ sk_sp<SkImage> SkRuntimeEffect::makeImage(GrRecordingContext* rContext,
 
         SkOverrideDeviceMatrixProvider matrixProvider(SkMatrix::I());
         GrColorInfo colorInfo(resultInfo.colorInfo());
-        GrFPArgs args(rContext, matrixProvider, &colorInfo);
+        SkSurfaceProps props{}; // the images this function creates always use the defaults
+        GrFPArgs args(rContext, matrixProvider, &colorInfo, props);
         SkSTArray<8, std::unique_ptr<GrFragmentProcessor>> childFPs;
         for (size_t i = 0; i < children.size(); ++i) {
             // TODO: add support for other types of child effects

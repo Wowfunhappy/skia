@@ -46,11 +46,13 @@ static constexpr DepthStencilSettings kDirectShadingPass = {
 // or we'll add a color-only fast path to RenderStep later.
 static constexpr PatchAttribs kAttribs = PatchAttribs::kJoinControlPoint |
                                          PatchAttribs::kStrokeParams |
-                                         PatchAttribs::kPaintDepth;
+                                         PatchAttribs::kPaintDepth |
+                                         PatchAttribs::kSsboIndex;
 using Writer = PatchWriter<DynamicInstancesPatchAllocator<FixedCountStrokes>,
                            Required<PatchAttribs::kJoinControlPoint>,
                            Required<PatchAttribs::kStrokeParams>,
                            Required<PatchAttribs::kPaintDepth>,
+                           Required<PatchAttribs::kSsboIndex>,
                            ReplicateLineEndPoints,
                            TrackJoinControlPoints>;
 
@@ -70,7 +72,8 @@ TessellateStrokesRenderStep::TessellateStrokesRenderStep()
                                         {"p23", VertexAttribType::kFloat4, SkSLType::kFloat4},
                                         {"prevPoint", VertexAttribType::kFloat2, SkSLType::kFloat2},
                                         {"stroke", VertexAttribType::kFloat2, SkSLType::kFloat2},
-                                        {"depth", VertexAttribType::kFloat, SkSLType::kFloat}}) {}
+                                        {"depth", VertexAttribType::kFloat, SkSLType::kFloat},
+                                        {"ssboIndex", VertexAttribType::kInt, SkSLType::kInt}}) {}
 
 TessellateStrokesRenderStep::~TessellateStrokesRenderStep() {}
 
@@ -82,14 +85,16 @@ const char* TessellateStrokesRenderStep::vertexSkSL() const {
         if ((sk_VertexID & 1) != 0) {
             edgeID = -edgeID;
         }
-        float2x2 affine = float2x2(affineMatrix);
+        float2x2 affine = float2x2(affineMatrix.xy, affineMatrix.zw);
         float4 devPosition = float4(
                 tessellate_stroked_curve(edgeID, 16383, affine, translate,
                                          maxScale, p01, p23, prevPoint, stroke),
                 depth, 1.0);)";
 }
 
-void TessellateStrokesRenderStep::writeVertices(DrawWriter* dw, const DrawParams& params) const {
+void TessellateStrokesRenderStep::writeVertices(DrawWriter* dw,
+                                                const DrawParams& params,
+                                                int ssboIndex) const {
     SkPath path = params.geometry().shape().asPath(); // TODO: Iterate the Shape directly
 
     int patchReserveCount = FixedCountStrokes::PreallocCount(path.countVerbs());
@@ -100,12 +105,13 @@ void TessellateStrokesRenderStep::writeVertices(DrawWriter* dw, const DrawParams
     // has figured out how to support vertex IDs before then.
     Writer writer{kAttribs, *dw, kNullBinding, kNullBinding, patchReserveCount};
     writer.updatePaintDepthAttrib(params.order().depthAsFloat());
+    writer.updateSsboIndexAttrib(ssboIndex);
 
     // The vector xform approximates how the control points are transformed by the shader to
     // more accurately compute how many *parametric* segments are needed.
     // getMaxScale() returns -1 if it can't compute a scale factor (e.g. perspective), taking the
     // absolute value automatically converts that to an identity scale factor for our purposes.
-    writer.setShaderTransform(wangs_formula::VectorXform{params.transform()},
+    writer.setShaderTransform(wangs_formula::VectorXform{params.transform().matrix()},
                               params.transform().maxScaleFactor());
 
     SkASSERT(params.isStroke());

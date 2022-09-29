@@ -11,7 +11,7 @@
 #if SK_SUPPORT_GPU
 #include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
-#include "src/gpu/ganesh/v1/SurfaceDrawContext_v1.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/text/gpu/SDFTControl.h"
 #include "src/text/gpu/TextBlobRedrawCoordinator.h"
 #endif // SK_SUPPORT_GPU
@@ -104,29 +104,34 @@ void SkGlyphRunListPainterCPU::drawForBitmapDevice(
                                        pathPaint.getPathEffect() ||
                                        pathPaint.getMaskFilter() ||
                                        (stroking && !hairline);
-            if (!needsExactCTM) {
-                for (auto [variant, pos] : accepted->accepted()) {
-                    const SkPath* path = variant.glyph()->path();
-                    SkMatrix m;
-                    SkPoint translate = drawOrigin + pos;
-                    m.setScaleTranslate(strikeToSourceScale, strikeToSourceScale,
-                                        translate.x(), translate.y());
-                    SkAutoCanvasRestore acr(canvas, true);
-                    canvas->concat(m);
-                    canvas->drawPath(*path, pathPaint);
-                }
-            } else {
-                for (auto [variant, pos] : accepted->accepted()) {
-                    const SkPath* path = variant.glyph()->path();
-                    SkMatrix m;
-                    SkPoint translate = drawOrigin + pos;
-                    m.setScaleTranslate(strikeToSourceScale, strikeToSourceScale,
-                                        translate.x(), translate.y());
+            {
+                SkBulkGlyphMetricsAndPaths glyphs{sk_sp<SkStrike>(strike)};
+                if (!needsExactCTM) {
+                    for (auto [variant, pos] : accepted->accepted()) {
+                        const SkGlyph& glyph = *glyphs.glyph(variant.packedID().glyphID());
+                        const SkPath* path = glyph.path();
+                        SkMatrix m;
+                        SkPoint translate = drawOrigin + pos;
+                        m.setScaleTranslate(strikeToSourceScale, strikeToSourceScale,
+                                            translate.x(), translate.y());
+                        SkAutoCanvasRestore acr(canvas, true);
+                        canvas->concat(m);
+                        canvas->drawPath(*path, pathPaint);
+                    }
+                } else {
+                    for (auto [variant, pos] : accepted->accepted()) {
+                        const SkGlyph& glyph = *glyphs.glyph(variant.packedID().glyphID());
+                        const SkPath* path = glyph.path();
+                        SkMatrix m;
+                        SkPoint translate = drawOrigin + pos;
+                        m.setScaleTranslate(strikeToSourceScale, strikeToSourceScale,
+                                            translate.x(), translate.y());
 
-                    SkPath deviceOutline;
-                    path->transform(m, &deviceOutline);
-                    deviceOutline.setIsVolatile(true);
-                    canvas->drawPath(deviceOutline, pathPaint);
+                        SkPath deviceOutline;
+                        path->transform(m, &deviceOutline);
+                        deviceOutline.setIsVolatile(true);
+                        canvas->drawPath(deviceOutline, pathPaint);
+                    }
                 }
             }
 
@@ -135,8 +140,10 @@ void SkGlyphRunListPainterCPU::drawForBitmapDevice(
                 strike->prepareForDrawableDrawing(accepted, rejected);
                 rejected->flipRejectsToSource();
 
+                SkBulkGlyphMetricsAndDrawables glyphs(std::move(strike));
                 for (auto [variant, pos] : accepted->accepted()) {
-                    SkDrawable* drawable = variant.glyph()->drawable();
+                    const SkGlyph& glyph = *glyphs.glyph(variant.packedID().glyphID());
+                    SkDrawable* drawable = glyph.drawable();
                     SkMatrix m;
                     SkPoint translate = drawOrigin + pos;
                     m.setScaleTranslate(strikeToSourceScale, strikeToSourceScale,

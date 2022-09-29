@@ -17,8 +17,8 @@
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/UniformManager.h"
-#include "src/gpu/graphite/mtl/MtlGpu.h"
 #include "src/gpu/graphite/mtl/MtlResourceProvider.h"
+#include "src/gpu/graphite/mtl/MtlSharedContext.h"
 #include "src/gpu/graphite/mtl/MtlUtils.h"
 
 #include "src/gpu/tessellate/WangsFormula.h"
@@ -273,33 +273,26 @@ enum ShaderType {
 static const int kShaderTypeCount = kLast_ShaderType + 1;
 
 sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(
-        MtlResourceProvider* resourceProvider, const MtlGpu* gpu,
+        MtlResourceProvider* resourceProvider, const MtlSharedContext* sharedContext,
         const GraphicsPipelineDesc& pipelineDesc,
         const RenderPassDesc& renderPassDesc) {
     sk_cfp<MTLRenderPipelineDescriptor*> psoDescriptor([[MTLRenderPipelineDescriptor alloc] init]);
 
     std::string msl[kShaderTypeCount];
     SkSL::Program::Inputs inputs[kShaderTypeCount];
-    SkSL::Program::Settings settings;
+    SkSL::ProgramSettings settings;
 
     settings.fForceNoRTFlip = true;
 
-    ShaderErrorHandler* errorHandler = gpu->caps()->shaderErrorHandler();
-    if (!SkSLToMSL(gpu,
-                   GetSkSLVS(pipelineDesc),
-                   SkSL::ProgramKind::kGraphiteVertex,
-                   settings,
-                   &msl[kVertex_ShaderType],
-                   &inputs[kVertex_ShaderType],
-                   errorHandler)) {
-        return nullptr;
-    }
+    auto skslCompiler = resourceProvider->skslCompiler();
+    ShaderErrorHandler* errorHandler = sharedContext->caps()->shaderErrorHandler();
 
     BlendInfo blendInfo;
+    bool localCoordsNeeded = false;
     auto dict = resourceProvider->shaderCodeDictionary();
-    if (!SkSLToMSL(gpu,
+    if (!SkSLToMSL(skslCompiler,
                    GetSkSLFS(dict, resourceProvider->runtimeEffectDictionary(),
-                             pipelineDesc, &blendInfo),
+                             pipelineDesc, &blendInfo, &localCoordsNeeded),
                    SkSL::ProgramKind::kGraphiteFragment,
                    settings,
                    &msl[kFragment_ShaderType],
@@ -308,12 +301,22 @@ sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(
         return nullptr;
     }
 
+    if (!SkSLToMSL(skslCompiler,
+                   GetSkSLVS(pipelineDesc, localCoordsNeeded),
+                   SkSL::ProgramKind::kGraphiteVertex,
+                   settings,
+                   &msl[kVertex_ShaderType],
+                   &inputs[kVertex_ShaderType],
+                   errorHandler)) {
+        return nullptr;
+    }
+
     sk_cfp<id<MTLLibrary>> shaderLibraries[kShaderTypeCount];
 
-    shaderLibraries[kVertex_ShaderType] = MtlCompileShaderLibrary(gpu,
+    shaderLibraries[kVertex_ShaderType] = MtlCompileShaderLibrary(sharedContext,
                                                                   msl[kVertex_ShaderType],
                                                                   errorHandler);
-    shaderLibraries[kFragment_ShaderType] = MtlCompileShaderLibrary(gpu,
+    shaderLibraries[kFragment_ShaderType] = MtlCompileShaderLibrary(sharedContext,
                                                                     msl[kFragment_ShaderType],
                                                                     errorHandler);
     if (!shaderLibraries[kVertex_ShaderType] || !shaderLibraries[kFragment_ShaderType]) {
@@ -354,10 +357,10 @@ sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(
 
     NSError* error;
     sk_cfp<id<MTLRenderPipelineState>> pso(
-            [gpu->device() newRenderPipelineStateWithDescriptor:psoDescriptor.get()
-                                                          error:&error]);
+            [sharedContext->device() newRenderPipelineStateWithDescriptor:psoDescriptor.get()
+                                                                    error:&error]);
     if (!pso) {
-        SKGPU_LOG_E("Pipeline creation failure:\n%s", error.debugDescription.UTF8String);
+        SKGPU_LOG_E("Render pipeline creation failure:\n%s", error.debugDescription.UTF8String);
         return nullptr;
     }
 
@@ -367,7 +370,7 @@ sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(
             resourceProvider->findOrCreateCompatibleDepthStencilState(depthStencilSettings);
 
     return sk_sp<MtlGraphicsPipeline>(
-            new MtlGraphicsPipeline(gpu,
+            new MtlGraphicsPipeline(sharedContext,
                                     std::move(pso),
                                     std::move(dss),
                                     depthStencilSettings.fStencilReferenceValue,

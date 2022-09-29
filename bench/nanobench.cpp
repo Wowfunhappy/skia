@@ -45,6 +45,7 @@
 #include "tools/MSKPPlayer.h"
 #include "tools/ProcStats.h"
 #include "tools/Stats.h"
+#include "tools/ToolUtils.h"
 #include "tools/flags/CommonFlags.h"
 #include "tools/flags/CommonFlagsConfig.h"
 #include "tools/ios_utils.h"
@@ -204,6 +205,10 @@ static DEFINE_string(properties, "",
 static DEFINE_bool(purgeBetweenBenches, false,
                    "Call SkGraphics::PurgeAllCaches() between each benchmark?");
 
+static DEFINE_bool(splitPerfettoTracesByBenchmark, true,
+                  "Create separate perfetto trace files for each benchmark?\n"
+                  "Will only take effect if perfetto tracing is enabled. See --trace.");
+
 static double now_ms() { return SkTime::GetNSecs() * 1e-6; }
 
 static SkString humanize(double ms) {
@@ -351,7 +356,7 @@ struct GraphiteTarget : public Target {
         this->testContext = testCtx;
         this->context = ctx;
 
-        this->recorder = this->context->makeRecorder();
+        this->recorder = this->context->makeRecorder(ToolUtils::CreateTestingRecorderOptions());
         if (!this->recorder) {
             return false;
         }
@@ -1461,6 +1466,9 @@ int main(int argc, char** argv) {
                 SkGraphics::PurgeAllCaches();
             }
 
+            if (FLAGS_splitPerfettoTracesByBenchmark) {
+                TRACE_EVENT_API_NEW_TRACE_SECTION(TRACE_STR_COPY(bench->getUniqueName()));
+            }
             TRACE_EVENT2("skia", "Benchmark", "name", TRACE_STR_COPY(bench->getUniqueName()),
                                               "config", TRACE_STR_COPY(config));
 

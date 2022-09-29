@@ -7,31 +7,34 @@
 
 #include "src/core/SkShaderCodeDictionary.h"
 
+#include "include/core/SkTileMode.h"
 #include "include/effects/SkRuntimeEffect.h"
-#include "include/private/SkSLString.h"
-#include "src/core/SkOpts.h"
-#include "src/core/SkRuntimeEffectDictionary.h"
+#include "include/private/SkOpts_spi.h"
 #include "src/core/SkRuntimeEffectPriv.h"
-#include "src/sksl/SkSLUtil.h"
-#include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
-#include "src/sksl/ir/SkSLVarDeclarations.h"
+#include "src/core/SkSLTypeShared.h"
 
 #ifdef SK_GRAPHITE_ENABLED
 #include "include/gpu/graphite/Context.h"
+#include "include/private/SkSLString.h"
+#include "src/core/SkRuntimeEffectDictionary.h"
 #include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/Renderer.h"
+#include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
+#include "src/sksl/ir/SkSLVarDeclarations.h"
 #endif
 
 #ifdef SK_ENABLE_PRECOMPILE
 #include "include/core/SkCombinationBuilder.h"
 #endif
 
+#include <new>
+
 using DataPayloadField = SkPaintParamsKey::DataPayloadField;
 using DataPayloadType = SkPaintParamsKey::DataPayloadType;
 
 namespace {
 
-#if defined(SK_GRAPHITE_ENABLED) && defined(SK_METAL)
+#if defined(SK_GRAPHITE_ENABLED) && defined(SK_ENABLE_SKSL)
 std::string get_mangled_name(const std::string& baseName, int manglingSuffix) {
     return baseName + "_" + std::to_string(manglingSuffix);
 }
@@ -52,9 +55,7 @@ std::string SkShaderSnippet::getMangledSamplerName(int samplerIdx, int mangleId)
     return result;
 }
 
-// TODO: SkShaderInfo::toSkSL needs to work outside of both just graphite and metal. To do
-// so we'll need to switch over to using SkSL's uniform capabilities.
-#if defined(SK_GRAPHITE_ENABLED) && defined(SK_METAL)
+#if defined(SK_GRAPHITE_ENABLED) && defined(SK_ENABLE_SKSL)
 
 // Returns an expression to invoke this entry, passing along an updated pre-local matrix.
 static std::string emit_expression_for_entry(const SkShaderInfo& shaderInfo,
@@ -127,15 +128,15 @@ static void emit_preamble_for_entry(const SkShaderInfo& shaderInfo,
 //   - The result of the final code snippet is then copied into "sk_FragColor".
 //   Note: each entry's 'fStaticFunctionName' field is expected to match the name of a function
 //   in the Graphite pre-compiled module.
-std::string SkShaderInfo::toSkSL(const skgpu::graphite::RenderStep* step) const {
+std::string SkShaderInfo::toSkSL(const skgpu::graphite::RenderStep* step,
+                                 const bool defineLocalCoordsVarying) const {
     std::string preamble = "layout(location = 0, index = 0) out half4 sk_FragColor;\n";
-
-    if (step->numVaryings() > 0) {
-        preamble += skgpu::graphite::EmitVaryings(step, "in");
-    }
+    preamble += skgpu::graphite::EmitVaryings(step, "in", defineLocalCoordsVarying);
 
     // The uniforms are mangled by having their index in 'fEntries' as a suffix (i.e., "_%d")
     // TODO: replace hard-coded bufferIDs with the backend's step and paint uniform-buffer indices.
+    // TODO: The use of these indices is Metal-specific. We should replace these functions with
+    // API-independent ones.
     if (step->numUniforms() > 0) {
         preamble += skgpu::graphite::EmitRenderStepUniforms(/*bufferID=*/1, "Step",
                                                             step->uniforms());
@@ -144,7 +145,12 @@ std::string SkShaderInfo::toSkSL(const skgpu::graphite::RenderStep* step) const 
                                                          this->needsLocalCoords());
     int binding = 0;
     preamble += skgpu::graphite::EmitTexturesAndSamplers(fBlockReaders, &binding);
+    if (step->hasTextures()) {
+        preamble += step->texturesAndSamplersSkSL(binding);
+    }
 
+    // TODO: Remove all the use of dev2LocalUni and the preLocal matrices once all render steps
+    // that require local coordinates emit them directly.
     std::string mainBody = SkSL::String::printf("void main() {\n"
                                                 "    float4 coords = %s sk_FragCoord;\n",
                                                 this->needsLocalCoords() ? "dev2LocalUni *" : "");
@@ -152,9 +158,15 @@ std::string SkShaderInfo::toSkSL(const skgpu::graphite::RenderStep* step) const 
     // TODO: what is the correct initial color to feed in?
     std::string lastOutputVar = "initialColor";
     SkSL::String::appendf(&mainBody, "    half4 %s = half4(0);", lastOutputVar.c_str());
+    if (this->needsLocalCoords()) {
+        // Get the local coordinates varying into half4 format as expected by emit_glue_code.
+        mainBody += "float4 outLocalCoords = float4(localCoordsVar, 0.0, 0.0);\n";
+    }
 
     for (int entryIndex = 0; entryIndex < (int)fBlockReaders.size();) {
         // Emit shader main body code. This never alters the preamble or increases the entry index.
+        // TODO - Once RenderSteps that require local coordinates emit them directly to the
+        // localCoordsVar varying, "outLocalCoords" can be passed in here instead of "coords".
         lastOutputVar = emit_glue_code_for_entry(*this, entryIndex, lastOutputVar, "coords",
                                                  "float4x4(1.0)", &mainBody);
 
@@ -163,7 +175,21 @@ std::string SkShaderInfo::toSkSL(const skgpu::graphite::RenderStep* step) const 
         emit_preamble_for_entry(*this, &entryIndex, &preamble);
     }
 
-    SkSL::String::appendf(&mainBody, "    sk_FragColor = %s;\n", lastOutputVar.c_str());
+    if (step->emitsPrimitiveColor()) {
+        mainBody += "half4 primitiveColor;";
+        mainBody += step->fragmentColorSkSL();
+        // TODO: Apply primitive blender
+        // For now, just overwrite the prior color stored in lastOutputVar
+        SkSL::String::appendf(&mainBody, "    %s = primitiveColor;\n", lastOutputVar.c_str());
+    }
+    if (step->emitsCoverage()) {
+        mainBody += "half4 outputCoverage;";
+        mainBody += step->fragmentCoverageSkSL();
+        SkSL::String::appendf(&mainBody, "    sk_FragColor = %s*outputCoverage;\n",
+                              lastOutputVar.c_str());
+    } else {
+        SkSL::String::appendf(&mainBody, "    sk_FragColor = %s;\n", lastOutputVar.c_str());
+    }
     mainBody += "}\n";
 
     return preamble + "\n" + mainBody;
@@ -260,7 +286,8 @@ const SkShaderSnippet* SkShaderCodeDictionary::getEntry(int codeSnippetID) const
     return nullptr;
 }
 
-void SkShaderCodeDictionary::getShaderInfo(SkUniquePaintParamsID uniqueID, SkShaderInfo* info) {
+void SkShaderCodeDictionary::getShaderInfo(SkUniquePaintParamsID uniqueID,
+                                           SkShaderInfo* info) const {
     auto entry = this->lookup(uniqueID);
 
     entry->paintParamsKey().toShaderInfo(this, info);

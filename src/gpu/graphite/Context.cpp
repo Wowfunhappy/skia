@@ -20,12 +20,12 @@
 #include "src/gpu/graphite/CommandBuffer.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/GlobalCache.h"
-#include "src/gpu/graphite/Gpu.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
 #include "src/gpu/graphite/QueueManager.h"
 #include "src/gpu/graphite/RecordingPriv.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/ResourceProvider.h"
+#include "src/gpu/graphite/SharedContext.h"
 
 #ifdef SK_METAL
 #include "src/gpu/graphite/mtl/MtlTrampoline.h"
@@ -36,35 +36,35 @@ namespace skgpu::graphite {
 #define ASSERT_SINGLE_OWNER SKGPU_ASSERT_SINGLE_OWNER(this->singleOwner())
 
 //--------------------------------------------------------------------------------------------------
-Context::Context(sk_sp<Gpu> gpu, std::unique_ptr<QueueManager> queueManager, BackendApi backend)
-        : fGpu(std::move(gpu))
+Context::Context(sk_sp<SharedContext> sharedContext, std::unique_ptr<QueueManager> queueManager)
+        : fSharedContext(std::move(sharedContext))
         , fQueueManager(std::move(queueManager))
-        , fGlobalCache(sk_make_sp<GlobalCache>())
-        , fBackend(backend) {
+        , fGlobalCache(sk_make_sp<GlobalCache>()) {
 }
 Context::~Context() {}
+
+BackendApi Context::backend() const { return fSharedContext->backend(); }
 
 #ifdef SK_METAL
 std::unique_ptr<Context> Context::MakeMetal(const MtlBackendContext& backendContext,
                                             const ContextOptions& options) {
-    sk_sp<Gpu> gpu = MtlTrampoline::MakeGpu(backendContext, options);
-    if (!gpu) {
+    sk_sp<SharedContext> sharedContext = MtlTrampoline::MakeSharedContext(backendContext, options);
+    if (!sharedContext) {
         return nullptr;
     }
 
-    auto queueManager = MtlTrampoline::MakeQueueManager(gpu.get());
+    auto queueManager = MtlTrampoline::MakeQueueManager(backendContext, sharedContext.get());
     if (!queueManager) {
         return nullptr;
     }
 
-    auto context = std::unique_ptr<Context>(new Context(std::move(gpu),
-                                                        std::move(queueManager),
-                                                        BackendApi::kMetal));
+    auto context = std::unique_ptr<Context>(new Context(std::move(sharedContext),
+                                                        std::move(queueManager)));
     SkASSERT(context);
 
     // We have to create this after the Context because we need to pass in the Context's
     // SingleOwner object.
-    auto resourceProvider = MtlTrampoline::MakeResourceProvider(context->fGpu.get(),
+    auto resourceProvider = MtlTrampoline::MakeResourceProvider(context->fSharedContext.get(),
                                                                 context->fGlobalCache,
                                                                 context->singleOwner());
     if (!resourceProvider) {
@@ -75,10 +75,10 @@ std::unique_ptr<Context> Context::MakeMetal(const MtlBackendContext& backendCont
 }
 #endif
 
-std::unique_ptr<Recorder> Context::makeRecorder() {
+std::unique_ptr<Recorder> Context::makeRecorder(const RecorderOptions& options) {
     ASSERT_SINGLE_OWNER
 
-    return std::unique_ptr<Recorder>(new Recorder(fGpu, fGlobalCache));
+    return std::unique_ptr<Recorder>(new Recorder(fSharedContext, fGlobalCache, options));
 }
 
 void Context::insertRecording(const InsertRecordingInfo& info) {
@@ -146,24 +146,15 @@ void Context::precompile(SkCombinationBuilder* combinationBuilder) {
     // shading, and just use ShaderType::kNone.
 }
 
-#endif // SK_ENABLE_PRECOMPILE
-
-BackendTexture Context::createBackendTexture(SkISize dimensions, const TextureInfo& info) {
-    ASSERT_SINGLE_OWNER
-
-    if (!info.isValid() || info.backend() != this->backend()) {
-        return {};
-    }
-    return fGpu->createBackendTexture(dimensions, info);
-}
-
 void Context::deleteBackendTexture(BackendTexture& texture) {
     ASSERT_SINGLE_OWNER
 
     if (!texture.isValid() || texture.backend() != this->backend()) {
         return;
     }
-    fGpu->deleteBackendTexture(texture);
+    fResourceProvider->deleteBackendTexture(texture);
 }
+
+#endif // SK_ENABLE_PRECOMPILE
 
 } // namespace skgpu::graphite

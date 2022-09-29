@@ -242,6 +242,13 @@ public:
     SkGlyphRect offset(SkScalar x, SkScalar y) const {
         return SkGlyphRect{fRect + Storage{-x, -y, x, y}};
     }
+    SkGlyphRect scaleAndOffset(SkScalar scale, SkPoint offset) const {
+        auto [x, y] = offset;
+        return fRect * scale + Storage{-x, -y, x, y};
+    }
+    SkGlyphRect inset(SkScalar dx, SkScalar dy) const {
+        return fRect - Storage{dx, dy, dx, dy};
+    }
     SkPoint leftTop() const { return -this->negLeftTop(); }
     SkPoint rightBottom() const { return {fRect[2], fRect[3]}; }
     SkPoint widthHeight() const { return this->rightBottom() + negLeftTop(); }
@@ -287,13 +294,18 @@ public:
     // Default ctor is only needed for the hash table.
     SkGlyphDigest() = default;
     SkGlyphDigest(size_t index, const SkGlyph& glyph);
-    int index()          const { return fIndex;         }
-    bool isEmpty()       const { return fIsEmpty;       }
-    bool isColor()       const { return fIsColor;       }
+    int index()          const { return fIndex; }
+    bool isEmpty()       const { return fIsEmpty; }
+    bool isColor()       const { return fFormat == SkMask::kARGB32_Format; }
     bool canDrawAsMask() const { return fCanDrawAsMask; }
     bool canDrawAsSDFT() const { return fCanDrawAsSDFT; }
+    SkMask::Format maskFormat() const { return static_cast<SkMask::Format>(fFormat); }
     uint16_t maxDimension()  const {
         return std::max(fWidth, fHeight);
+    }
+
+    SkGlyphRect bounds() const {
+        return SkGlyphRect(fLeft, fTop, (SkScalar)fLeft + fWidth, (SkScalar)fTop + fHeight);
     }
 
     // Common categories for glyph types used by GPU.
@@ -304,12 +316,13 @@ public:
 
 private:
     static_assert(SkPackedGlyphID::kEndData == 20);
+    static_assert(SkMask::kCountMaskFormats <= 8);
     struct {
         uint32_t fIndex         : SkPackedGlyphID::kEndData;
         uint32_t fIsEmpty       : 1;
-        uint32_t fIsColor       : 1;
         uint32_t fCanDrawAsMask : 1;
         uint32_t fCanDrawAsSDFT : 1;
+        uint32_t fFormat        : 3;
     };
     int16_t fLeft, fTop;
     uint16_t fWidth, fHeight;

@@ -8,22 +8,27 @@
 #ifndef SkShaderCodeDictionary_DEFINED
 #define SkShaderCodeDictionary_DEFINED
 
-#include <array>
-#include <unordered_map>
-#include <vector>
 #include "include/core/SkSpan.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkMacros.h"
 #include "include/private/SkSpinlock.h"
 #include "include/private/SkTHash.h"
+#include "include/private/SkThreadAnnotations.h"
+#include "include/private/SkTo.h"
 #include "include/private/SkUniquePaintParamsID.h"
 #include "src/core/SkArenaAlloc.h"
+#include "src/core/SkBuiltInCodeSnippetID.h"
 #include "src/core/SkEnumBitMask.h"
 #include "src/core/SkPaintParamsKey.h"
-#include "src/core/SkPipelineData.h"
 #include "src/core/SkUniform.h"
 
-namespace SkSL {
-struct ShaderCaps;
-}
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #ifdef SK_GRAPHITE_ENABLED
 namespace skgpu::graphite {
@@ -31,9 +36,11 @@ class RenderStep;
 }
 #endif
 
-class SkBlenderID;
 class SkRuntimeEffect;
 class SkRuntimeEffectDictionary;
+#ifdef SK_ENABLE_PRECOMPILE
+class SkBlenderID;
+#endif
 
 // TODO: How to represent the type (e.g., 2D) of texture being sampled?
 class SkTextureAndSampler {
@@ -142,8 +149,9 @@ public:
     const skgpu::BlendInfo& blendInfo() const { return fBlendInfo; }
 #endif
 
-#if defined(SK_GRAPHITE_ENABLED) && defined(SK_METAL)
-    std::string toSkSL(const skgpu::graphite::RenderStep* step) const;
+#if defined(SK_GRAPHITE_ENABLED) && defined(SK_ENABLE_SKSL)
+    std::string toSkSL(const skgpu::graphite::RenderStep* step,
+                       const bool defineLocalCoordsVarying) const;
 #endif
 
 private:
@@ -221,7 +229,7 @@ public:
         return this->getEntry(SkTo<int>(codeSnippetID));
     }
 
-    void getShaderInfo(SkUniquePaintParamsID, SkShaderInfo*);
+    void getShaderInfo(SkUniquePaintParamsID, SkShaderInfo*) const;
 
     int findOrCreateRuntimeEffectSnippet(const SkRuntimeEffect* effect);
 

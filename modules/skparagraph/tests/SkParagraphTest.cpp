@@ -1,4 +1,9 @@
-// Copyright 2019 Google LLC.
+/*
+ * Copyright 2019 Google LLC
+ *
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the LICENSE file.
+ */
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
@@ -28,10 +33,10 @@
 #include "modules/skparagraph/src/ParagraphImpl.h"
 #include "modules/skparagraph/src/Run.h"
 #include "modules/skparagraph/src/TextLine.h"
+#include "modules/skparagraph/tests/SkShaperJSONWriter.h"
 #include "modules/skparagraph/utils/TestFontCollection.h"
 #include "src/core/SkOSFile.h"
 #include "src/utils/SkOSPath.h"
-#include "src/utils/SkShaperJSONWriter.h"
 #include "tests/Test.h"
 #include "tools/Resources.h"
 
@@ -7008,4 +7013,26 @@ UNIX_ONLY_TEST(SkParagraph_TabSubstitution, reporter) {
     REPORTER_ASSERT(reporter, ((ParagraphImpl*)paragraph2.get())->runs()[0].glyphs()[15] == 0);
     // Notice, that the cache didn't work for the second paragraph - as it should not
     REPORTER_ASSERT(reporter, 2 == fontCollection->getParagraphCache()->count());
+}
+
+DEF_TEST(SkParagraph_lineMetricsWithEllipsis, reporter) {
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
+    if (!fontCollection->fontsFound()) return;
+    fontCollection->setDefaultFontManager(SkFontMgr::RefDefault());
+    fontCollection->enableFontFallback();
+
+    ParagraphStyle paragraph_style;
+    paragraph_style.setMaxLines(1);
+    std::u16string ellipsis = u"\u2026";
+    paragraph_style.setEllipsis(ellipsis);
+
+    ParagraphBuilderImpl builder(paragraph_style, fontCollection);
+    builder.addText("hello");
+
+    auto paragraph = builder.Build();
+    paragraph->layout(1.);
+
+    std::vector<LineMetrics> lm;
+    paragraph->getLineMetrics(lm);
+    REPORTER_ASSERT(reporter, lm.size() == 1);
 }

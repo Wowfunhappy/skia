@@ -115,6 +115,7 @@ public:
     virtual void fillVertexData(
             skgpu::graphite::DrawWriter*,
             int offset, int count,
+            int ssboIndex,
             SkScalar depth,
             const skgpu::graphite::Transform& transform) const = 0;
 
@@ -242,7 +243,7 @@ public:
     enum SubRunCreationBehavior {kAddSubRuns, kStrikeCalculationsOnly};
     // The returned SubRunContainerOwner will never be null. If subRunCreation ==
     // kStrikeCalculationsOnly, then the returned container will be empty.
-    static SK_WARN_UNUSED_RESULT std::tuple<bool, SubRunContainerOwner> MakeInAlloc(
+    static SK_WARN_UNUSED_RESULT SubRunContainerOwner MakeInAlloc(
             const GlyphRunList& glyphRunList,
             const SkMatrix& positionMatrix,
             const SkPaint& runPaint,

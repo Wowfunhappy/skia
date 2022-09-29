@@ -17,10 +17,11 @@
 #include "src/gpu/graphite/DrawContext.h"
 #include "src/gpu/graphite/DrawList.h"
 #include "src/gpu/graphite/DrawParams.h"
-#include "src/gpu/graphite/Gpu.h"
+#include "src/gpu/graphite/ImageUtils.h"
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/Renderer.h"
+#include "src/gpu/graphite/SharedContext.h"
 #include "src/gpu/graphite/TextureProxy.h"
 #include "src/gpu/graphite/TextureUtils.h"
 #include "src/gpu/graphite/geom/BoundsManager.h"
@@ -35,6 +36,7 @@
 #include "include/core/SkPathEffect.h"
 #include "include/core/SkStrokeRec.h"
 #include "include/private/SkImageInfoPriv.h"
+#include "src/core/SkVerticesPriv.h"
 
 #include "src/core/SkConvertPixels.h"
 #include "src/core/SkMatrixPriv.h"
@@ -55,7 +57,7 @@ namespace {
 static const SkStrokeRec kFillStyle(SkStrokeRec::kFill_InitStyle);
 
 bool paint_depends_on_dst(const PaintParams& paintParams) {
-    std::optional<SkBlendMode> bm = paintParams.asBlendMode();
+    std::optional<SkBlendMode> bm = paintParams.asFinalBlendMode();
     if (!bm.has_value()) {
         return true;
     }
@@ -450,6 +452,18 @@ void Device::drawRect(const SkRect& r, const SkPaint& paint) {
                        paint, SkStrokeRec(paint));
 }
 
+void Device::drawVertices(const SkVertices* vertices, sk_sp<SkBlender> blender,
+                          const SkPaint& paint, bool skipColorXform)  {
+  // TODO - Add GPU handling of skipColorXform once Graphite has its color system more fleshed out.
+  this->drawGeometry(this->localToDeviceTransform(),
+                     Geometry(sk_ref_sp(vertices)),
+                     paint,
+                     kFillStyle,
+                     DrawFlags::kIgnorePathEffect | DrawFlags::kIgnoreMaskFilter,
+                     std::move(blender),
+                     skipColorXform);
+}
+
 void Device::drawOval(const SkRect& oval, const SkPaint& paint) {
     // TODO: This has wasted effort from the SkCanvas level since it instead converts rrects that
     // happen to be ovals into this, only for us to go right back to rrect.
@@ -532,10 +546,17 @@ void Device::drawImageRect(const SkImage* image, const SkRect* src, const SkRect
         }
     }
 
+    auto [ imageToDraw, newSampling ] = skgpu::graphite::GetGraphiteBacked(this->recorder(),
+                                                                           image, sampling);
+    if (!imageToDraw) {
+        SKGPU_LOG_W("Device::drawImageRect: Creation of Graphite-backed image failed");
+        return;
+    }
+
     // construct a shader, so we can call drawRect with the dst
-    auto s = make_img_shader_for_paint(paint, sk_ref_sp(image), tmpSrc,
+    auto s = make_img_shader_for_paint(paint, std::move(imageToDraw), tmpSrc,
                                        SkTileMode::kClamp, SkTileMode::kClamp,
-                                       sampling, &matrix);
+                                       newSampling, &matrix);
     if (!s) {
         return;
     }
@@ -602,7 +623,9 @@ void Device::drawGeometry(const Transform& localToDevice,
                           const Geometry& geometry,
                           const SkPaint& paint,
                           const SkStrokeRec& style,
-                          SkEnumBitMask<DrawFlags> flags) {
+                          SkEnumBitMask<DrawFlags> flags,
+                          sk_sp<SkBlender> primitiveBlender,
+                          bool skipColorXform) {
     if (!localToDevice.valid()) {
         // If the transform is not invertible or not finite then drawing isn't well defined.
         SKGPU_LOG_W("Skipping draw with non-invertible/non-finite transform.");
@@ -627,12 +650,14 @@ void Device::drawGeometry(const Transform& localToDevice,
                                               nullptr, localToDevice)) {
             // Recurse using the path and new style, while disabling downstream path effect handling
             this->drawGeometry(localToDevice, Geometry(Shape(dst)), paint, style,
-                               flags | DrawFlags::kIgnorePathEffect);
+                               flags | DrawFlags::kIgnorePathEffect, std::move(primitiveBlender),
+                               skipColorXform);
             return;
         } else {
             SKGPU_LOG_W("Path effect failed to apply, drawing original path.");
             this->drawGeometry(localToDevice, geometry, paint, style,
-                               flags | DrawFlags::kIgnorePathEffect);
+                               flags | DrawFlags::kIgnorePathEffect, std::move(primitiveBlender),
+                               skipColorXform);
             return;
         }
     }
@@ -642,7 +667,8 @@ void Device::drawGeometry(const Transform& localToDevice,
         // TODO: Could this be handled by SkCanvas by drawing a mask, blurring, and then sampling
         // with a rect draw? What about fast paths for rrect blur masks...
         this->drawGeometry(localToDevice, geometry, paint, style,
-                           flags | DrawFlags::kIgnoreMaskFilter);
+                           flags | DrawFlags::kIgnoreMaskFilter, std::move(primitiveBlender),
+                           skipColorXform);
         return;
     }
 
@@ -651,7 +677,8 @@ void Device::drawGeometry(const Transform& localToDevice,
     if (geometry.isShape() && localToDevice.type() == Transform::Type::kProjection) {
         SkPath devicePath = geometry.shape().asPath();
         devicePath.transform(localToDevice.matrix().asM33());
-        this->drawGeometry(Transform::Identity(), Geometry(Shape(devicePath)), paint, style, flags);
+        this->drawGeometry(Transform::Identity(), Geometry(Shape(devicePath)), paint, style, flags,
+                           std::move(primitiveBlender), skipColorXform);
         return;
     }
 
@@ -709,7 +736,7 @@ void Device::drawGeometry(const Transform& localToDevice,
     // If a draw is not opaque, it must be drawn after the most recent draw it intersects with in
     // order to blend correctly. We always query the most recent draw (even when opaque) because it
     // also lets Device easily track whether or not there are any overlapping draws.
-    PaintParams shading{paint};
+    PaintParams shading{paint, std::move(primitiveBlender), skipColorXform};
     const bool dependsOnDst = renderer->emitsCoverage() || paint_depends_on_dst(shading);
     CompressedPaintersOrder prevDraw =
             fColorDepthBoundsManager->getMostRecentDraw(clip.drawBounds());
@@ -799,6 +826,9 @@ const Renderer* Device::ChooseRenderer(const Geometry& geometry,
 
     if (geometry.isSubRun()) {
         return geometry.subRunData().subRun()->renderer();
+    } else if (geometry.isVertices()) {
+        SkVerticesPriv info(geometry.vertices()->priv());
+        return &Renderer::Vertices(info.mode(), info.hasColors(), info.hasTexCoords());
     }
 
     if (!geometry.isShape()) {
