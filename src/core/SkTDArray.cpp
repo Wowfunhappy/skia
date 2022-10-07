@@ -11,9 +11,18 @@
 
 #include <utility>
 
-SkTDStorage::SkTDStorage(const void* src, int count, int sizeOfT) : fSizeOfT{sizeOfT} {
-    SkASSERT(src || count == 0);
-    this->assign(src, count);
+SkTDStorage::SkTDStorage(int sizeOfT) : fSizeOfT{sizeOfT} {}
+
+SkTDStorage::SkTDStorage(const void* src, int count, int sizeOfT)
+        : fSizeOfT{sizeOfT}
+        , fReserve{count}
+        , fCount{count} {
+    if (count > 0) {
+        SkASSERT(src != nullptr);
+        size_t storageSize = this->bytes(count);
+        fStorage = static_cast<std::byte*>(sk_malloc_throw(storageSize));
+        memcpy(fStorage, src, storageSize);
+    }
 }
 
 SkTDStorage::SkTDStorage(const SkTDStorage& that)
@@ -21,18 +30,23 @@ SkTDStorage::SkTDStorage(const SkTDStorage& that)
 
 SkTDStorage& SkTDStorage::operator=(const SkTDStorage& that) {
     if (this != &that) {
-        this->assign(that.fStorage, that.fCount);
+        if (that.fCount <= fReserve) {
+            fCount = that.fCount;
+            if (fCount > 0) {
+                memcpy(fStorage, that.data(), that.size_bytes());
+            }
+        } else {
+            *this = SkTDStorage{that.data(), that.size(), that.fSizeOfT};
+        }
     }
     return *this;
 }
 
 SkTDStorage::SkTDStorage(SkTDStorage&& that)
         : fSizeOfT{that.fSizeOfT}
-        , fStorage(that.fStorage)
+        , fStorage(std::exchange(that.fStorage, nullptr))
         , fReserve{that.fReserve}
-        , fCount{that.fCount} {
-    that.fStorage = nullptr;
-}
+        , fCount{that.fCount} {}
 
 SkTDStorage& SkTDStorage::operator=(SkTDStorage&& that) {
     if (this != &that) {
@@ -130,24 +144,26 @@ void SkTDStorage::removeShuffle(int index) {
     this->resize(newCount);
 }
 
-void SkTDStorage::assign(const void* src, int count) {
-    fCount = count;
-    if (fReserve < fCount) {
-        // This looks like shrinking, but it allocates exactly fCount elements instead of
-        // padding by adding the growth factor.
-        this->shrink_to_fit();
-    }
-    if (count > 0) {
-        this->copySrc(/*dstIndex=*/0, src, count);
-    }
-}
-
 void* SkTDStorage::prepend() {
     return this->insert(/*index=*/0);
 }
 
-void* SkTDStorage::append() {
-    return this->insert(fCount);
+void SkTDStorage::append() {
+    if (fCount < fReserve) {
+        fCount++;
+    } else {
+        this->insert(fCount);
+    }
+}
+
+void SkTDStorage::append(int count) {
+    SkASSERT(count >= 0);
+    // Read as: if (fCount + count <= fReserve) {...}. This is a UB safe way to avoid the add.
+    if (fReserve - fCount >= count) {
+        fCount += count;
+    } else {
+        this->insert(fCount, count, nullptr);
+    }
 }
 
 void* SkTDStorage::append(const void* src, int count) {
