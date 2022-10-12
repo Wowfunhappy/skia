@@ -20,7 +20,6 @@
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLContext.h"
-#include "src/sksl/SkSLParsedModule.h"
 #include "src/sksl/SkSLPool.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLThreadContext.h"
@@ -53,6 +52,8 @@
 
 namespace SkSL {
 
+class BuiltinMap;
+
 namespace dsl {
 
 void Start(SkSL::Compiler* compiler, ProgramKind kind) {
@@ -61,13 +62,16 @@ void Start(SkSL::Compiler* compiler, ProgramKind kind) {
 
 void Start(SkSL::Compiler* compiler, ProgramKind kind, const ProgramSettings& settings) {
     ThreadContext::SetInstance(std::make_unique<ThreadContext>(compiler, kind, settings,
-            compiler->moduleForProgramKind(kind), /*isModule=*/false));
+                                                               compiler->moduleForProgramKind(kind),
+                                                               /*isModule=*/false));
 }
 
-void StartModule(SkSL::Compiler* compiler, ProgramKind kind, const ProgramSettings& settings,
-                 SkSL::ParsedModule baseModule) {
+void StartModule(SkSL::Compiler* compiler,
+                 ProgramKind kind,
+                 const ProgramSettings& settings,
+                 const SkSL::BuiltinMap* baseModule) {
     ThreadContext::SetInstance(std::make_unique<ThreadContext>(compiler, kind, settings,
-            baseModule, /*isModule=*/true));
+                                                               baseModule, /*isModule=*/true));
 }
 
 void End() {
@@ -174,8 +178,7 @@ public:
             // sk_FragColor can end up with a null declaration despite no error occurring due to
             // specific treatment in the compiler. Ignore the null and just grab the existing
             // variable from the symbol table.
-            SkSL::Symbol* alreadyDeclared =
-                    ThreadContext::SymbolTable()->getMutableSymbol(var.fName);
+            SkSL::Symbol* alreadyDeclared = ThreadContext::SymbolTable()->findMutable(var.fName);
             if (alreadyDeclared && alreadyDeclared->is<Variable>()) {
                 var.fVar = &alreadyDeclared->as<Variable>();
                 var.fInitialized = true;
