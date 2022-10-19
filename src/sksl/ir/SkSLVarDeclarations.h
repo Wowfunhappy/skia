@@ -35,7 +35,7 @@ class VarDeclaration final : public Statement {
 public:
     inline static constexpr Kind kIRNodeKind = Kind::kVarDeclaration;
 
-    VarDeclaration(const Variable* var,
+    VarDeclaration(Variable* var,
                    const Type* baseType,
                    int arraySize,
                    std::unique_ptr<Expression> value,
@@ -74,14 +74,12 @@ public:
         return fBaseType;
     }
 
-    const Variable& var() const {
-        // This should never be called after the Variable has been deleted.
-        SkASSERT(fVar);
-        return *fVar;
+    Variable* var() const {
+        return fVar;
     }
 
-    void setVar(const Variable* var) {
-        fVar = var;
+    void detachDeadVariable() {
+        fVar = nullptr;
     }
 
     int arraySize() const {
@@ -101,10 +99,11 @@ public:
     std::string description() const override;
 
 private:
-    static bool ErrorCheckAndCoerce(const Context& context, const Variable& var,
-            std::unique_ptr<Expression>& value);
+    static bool ErrorCheckAndCoerce(const Context& context,
+                                    const Variable& var,
+                                    std::unique_ptr<Expression>& value);
 
-    const Variable* fVar;
+    Variable* fVar;
     const Type& fBaseType;
     int fArraySize;  // zero means "not an array"
     std::unique_ptr<Expression> fValue;
@@ -126,6 +125,7 @@ public:
             : INHERITED(decl->fPosition, kIRNodeKind)
             , fDeclaration(std::move(decl)) {
         SkASSERT(this->declaration()->is<VarDeclaration>());
+        this->varDeclaration().var()->setGlobalVarDeclaration(this);
     }
 
     std::unique_ptr<Statement>& declaration() {
@@ -134,6 +134,14 @@ public:
 
     const std::unique_ptr<Statement>& declaration() const {
         return fDeclaration;
+    }
+
+    VarDeclaration& varDeclaration() {
+        return fDeclaration->as<VarDeclaration>();
+    }
+
+    const VarDeclaration& varDeclaration() const {
+        return fDeclaration->as<VarDeclaration>();
     }
 
     std::unique_ptr<ProgramElement> clone() const override {

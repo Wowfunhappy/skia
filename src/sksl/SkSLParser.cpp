@@ -39,8 +39,6 @@ using namespace SkSL::dsl;
 
 namespace SkSL {
 
-class BuiltinMap;
-
 static constexpr int kMaxParseDepth = 50;
 
 static int parse_modifier_token(Token::Kind token) {
@@ -129,8 +127,15 @@ Token Parser::nextRawToken() {
 
         // Some tokens are always invalid, so we detect and report them here.
         switch (token.fKind) {
+            case Token::Kind::TK_PRIVATE_IDENTIFIER:
+                if (ProgramConfig::AllowsPrivateIdentifiers(fKind)) {
+                    token.fKind = Token::Kind::TK_IDENTIFIER;
+                    break;
+                }
+                [[fallthrough]];
+
             case Token::Kind::TK_RESERVED:
-                this->error(token, "'" + std::string(this->text(token)) + "' is a reserved word");
+                this->error(token, "name '" + std::string(this->text(token)) + "' is reserved");
                 token.fKind = Token::Kind::TK_IDENTIFIER;  // reduces additional follow-up errors
                 break;
 
@@ -296,14 +301,17 @@ std::unique_ptr<Program> Parser::program() {
     return result;
 }
 
-SkSL::LoadedModule Parser::moduleInheritingFrom(const SkSL::BuiltinMap* baseModule) {
+std::unique_ptr<SkSL::Module> Parser::moduleInheritingFrom(const SkSL::Module* parent) {
     ErrorReporter* errorReporter = &fCompiler.errorReporter();
-    StartModule(&fCompiler, fKind, fSettings, baseModule);
+    StartModule(&fCompiler, fKind, fSettings, parent);
     SetErrorReporter(errorReporter);
     errorReporter->setSource(*fText);
     this->declarations();
     CurrentSymbolTable()->takeOwnershipOfString(std::move(*fText));
-    SkSL::LoadedModule result{CurrentSymbolTable(), std::move(ThreadContext::ProgramElements())};
+    auto result = std::make_unique<SkSL::Module>();
+    result->fParent = parent;
+    result->fSymbols = CurrentSymbolTable();
+    result->fElements = std::move(ThreadContext::ProgramElements());
     errorReporter->setSource(std::string_view());
     End();
     return result;

@@ -170,6 +170,17 @@ public:
     }
 
     /**
+     * Ensures there is enough reserved space for n elements.
+     */
+    void reserve(int n) {
+        SkASSERT(n >= 0);
+        if (n < count()) {
+          return;
+        }
+        reserve_back(n - count());
+    }
+
+    /**
      * Ensures there is enough reserved space for n additional elements. The is guaranteed at least
      * until the array size grows above n and subsequently shrinks below n, any version of reset()
      * is called, or reserve_back() is called again.
@@ -245,11 +256,11 @@ public:
      */
     T* push_back_n(int n) {
         SkASSERT(n >= 0);
-        void* newTs = this->push_back_raw(n);
+        T* newTs = TCast(this->push_back_raw(n));
         for (int i = 0; i < n; ++i) {
-            new (static_cast<char*>(newTs) + i * sizeof(T)) T;
+            new (&newTs[i]) T;
         }
-        return static_cast<T*>(newTs);
+        return newTs;
     }
 
     /**
@@ -360,16 +371,46 @@ public:
     const T* begin() const {
         return fItemArray;
     }
+
+    // It's safe to use fItemArray + fCount because if fItemArray is nullptr then adding 0 is
+    // valid and returns nullptr. See [expr.add] in the C++ standard.
     T* end() {
-        return fItemArray ? fItemArray + fCount : nullptr;
+        if (fItemArray == nullptr) {
+            SkASSERT(fCount == 0);
+        }
+        return fItemArray + fCount;
     }
     const T* end() const {
-        return fItemArray ? fItemArray + fCount : nullptr;
+        if (fItemArray == nullptr) {
+            SkASSERT(fCount == 0);
+        }
+        return fItemArray + fCount;
     }
     T* data() { return fItemArray; }
     const T* data() const { return fItemArray; }
     size_t size() const { return (size_t)fCount; }
+    size_t size_bytes() const { return static_cast<size_t>(fCount) * sizeof(T); }
     void resize(size_t count) { this->resize_back((int)count); }
+
+    void clear() { resize_back(0); }
+
+    void shrink_to_fit() {
+        if (!fOwnMemory || fCount == fAllocCount) {
+            return;
+        }
+        if (fCount == 0) {
+            sk_free(fItemArray);
+            fItemArray = nullptr;
+        } else {
+            T* newItemArray = TCast(sk_malloc_throw((size_t)fCount, sizeof(T)));
+            this->move(newItemArray);
+            if (fOwnMemory) {
+                sk_free(fItemArray);
+            }
+            fItemArray = newItemArray;
+        }
+        fAllocCount = fCount;
+    }
 
     /**
      * Get the i^th element.
@@ -517,23 +558,25 @@ private:
         }
     }
 
-    template <bool E = MEM_MOVE> std::enable_if_t<E, void> move(int dst, int src) {
-        memcpy(static_cast<void*>(&fItemArray[dst]),
-               static_cast<void*>(&fItemArray[src]),
-               sizeof(T));
-    }
-    template <bool E = MEM_MOVE> std::enable_if_t<E, void> move(void* dst) {
-        sk_careful_memcpy(dst, fItemArray, fCount * sizeof(T));
+    void move(int dst, int src) {
+        if constexpr (MEM_MOVE) {
+            memcpy(static_cast<void*>(&fItemArray[dst]),
+                   static_cast<void*>(&fItemArray[src]),
+                   sizeof(T));
+        } else {
+            new (&fItemArray[dst]) T(std::move(fItemArray[src]));
+            fItemArray[src].~T();
+        }
     }
 
-    template <bool E = MEM_MOVE> std::enable_if_t<!E, void> move(int dst, int src) {
-        new (&fItemArray[dst]) T(std::move(fItemArray[src]));
-        fItemArray[src].~T();
-    }
-    template <bool E = MEM_MOVE> std::enable_if_t<!E, void> move(void* dst) {
-        for (int i = 0; i < this->count(); ++i) {
-            new (static_cast<char*>(dst) + sizeof(T) * (size_t)i) T(std::move(fItemArray[i]));
-            fItemArray[i].~T();
+    void move(void* dst) {
+        if constexpr (MEM_MOVE) {
+            sk_careful_memcpy(dst, fItemArray, fCount * sizeof(T));
+        } else {
+            for (int i = 0; i < this->count(); ++i) {
+                new (static_cast<char*>(dst) + sizeof(T) * (size_t)i) T(std::move(fItemArray[i]));
+                fItemArray[i].~T();
+            }
         }
     }
 
