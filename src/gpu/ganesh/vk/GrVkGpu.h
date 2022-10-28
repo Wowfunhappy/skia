@@ -25,7 +25,6 @@ class GrPipeline;
 class GrVkBuffer;
 class GrVkCommandPool;
 class GrVkFramebuffer;
-class GrVkMemoryAllocator;
 class GrVkPipeline;
 class GrVkPipelineState;
 class GrVkPrimaryCommandBuffer;
@@ -33,7 +32,10 @@ class GrVkOpsRenderPass;
 class GrVkRenderPass;
 class GrVkSecondaryCommandBuffer;
 class GrVkTexture;
-struct GrVkInterface;
+
+namespace skgpu { struct VulkanInterface; }
+
+namespace skgpu { class VulkanMemoryAllocator; }
 
 class GrVkGpu : public GrGpu {
 public:
@@ -51,7 +53,7 @@ public:
     GrThreadSafePipelineBuilder* pipelineBuilder() override;
     sk_sp<GrThreadSafePipelineBuilder> refPipelineBuilder() override;
 
-    const GrVkInterface* vkInterface() const { return fInterface.get(); }
+    const skgpu::VulkanInterface* vkInterface() const { return fInterface.get(); }
     const GrVkCaps& vkCaps() const { return *fVkCaps; }
 
     GrStagingBufferManager* stagingBufferManager() override { return &fStagingBufferManager; }
@@ -59,7 +61,7 @@ public:
 
     bool isDeviceLost() const override { return fDeviceIsLost; }
 
-    GrVkMemoryAllocator* memoryAllocator() const { return fMemoryAllocator.get(); }
+    skgpu::VulkanMemoryAllocator* memoryAllocator() const { return fMemoryAllocator.get(); }
 
     VkPhysicalDevice physicalDevice() const { return fPhysicalDevice; }
     VkDevice device() const { return fDevice; }
@@ -177,6 +179,8 @@ public:
     bool updateBuffer(sk_sp<GrVkBuffer> buffer, const void* src, VkDeviceSize offset,
                       VkDeviceSize size);
 
+    bool zeroBuffer(sk_sp<GrGpuBuffer>);
+
     enum PersistentCacheKeyType : uint32_t {
         kShader_PersistentCacheKeyType = 0,
         kPipelineCache_PersistentCacheKeyType = 1,
@@ -193,8 +197,8 @@ public:
     void endRenderPass(GrRenderTarget* target, GrSurfaceOrigin origin, const SkIRect& bounds);
 
     // Returns true if VkResult indicates success and also checks for device lost or OOM. Every
-    // Vulkan call (and GrVkMemoryAllocator call that returns VkResult) made on behalf of the
-    // GrVkGpu should be processed by this function so that we respond to OOMs and lost devices.
+    // Vulkan call (and skgpu::VulkanMemoryAllocator call that returns VkResult) made on behalf of
+    // the GrVkGpu should be processed by this function so that we respond to OOMs and lost devices.
     bool checkVkResult(VkResult);
 
 private:
@@ -203,9 +207,13 @@ private:
         kSkip_SyncQueue
     };
 
-    GrVkGpu(GrDirectContext*, const GrVkBackendContext&, const sk_sp<GrVkCaps> caps,
-            sk_sp<const GrVkInterface>, uint32_t instanceVersion, uint32_t physicalDeviceVersion,
-            sk_sp<GrVkMemoryAllocator>);
+    GrVkGpu(GrDirectContext*,
+            const GrVkBackendContext&,
+            const sk_sp<GrVkCaps> caps,
+            sk_sp<const skgpu::VulkanInterface>,
+            uint32_t instanceVersion,
+            uint32_t physicalDeviceVersion,
+            sk_sp<skgpu::VulkanMemoryAllocator>);
 
     void destroyResources();
 
@@ -213,7 +221,8 @@ private:
                                             const GrBackendFormat&,
                                             GrRenderable,
                                             GrMipmapped,
-                                            GrProtected) override;
+                                            GrProtected,
+                                            std::string_view label) override;
     GrBackendTexture onCreateCompressedBackendTexture(SkISize dimensions,
                                                       const GrBackendFormat&,
                                                       GrMipmapped,
@@ -383,8 +392,8 @@ private:
                                         GrVkImageInfo*,
                                         GrProtected);
 
-    sk_sp<const GrVkInterface>                            fInterface;
-    sk_sp<GrVkMemoryAllocator>                            fMemoryAllocator;
+    sk_sp<const skgpu::VulkanInterface>                   fInterface;
+    sk_sp<skgpu::VulkanMemoryAllocator>                   fMemoryAllocator;
     sk_sp<GrVkCaps>                                       fVkCaps;
     bool                                                  fDeviceIsLost = false;
 

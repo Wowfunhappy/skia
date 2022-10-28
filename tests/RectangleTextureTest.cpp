@@ -27,7 +27,7 @@ static void test_basic_draw_as_src(skiatest::Reporter* reporter, GrDirectContext
                                    GrSurfaceProxyView rectView, GrColorType colorType,
                                    SkAlphaType alphaType, uint32_t expectedPixelValues[]) {
     auto sfc = dContext->priv().makeSFC(
-            {colorType, kPremul_SkAlphaType, nullptr, rectView.dimensions()});
+            {colorType, kPremul_SkAlphaType, nullptr, rectView.dimensions()}, /*label=*/{});
     for (auto filter : {GrSamplerState::Filter::kNearest, GrSamplerState::Filter::kLinear}) {
         for (auto mm : {GrSamplerState::MipmapMode::kNone, GrSamplerState::MipmapMode::kLinear}) {
             sfc->clear(SkPMColor4f::FromBytes_RGBA(0xDDCCBBAA));
@@ -139,11 +139,8 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(RectangleTexture,
     for (auto origin : { kBottomLeft_GrSurfaceOrigin, kTopLeft_GrSurfaceOrigin }) {
 
         auto format = GrBackendFormat::MakeGL(GR_GL_RGBA8, GR_GL_TEXTURE_RECTANGLE);
-        GrBackendTexture rectangleTex = dContext->createBackendTexture(kWidth,
-                                                                       kHeight,
-                                                                       format,
-                                                                       GrMipmapped::kNo,
-                                                                       GrRenderable::kYes);
+        GrBackendTexture rectangleTex = dContext->createBackendTexture(
+                kWidth, kHeight, format, GrMipmapped::kNo, GrRenderable::kYes);
         if (!rectangleTex.isValid()) {
             continue;
         }

@@ -11,8 +11,6 @@
 
 #if SK_SUPPORT_GPU && defined(SK_VULKAN)
 
-#include "include/gpu/vk/GrVkVulkan.h"
-
 #include "include/core/SkBitmap.h"
 #include "include/core/SkDrawable.h"
 #include "include/core/SkSurface.h"
@@ -20,10 +18,10 @@
 #include "include/gpu/GrDirectContext.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/vk/GrVkGpu.h"
-#include "src/gpu/ganesh/vk/GrVkInterface.h"
 #include "src/gpu/ganesh/vk/GrVkMemory.h"
 #include "src/gpu/ganesh/vk/GrVkSecondaryCBDrawContext_impl.h"
 #include "src/gpu/ganesh/vk/GrVkUtil.h"
+#include "src/gpu/vk/VulkanInterface.h"
 #include "tests/Test.h"
 #include "tools/gpu/GrContextFactory.h"
 
@@ -33,7 +31,7 @@ static const int DEV_W = 16, DEV_H = 16;
 
 class TestDrawable : public SkDrawable {
 public:
-    TestDrawable(const GrVkInterface* interface, GrDirectContext* dContext,
+    TestDrawable(const skgpu::VulkanInterface* interface, GrDirectContext* dContext,
                  int32_t width, int32_t height)
             : INHERITED()
             , fInterface(interface)
@@ -45,7 +43,7 @@ public:
 
     class DrawHandlerBasic : public GpuDrawHandler {
     public:
-        DrawHandlerBasic(const GrVkInterface* interface, int32_t width, int32_t height)
+        DrawHandlerBasic(const skgpu::VulkanInterface* interface, int32_t width, int32_t height)
             : INHERITED()
             , fInterface(interface)
             , fWidth(width)
@@ -84,9 +82,9 @@ public:
             vkInfo.fDrawBounds->extent = { (uint32_t)fWidth / 2, (uint32_t)fHeight };
         }
     private:
-        const GrVkInterface* fInterface;
-        int32_t              fWidth;
-        int32_t              fHeight;
+        const skgpu::VulkanInterface* fInterface;
+        int32_t                       fWidth;
+        int32_t                       fHeight;
 
         using INHERITED = GpuDrawHandler;
     };
@@ -211,11 +209,11 @@ public:
     }
 
 private:
-    const GrVkInterface* fInterface;
-    GrDirectContext*     fDContext;
+    const skgpu::VulkanInterface*     fInterface;
+    GrDirectContext*                  fDContext;
     sk_sp<GrVkSecondaryCBDrawContext> fDrawContext;
-    int32_t              fWidth;
-    int32_t              fHeight;
+    int32_t                           fWidth;
+    int32_t                           fHeight;
 
     using INHERITED = SkDrawable;
 };

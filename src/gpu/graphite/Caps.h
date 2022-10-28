@@ -14,6 +14,7 @@
 #include "src/gpu/ResourceKey.h"
 #include "src/gpu/Swizzle.h"
 #include "src/gpu/graphite/ResourceTypes.h"
+#include "src/text/gpu/SDFTControl.h"
 
 class SkCapabilities;
 
@@ -30,9 +31,9 @@ class GraphiteResourceKey;
 struct RenderPassDesc;
 class TextureInfo;
 
-class Caps : public SkRefCnt {
+class Caps {
 public:
-    ~Caps() override;
+    virtual ~Caps();
 
     const SkSL::ShaderCaps* shaderCaps() const { return fShaderCaps.get(); }
 
@@ -43,7 +44,8 @@ public:
                                                      Protected,
                                                      Renderable) const = 0;
 
-    virtual TextureInfo getDefaultMSAATextureInfo(const TextureInfo& singleSampledInfo) const = 0;
+    virtual TextureInfo getDefaultMSAATextureInfo(const TextureInfo& singleSampledInfo,
+                                                  Discardable discardable) const = 0;
 
     virtual TextureInfo getDefaultDepthStencilTextureInfo(SkEnumBitMask<DepthStencilFlags>,
                                                           uint32_t sampleCount,
@@ -80,6 +82,13 @@ public:
 
     bool clampToBorderSupport() const { return fClampToBorderSupport; }
 
+    // Returns whether storage buffers are supported.
+    bool storageBufferSupport() const { return fStorageBufferSupport; }
+
+    // Returns whether storage buffers are preferred over uniform buffers, when both will yield
+    // correct results.
+    bool storageBufferPreferred() const { return fStorageBufferPreferred; }
+
     // Returns the skgpu::Swizzle to use when sampling or reading back from a texture with the
     // passed in SkColorType and TextureInfo.
     skgpu::Swizzle getReadSwizzle(SkColorType, const TextureInfo&) const;
@@ -97,6 +106,8 @@ public:
 
     bool allowMultipleGlyphCacheTextures() const { return fAllowMultipleGlyphCacheTextures; }
     bool supportBilerpFromGlyphAtlas() const { return fSupportBilerpFromGlyphAtlas; }
+
+    sktext::gpu::SDFTControl getSDFTControl(bool useSDFTForSmallText) const;
 
 protected:
     Caps();
@@ -131,6 +142,9 @@ protected:
     std::unique_ptr<SkSL::ShaderCaps> fShaderCaps;
 
     bool fClampToBorderSupport = true;
+
+    bool fStorageBufferSupport = false;
+    bool fStorageBufferPreferred = false;
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Client-provided Caps

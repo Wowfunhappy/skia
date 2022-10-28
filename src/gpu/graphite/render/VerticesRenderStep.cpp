@@ -8,76 +8,98 @@
 #include "src/gpu/graphite/render/VerticesRenderStep.h"
 
 #include "src/core/SkPipelineData.h"
+#include "src/core/SkSLTypeShared.h"
 #include "src/core/SkVertState.h"
 #include "src/core/SkVerticesPriv.h"
 #include "src/gpu/graphite/DrawParams.h"
+#include "src/gpu/graphite/DrawTypes.h"
 #include "src/gpu/graphite/DrawWriter.h"
-#include "src/gpu/graphite/render/StencilAndCoverDSS.h"
+#include "src/gpu/graphite/render/CommonDepthStencilSettings.h"
 
 namespace skgpu::graphite {
 
 namespace {
-static constexpr DepthStencilSettings kDirectShadingPass = {
-        /*frontStencil=*/{},
-        /*backStencil=*/ {},
-        /*refValue=*/    0,
-        /*stencilTest=*/ false,
-        /*depthCompare=*/CompareOp::kGreater,
-        /*depthTest=*/   true,
-        /*depthWrite=*/  true
-};
 
-static constexpr Attribute positionAttribute = {"position", VertexAttribType::kFloat2,
-                                                SkSLType::kFloat2};
-static constexpr Attribute ssboIndexAttribute = {"ssboIndex", VertexAttribType::kInt,
-                                                 SkSLType::kInt};
-static constexpr Attribute textureAttribute = {"texCoords", VertexAttribType::kFloat2,
-                                               SkSLType::kFloat2};
-// static constexpr Attribute colorAttribute = {"color", VertexAttribType::kFloat4,
-//                                              SkSLType::kFloat4};
+static constexpr Attribute kPositionAttr =
+        {"position", VertexAttribType::kFloat2, SkSLType::kFloat2};
+static constexpr Attribute kTexCoordAttr =
+        {"texCoords", VertexAttribType::kFloat2, SkSLType::kFloat2};
+static constexpr Attribute kColorAttr =
+        {"vertColor", VertexAttribType::kUByte4_norm, SkSLType::kHalf4};
+static constexpr Attribute kSsboIndexAttr =
+        {"ssboIndex", VertexAttribType::kInt, SkSLType::kInt};
 
-static constexpr std::initializer_list<Attribute> positionOnly = {positionAttribute,
-                                                                  ssboIndexAttribute};
-// static constexpr std::initializer_list<Attribute> withColor = {positionAttribute,
-//                                                                colorAttribute};
-static constexpr std::initializer_list<Attribute> withTexture = {positionAttribute,
-                                                                 textureAttribute,
-                                                                 ssboIndexAttribute};
-// static constexpr std::initializer_list<Attribute> withTextureAndColor = {positionAttribute,
-//                                                                          colorAttribute,
-//                                                                          textureAttribute};
+static constexpr Attribute kAttributePositionOnly[] =
+        {kPositionAttr, kSsboIndexAttr};
+static constexpr Attribute kAttributeColor[] =
+        {kPositionAttr, kColorAttr, kSsboIndexAttr};
+static constexpr Attribute kAttributeTexCoords[] =
+        {kPositionAttr, kTexCoordAttr, kSsboIndexAttr};
+static constexpr Attribute kAttributeColorAndTexCoords[] =
+        {kPositionAttr, kColorAttr, kTexCoordAttr, kSsboIndexAttr};
 
-// static constexpr std::initializer_list<Attribute> attributeArray [4] = { positionOnly, withColor,
-//                                                                          withTexture,
-//                                                                          withTextureAndColor };
+static constexpr SkSpan<const Attribute> kAttributes[4] = {
+        kAttributePositionOnly,
+        kAttributeColor,
+        kAttributeTexCoords,
+        kAttributeColorAndTexCoords,
+    };
+
+static constexpr Varying kVaryingColor[] =
+        {{"color", SkSLType::kHalf4}};
+
+static constexpr SkSpan<const Varying> kVaryings[2] = {
+        /*none*/  {},
+        /*color*/ kVaryingColor
+    };
+
+std::string variant_name(PrimitiveType type, bool hasColor, bool hasTexCoords) {
+    SkASSERT(type == PrimitiveType::kTriangles || type == PrimitiveType::kTriangleStrip);
+    std::string name = (type == PrimitiveType::kTriangles ? "tris" : "tristrips");
+    if (hasColor) {
+        name += "-color";
+    }
+    if (hasTexCoords) {
+        name += "-texCoords";
+    }
+    return name;
+}
+
 }  // namespace
 
-VerticesRenderStep::VerticesRenderStep(PrimitiveType type, std::string_view variantName,
-                                       bool hasColor, bool hasTexture)
+VerticesRenderStep::VerticesRenderStep(PrimitiveType type, bool hasColor, bool hasTexCoords)
         : RenderStep("VerticesRenderStep",
-                     variantName,
-                     Flags::kPerformsShading,
+                     variant_name(type, hasColor, hasTexCoords),
+                     hasColor ? Flags::kEmitsPrimitiveColor | Flags::kPerformsShading
+                              : Flags::kPerformsShading,
                      /*uniforms=*/{{"depth", SkSLType::kFloat}},
                      type,
-                     kDirectShadingPass,
-                     // TODO: Select attributes based upon whether the vertices has color and/or
-                     // texture information.
-                     /*vertexAttrs=*/hasTexture ? withTexture : positionOnly,
-                     /*instanceAttrs=*/{})
-                     , fHasColor(hasColor)
-                     , fHasTexture(hasTexture) {
-    // TODO: Remove the following line once fHasColor is used. Here for now to prevent a warning.
-    (void) fHasColor;
-}
+                     kDirectDepthGEqualPass,
+                     /*vertexAttrs=*/  kAttributes[2*hasTexCoords + hasColor],
+                     /*instanceAttrs=*/{},
+                     /*varyings=*/     kVaryings[hasColor])
+        , fHasColor(hasColor)
+        , fHasTexCoords(hasTexCoords) {}
 
 VerticesRenderStep::~VerticesRenderStep() {}
 
 const char* VerticesRenderStep::vertexSkSL() const {
-     // Add cases for color and color+texture.
-    if (fHasTexture) {
+    if (fHasColor && fHasTexCoords) {
+        return R"(
+            color = half4(vertColor.bgr * vertColor.a, vertColor.a);
+            float4 devPosition = float4(position, 1.0, 1.0);
+            stepLocalCoords = texCoords;
+        )";
+    } else if (fHasTexCoords) {
         return R"(
             float4 devPosition = float4(position, 1.0, 1.0);
             stepLocalCoords = texCoords;
+        )";
+    } else if (fHasColor) {
+        return R"(
+            color = half4(vertColor.bgr * vertColor.a, vertColor.a);
+            float4 devPosition = float4(position, 1.0, 1.0);
+            stepLocalCoords = position;
         )";
     } else {
         return R"(
@@ -91,9 +113,12 @@ void VerticesRenderStep::writeVertices(DrawWriter* writer,
                                        const DrawParams& params,
                                        int ssboIndex) const {
     // TODO: Instead of fHasColor and fHasTexture, use info() and assert.
-    // Add cases for color and color+texture.
-    if (fHasTexture) {
-        this->writeVerticesTexture(writer, params, ssboIndex);
+    if (fHasColor && fHasTexCoords) {
+        writeVerticesColorAndTexture(writer, params, ssboIndex);
+    } else if (fHasColor) {
+        writeVerticesColor(writer, params, ssboIndex);
+    } else if (fHasTexCoords) {
+        writeVerticesTexture(writer, params, ssboIndex);
     } else {
         SkVerticesPriv info(params.geometry().vertices()->priv());
         const int vertexCount = info.vertexCount();
@@ -125,6 +150,73 @@ void VerticesRenderStep::writeUniformsAndTextures(const DrawParams& params,
     // is needed. Store PaintDepth as a uniform to avoid copying the same depth for each vertex.
     SkDEBUGCODE(UniformExpectationsValidator uev(gatherer, this->uniforms());)
     gatherer->write(params.order().depthAsFloat());
+}
+
+const char* VerticesRenderStep::fragmentColorSkSL() const {
+    if (fHasColor) {
+        return "primitiveColor = color;\n";
+    } else {
+        return "";
+    }
+}
+
+void VerticesRenderStep::writeVerticesColorAndTexture(DrawWriter* writer, const DrawParams& params,
+                                                      int ssboIndex) const {
+    SkVerticesPriv info(params.geometry().vertices()->priv());
+    const int vertexCount = info.vertexCount();
+    const int indexCount = info.indexCount();
+    const SkPoint* positions = info.positions();
+    const uint16_t* indices = info.indices();
+    const SkColor* colors = info.colors();
+    const SkPoint* texCoords = info.texCoords();
+
+    DrawWriter::Vertices verts{*writer};
+
+    VertState state(vertexCount, indices, indexCount);
+    VertState::Proc vertProc = state.chooseProc(info.mode());
+
+    while (vertProc(&state)) {
+        SkV2 p[3] = {{positions[state.f0].x(), positions[state.f0].y()},
+                     {positions[state.f1].x(), positions[state.f1].y()},
+                     {positions[state.f2].x(), positions[state.f2].y()}};
+
+        SkV4 devPoints[3];
+        params.transform().mapPoints(p, devPoints, 3);
+
+        verts.append(3) << devPoints[0].x << devPoints[0].y << colors[state.f0]
+                        << texCoords[state.f0] << ssboIndex
+                        << devPoints[1].x << devPoints[1].y << colors[state.f1]
+                        << texCoords[state.f1] << ssboIndex
+                        << devPoints[2].x << devPoints[2].y << colors[state.f2]
+                        << texCoords[state.f2] << ssboIndex;
+    }
+}
+
+void VerticesRenderStep::writeVerticesColor(DrawWriter* writer, const DrawParams& params,
+                                            int ssboIndex) const {
+    SkVerticesPriv info(params.geometry().vertices()->priv());
+    const int vertexCount = info.vertexCount();
+    const int indexCount = info.indexCount();
+    const SkPoint* positions = info.positions();
+    const uint16_t* indices = info.indices();
+    const SkColor* colors = info.colors();
+
+    DrawWriter::Vertices verts{*writer};
+    VertState state(vertexCount, indices, indexCount);
+    VertState::Proc vertProc = state.chooseProc(info.mode());
+
+    while (vertProc(&state)) {
+        SkV2 p[3] = {{positions[state.f0].x(), positions[state.f0].y()},
+                     {positions[state.f1].x(), positions[state.f1].y()},
+                     {positions[state.f2].x(), positions[state.f2].y()}};
+
+        SkV4 devPoints[3];
+        params.transform().mapPoints(p, devPoints, 3);
+
+        verts.append(3) << devPoints[0].x << devPoints[0].y << colors[state.f0] << ssboIndex
+                        << devPoints[1].x << devPoints[1].y << colors[state.f1] << ssboIndex
+                        << devPoints[2].x << devPoints[2].y << colors[state.f2] << ssboIndex;
+    }
 }
 
 void VerticesRenderStep::writeVerticesTexture(DrawWriter* writer, const DrawParams& params,

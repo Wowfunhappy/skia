@@ -16,6 +16,7 @@
 #include "src/gpu/graphite/mtl/MtlComputePipeline.h"
 #include "src/gpu/graphite/mtl/MtlGraphicsPipeline.h"
 #include "src/gpu/graphite/mtl/MtlRenderCommandEncoder.h"
+#include "src/gpu/graphite/mtl/MtlResourceProvider.h"
 #include "src/gpu/graphite/mtl/MtlSampler.h"
 #include "src/gpu/graphite/mtl/MtlSharedContext.h"
 #include "src/gpu/graphite/mtl/MtlTexture.h"
@@ -24,7 +25,8 @@
 namespace skgpu::graphite {
 
 sk_sp<MtlCommandBuffer> MtlCommandBuffer::Make(id<MTLCommandQueue> queue,
-                                               const MtlSharedContext* sharedContext) {
+                                               const MtlSharedContext* sharedContext,
+                                               MtlResourceProvider* resourceProvider) {
     sk_cfp<id<MTLCommandBuffer>> cmdBuffer;
     if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, *)) {
         sk_cfp<MTLCommandBufferDescriptor*> desc([[MTLCommandBufferDescriptor alloc] init]);
@@ -46,12 +48,16 @@ sk_sp<MtlCommandBuffer> MtlCommandBuffer::Make(id<MTLCommandQueue> queue,
      (*cmdBuffer).label = @"MtlCommandBuffer::Make";
 #endif
 
-    return sk_sp<MtlCommandBuffer>(new MtlCommandBuffer(std::move(cmdBuffer), sharedContext));
+    return sk_sp<MtlCommandBuffer>(
+            new MtlCommandBuffer(std::move(cmdBuffer), sharedContext, resourceProvider));
 }
 
 MtlCommandBuffer::MtlCommandBuffer(sk_cfp<id<MTLCommandBuffer>> cmdBuffer,
-                                   const MtlSharedContext* sharedContext)
-    : fCommandBuffer(std::move(cmdBuffer)), fSharedContext(sharedContext) {}
+                                   const MtlSharedContext* sharedContext,
+                                   MtlResourceProvider* resourceProvider)
+        : fCommandBuffer(std::move(cmdBuffer))
+        , fSharedContext(sharedContext)
+        , fResourceProvider(resourceProvider) {}
 
 MtlCommandBuffer::~MtlCommandBuffer() {}
 
@@ -143,6 +149,7 @@ bool MtlCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
     sk_cfp<MTLRenderPassDescriptor*> descriptor([[MTLRenderPassDescriptor alloc] init]);
     // Set up color attachment.
     auto& colorInfo = renderPassDesc.fColorAttachment;
+    bool loadMSAAFromResolve = false;
     if (colorTexture) {
         // TODO: check Texture matches RenderPassDesc
         auto colorAttachment = (*descriptor).colorAttachments[0];
@@ -167,6 +174,11 @@ bool MtlCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
                 // TODO: Add error output
                 SkASSERT(false);
             }
+            // But it also means we have to load the resolve texture into the MSAA color attachment
+            loadMSAAFromResolve = renderPassDesc.fColorResolveAttachment.fLoadOp == LoadOp::kLoad;
+            // TODO: If the color resolve texture is read-only we can use a private (vs. memoryless)
+            // msaa attachment that's coupled to the framebuffer and the StoreAndMultisampleResolve
+            // action instead of loading as a draw.
         }
     }
 
@@ -200,8 +212,24 @@ bool MtlCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
     fActiveRenderCommandEncoder = MtlRenderCommandEncoder::Make(fSharedContext,
                                                                 fCommandBuffer.get(),
                                                                 descriptor.get());
-
     this->trackResource(fActiveRenderCommandEncoder);
+
+    if (loadMSAAFromResolve) {
+        // Manually load the contents of the resolve texture into the MSAA attachment as a draw,
+        // so the actual load op for the MSAA attachment had better have been discard.
+        SkASSERT(colorInfo.fLoadOp == LoadOp::kDiscard);
+        auto loadPipeline = fResourceProvider->findOrCreateLoadMSAAPipeline(renderPassDesc);
+        if (!loadPipeline) {
+            SKGPU_LOG_E("Unable to create pipeline to load resolve texture into MSAA attachment");
+            return false;
+        }
+        this->bindGraphicsPipeline(loadPipeline.get());
+        // The load msaa pipeline takes no uniforms, no vertex/instance attributes and only uses
+        // one texture that does not require a sampler.
+        fActiveRenderCommandEncoder->setFragmentTexture(
+                ((MtlTexture*) resolveTexture)->mtlTexture(), 0);
+        this->draw(PrimitiveType::kTriangleStrip, 0, 4);
+    }
 
     return true;
 }
@@ -338,9 +366,6 @@ void MtlCommandBuffer::bindGraphicsPipeline(const GraphicsPipeline* graphicsPipe
     fActiveRenderCommandEncoder->setDepthStencilState(depthStencilState);
     uint32_t stencilRefValue = mtlPipeline->stencilReferenceValue();
     fActiveRenderCommandEncoder->setStencilReferenceValue(stencilRefValue);
-
-    fCurrentVertexStride = mtlPipeline->vertexStride();
-    fCurrentInstanceStride = mtlPipeline->instanceStride();
 }
 
 void MtlCommandBuffer::bindUniformBuffer(const BindBufferInfo& info, UniformSlot slot) {
@@ -587,13 +612,6 @@ bool MtlCommandBuffer::onCopyTextureToBuffer(const Texture* texture,
     blitCmdEncoder->pushDebugGroup(@"readOrTransferPixels");
 #endif
     blitCmdEncoder->copyFromTexture(mtlTexture, srcRect, mtlBuffer, bufferOffset, bufferRowBytes);
-
-    if (fSharedContext->mtlCaps().isMac()) {
-#ifdef SK_BUILD_FOR_MAC
-        // Sync GPU data back to the CPU
-        blitCmdEncoder->synchronizeResource(mtlBuffer);
-#endif
-    }
 #ifdef SK_ENABLE_MTL_DEBUG_INFO
     blitCmdEncoder->popDebugGroup();
 #endif
@@ -637,5 +655,51 @@ bool MtlCommandBuffer::onCopyBufferToTexture(const Buffer* buffer,
     return true;
 }
 
+bool MtlCommandBuffer::onSynchronizeBufferToCpu(const Buffer* buffer, bool* outDidResultInWork) {
+#ifdef SK_BUILD_FOR_MAC
+    SkASSERT(!fActiveRenderCommandEncoder);
+    SkASSERT(!fActiveComputeCommandEncoder);
+
+    id<MTLBuffer> mtlBuffer = static_cast<const MtlBuffer*>(buffer)->mtlBuffer();
+    if ([mtlBuffer storageMode] != MTLStorageModeManaged) {
+        *outDidResultInWork = false;
+        return true;
+    }
+
+    MtlBlitCommandEncoder* blitCmdEncoder = this->getBlitCommandEncoder();
+    if (!blitCmdEncoder) {
+        return false;
+    }
+
+#ifdef SK_ENABLE_MTL_DEBUG_INFO
+    blitCmdEncoder->pushDebugGroup(@"synchronizeToCpu");
+#endif
+    blitCmdEncoder->synchronizeResource(mtlBuffer);
+#ifdef SK_ENABLE_MTL_DEBUG_INFO
+    blitCmdEncoder->popDebugGroup();
+#endif
+
+    *outDidResultInWork = true;
+    return true;
+#else   // SK_BUILD_FOR_MAC
+    // Explicit synchronization is never necessary on builds that are not macOS since we never use
+    // discrete GPUs with managed mode buffers outside of macOS.
+    *outDidResultInWork = false;
+    return true;
+#endif  // SK_BUILD_FOR_MAC
+}
+
+#ifdef SK_ENABLE_PIET_GPU
+void MtlCommandBuffer::onRenderPietScene(const skgpu::piet::Scene& scene, const Texture* target) {
+    SkASSERT(!fActiveRenderCommandEncoder);
+    SkASSERT(!fActiveComputeCommandEncoder);
+    this->endBlitCommandEncoder();
+
+    SkASSERT(fPietRenderer);
+
+    id<MTLTexture> mtlTexture = static_cast<const MtlTexture*>(target)->mtlTexture();
+    fPietRenderer->render(scene, mtlTexture, fCommandBuffer.get());
+}
+#endif
 
 } // namespace skgpu::graphite

@@ -135,4 +135,27 @@ bool CommandBuffer::copyBufferToTexture(const Buffer* buffer,
     return true;
 }
 
+bool CommandBuffer::synchronizeBufferToCpu(sk_sp<Buffer> buffer) {
+    SkASSERT(buffer);
+
+    bool didResultInWork = false;
+    if (!this->onSynchronizeBufferToCpu(buffer.get(), &didResultInWork)) {
+        return false;
+    }
+
+    if (didResultInWork) {
+        this->trackResource(std::move(buffer));
+        SkDEBUGCODE(fHasWork = true;)
+    }
+
+    return true;
+}
+
+#ifdef SK_ENABLE_PIET_GPU
+void CommandBuffer::renderPietScene(const skgpu::piet::Scene& scene, sk_sp<Texture> target) {
+    this->onRenderPietScene(scene, target.get());
+    this->trackResource(std::move(target));
+}
+#endif
+
 } // namespace skgpu::graphite

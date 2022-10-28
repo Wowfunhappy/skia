@@ -14,7 +14,6 @@
 #include "include/gpu/graphite/Context.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Recording.h"
-#include "include/gpu/graphite/SkStuff.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/RecorderPriv.h"
@@ -206,7 +205,7 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(GraphiteBudgetedResourcesTest, reporter, context)
     REPORTER_ASSERT(reporter, imageResourcePtr->budgeted() == SkBudgeted::kYes);
 
     // Now try an SkSurface. This is simpler since we can directly create Graphite SkSurface's.
-    sk_sp<SkSurface> surface = MakeGraphite(recorder.get(), info);
+    sk_sp<SkSurface> surface = SkSurface::MakeGraphite(recorder.get(), info);
     if (!surface) {
         ERRORF(reporter, "Failed to make surface");
         return;
@@ -228,6 +227,15 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(GraphiteBudgetedResourcesTest, reporter, context)
     REPORTER_ASSERT(reporter, resourceCache->getResourceCount() == 5);
     REPORTER_ASSERT(reporter, resourceCache->numFindableResources() == 4);
     REPORTER_ASSERT(reporter, surfaceResourcePtr->budgeted() == SkBudgeted::kNo);
+
+    // The creation of the surface may have added an initial clear to it. Thus if we just reset the
+    // surface it will flush the clean on the device and we don't be dropping all our refs to the
+    // surface. So we force all the work to happen first.
+    recording = recorder->snap();
+    insertInfo.fRecording = recording.get();
+    context->insertRecording(insertInfo);
+    context->submit(SyncToCpu::kYes);
+    recording.reset();
 
     surface.reset();
     resourceCache->forceProcessReturnedResources();

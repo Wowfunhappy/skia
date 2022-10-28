@@ -24,7 +24,6 @@
 
 #ifdef SK_VULKAN
 #include "include/gpu/vk/GrVkTypes.h"
-#include "include/gpu/vk/GrVkVulkan.h"
 #include "src/gpu/ganesh/vk/GrVkCommandPool.h"
 #include "src/gpu/ganesh/vk/GrVkGpu.h"
 #include "src/gpu/ganesh/vk/GrVkUtil.h"
@@ -271,7 +270,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(EmptySurfaceSemaphoreTest,
 #ifdef SK_VULKAN
     if (GrBackendApi::kVulkan == ctxInfo.backend()) {
         GrVkGpu* gpu = static_cast<GrVkGpu*>(ctx->priv().getGpu());
-        const GrVkInterface* interface = gpu->vkInterface();
+        const skgpu::VulkanInterface* interface = gpu->vkInterface();
         VkDevice device = gpu->device();
         VkQueue queue = gpu->queue();
         GrVkCommandPool* cmdPool = gpu->cmdPool();

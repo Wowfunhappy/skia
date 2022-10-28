@@ -8,12 +8,14 @@
 #include "src/gpu/graphite/Surface_Graphite.h"
 
 #include "include/core/SkCapabilities.h"
+#include "include/gpu/graphite/BackendTexture.h"
 #include "include/gpu/graphite/Recorder.h"
-#include "include/gpu/graphite/SkStuff.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/RecorderPriv.h"
+#include "src/gpu/graphite/ResourceProvider.h"
+#include "src/gpu/graphite/Texture.h"
 
 namespace skgpu::graphite {
 
@@ -31,18 +33,21 @@ Recorder* Surface::onGetRecorder() {
 SkCanvas* Surface::onNewCanvas() { return new SkCanvas(fDevice); }
 
 sk_sp<SkSurface> Surface::onNewSurface(const SkImageInfo& ii) {
-    return MakeGraphite(fDevice->recorder(), ii);
+    return SkSurface::MakeGraphite(fDevice->recorder(), ii, Mipmapped::kNo, &this->props());
 }
 
 sk_sp<SkImage> Surface::onNewImageSnapshot(const SkIRect* subset) {
     SkImageInfo ii = subset ? this->imageInfo().makeDimensions(subset->size())
                             : this->imageInfo();
 
-    // TODO: create a real proxy view
-    sk_sp<TextureProxy> proxy(new TextureProxy(ii.dimensions(), {}, SkBudgeted::kNo));
-    TextureProxyView tpv(std::move(proxy));
+    // TODO: we need to resolve Graphite's Surface/Image story then expand the handling
+    // in here.
+    TextureProxyView srcView = fDevice->readSurfaceView();
+    if (!srcView) {
+        return nullptr;
+    }
 
-    return sk_sp<Image>(new Image(tpv, ii.colorInfo()));
+    return sk_sp<Image>(new Image(std::move(srcView), ii.colorInfo()));
 }
 
 void Surface::onWritePixels(const SkPixmap& pixmap, int x, int y) {
@@ -72,4 +77,89 @@ GrSemaphoresSubmitted Surface::onFlush(BackendSurfaceAccess,
 }
 #endif
 
+sk_sp<SkSurface> Surface::MakeGraphite(Recorder* recorder,
+                                       const SkImageInfo& info,
+                                       SkBudgeted budgeted,
+                                       Mipmapped mipmapped,
+                                       const SkSurfaceProps* props) {
+
+    sk_sp<Device> device = Device::Make(recorder, info, budgeted, mipmapped,
+                                        SkSurfacePropsCopyOrDefault(props),
+                                        /* addInitialClear= */ true);
+    if (!device) {
+        return nullptr;
+    }
+
+    return sk_make_sp<Surface>(std::move(device));
+}
+
 } // namespace skgpu::graphite
+
+using namespace skgpu::graphite;
+
+namespace {
+
+bool validate_backend_texture(const Caps* caps,
+                              const BackendTexture& texture,
+                              SkColorType ct) {
+    if (!texture.isValid()) {
+        return false;
+    }
+
+    const TextureInfo& info = texture.info();
+    if (!caps->areColorTypeAndTextureInfoCompatible(ct, info)) {
+        return false;
+    }
+
+    if (!caps->isRenderable(info)) {
+        return false;
+    }
+    return true;
+}
+
+} // anonymous namespace
+
+sk_sp<SkSurface> SkSurface::MakeGraphite(Recorder* recorder,
+                                         const SkImageInfo& info,
+                                         Mipmapped mipmapped,
+                                         const SkSurfaceProps* props) {
+    // The client is getting the ref on this surface so it must be unbudgeted.
+    return skgpu::graphite::Surface::MakeGraphite(recorder,
+                                                  info,
+                                                  SkBudgeted::kNo,
+                                                  mipmapped,
+                                                  props);
+}
+
+sk_sp<SkSurface> SkSurface::MakeGraphiteFromBackendTexture(Recorder* recorder,
+                                                           const BackendTexture& beTexture,
+                                                           SkColorType colorType,
+                                                           sk_sp<SkColorSpace> colorSpace,
+                                                           const SkSurfaceProps* props) {
+
+    if (!recorder) {
+        return nullptr;
+    }
+
+    if (!validate_backend_texture(recorder->priv().caps(), beTexture, colorType)) {
+        return nullptr;
+    }
+
+    sk_sp<Texture> texture = recorder->priv().resourceProvider()->createWrappedTexture(beTexture);
+    if (!texture) {
+        return nullptr;
+    }
+
+    sk_sp<TextureProxy> proxy(new TextureProxy(std::move(texture)));
+
+    sk_sp<Device> device = Device::Make(recorder,
+                                        std::move(proxy),
+                                        { colorType, kPremul_SkAlphaType, std::move(colorSpace) },
+                                        SkSurfacePropsCopyOrDefault(props),
+                                        /* addInitialClear= */ false);
+    if (!device) {
+        return nullptr;
+    }
+
+    return sk_make_sp<Surface>(std::move(device));
+}

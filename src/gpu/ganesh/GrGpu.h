@@ -396,6 +396,9 @@ public:
                           const GrFlushInfo&,
                           const GrBackendSurfaceMutableState* newState);
 
+    // Called before render tasks are executed during a flush.
+    virtual void willExecute() {}
+
     bool submitToGpu(bool syncCpu);
 
     virtual void submit(GrOpsRenderPass*) = 0;
@@ -557,7 +560,8 @@ public:
                                           const GrBackendFormat&,
                                           GrRenderable,
                                           GrMipmapped,
-                                          GrProtected);
+                                          GrProtected,
+                                          std::string_view label);
 
     bool clearBackendTexture(const GrBackendTexture&,
                              sk_sp<skgpu::RefCntedCallback> finishedCallback,
@@ -692,7 +696,8 @@ private:
                                                     const GrBackendFormat&,
                                                     GrRenderable,
                                                     GrMipmapped,
-                                                    GrProtected) = 0;
+                                                    GrProtected,
+                                                    std::string_view label) = 0;
 
     virtual GrBackendTexture onCreateCompressedBackendTexture(
             SkISize dimensions, const GrBackendFormat&, GrMipmapped, GrProtected) = 0;

@@ -40,7 +40,6 @@
 #include <GLES/glext.h>
 
 #ifdef SK_VULKAN
-#include "include/gpu/vk/GrVkExtensions.h"
 #include "src/gpu/ganesh/vk/GrVkGpu.h"
 #endif
 
@@ -176,7 +175,9 @@ GrSurfaceProxyView GrAHardwareBufferImageGenerator::makeView(GrRecordingContext*
             },
             backendFormat, {width, height}, GrMipmapped::kNo, GrMipmapStatus::kNotAllocated,
             GrInternalSurfaceFlags::kReadOnly, SkBackingFit::kExact, SkBudgeted::kNo,
-            GrProtected(fIsProtectedContent), GrSurfaceProxy::UseAllocator::kYes);
+            GrProtected(fIsProtectedContent),
+            GrSurfaceProxy::UseAllocator::kYes,
+            "AHardwareBufferImageGenerator_MakeView");
 
     skgpu::Swizzle readSwizzle = context->priv().caps()->getReadSwizzle(backendFormat, grColorType);
 

@@ -52,6 +52,8 @@ public:
     SkSL::GLSLGeneration glslGeneration() const { return fGLContext->glslGeneration(); }
     const GrGLCaps& glCaps() const { return *fGLContext->caps(); }
 
+    GrStagingBufferManager* stagingBufferManager() override { return fStagingBufferManager.get(); }
+
     // Used by GrGLProgram to configure OpenGL state.
     void bindTexture(int unitIdx, GrSamplerState samplerState, const skgpu::Swizzle&, GrGLTexture*);
 
@@ -180,6 +182,8 @@ public:
     void resetShaderCacheForTesting() const override { fProgramCache->reset(); }
 #endif
 
+    void willExecute() override;
+
     void submit(GrOpsRenderPass* renderPass) override;
 
     GrFence SK_WARN_UNUSED_RESULT insertFence() override;
@@ -221,7 +225,8 @@ private:
                                             const GrBackendFormat&,
                                             GrRenderable,
                                             GrMipmapped,
-                                            GrProtected) override;
+                                            GrProtected,
+                                            std::string_view label) override;
 
     GrBackendTexture onCreateCompressedBackendTexture(SkISize dimensions,
                                                       const GrBackendFormat&,
@@ -299,7 +304,8 @@ private:
                            GrRenderable,
                            GrGLTextureParameters::SamplerOverriddenState*,
                            int mipLevelCount,
-                           GrProtected isProtected);
+                           GrProtected isProtected,
+                           std::string_view label);
 
     GrGLuint createCompressedTexture2D(SkISize dimensions,
                                        SkImage::CompressionType compression,
@@ -791,6 +797,9 @@ private:
     std::unique_ptr<SamplerObjectCache> fSamplerObjectCache;
 
     std::unique_ptr<GrGLOpsRenderPass> fCachedOpsRenderPass;
+
+    std::unique_ptr<GrStagingBufferManager> fStagingBufferManager;
+
     GrFinishCallbacks fFinishCallbacks;
 
     // If we've called a command that requires us to call glFlush than this will be set to true

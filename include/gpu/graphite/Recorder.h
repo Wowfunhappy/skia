@@ -16,10 +16,9 @@
 
 #include <vector>
 
-class SkRuntimeEffect;
+class SkRuntimeEffectDictionary;
 class SkTextureDataBlock;
 class SkUniformDataBlock;
-class SkUniformDataBlockPassThrough;  // TODO: remove
 
 namespace skgpu { class TokenTracker; }
 
@@ -46,9 +45,9 @@ class TaskGraph;
 class TextureInfo;
 class UploadBufferManager;
 
-template<typename StorageT, typename BaseT> class PipelineDataCache;
-using UniformDataCache = PipelineDataCache<SkUniformDataBlockPassThrough, SkUniformDataBlock>;
-using TextureDataCache = PipelineDataCache<std::unique_ptr<SkTextureDataBlock>, SkTextureDataBlock>;
+template<typename T> class PipelineDataCache;
+using UniformDataCache = PipelineDataCache<SkUniformDataBlock>;
+using TextureDataCache = PipelineDataCache<SkTextureDataBlock>;
 
 struct SK_API RecorderOptions final {
     RecorderOptions() = default;
@@ -69,9 +68,8 @@ public:
 
     std::unique_ptr<Recording> snap();
 
-    ImageProvider* clientImageProvider() const {
-        return fClientImageProvider.get();
-    }
+    ImageProvider* clientImageProvider() { return fClientImageProvider.get(); }
+    const ImageProvider* clientImageProvider() const { return fClientImageProvider.get(); }
 
     /**
      * Creates a new backend gpu texture matching the dimensions and TextureInfo. If an invalid
@@ -110,7 +108,7 @@ private:
     friend class Device; // For registering and deregistering Devices;
     friend class RecorderPriv; // for ctor and hidden methods
 
-    Recorder(sk_sp<SharedContext>, sk_sp<GlobalCache>, const RecorderOptions&);
+    Recorder(sk_sp<SharedContext>, const RecorderOptions&);
 
     SingleOwner* singleOwner() const { return &fSingleOwner; }
 
@@ -138,6 +136,7 @@ private:
 
     sk_sp<SharedContext> fSharedContext;
     std::unique_ptr<ResourceProvider> fResourceProvider;
+    std::unique_ptr<SkRuntimeEffectDictionary> fRuntimeEffectDict;
 
     std::unique_ptr<TaskGraph> fGraph;
     std::unique_ptr<UniformDataCache> fUniformDataCache;

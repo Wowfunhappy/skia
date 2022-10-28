@@ -148,21 +148,21 @@ std::unique_ptr<GrFragmentProcessor> SkSweepGradient::asFragmentProcessor(
     // using atan instead.
     int useAtanWorkaround =
             args.fContext->priv().caps()->shaderCaps()->fAtan2ImplementedAsAtanYOverX;
-    static const SkRuntimeEffect* effect = SkMakeRuntimeEffect(SkRuntimeEffect::MakeForShader, R"(
-        uniform half bias;
-        uniform half scale;
-        uniform int useAtanWorkaround;  // specialized
+    static const SkRuntimeEffect* effect = SkMakeRuntimeEffect(SkRuntimeEffect::MakeForShader,
+        "uniform half bias;"
+        "uniform half scale;"
+        "uniform int useAtanWorkaround;"  // specialized
 
-        half4 main(float2 coord) {
-            half angle = bool(useAtanWorkaround)
-                    ? half(2 * atan(-coord.y, length(coord) - coord.x))
-                    : half(atan(-coord.y, -coord.x));
+        "half4 main(float2 coord) {"
+            "half angle = bool(useAtanWorkaround)"
+                    "? half(2 * atan(-coord.y, length(coord) - coord.x))"
+                    ": half(atan(-coord.y, -coord.x));"
 
             // 0.1591549430918 is 1/(2*pi), used since atan returns values [-pi, pi]
-            half t = (angle * 0.1591549430918 + 0.5 + bias) * scale;
-            return half4(t, 1, 0, 0); // y = 1 for always valid
-        }
-    )");
+            "half t = (angle * 0.1591549430918 + 0.5 + bias) * scale;"
+            "return half4(t, 1, 0, 0);" // y = 1 for always valid
+        "}"
+    );
 
     // The sweep gradient never rejects a pixel so it doesn't change opacity
     auto fp = GrSkSLFP::Make(effect, "SweepLayout", /*inputFP=*/nullptr,
@@ -248,6 +248,38 @@ sk_sp<SkShader> SkGradientShader::MakeSweep(SkScalar cx, SkScalar cy,
                    t1 =   endAngle / 360;
 
     return sk_make_sp<SkSweepGradient>(SkPoint::Make(cx, cy), t0, t1, desc);
+}
+
+sk_sp<SkShader> SkGradientShader::MakeSweep(SkScalar cx, SkScalar cy,
+                                            const SkColor colors[],
+                                            const SkScalar pos[],
+                                            int colorCount,
+                                            SkTileMode mode,
+                                            SkScalar startAngle,
+                                            SkScalar endAngle,
+                                            uint32_t flags,
+                                            const SkMatrix* localMatrix) {
+    SkColorConverter converter(colors, colorCount);
+    return MakeSweep(cx, cy, converter.fColors4f.begin(), nullptr, pos, colorCount,
+                     mode, startAngle, endAngle, flags, localMatrix);
+}
+
+sk_sp<SkShader> SkGradientShader::MakeSweep(SkScalar cx, SkScalar cy,
+                                            const SkColor4f colors[],
+                                            sk_sp<SkColorSpace> colorSpace,
+                                            const SkScalar pos[], int count,
+                                            uint32_t flags,
+                                            const SkMatrix* localMatrix) {
+    return MakeSweep(cx, cy, colors, std::move(colorSpace), pos, count,
+                     SkTileMode::kClamp, 0, 360, flags, localMatrix);
+}
+
+sk_sp<SkShader> SkGradientShader::MakeSweep(SkScalar cx, SkScalar cy,
+                                            const SkColor4f colors[],
+                                            sk_sp<SkColorSpace> colorSpace,
+                                            const SkScalar pos[],
+                                            int count) {
+    return MakeSweep(cx, cy, colors, std::move(colorSpace), pos, count, 0, nullptr);
 }
 
 void SkRegisterSweepGradientShaderFlattenable() {

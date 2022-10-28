@@ -7,7 +7,6 @@
 
 #include "src/sksl/SkSLCompiler.h"
 
-#include "include/private/SkSLModifiers.h"
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkSLSymbol.h"
 #include "include/sksl/DSLCore.h"
@@ -16,10 +15,11 @@
 #include "src/core/SkTraceEvent.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLBuiltinMap.h"
-#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLContext.h"
-#include "src/sksl/SkSLDSLParser.h"
+#include "src/sksl/SkSLInliner.h"
+#include "src/sksl/SkSLModuleLoader.h"
 #include "src/sksl/SkSLOutputStream.h"
+#include "src/sksl/SkSLParser.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLRehydrator.h"
 #include "src/sksl/SkSLStringStream.h"
@@ -34,7 +34,6 @@
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
-#include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLTypeReference.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
@@ -70,34 +69,9 @@
 #define REHYDRATE 1
 #endif
 
-#if REHYDRATE
-
-// At runtime, we load the dehydrated sksl data files. The data is a (pointer, size) pair.
-#include "src/sksl/generated/sksl_shared.dehydrated.sksl"
-#include "src/sksl/generated/sksl_compute.dehydrated.sksl"
-#include "src/sksl/generated/sksl_frag.dehydrated.sksl"
-#include "src/sksl/generated/sksl_gpu.dehydrated.sksl"
-#include "src/sksl/generated/sksl_public.dehydrated.sksl"
-#include "src/sksl/generated/sksl_rt_shader.dehydrated.sksl"
-#include "src/sksl/generated/sksl_vert.dehydrated.sksl"
-#if defined(SK_GRAPHITE_ENABLED)
-#include "src/sksl/generated/sksl_graphite_frag.dehydrated.sksl"
-#include "src/sksl/generated/sksl_graphite_vert.dehydrated.sksl"
-#endif
-
-#define MODULE_DATA(name) MakeModuleData(SKSL_INCLUDE_sksl_##name,\
-                                         SKSL_INCLUDE_sksl_##name##_LENGTH)
-
-#else
-
-// In standalone mode, we load the textual sksl source files. GN generates or copies these files
-// to the skslc executable directory. The "data" in this mode is just the filename.
-#define MODULE_DATA(name) MakeModulePath("sksl_" #name ".sksl")
-
-#endif
-
 namespace SkSL {
 
+class ModifiersPool;
 class ProgramUsage;
 
 // These flags allow tools like Viewer or Nanobench to override the compiler's ProgramSettings.
@@ -137,6 +111,22 @@ public:
     ProgramConfig* fOldConfig;
 };
 
+class AutoShaderCaps {
+public:
+    AutoShaderCaps(std::shared_ptr<Context>& context, const ShaderCaps* caps)
+            : fContext(context.get())
+            , fOldCaps(fContext->fCaps) {
+        fContext->fCaps = caps;
+    }
+
+    ~AutoShaderCaps() {
+        fContext->fCaps = fOldCaps;
+    }
+
+    Context* fContext;
+    const ShaderCaps* fOldCaps;
+};
+
 class AutoModifiersPool {
 public:
     AutoModifiersPool(std::shared_ptr<Context>& context, ModifiersPool* modifiersPool)
@@ -152,260 +142,48 @@ public:
     Context* fContext;
 };
 
-Compiler::Compiler(const ShaderCaps* caps)
-        : fErrorReporter(this)
-        , fContext(std::make_shared<Context>(fErrorReporter, *caps, fMangler))
-        , fInliner(fContext.get()) {
+Compiler::Compiler(const ShaderCaps* caps) : fErrorReporter(this), fCaps(caps) {
     SkASSERT(caps);
-    fRootModule.fSymbols = this->makeRootSymbolTable();
+
+    auto moduleLoader = ModuleLoader::Get();
+    fContext = std::make_shared<Context>(moduleLoader.builtinTypes(), /*caps=*/nullptr,
+                                         fErrorReporter);
 }
 
 Compiler::~Compiler() {}
 
-#define TYPE(t) &BuiltinTypes::f ## t
-
-using BuiltinTypePtr = const std::unique_ptr<Type> BuiltinTypes::*;
-
-inline static constexpr BuiltinTypePtr kRootTypes[] = {
-    TYPE(Void),
-
-    TYPE( Float), TYPE( Float2), TYPE( Float3), TYPE( Float4),
-    TYPE(  Half), TYPE(  Half2), TYPE(  Half3), TYPE(  Half4),
-    TYPE(   Int), TYPE(   Int2), TYPE(   Int3), TYPE(   Int4),
-    TYPE(  UInt), TYPE(  UInt2), TYPE(  UInt3), TYPE(  UInt4),
-    TYPE( Short), TYPE( Short2), TYPE( Short3), TYPE( Short4),
-    TYPE(UShort), TYPE(UShort2), TYPE(UShort3), TYPE(UShort4),
-    TYPE(  Bool), TYPE(  Bool2), TYPE(  Bool3), TYPE(  Bool4),
-
-    TYPE(Float2x2), TYPE(Float2x3), TYPE(Float2x4),
-    TYPE(Float3x2), TYPE(Float3x3), TYPE(Float3x4),
-    TYPE(Float4x2), TYPE(Float4x3), TYPE(Float4x4),
-
-    TYPE(Half2x2),  TYPE(Half2x3),  TYPE(Half2x4),
-    TYPE(Half3x2),  TYPE(Half3x3),  TYPE(Half3x4),
-    TYPE(Half4x2),  TYPE(Half4x3),  TYPE(Half4x4),
-
-    TYPE(SquareMat), TYPE(SquareHMat),
-    TYPE(Mat),       TYPE(HMat),
-
-    // TODO(skia:12349): generic short/ushort
-    TYPE(GenType),   TYPE(GenIType), TYPE(GenUType),
-    TYPE(GenHType),   /* (GenSType)      (GenUSType) */
-    TYPE(GenBType),
-    TYPE(IntLiteral),
-    TYPE(FloatLiteral),
-
-    TYPE(Vec),     TYPE(IVec),     TYPE(UVec),
-    TYPE(HVec),    TYPE(SVec),     TYPE(USVec),
-    TYPE(BVec),
-
-    TYPE(ColorFilter),
-    TYPE(Shader),
-    TYPE(Blender),
-};
-
-inline static constexpr BuiltinTypePtr kPrivateTypes[] = {
-    TYPE(Sampler2D), TYPE(SamplerExternalOES), TYPE(Sampler2DRect),
-
-    TYPE(SubpassInput), TYPE(SubpassInputMS),
-
-    TYPE(Sampler),
-    TYPE(Texture2D),
-};
-
-#undef TYPE
-
-std::shared_ptr<SymbolTable> Compiler::makeRootSymbolTable() {
-    auto rootSymbolTable = std::make_shared<SymbolTable>(/*builtin=*/true);
-
-    for (BuiltinTypePtr rootType : kRootTypes) {
-        rootSymbolTable->addWithoutOwnership((fContext->fTypes.*rootType).get());
-    }
-
-    for (BuiltinTypePtr privateType : kPrivateTypes) {
-        rootSymbolTable->addWithoutOwnership((fContext->fTypes.*privateType).get());
-    }
-
-    // sk_Caps is "builtin", but all references to it are resolved to Settings, so we don't need to
-    // treat it as builtin (ie, no need to clone it into the Program).
-    rootSymbolTable->add(std::make_unique<Variable>(/*pos=*/Position(),
-                                                    /*modifiersPosition=*/Position(),
-                                                    fCoreModifiers.add(Modifiers{}),
-                                                    "sk_Caps",
-                                                    fContext->fTypes.fSkCaps.get(),
-                                                    /*builtin=*/false,
-                                                    Variable::Storage::kGlobal));
-    return rootSymbolTable;
-}
-
-const ParsedModule& Compiler::loadSharedModule() {
-    if (!fSharedModule.fSymbols) {
-        fSharedModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(shared),
-                                          fRootModule);
-    }
-    return fSharedModule;
-}
-
-const ParsedModule& Compiler::loadGPUModule() {
-    if (!fGPUModule.fSymbols) {
-        fGPUModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(gpu),
-                                       this->loadSharedModule());
-    }
-    return fGPUModule;
-}
-
-const ParsedModule& Compiler::loadFragmentModule() {
-    if (!fFragmentModule.fSymbols) {
-        fFragmentModule = this->parseModule(ProgramKind::kFragment, MODULE_DATA(frag),
-                                            this->loadGPUModule());
-    }
-    return fFragmentModule;
-}
-
-const ParsedModule& Compiler::loadVertexModule() {
-    if (!fVertexModule.fSymbols) {
-        fVertexModule = this->parseModule(ProgramKind::kVertex, MODULE_DATA(vert),
-                                          this->loadGPUModule());
-    }
-    return fVertexModule;
-}
-
-const ParsedModule& Compiler::loadComputeModule() {
-    if (!fComputeModule.fSymbols) {
-        fComputeModule = this->parseModule(ProgramKind::kCompute, MODULE_DATA(compute),
-                                           this->loadGPUModule());
-    }
-    return fComputeModule;
-}
-
-const ParsedModule& Compiler::loadGraphiteFragmentModule() {
-#if defined(SK_GRAPHITE_ENABLED)
-    if (!fGraphiteFragmentModule.fSymbols) {
-        fGraphiteFragmentModule = this->parseModule(ProgramKind::kGraphiteFragment,
-                                                    MODULE_DATA(graphite_frag),
-                                                    this->loadFragmentModule());
-    }
-    return fGraphiteFragmentModule;
-#else
-    return this->loadFragmentModule();
-#endif
-}
-
-const ParsedModule& Compiler::loadGraphiteVertexModule() {
-#if defined(SK_GRAPHITE_ENABLED)
-    if (!fGraphiteVertexModule.fSymbols) {
-        fGraphiteVertexModule = this->parseModule(ProgramKind::kGraphiteVertex,
-                                                  MODULE_DATA(graphite_vert),
-                                                  this->loadVertexModule());
-    }
-    return fGraphiteVertexModule;
-#else
-    return this->loadVertexModule();
-#endif
-}
-
-static void add_public_type_aliases(SkSL::SymbolTable* symbols, const SkSL::BuiltinTypes& types) {
-    // Add some aliases to the runtime effect modules so that it's friendlier, and more like GLSL.
-    symbols->addWithoutOwnership(types.fVec2.get());
-    symbols->addWithoutOwnership(types.fVec3.get());
-    symbols->addWithoutOwnership(types.fVec4.get());
-
-    symbols->addWithoutOwnership(types.fIVec2.get());
-    symbols->addWithoutOwnership(types.fIVec3.get());
-    symbols->addWithoutOwnership(types.fIVec4.get());
-
-    symbols->addWithoutOwnership(types.fBVec2.get());
-    symbols->addWithoutOwnership(types.fBVec3.get());
-    symbols->addWithoutOwnership(types.fBVec4.get());
-
-    symbols->addWithoutOwnership(types.fMat2.get());
-    symbols->addWithoutOwnership(types.fMat3.get());
-    symbols->addWithoutOwnership(types.fMat4.get());
-
-    symbols->addWithoutOwnership(types.fMat2x2.get());
-    symbols->addWithoutOwnership(types.fMat2x3.get());
-    symbols->addWithoutOwnership(types.fMat2x4.get());
-    symbols->addWithoutOwnership(types.fMat3x2.get());
-    symbols->addWithoutOwnership(types.fMat3x3.get());
-    symbols->addWithoutOwnership(types.fMat3x4.get());
-    symbols->addWithoutOwnership(types.fMat4x2.get());
-    symbols->addWithoutOwnership(types.fMat4x3.get());
-    symbols->addWithoutOwnership(types.fMat4x4.get());
-
-    // Hide all the private symbols by aliasing them all to "invalid". This will prevent code from
-    // using built-in names like `sampler2D` as variable names.
-    for (BuiltinTypePtr privateType : kPrivateTypes) {
-        symbols->add(Type::MakeAliasType((types.*privateType)->name(), *types.fInvalid));
-    }
-    symbols->add(Type::MakeAliasType("sk_Caps", *types.fInvalid));
-}
-
-std::shared_ptr<SymbolTable> Compiler::makeRootSymbolTableWithPublicTypes() {
-    auto result = std::make_shared<SymbolTable>(fRootModule.fSymbols, /*builtin=*/true);
-    add_public_type_aliases(result.get(), fContext->fTypes);
-    return result;
-}
-
-const ParsedModule& Compiler::loadPublicModule() {
-    if (!fPublicModule.fSymbols) {
-        fPublicModule = this->parseModule(ProgramKind::kGeneric, MODULE_DATA(public),
-                                          this->loadSharedModule());
-        add_public_type_aliases(fPublicModule.fSymbols.get(), fContext->fTypes);
-    }
-    return fPublicModule;
-}
-
-const ParsedModule& Compiler::loadPrivateRTShaderModule() {
-    if (!fRuntimeShaderModule.fSymbols) {
-        fRuntimeShaderModule = this->parseModule(
-                ProgramKind::kRuntimeShader, MODULE_DATA(rt_shader), this->loadPublicModule());
-    }
-    return fRuntimeShaderModule;
-}
-
 const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
+    auto m = ModuleLoader::Get();
     switch (kind) {
-        case ProgramKind::kVertex:               return this->loadVertexModule();           break;
-        case ProgramKind::kFragment:             return this->loadFragmentModule();         break;
-        case ProgramKind::kCompute:              return this->loadComputeModule();          break;
-        case ProgramKind::kGraphiteVertex:       return this->loadGraphiteVertexModule();   break;
-        case ProgramKind::kGraphiteFragment:     return this->loadGraphiteFragmentModule(); break;
-        case ProgramKind::kRuntimeColorFilter:   return this->loadPublicModule();           break;
-        case ProgramKind::kRuntimeShader:        return this->loadPublicModule();           break;
-        case ProgramKind::kRuntimeBlender:       return this->loadPublicModule();           break;
-        case ProgramKind::kPrivateRuntimeShader: return this->loadPrivateRTShaderModule();  break;
-        case ProgramKind::kMeshVertex:           return this->loadPublicModule();           break;
-        case ProgramKind::kMeshFragment:         return this->loadPublicModule();           break;
-        case ProgramKind::kGeneric:              return this->loadPublicModule();           break;
+        case ProgramKind::kVertex:               return m.loadVertexModule(this);           break;
+        case ProgramKind::kFragment:             return m.loadFragmentModule(this);         break;
+        case ProgramKind::kCompute:              return m.loadComputeModule(this);          break;
+        case ProgramKind::kGraphiteVertex:       return m.loadGraphiteVertexModule(this);   break;
+        case ProgramKind::kGraphiteFragment:     return m.loadGraphiteFragmentModule(this); break;
+        case ProgramKind::kRuntimeColorFilter:   return m.loadPublicModule(this);           break;
+        case ProgramKind::kRuntimeShader:        return m.loadPublicModule(this);           break;
+        case ProgramKind::kRuntimeBlender:       return m.loadPublicModule(this);           break;
+        case ProgramKind::kPrivateRuntimeShader: return m.loadPrivateRTShaderModule(this);  break;
+        case ProgramKind::kMeshVertex:           return m.loadPublicModule(this);           break;
+        case ProgramKind::kMeshFragment:         return m.loadPublicModule(this);           break;
+        case ProgramKind::kGeneric:              return m.loadPublicModule(this);           break;
     }
     SkUNREACHABLE;
 }
 
 LoadedModule Compiler::loadModule(ProgramKind kind,
                                   ModuleData data,
-                                  std::shared_ptr<SymbolTable> base,
-                                  bool dehydrate) {
-    if (dehydrate) {
-        // sksl-precompile passes `true` when dehydrating the lowest-level module to indicate that
-        // we should use the root module. Child modules that depend on the earlier module will pass
-        // `false` and pass the lower-level module's symbol table in `base`.
-        SkASSERT(base == nullptr);
-        base = fRootModule.fSymbols;
-    }
+                                  ModifiersPool& modifiersPool,
+                                  std::shared_ptr<SymbolTable> base) {
     SkASSERT(base);
-
-    // Put the core-module modifier pool into the context.
-    AutoModifiersPool autoPool(fContext, &fCoreModifiers);
-
-    // Built-in modules always use default program settings.
-    ProgramSettings settings;
-    settings.fReplaceSettings = !dehydrate;
+    // Modules are shared and cannot rely on shader caps.
+    AutoShaderCaps autoCaps(fContext, nullptr);
+    AutoModifiersPool autoPool(fContext, &modifiersPool);
 
 #if REHYDRATE
     ProgramConfig config;
     config.fIsBuiltinCode = true;
     config.fKind = kind;
-    config.fSettings = settings;
     AutoProgramConfig autoConfig(fContext, &config);
     SkASSERT(data.fData && (data.fSize != 0));
     Rehydrator rehydrator(*this, data.fData, data.fSize, std::move(base));
@@ -420,7 +198,9 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
         abort();
     }
     ParsedModule baseModule = {std::move(base), /*fElements=*/nullptr};
-    LoadedModule module = DSLParser(this, settings, kind, std::move(text))
+    // Built-in modules always use default program settings.
+    ProgramSettings settings;
+    LoadedModule module = Parser(this, settings, kind, std::move(text))
                                   .moduleInheritingFrom(baseModule);
     if (this->errorCount()) {
         printf("Unexpected errors: %s\n", this->fErrorText.c_str());
@@ -432,9 +212,12 @@ LoadedModule Compiler::loadModule(ProgramKind kind,
     return module;
 }
 
-ParsedModule Compiler::parseModule(ProgramKind kind, ModuleData data, const ParsedModule& base) {
-    LoadedModule module = this->loadModule(kind, data, base.fSymbols, /*dehydrate=*/false);
-    this->optimizeRehydratedModule(module, base);
+ParsedModule Compiler::parseModule(ProgramKind kind,
+                                   ModuleData data,
+                                   const ParsedModule& base,
+                                   ModifiersPool& modifiersPool) {
+    LoadedModule module = this->loadModule(kind, data, modifiersPool, base.fSymbols);
+    this->optimizeRehydratedModule(module, base, modifiersPool);
 
     // For modules that just declare (but don't define) intrinsic functions, there will be no new
     // program elements. In that case, we can share our parent's element map:
@@ -529,10 +312,12 @@ std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
         settings.fAllowNarrowingConversions = true;
     }
 
-    this->resetErrors();
-    fInliner.reset();
+    // Put the ShaderCaps into the context while compiling a program.
+    AutoShaderCaps autoCaps(fContext, fCaps);
 
-    return DSLParser(this, settings, kind, std::move(text)).program();
+    this->resetErrors();
+
+    return Parser(this, settings, kind, std::move(text)).program();
 }
 
 std::unique_ptr<Expression> Compiler::convertIdentifier(Position pos, std::string_view name) {
@@ -573,7 +358,9 @@ std::unique_ptr<Expression> Compiler::convertIdentifier(Position pos, std::strin
     }
 }
 
-bool Compiler::optimizeRehydratedModule(LoadedModule& module, const ParsedModule& base) {
+bool Compiler::optimizeRehydratedModule(LoadedModule& module,
+                                        const ParsedModule& base,
+                                        ModifiersPool& modifiersPool) {
     SkASSERT(!this->errorCount());
 
     // Create a temporary program configuration with default settings.
@@ -581,14 +368,14 @@ bool Compiler::optimizeRehydratedModule(LoadedModule& module, const ParsedModule
     config.fIsBuiltinCode = true;
     config.fKind = module.fKind;
     AutoProgramConfig autoConfig(fContext, &config);
-    AutoModifiersPool autoPool(fContext, &fCoreModifiers);
+    AutoModifiersPool autoPool(fContext, &modifiersPool);
 
     std::unique_ptr<ProgramUsage> usage = Analysis::GetUsage(module, base);
 
     // Perform inline-candidate analysis and inline any functions deemed suitable.
-    fInliner.reset();
+    Inliner inliner(fContext.get());
     while (this->errorCount() == 0) {
-        if (!this->runInliner(module.fElements, module.fSymbols, usage.get())) {
+        if (!this->runInliner(&inliner, module.fElements, module.fSymbols, usage.get())) {
             break;
         }
     }
@@ -620,7 +407,6 @@ bool Compiler::optimizeModuleForDehydration(LoadedModule& module, const ParsedMo
     // functions here, since those can be referenced by the finished program even if they're
     // unreferenced now. We also don't run the inliner to avoid growing the program; that is done in
     // `optimizeRehydratedModule` above.
-
     return this->errorCount() == 0;
 }
 
@@ -630,14 +416,16 @@ bool Compiler::optimize(Program& program) {
         return true;
     }
 
+    AutoShaderCaps autoCaps(fContext, fCaps);
+
     SkASSERT(!this->errorCount());
     ProgramUsage* usage = program.fUsage.get();
 
     if (this->errorCount() == 0) {
         // Run the inliner only once; it is expensive! Multiple passes can occasionally shake out
         // more wins, but it's diminishing returns.
-        fInliner.reset();
-        this->runInliner(program.fOwnedElements, program.fSymbols, usage);
+        Inliner inliner(fContext.get());
+        this->runInliner(&inliner, program.fOwnedElements, program.fSymbols, usage);
 
         // Unreachable code can confuse some drivers, so it's worth removing. (skia:12012)
         Transform::EliminateUnreachableCode(program);
@@ -655,7 +443,8 @@ bool Compiler::optimize(Program& program) {
     return this->errorCount() == 0;
 }
 
-bool Compiler::runInliner(const std::vector<std::unique_ptr<ProgramElement>>& elements,
+bool Compiler::runInliner(Inliner* inliner,
+                          const std::vector<std::unique_ptr<ProgramElement>>& elements,
                           std::shared_ptr<SymbolTable> symbols,
                           ProgramUsage* usage) {
     // The program's SymbolTable was taken out of fSymbolTable when the program was bundled, but
@@ -669,13 +458,15 @@ bool Compiler::runInliner(const std::vector<std::unique_ptr<ProgramElement>>& el
     SkASSERT(!fSymbolTable);
     fSymbolTable = symbols;
 
-    bool result = fInliner.analyze(elements, symbols, usage);
+    bool result = inliner->analyze(elements, symbols, usage);
 
     fSymbolTable = nullptr;
     return result;
 }
 
 bool Compiler::finalize(Program& program) {
+    AutoShaderCaps autoCaps(fContext, fCaps);
+
     // Copy all referenced built-in functions into the Program.
     Transform::FindAndDeclareBuiltinFunctions(program);
 
@@ -740,8 +531,9 @@ static bool validate_spirv(ErrorReporter& reporter, std::string_view program) {
 bool Compiler::toSPIRV(Program& program, OutputStream& out) {
     TRACE_EVENT0("skia.shaders", "SkSL::Compiler::toSPIRV");
     AutoSource as(this, *program.fSource);
+    AutoShaderCaps autoCaps(fContext, fCaps);
     ProgramSettings settings;
-    settings.fDSLUseMemoryPool = false;
+    settings.fUseMemoryPool = false;
     dsl::Start(this, program.fConfig->fKind, settings);
     dsl::SetErrorReporter(&fErrorReporter);
     fSymbolTable = program.fSymbols;
@@ -775,6 +567,7 @@ bool Compiler::toSPIRV(Program& program, std::string* out) {
 bool Compiler::toGLSL(Program& program, OutputStream& out) {
     TRACE_EVENT0("skia.shaders", "SkSL::Compiler::toGLSL");
     AutoSource as(this, *program.fSource);
+    AutoShaderCaps autoCaps(fContext, fCaps);
     GLSLCodeGenerator cg(fContext.get(), &program, &out);
     bool result = cg.generateCode();
     return result;
@@ -816,6 +609,7 @@ bool Compiler::toHLSL(Program& program, std::string* out) {
 bool Compiler::toMetal(Program& program, OutputStream& out) {
     TRACE_EVENT0("skia.shaders", "SkSL::Compiler::toMetal");
     AutoSource as(this, *program.fSource);
+    AutoShaderCaps autoCaps(fContext, fCaps);
     MetalCodeGenerator cg(fContext.get(), &program, &out);
     bool result = cg.generateCode();
     return result;

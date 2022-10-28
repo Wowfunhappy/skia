@@ -563,8 +563,107 @@ DEF_TEST(SkRasterPipeline_lowp_clamp01, r) {
     SkRasterPipeline_<256> p;
     p.append(SkRasterPipeline::load_8888,  &ptr);
     p.append(SkRasterPipeline::swap_rb);
-    p.append(SkRasterPipeline::clamp_0);
-    p.append(SkRasterPipeline::clamp_1);
+    p.append(SkRasterPipeline::clamp_01);
     p.append(SkRasterPipeline::store_8888, &ptr);
     p.run(0,0,1,1);
+}
+
+// Helper struct that can be used to scrape stack addresses at different points in a pipeline
+class StackCheckerCtx : SkRasterPipeline_CallbackCtx {
+public:
+    StackCheckerCtx() {
+        this->fn = [](SkRasterPipeline_CallbackCtx* self, int active_pixels) {
+            auto ctx = (StackCheckerCtx*)self;
+            ctx->fStackAddrs.push_back(&active_pixels);
+        };
+    }
+
+    enum class Behavior {
+        kGrowth,
+        kBaseline,
+        kUnknown,
+    };
+
+    static Behavior GrowthBehavior() {
+        // Without the musttail attribute, we have no way of knowing what's going to happen.
+        // In release builds, it's likely that the compiler will apply tail call optimization.
+        // Even in some debug builds (on Windows), we don't see stack growth.
+        return Behavior::kUnknown;
+    }
+
+    // Call one of these two each time the checker callback is added:
+    StackCheckerCtx* expectGrowth() {
+        fExpectedBehavior.push_back(GrowthBehavior());
+        return this;
+    }
+
+    StackCheckerCtx* expectBaseline() {
+        fExpectedBehavior.push_back(Behavior::kBaseline);
+        return this;
+    }
+
+    void validate(skiatest::Reporter* r) {
+        REPORTER_ASSERT(r, fStackAddrs.size() == fExpectedBehavior.size());
+
+        void* baseline = fStackAddrs[0];
+        for (size_t i = 1; i < fStackAddrs.size(); i++) {
+            if (fExpectedBehavior[i] == Behavior::kGrowth) {
+                REPORTER_ASSERT(r, fStackAddrs[i] != baseline);
+            } else if (fExpectedBehavior[i] == Behavior::kBaseline) {
+                REPORTER_ASSERT(r, fStackAddrs[i] == baseline);
+            } else {
+                // Unknown behavior, nothing we can assert here
+            }
+        }
+    }
+
+private:
+    std::vector<void*>    fStackAddrs;
+    std::vector<Behavior> fExpectedBehavior;
+};
+
+DEF_TEST(SkRasterPipeline_stack_rewind, r) {
+    // This test verifies that we can control stack usage with stack_rewind
+
+    // Without stack_rewind, we should (maybe) see stack growth
+    {
+        StackCheckerCtx stack;
+        uint32_t rgba = 0xff0000ff;
+        SkRasterPipeline_MemoryCtx ptr = { &rgba, 0 };
+
+        SkRasterPipeline_<256> p;
+        p.append(SkRasterPipeline::callback, stack.expectBaseline());
+        p.append(SkRasterPipeline::load_8888,  &ptr);
+        p.append(SkRasterPipeline::callback, stack.expectGrowth());
+        p.append(SkRasterPipeline::swap_rb);
+        p.append(SkRasterPipeline::callback, stack.expectGrowth());
+        p.append(SkRasterPipeline::store_8888, &ptr);
+        p.run(0,0,1,1);
+
+        REPORTER_ASSERT(r, rgba == 0xffff0000); // Ensure the pipeline worked
+        stack.validate(r);
+    }
+
+    // With stack_rewind, we should (always) be able to get back to baseline
+    {
+        StackCheckerCtx stack;
+        uint32_t rgba = 0xff0000ff;
+        SkRasterPipeline_MemoryCtx ptr = { &rgba, 0 };
+
+        SkRasterPipeline_<256> p;
+        p.append(SkRasterPipeline::callback, stack.expectBaseline());
+        p.append(SkRasterPipeline::load_8888,  &ptr);
+        p.append(SkRasterPipeline::callback, stack.expectGrowth());
+        p.append_stack_rewind();
+        p.append(SkRasterPipeline::callback, stack.expectBaseline());
+        p.append(SkRasterPipeline::swap_rb);
+        p.append(SkRasterPipeline::callback, stack.expectGrowth());
+        p.append_stack_rewind();
+        p.append(SkRasterPipeline::callback, stack.expectBaseline());
+        p.append(SkRasterPipeline::store_8888, &ptr);
+        p.run(0,0,1,1);
+
+        REPORTER_ASSERT(r, rgba == 0xffff0000); // Ensure the pipeline worked
+        stack.validate(r);
+    }
 }

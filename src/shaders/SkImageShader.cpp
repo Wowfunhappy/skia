@@ -633,10 +633,9 @@ bool SkImageShader::doStages(const SkStageRec& rec, TransformShader* updater) co
 
         // Bicubic filtering naturally produces out of range values on both sides of [0,1].
         if (sampling.useCubic) {
-            p->append(SkRasterPipeline::clamp_0);
             p->append(at == kUnpremul_SkAlphaType || fClampAsIfUnpremul
-                          ? SkRasterPipeline::clamp_1
-                          : SkRasterPipeline::clamp_a);
+                          ? SkRasterPipeline::clamp_01
+                          : SkRasterPipeline::clamp_gamut);
         }
 
         // Transform color space and alpha type to match shader convention (dst CS, premul alpha).
@@ -661,22 +660,6 @@ bool SkImageShader::doStages(const SkStageRec& rec, TransformShader* updater) co
         return append_misc();
     }
     if (true
-        && (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType) // TODO: all formats
-        && !sampling.useCubic && sampling.filter == SkFilterMode::kLinear
-        && fTileModeX != SkTileMode::kDecal // TODO decal too?
-        && fTileModeY != SkTileMode::kDecal) {
-
-        auto ctx = alloc->make<SkRasterPipeline_SamplerCtx2>();
-        *(SkRasterPipeline_GatherCtx*)(ctx) = *gather;
-        ctx->ct = ct;
-        ctx->tileX = fTileModeX;
-        ctx->tileY = fTileModeY;
-        ctx->invWidth  = 1.0f / ctx->width;
-        ctx->invHeight = 1.0f / ctx->height;
-        p->append(SkRasterPipeline::bilinear, ctx);
-        return append_misc();
-    }
-    if (true
         && (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType)
         && sampling.useCubic
         && fTileModeX == SkTileMode::kClamp && fTileModeY == SkTileMode::kClamp) {
@@ -685,22 +668,6 @@ bool SkImageShader::doStages(const SkStageRec& rec, TransformShader* updater) co
         if (ct == kBGRA_8888_SkColorType) {
             p->append(SkRasterPipeline::swap_rb);
         }
-        return append_misc();
-    }
-    if (true
-        && (ct == kRGBA_8888_SkColorType || ct == kBGRA_8888_SkColorType) // TODO: all formats
-        && sampling.useCubic
-        && fTileModeX != SkTileMode::kDecal // TODO decal too?
-        && fTileModeY != SkTileMode::kDecal) {
-
-        auto ctx = alloc->make<SkRasterPipeline_SamplerCtx2>();
-        *(SkRasterPipeline_GatherCtx*)(ctx) = *gather;
-        ctx->ct = ct;
-        ctx->tileX = fTileModeX;
-        ctx->tileY = fTileModeY;
-        ctx->invWidth  = 1.0f / ctx->width;
-        ctx->invHeight = 1.0f / ctx->height;
-        p->append(SkRasterPipeline::bicubic, ctx);
         return append_misc();
     }
 
@@ -718,6 +685,7 @@ bool SkImageShader::doStages(const SkStageRec& rec, TransformShader* updater) co
         CubicResamplerMatrix(sampling.cubic.B, sampling.cubic.C).getColMajor(sampler->weights);
 
         p->append(SkRasterPipeline::save_xy, sampler);
+        p->append(SkRasterPipeline::bicubic_setup, sampler);
 
         sample(SkRasterPipeline::bicubic_n3x, SkRasterPipeline::bicubic_n3y);
         sample(SkRasterPipeline::bicubic_n1x, SkRasterPipeline::bicubic_n3y);

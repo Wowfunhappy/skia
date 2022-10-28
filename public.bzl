@@ -155,7 +155,6 @@ SKIA_PUBLIC_HDRS = [
     "include/gpu/graphite/mtl/MtlTypes.h",
     "include/gpu/graphite/Recorder.h",
     "include/gpu/graphite/Recording.h",
-    "include/gpu/graphite/SkStuff.h",
     "include/gpu/graphite/TextureInfo.h",
     "include/gpu/GrBackendDrawableInfo.h",
     "include/gpu/GrBackendSemaphore.h",
@@ -179,7 +178,9 @@ SKIA_PUBLIC_HDRS = [
     "include/gpu/vk/GrVkExtensions.h",
     "include/gpu/vk/GrVkMemoryAllocator.h",
     "include/gpu/vk/GrVkTypes.h",
-    "include/gpu/vk/GrVkVulkan.h",
+    "include/gpu/vk/VulkanExtensions.h",
+    "include/gpu/vk/VulkanMemoryAllocator.h",
+    "include/gpu/vk/VulkanTypes.h",
     "include/pathops/SkPathOps.h",
     "include/ports/SkCFObject.h",
     "include/ports/SkFontConfigInterface.h",
@@ -231,6 +232,7 @@ SKIA_PUBLIC_HDRS = [
     "include/utils/SkShadowUtils.h",
     "include/utils/SkTextUtils.h",
     "include/utils/SkTraceEventPhase.h",
+    "include/utils/mac/SkCGUtils.h",
 ]
 
 ################################################################################
@@ -317,9 +319,6 @@ BASE_SRCS_ALL = [
     "src/core/SkBitmapCache.h",
     "src/core/SkBitmapDevice.cpp",
     "src/core/SkBitmapDevice.h",
-    "src/core/SkBitmapProcState.cpp",
-    "src/core/SkBitmapProcState.h",
-    "src/core/SkBitmapProcState_matrixProcs.cpp",
     "src/core/SkBlendMode.cpp",
     "src/core/SkBlendModeBlender.cpp",
     "src/core/SkBlendModeBlender.h",
@@ -332,7 +331,6 @@ BASE_SRCS_ALL = [
     "src/core/SkBlitter.h",
     "src/core/SkBlitter_A8.cpp",
     "src/core/SkBlitter_ARGB32.cpp",
-    "src/core/SkBlitter_RGB565.cpp",
     "src/core/SkBlitter_Sprite.cpp",
     "src/core/SkBlockAllocator.cpp",
     "src/core/SkBlockAllocator.h",
@@ -483,8 +481,6 @@ BASE_SRCS_ALL = [
     "src/core/SkMath.cpp",
     "src/core/SkMathPriv.h",
     "src/core/SkMatrix.cpp",
-    "src/core/SkMatrixImageFilter.cpp",
-    "src/core/SkMatrixImageFilter.h",
     "src/core/SkMatrixInvert.cpp",
     "src/core/SkMatrixInvert.h",
     "src/core/SkMatrixPriv.h",
@@ -613,7 +609,6 @@ BASE_SRCS_ALL = [
     "src/core/SkSpinlock.cpp",
     "src/core/SkSpriteBlitter.h",
     "src/core/SkSpriteBlitter_ARGB32.cpp",
-    "src/core/SkSpriteBlitter_RGB565.cpp",
     "src/core/SkStream.cpp",
     "src/core/SkStreamPriv.h",
     "src/core/SkStrikeCache.cpp",
@@ -726,6 +721,7 @@ BASE_SRCS_ALL = [
     "src/effects/imagefilters/SkLightingImageFilter.cpp",
     "src/effects/imagefilters/SkMagnifierImageFilter.cpp",
     "src/effects/imagefilters/SkMatrixConvolutionImageFilter.cpp",
+    "src/effects/imagefilters/SkMatrixTransformImageFilter.cpp",
     "src/effects/imagefilters/SkMergeImageFilter.cpp",
     "src/effects/imagefilters/SkMorphologyImageFilter.cpp",
     "src/effects/imagefilters/SkOffsetImageFilter.cpp",
@@ -753,6 +749,7 @@ BASE_SRCS_ALL = [
     "src/gpu/ResourceKey.cpp",
     "src/gpu/ResourceKey.h",
     "src/gpu/ShaderErrorHandler.cpp",
+    "src/gpu/SkRenderEngineAbortf.h",
     "src/gpu/Swizzle.cpp",
     "src/gpu/Swizzle.h",
     # We include the ganesh files, but leave out any specific backend (e.g. GL, Vulkan)
@@ -782,6 +779,8 @@ BASE_SRCS_ALL = [
     "src/gpu/ganesh/GrBufferAllocPool.h",
     "src/gpu/ganesh/GrBufferTransferRenderTask.cpp",
     "src/gpu/ganesh/GrBufferTransferRenderTask.h",
+    "src/gpu/ganesh/GrBufferUpdateRenderTask.cpp",
+    "src/gpu/ganesh/GrBufferUpdateRenderTask.h",
     "src/gpu/ganesh/GrCaps.cpp",
     "src/gpu/ganesh/GrCaps.h",
     "src/gpu/ganesh/GrClientMappedBufferManager.cpp",
@@ -1355,8 +1354,6 @@ BASE_SRCS_ALL = [
     "src/sfnt/SkPanose.h",
     "src/sfnt/SkSFNTHeader.h",
     "src/sfnt/SkTTCFHeader.h",
-    "src/shaders/SkBitmapProcShader.cpp",
-    "src/shaders/SkBitmapProcShader.h",
     "src/shaders/SkColorFilterShader.cpp",
     "src/shaders/SkColorFilterShader.h",
     "src/shaders/SkColorShader.cpp",
@@ -1399,8 +1396,6 @@ BASE_SRCS_ALL = [
     "src/sksl/SkSLConstantFolder.h",
     "src/sksl/SkSLContext.cpp",
     "src/sksl/SkSLContext.h",
-    "src/sksl/SkSLDSLParser.cpp",
-    "src/sksl/SkSLDSLParser.h",
     "src/sksl/SkSLDehydrator.cpp",
     "src/sksl/SkSLDehydrator.h",
     "src/sksl/SkSLErrorReporter.cpp",
@@ -1408,6 +1403,7 @@ BASE_SRCS_ALL = [
     "src/sksl/SkSLGLSL.h",
     "src/sksl/SkSLInliner.cpp",
     "src/sksl/SkSLInliner.h",
+    "src/sksl/SkSLIntrinsicList.cpp",
     "src/sksl/SkSLIntrinsicList.h",
     "src/sksl/SkSLLexer.cpp",
     "src/sksl/SkSLLexer.h",
@@ -1416,10 +1412,14 @@ BASE_SRCS_ALL = [
     "src/sksl/SkSLMemoryLayout.h",
     "src/sksl/SkSLMemoryPool.h",
     "src/sksl/SkSLModifiersPool.h",
+    "src/sksl/SkSLModuleLoader.cpp",
+    "src/sksl/SkSLModuleLoader.h",
     "src/sksl/SkSLOperator.cpp",
     "src/sksl/SkSLOutputStream.cpp",
     "src/sksl/SkSLOutputStream.h",
     "src/sksl/SkSLParsedModule.h",
+    "src/sksl/SkSLParser.cpp",
+    "src/sksl/SkSLParser.h",
     "src/sksl/SkSLPool.cpp",
     "src/sksl/SkSLPool.h",
     "src/sksl/SkSLPosition.cpp",
@@ -1427,8 +1427,6 @@ BASE_SRCS_ALL = [
     "src/sksl/SkSLRehydrator.cpp",
     "src/sksl/SkSLRehydrator.h",
     "src/sksl/SkSLSampleUsage.cpp",
-    "src/sksl/SkSLSharedCompiler.cpp",
-    "src/sksl/SkSLSharedCompiler.h",
     "src/sksl/SkSLString.cpp",
     "src/sksl/SkSLStringStream.h",
     "src/sksl/SkSLThreadContext.cpp",
@@ -1438,8 +1436,8 @@ BASE_SRCS_ALL = [
     "src/sksl/analysis/SkSLCanExitWithoutReturningValue.cpp",
     "src/sksl/analysis/SkSLCheckProgramStructure.cpp",
     "src/sksl/analysis/SkSLFinalizationChecks.cpp",
-    "src/sksl/analysis/SkSLGetComputeShaderMainParams.cpp",
     "src/sksl/analysis/SkSLGetLoopUnrollInfo.cpp",
+    "src/sksl/analysis/SkSLHasSideEffects.cpp",
     "src/sksl/analysis/SkSLIsConstantExpression.cpp",
     "src/sksl/analysis/SkSLIsSameExpressionTree.cpp",
     "src/sksl/analysis/SkSLIsTrivialExpression.cpp",
@@ -1658,8 +1656,6 @@ BASE_SRCS_ALL = [
     "src/utils/SkShadowUtils.cpp",
     "src/utils/SkTestCanvas.h",
     "src/utils/SkTextUtils.cpp",
-    "src/utils/SkThreadUtils_pthread.cpp",
-    "src/utils/SkThreadUtils_win.cpp",
     "src/utils/SkUTF.cpp",
     "src/utils/SkUTF.h",
     "src/utils/SkVMVisualizer.cpp",
@@ -1754,7 +1750,6 @@ PORTS_SRCS_UNIX = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 GL_SRCS_ANDROID = base_gl_srcs + [
@@ -1783,7 +1778,6 @@ PORTS_SRCS_ANDROID = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 PORTS_SRCS_ANDROID_NO_FONT = [
@@ -1797,7 +1791,6 @@ PORTS_SRCS_ANDROID_NO_FONT = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 GL_SRCS_IOS = base_gl_srcs + [
@@ -1822,7 +1815,6 @@ PORTS_SRCS_IOS = [
     "src/ports/SkOSLibrary_posix.cpp",
     "src/ports/SkScalerContext_mac_ct.cpp",
     "src/ports/SkScalerContext_mac_ct.h",
-    "src/ports/SkTLS_pthread.cpp",
     "src/ports/SkTypeface_mac_ct.cpp",
     "src/ports/SkTypeface_mac_ct.h",
     "src/utils/mac/SkCreateCGImageRef.cpp",
@@ -1846,7 +1838,6 @@ PORTS_SRCS_FUCHSIA = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 
 GL_SRCS_MACOS = base_gl_srcs + [
@@ -1871,7 +1862,6 @@ PORTS_SRCS_WASM = [
     "src/ports/SkOSFile_stdio.cpp",
     "src/ports/SkOSLibrary.h",
     "src/ports/SkOSLibrary_posix.cpp",
-    "src/ports/SkTLS_pthread.cpp",
 ]
 GL_SRCS_WASM = GL_SRCS_UNIX_EGL
 
@@ -1902,8 +1892,6 @@ MTL_SRCS = [
 ]
 
 VULKAN_SRCS = [
-    "src/gpu/ganesh/vk/GrVkAMDMemoryAllocator.cpp",
-    "src/gpu/ganesh/vk/GrVkAMDMemoryAllocator.h",
     "src/gpu/ganesh/vk/GrVkBuffer.cpp",
     "src/gpu/ganesh/vk/GrVkBuffer.h",
     "src/gpu/ganesh/vk/GrVkCaps.cpp",
@@ -1918,7 +1906,6 @@ VULKAN_SRCS = [
     "src/gpu/ganesh/vk/GrVkDescriptorSet.h",
     "src/gpu/ganesh/vk/GrVkDescriptorSetManager.cpp",
     "src/gpu/ganesh/vk/GrVkDescriptorSetManager.h",
-    "src/gpu/ganesh/vk/GrVkExtensions.cpp",
     "src/gpu/ganesh/vk/GrVkFramebuffer.cpp",
     "src/gpu/ganesh/vk/GrVkFramebuffer.h",
     "src/gpu/ganesh/vk/GrVkGpu.cpp",
@@ -1928,8 +1915,6 @@ VULKAN_SRCS = [
     "src/gpu/ganesh/vk/GrVkImageLayout.h",
     "src/gpu/ganesh/vk/GrVkImageView.cpp",
     "src/gpu/ganesh/vk/GrVkImageView.h",
-    "src/gpu/ganesh/vk/GrVkInterface.cpp",
-    "src/gpu/ganesh/vk/GrVkInterface.h",
     "src/gpu/ganesh/vk/GrVkManagedResource.h",
     "src/gpu/ganesh/vk/GrVkMemory.cpp",
     "src/gpu/ganesh/vk/GrVkMemory.h",
@@ -1971,6 +1956,9 @@ VULKAN_SRCS = [
     "src/gpu/ganesh/vk/GrVkUtil.h",
     "src/gpu/ganesh/vk/GrVkVaryingHandler.cpp",
     "src/gpu/ganesh/vk/GrVkVaryingHandler.h",
+    "src/gpu/vk/VulkanExtensions.cpp",
+    "src/gpu/vk/VulkanInterface.cpp",
+    "src/gpu/vk/VulkanInterface.h",
 ]
 
 ################################################################################
@@ -2249,6 +2237,8 @@ SKOTTIE_LIB_SRCS = [
     "modules/skottie/src/SkottiePriv.h",
     "modules/skottie/src/SkottieProperty.cpp",
     "modules/skottie/src/SkottieValue.h",
+    "modules/skottie/src/text/Font.cpp",
+    "modules/skottie/src/text/Font.h",
     "modules/skottie/src/text/RangeSelector.cpp",
     "modules/skottie/src/text/RangeSelector.h",
     "modules/skottie/src/text/SkottieShaper.cpp",
@@ -2294,6 +2284,7 @@ SKOTTIE_SHAPER_SRCS = [
 # Stubs, pending SkUnicode fission
 SKUNICODE_ICU_BUILTIN_SRCS = [
     "modules/skunicode/src/SkUnicode.cpp",
+    "modules/skunicode/src/SkUnicode_client.cpp",
     "modules/skunicode/src/SkUnicode_icu.cpp",
     "modules/skunicode/src/SkUnicode_icu.h",
     "modules/skunicode/src/SkUnicode_icu_builtin.cpp",
@@ -2301,9 +2292,15 @@ SKUNICODE_ICU_BUILTIN_SRCS = [
 
 SKUNICODE_ICU_RUNTIME_SRCS = [
     "modules/skunicode/src/SkUnicode.cpp",
+    "modules/skunicode/src/SkUnicode_client.cpp",
     "modules/skunicode/src/SkUnicode_icu.cpp",
     "modules/skunicode/src/SkUnicode_icu.h",
     "modules/skunicode/src/SkUnicode_icu_runtime.cpp",
+]
+
+SKUNICODE_NO_ICU_SRCS = [
+    "modules/skunicode/src/SkUnicode.cpp",
+    "modules/skunicode/src/SkUnicode_client.cpp",
 ]
 
 SKUNICODE_HDRS = [

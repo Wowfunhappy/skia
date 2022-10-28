@@ -47,6 +47,9 @@
           return 0;
         }
         GL.makeContextCurrent(handle);
+        // Emscripten does not enable this by default and Skia needs this to handle certain GPU
+        // corner cases.
+        GL.currentContext.GLctx.getExtension('WEBGL_debug_renderer_info');
         return handle;
       };
 
@@ -350,7 +353,8 @@
       };
 
       CanvasKit.getCurrentGrDirectContext = function() {
-        if (GL.currentContext) {
+        if (GL.currentContext && GL.currentContext.grDirectContext &&
+            !GL.currentContext.grDirectContext['isDeleted']()) {
           return GL.currentContext.grDirectContext;
         }
         return null;

@@ -7,13 +7,13 @@
 
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 
+#include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkSLDefines.h"
 #include "include/private/SkSLLayout.h"
 #include "include/private/SkSLModifiers.h"
 #include "include/private/SkSLProgramKind.h"
 #include "include/private/SkStringView.h"
-#include "include/private/SkTHash.h"
 #include "include/sksl/SkSLErrorReporter.h"
 #include "include/sksl/SkSLPosition.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
@@ -28,25 +28,9 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <initializer_list>
 #include <utility>
 
 namespace SkSL {
-
-static IntrinsicKind identify_intrinsic(std::string_view functionName) {
-    #define SKSL_INTRINSIC(name) {#name, k_##name##_IntrinsicKind},
-    static const auto* kAllIntrinsics = new SkTHashMap<std::string_view, IntrinsicKind>{
-        SKSL_INTRINSIC_LIST
-    };
-    #undef SKSL_INTRINSIC
-
-    if (skstd::starts_with(functionName, '$')) {
-        functionName.remove_prefix(1);
-    }
-
-    IntrinsicKind* kind = kAllIntrinsics->find(functionName);
-    return kind ? *kind : kNotIntrinsic;
-}
 
 static bool check_modifiers(const Context& context,
                             Position pos,
@@ -229,16 +213,13 @@ static bool check_main_signature(const Context& context, Position pos, const Typ
         }
         case ProgramKind::kRuntimeShader:
         case ProgramKind::kPrivateRuntimeShader: {
-            // (half4|float4) main(float2)  -or-  (half4|float4) main(float2, half4|float4)
+            // (half4|float4) main(float2)
             if (!typeIsValidForColor(returnType)) {
                 errors.error(pos, "'main' must return: 'vec4', 'float4', or 'half4'");
                 return false;
             }
-            bool validParams =
-                    (parameters.size() == 1 && paramIsCoords(0)) ||
-                    (parameters.size() == 2 && paramIsCoords(0) && paramIsInputColor(1));
-            if (!validParams) {
-                errors.error(pos, "'main' parameters must be (float2, (vec4|float4|half4)?)");
+            if (!(parameters.size() == 1 && paramIsCoords(0))) {
+                errors.error(pos, "'main' parameter must be 'float2' or 'vec2'");
                 return false;
             }
             break;
@@ -271,8 +252,8 @@ static bool check_main_signature(const Context& context, Position pos, const Typ
             break;
         }
         case ProgramKind::kMeshFragment: {
-            // float2 main(Varyings) -or- float2 main(Varyings, out half4|float4]) -or-
-            // void main(Varyings) -or- void main(Varyings, out half4|float4])
+            // float2 main(Varyings) -or- float2 main(Varyings, out half4|float4) -or-
+            // void main(Varyings) -or- void main(Varyings, out half4|float4)
             if (!returnType.matches(*context.fTypes.fFloat2) &&
                 !returnType.matches(*context.fTypes.fVoid)) {
                 errors.error(pos, "'main' must return: 'vec2', 'float2', 'or' 'void'");
@@ -321,7 +302,7 @@ static bool check_main_signature(const Context& context, Position pos, const Typ
 static int find_generic_index(const Type& concreteType,
                               const Type& genericType,
                               bool allowNarrowing) {
-    const std::vector<const Type*>& genericTypes = genericType.coercibleTypes();
+    SkSpan<const Type* const> genericTypes = genericType.coercibleTypes();
     for (size_t index = 0; index < genericTypes.size(); ++index) {
         if (concreteType.canCoerceTo(*genericTypes[index], allowNarrowing)) {
             return index;
@@ -464,7 +445,7 @@ FunctionDeclaration::FunctionDeclaration(Position pos,
         , fReturnType(returnType)
         , fBuiltin(builtin)
         , fIsMain(name == "main")
-        , fIntrinsicKind(builtin ? identify_intrinsic(name) : kNotIntrinsic) {
+        , fIntrinsicKind(builtin ? FindIntrinsicKind(name) : kNotIntrinsic) {
     // None of the parameters are allowed to be be null.
     SkASSERT(std::count(fParameters.begin(), fParameters.end(), nullptr) == 0);
 }
@@ -520,10 +501,8 @@ std::string FunctionDeclaration::mangledName() const {
         name.remove_prefix(1);
         builtinMarker = "Q";  // a unique, otherwise-unused mangle character
     }
-    // GLSL forbids two underscores in a row; add an extra character if necessary to avoid this.
-    const char* splitter = skstd::ends_with(name, '_') ? "x_" : "_";
     // Rename function to `funcname_returntypeparamtypes`.
-    std::string result = std::string(name) + splitter + builtinMarker +
+    std::string result = std::string(name) + "_" + builtinMarker +
                          this->returnType().abbreviatedName();
     for (const Variable* p : this->parameters()) {
         result += p->type().abbreviatedName();

@@ -33,8 +33,6 @@ CORE_SRCS = [
     "SkSLConstantFolder.h",
     "SkSLContext.cpp",
     "SkSLContext.h",
-    "SkSLDSLParser.cpp",
-    "SkSLDSLParser.h",
     "SkSLDehydrator.cpp",
     "SkSLDehydrator.h",
     "SkSLErrorReporter.cpp",
@@ -42,6 +40,7 @@ CORE_SRCS = [
     "SkSLGLSL.h",
     "SkSLInliner.cpp",
     "SkSLInliner.h",
+    "SkSLIntrinsicList.cpp",
     "SkSLIntrinsicList.h",
     "SkSLLexer.cpp",
     "SkSLLexer.h",
@@ -50,10 +49,14 @@ CORE_SRCS = [
     "SkSLMemoryLayout.h",
     "SkSLMemoryPool.h",
     "SkSLModifiersPool.h",
+    "SkSLModuleLoader.cpp",
+    "SkSLModuleLoader.h",
     "SkSLOperator.cpp",
     "SkSLOutputStream.cpp",
     "SkSLOutputStream.h",
     "SkSLParsedModule.h",
+    "SkSLParser.cpp",
+    "SkSLParser.h",
     "SkSLPool.cpp",
     "SkSLPool.h",
     "SkSLPosition.cpp",
@@ -61,8 +64,6 @@ CORE_SRCS = [
     "SkSLRehydrator.cpp",
     "SkSLRehydrator.h",
     "SkSLSampleUsage.cpp",
-    "SkSLSharedCompiler.cpp",
-    "SkSLSharedCompiler.h",
     "SkSLString.cpp",
     "SkSLStringStream.h",
     "SkSLThreadContext.cpp",
@@ -96,18 +97,18 @@ selects.config_setting_group(
 )
 
 bool_flag(
+    name = "enable_sksl",
     default = False,
-    flag_name = "enable_sksl",
 )
 
 bool_flag(
+    name = "enable_skslc",
     default = False,
-    flag_name = "enable_skslc",
 )
 
 bool_flag(
+    name = "enable_sksl_tracing",
     default = False,
-    flag_name = "enable_sksl_tracing",
 )
 
 filegroup(

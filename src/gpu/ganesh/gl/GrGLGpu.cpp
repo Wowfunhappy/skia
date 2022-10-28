@@ -23,6 +23,7 @@
 #include "src/core/SkMipmap.h"
 #include "src/core/SkScopeExit.h"
 #include "src/core/SkTraceEvent.h"
+#include "src/gpu/SkRenderEngineAbortf.h"
 #include "src/gpu/ganesh/GrBackendUtils.h"
 #include "src/gpu/ganesh/GrCpuBuffer.h"
 #include "src/gpu/ganesh/GrDataUtils.h"
@@ -32,6 +33,7 @@
 #include "src/gpu/ganesh/GrProgramInfo.h"
 #include "src/gpu/ganesh/GrRenderTarget.h"
 #include "src/gpu/ganesh/GrShaderCaps.h"
+#include "src/gpu/ganesh/GrStagingBufferManager.h"
 #include "src/gpu/ganesh/GrSurfaceProxyPriv.h"
 #include "src/gpu/ganesh/GrTexture.h"
 #include "src/gpu/ganesh/GrUtil.h"
@@ -238,6 +240,9 @@ public:
     }
 
     void bindSampler(int unitIdx, GrSamplerState state) {
+        if (unitIdx >= fNumTextureUnits) {
+            return;
+        }
         // In GL the max aniso value is specified in addition to min/mag filters and the driver
         // is encouraged to consider the other filter settings when doing aniso.
         uint32_t key = state.asKey(/*anisoIsOrthogonal=*/true);
@@ -891,6 +896,10 @@ bool GrGLGpu::onWritePixels(GrSurface* surface,
         params->set(nullptr, nonsamplerState, fResetTimestampForTextureParameters);
     }
 
+    if (this->glCaps().flushBeforeWritePixels()) {
+        GL_CALL(Flush());
+    }
+
     SkASSERT(!GrGLFormatIsCompressed(glTex->format()));
     return this->uploadColorTypeTexData(glTex->format(),
                                         surfaceColorType,
@@ -907,6 +916,9 @@ bool GrGLGpu::onTransferFromBufferToBuffer(sk_sp<GrGpuBuffer> src,
                                            sk_sp<GrGpuBuffer> dst,
                                            size_t dstOffset,
                                            size_t size) {
+    SkASSERT(!src->isMapped());
+    SkASSERT(!dst->isMapped());
+
     auto glSrc = static_cast<const GrGLBuffer*>(src.get());
     auto glDst = static_cast<const GrGLBuffer*>(dst.get());
 
@@ -1168,6 +1180,8 @@ bool GrGLGpu::uploadCompressedTexData(SkImage::CompressionType compressionType,
         numMipLevels = SkMipmap::ComputeLevelCount(dimensions.width(), dimensions.height())+1;
     }
 
+    this->unbindXferBuffer(GrGpuBufferType::kXferCpuToGpu);
+
     // TODO: Make sure that the width and height that we pass to OpenGL
     // is a multiple of the block size.
 
@@ -1288,6 +1302,7 @@ bool GrGLGpu::createRenderTargetObjects(const GrGLTexture::Desc& desc,
 
     GL_CALL(GenFramebuffers(1, &rtIDs->fSingleSampleFBOID));
     if (!rtIDs->fSingleSampleFBOID) {
+        RENDERENGINE_ABORTF("%s failed to GenFramebuffers!", __func__);
         return false;
     }
 
@@ -1457,7 +1472,7 @@ sk_sp<GrTexture> GrGLGpu::onCreateTexture(SkISize dimensions,
     SkASSERT(!GrGLFormatIsCompressed(texDesc.fFormat));
 
     texDesc.fID = this->createTexture(dimensions, texDesc.fFormat, texDesc.fTarget, renderable,
-                                      &initialState, mipLevelCount, isProtected);
+                                      &initialState, mipLevelCount, isProtected, label);
 
     if (!texDesc.fID) {
         return return_null_texture();
@@ -1673,7 +1688,11 @@ int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
         int firstWorkingStencilFormatIndex = -1;
 
         GrGLuint colorID = this->createTexture({kSize, kSize}, format, GR_GL_TEXTURE_2D,
-                                               GrRenderable::kYes, nullptr, 1, GrProtected::kNo);
+                                               GrRenderable::kYes,
+                                               nullptr,
+                                               1,
+                                               GrProtected::kNo,
+                                               /*label=*/"Skia");
         if (!colorID) {
             return -1;
         }
@@ -1740,10 +1759,10 @@ int GrGLGpu::getCompatibleStencilIndex(GrGLFormat format) {
     return this->glCaps().getStencilFormatIndexForFormat(format);
 }
 
-static void set_khr_debug_label(GrGLGpu* gpu, const GrGLuint id) {
+static void set_khr_debug_label(GrGLGpu* gpu, const GrGLuint id, std::string_view label) {
+    const std::string khr_debug_label = label.empty() ? "Skia" : std::string(label);
     if (gpu->glCaps().debugSupport()) {
-        const char* label = "Skia";
-        GR_GL_CALL(gpu->glInterface(), ObjectLabel(GR_GL_TEXTURE, id, -1, label));
+        GR_GL_CALL(gpu->glInterface(), ObjectLabel(GR_GL_TEXTURE, id, -1, khr_debug_label.c_str()));
     }
 }
 
@@ -1764,7 +1783,7 @@ GrGLuint GrGLGpu::createCompressedTexture2D(
 
     this->bindTextureToScratchUnit(GR_GL_TEXTURE_2D, id);
 
-    set_khr_debug_label(this, id);
+    set_khr_debug_label(this, id, /*label=*/"Skia");
 
     *initialState = set_initial_texture_params(this->glInterface(),
                                                this->glCaps(),
@@ -1779,7 +1798,8 @@ GrGLuint GrGLGpu::createTexture(SkISize dimensions,
                                 GrRenderable renderable,
                                 GrGLTextureParameters::SamplerOverriddenState* initialState,
                                 int mipLevelCount,
-                                GrProtected isProtected) {
+                                GrProtected isProtected,
+                                std::string_view label) {
     SkASSERT(format != GrGLFormat::kUnknown);
     SkASSERT(!GrGLFormatIsCompressed(format));
 
@@ -1792,7 +1812,7 @@ GrGLuint GrGLGpu::createTexture(SkISize dimensions,
 
     this->bindTextureToScratchUnit(target, id);
 
-    set_khr_debug_label(this, id);
+    set_khr_debug_label(this, id, label);
 
     if (GrRenderable::kYes == renderable && this->glCaps().textureUsageSupport()) {
         // provides a hint about how this texture will be used
@@ -1828,6 +1848,9 @@ GrGLuint GrGLGpu::createTexture(SkISize dimensions,
             this->glCaps().getTexImageExternalFormatAndType(format, &externalFormat, &externalType);
             GrGLenum error = GR_GL_NO_ERROR;
             if (externalFormat && externalType) {
+                // If we don't unbind here then nullptr is treated as a zero offset into the bound
+                // transfer buffer rather than an indication that there is no data to copy.
+                this->unbindXferBuffer(GrGpuBufferType::kXferCpuToGpu);
                 for (int level = 0; level < mipLevelCount && error == GR_GL_NO_ERROR; level++) {
                     const int twoToTheMipLevel = 1 << level;
                     const int currentWidth = std::max(1, dimensions.width() / twoToTheMipLevel);
@@ -2630,7 +2653,7 @@ void GrGLGpu::flushBlendAndColorWrite(const skgpu::BlendInfo& blendInfo,
     skgpu::BlendCoeff dstCoeff = blendInfo.fDstBlend;
 
     // Any optimization to disable blending should have already been applied and
-    // tweaked the equation to "add" or "subtract", and the coeffs to (1, 0).
+    // tweaked the equation to "add "or "subtract", and the coeffs to (1, 0).
     bool blendOff = skgpu::BlendShouldDisable(equation, srcCoeff, dstCoeff) ||
                     !blendInfo.fWritesColor;
 
@@ -2680,6 +2703,8 @@ void GrGLGpu::flushBlendAndColorWrite(const skgpu::BlendInfo& blendInfo,
 
         if (skgpu::BlendEquationIsAdvanced(equation)) {
             SkASSERT(this->caps()->advancedBlendEquationSupport());
+
+            this->flushColorWrite(blendInfo.fWritesColor);
             // Advanced equations have no other blend state.
             return;
         }
@@ -3197,11 +3222,11 @@ bool GrGLGpu::createCopyProgram(GrTexture* srcTex) {
     vshaderTxt.append(";");
 
     vshaderTxt.append(
-        "// Copy Program VS\n"
+        // Copy Program VS
         "void main() {"
-        "  v_texCoord = half2(a_vertex.xy * u_texCoordXform.xy + u_texCoordXform.zw);"
-        "  sk_Position.xy = a_vertex * u_posXform.xy + u_posXform.zw;"
-        "  sk_Position.zw = half2(0, 1);"
+          "v_texCoord = half2(a_vertex.xy * u_texCoordXform.xy + u_texCoordXform.zw);"
+          "sk_Position.xy = a_vertex * u_posXform.xy + u_posXform.zw;"
+          "sk_Position.zw = half2(0, 1);"
         "}"
     );
 
@@ -3217,9 +3242,9 @@ bool GrGLGpu::createCopyProgram(GrTexture* srcTex) {
     uTexture.appendDecl(shaderCaps, &fshaderTxt);
     fshaderTxt.append(";");
     fshaderTxt.appendf(
-        "// Copy Program FS\n"
+        // Copy Program FS
         "void main() {"
-        "  sk_FragColor = sample(u_texture, v_texCoord);"
+          "sk_FragColor = sample(u_texture, v_texCoord);"
         "}"
     );
 
@@ -3307,33 +3332,33 @@ bool GrGLGpu::createMipmapProgram(int progIdx) {
     }
 
     vshaderTxt.append(
-        "// Mipmap Program VS\n"
+        // Mipmap Program VS
         "void main() {"
-        "  sk_Position.xy = a_vertex * half2(2) - half2(1);"
-        "  sk_Position.zw = half2(0, 1);"
+          "sk_Position.xy = a_vertex * half2(2) - half2(1);"
+          "sk_Position.zw = half2(0, 1);"
     );
 
     // Insert texture coordinate computation:
     if (oddWidth && oddHeight) {
         vshaderTxt.append(
-            "  v_texCoord0 = a_vertex.xy * u_texCoordXform.yw;"
-            "  v_texCoord1 = a_vertex.xy * u_texCoordXform.yw + half2(u_texCoordXform.x, 0);"
-            "  v_texCoord2 = a_vertex.xy * u_texCoordXform.yw + half2(0, u_texCoordXform.z);"
-            "  v_texCoord3 = a_vertex.xy * u_texCoordXform.yw + u_texCoordXform.xz;"
+              "v_texCoord0 = a_vertex.xy * u_texCoordXform.yw;"
+              "v_texCoord1 = a_vertex.xy * u_texCoordXform.yw + half2(u_texCoordXform.x, 0);"
+              "v_texCoord2 = a_vertex.xy * u_texCoordXform.yw + half2(0, u_texCoordXform.z);"
+              "v_texCoord3 = a_vertex.xy * u_texCoordXform.yw + u_texCoordXform.xz;"
         );
     } else if (oddWidth) {
         vshaderTxt.append(
-            "  v_texCoord0 = a_vertex.xy * half2(u_texCoordXform.y, 1);"
-            "  v_texCoord1 = a_vertex.xy * half2(u_texCoordXform.y, 1) + half2(u_texCoordXform.x, 0);"
+              "v_texCoord0 = a_vertex.xy * half2(u_texCoordXform.y, 1);"
+              "v_texCoord1 = a_vertex.xy * half2(u_texCoordXform.y, 1) + half2(u_texCoordXform.x, 0);"
         );
     } else if (oddHeight) {
         vshaderTxt.append(
-            "  v_texCoord0 = a_vertex.xy * half2(1, u_texCoordXform.w);"
-            "  v_texCoord1 = a_vertex.xy * half2(1, u_texCoordXform.w) + half2(0, u_texCoordXform.z);"
+              "v_texCoord0 = a_vertex.xy * half2(1, u_texCoordXform.w);"
+              "v_texCoord1 = a_vertex.xy * half2(1, u_texCoordXform.w) + half2(0, u_texCoordXform.z);"
         );
     } else {
         vshaderTxt.append(
-            "  v_texCoord0 = a_vertex.xy;"
+              "v_texCoord0 = a_vertex.xy;"
         );
     }
 
@@ -3353,25 +3378,25 @@ bool GrGLGpu::createMipmapProgram(int progIdx) {
     uTexture.appendDecl(shaderCaps, &fshaderTxt);
     fshaderTxt.append(";");
     fshaderTxt.append(
-        "// Mipmap Program FS\n"
+        // Mipmap Program FS
         "void main() {"
     );
 
     if (oddWidth && oddHeight) {
         fshaderTxt.append(
-            "  sk_FragColor = (sample(u_texture, v_texCoord0) + "
-            "                  sample(u_texture, v_texCoord1) + "
-            "                  sample(u_texture, v_texCoord2) + "
-            "                  sample(u_texture, v_texCoord3)) * 0.25;"
+              "sk_FragColor = (sample(u_texture, v_texCoord0) + "
+                              "sample(u_texture, v_texCoord1) + "
+                              "sample(u_texture, v_texCoord2) + "
+                              "sample(u_texture, v_texCoord3)) * 0.25;"
         );
     } else if (oddWidth || oddHeight) {
         fshaderTxt.append(
-            "  sk_FragColor = (sample(u_texture, v_texCoord0) + "
-            "                  sample(u_texture, v_texCoord1)) * 0.5;"
+              "sk_FragColor = (sample(u_texture, v_texCoord0) + "
+                              "sample(u_texture, v_texCoord1)) * 0.5;"
         );
     } else {
         fshaderTxt.append(
-            "  sk_FragColor = sample(u_texture, v_texCoord0);"
+              "sk_FragColor = sample(u_texture, v_texCoord0);"
         );
     }
 
@@ -3700,7 +3725,8 @@ GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,
                                                  const GrBackendFormat& format,
                                                  GrRenderable renderable,
                                                  GrMipmapped mipmapped,
-                                                 GrProtected isProtected) {
+                                                 GrProtected isProtected,
+                                                 std::string_view label) {
     this->handleDirtyContext();
 
     GrGLFormat glFormat = format.asGLFormat();
@@ -3738,7 +3764,7 @@ GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,
     }
     info.fFormat = GrGLFormatToEnum(glFormat);
     info.fID = this->createTexture(dimensions, glFormat, info.fTarget, renderable, &initialState,
-                                   numMipLevels, isProtected);
+                                   numMipLevels, isProtected, label);
     if (!info.fID) {
         return {};
     }
@@ -3752,7 +3778,7 @@ GrBackendTexture GrGLGpu::onCreateBackendTexture(SkISize dimensions,
                     fResetTimestampForTextureParameters);
 
     return GrBackendTexture(dimensions.width(), dimensions.height(), mipmapped, info,
-                            std::move(parameters));
+                            std::move(parameters), label);
 }
 
 bool GrGLGpu::onClearBackendTexture(const GrBackendTexture& backendTexture,
@@ -3921,7 +3947,10 @@ GrBackendRenderTarget GrGLGpu::createTestingOnlyBackendRenderTarget(SkISize dime
     if (useTexture) {
         GrGLTextureParameters::SamplerOverriddenState initialState;
         colorID = this->createTexture(dimensions, format, GR_GL_TEXTURE_2D, GrRenderable::kYes,
-                                      &initialState, 1, isProtected);
+                                      &initialState,
+                                      1,
+                                      isProtected,
+                                      /*label=*/"Skia");
         if (!colorID) {
             deleteIDs();
             return {};
@@ -4063,6 +4092,14 @@ bool GrGLGpu::onSubmitToGpu(bool syncCpu) {
         this->clearErrorsAndCheckForOOM();
     }
     return true;
+}
+
+void GrGLGpu::willExecute() {
+    // Because our transfers will be submitted to GL to perfom immediately (no command buffer to
+    // submit), we must unmap any staging buffers.
+    if (fStagingBufferManager) {
+        fStagingBufferManager->detachBuffers();
+    }
 }
 
 void GrGLGpu::submit(GrOpsRenderPass* renderPass) {

@@ -194,6 +194,10 @@ def compile_fn(api, checkout_root, out_dir):
     # build IDs are required for Bloaty if we want to use strip to ignore debug symbols.
     # https://github.com/google/bloaty/blob/master/doc/using.md#debugging-stripped-binaries
     extra_ldflags.append('-Wl,--build-id=sha1')
+    args.update({
+      'skia_use_runtime_icu': 'true',
+      'skia_enable_optimize_size': 'true',
+    })
 
   if 'Exceptions' in extra_tokens:
     extra_cflags.append('/EHsc')
@@ -241,7 +245,6 @@ def compile_fn(api, checkout_root, out_dir):
     args['skia_enable_precompile'] = 'false'
   if 'Graphite' in extra_tokens:
     args['skia_enable_graphite'] = 'true'
-    args['skia_use_metal'] = 'true'
   if 'NoGpu' in extra_tokens:
     args['skia_enable_gpu'] = 'false'
   if 'NoDEPS' in extra_tokens:

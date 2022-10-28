@@ -912,15 +912,13 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 			if b.matchOs("Win") {
 				gpu, ok := map[string]string{
 					// At some point this might use the device ID, but for now it's like Chromebooks.
-					"Adreno630":     "Adreno630",
-					"GT610":         "10de:104a-23.21.13.9101",
 					"GTX660":        "10de:11c0-26.21.14.4120",
-					"GTX960":        "10de:1401-27.21.14.5671",
+					"GTX960":        "10de:1401-30.0.15.1215",
 					"IntelHD4400":   "8086:0a16-20.19.15.4963",
 					"IntelIris540":  "8086:1926-26.20.100.7463",
 					"IntelIris6100": "8086:162b-20.19.15.4963",
 					"IntelIris655":  "8086:3ea5-26.20.100.7463",
-					"IntelIrisXe":   "8086:9a49-30.0.101.1340",
+					"IntelIrisXe":   "8086:9a49-31.0.101.3222",
 					"RadeonHD7770":  "1002:683d-26.20.13031.18002",
 					"RadeonR9M470X": "1002:6646-26.20.13031.18002",
 					"QuadroP400":    "10de:1cb3-30.0.15.1179",
@@ -1015,8 +1013,11 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 		}
 	} else {
 		if d["os"] == DEBIAN_11_OS {
-			// The Debain11 compile machines in the skolo have
+			// The Debian11 compile machines in the skolo have
 			// GPUs, but we still use them for compiles also.
+
+			// Dodge Raspberry Pis.
+			d["cpu"] = "x86-64"
 		} else {
 			d["gpu"] = "none"
 		}
@@ -2092,6 +2093,7 @@ var shorthandToLabel = map[string]string{
 	"example_hello_world_vulkan": "//example:hello_world_vulkan",
 	"modules_canvaskit":          "//modules/canvaskit:canvaskit",
 	"skia_public":                "//:skia_public",
+	"skottie_tool_gpu":           "//modules/skottie:skottie_tool_gpu",
 }
 
 // bazelBuild adds a task which builds the specified single-target label (//foo:bar) or

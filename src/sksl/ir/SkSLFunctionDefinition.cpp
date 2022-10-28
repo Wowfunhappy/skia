@@ -35,6 +35,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <forward_list>
+#include <string_view>
 
 namespace SkSL {
 
@@ -117,15 +118,19 @@ std::unique_ptr<FunctionDefinition> FunctionDefinition::Convert(const Context& c
                     // (i.e., RelaxedPrecision math doesn't mean your variable takes less space.)
                     // We also don't attempt to reclaim slots at the end of a Block.
                     size_t prevSlotsUsed = fSlotsUsed;
-                    fSlotsUsed = SkSafeMath::Add(
-                            fSlotsUsed, stmt.as<VarDeclaration>().var().type().slotCount());
+                    const Variable& var = stmt.as<VarDeclaration>().var();
+                    if (var.type().isOrContainsUnsizedArray()) {
+                        fContext.fErrors->error(stmt.fPosition,
+                                                "unsized arrays are not permitted here");
+                        break;
+                    }
+                    fSlotsUsed = SkSafeMath::Add(fSlotsUsed, var.type().slotCount());
                     // To avoid overzealous error reporting, only trigger the error at the first
                     // place where the stack limit is exceeded.
                     if (prevSlotsUsed < kVariableSlotLimit && fSlotsUsed >= kVariableSlotLimit) {
-                        fContext.fErrors->error(
-                                stmt.fPosition,
-                                "variable '" + std::string(stmt.as<VarDeclaration>().var().name()) +
-                                "' exceeds the stack size limit");
+                        fContext.fErrors->error(stmt.fPosition,
+                                                "variable '" + std::string(var.name()) +
+                                                "' exceeds the stack size limit");
                     }
                     break;
                 }
@@ -228,8 +233,8 @@ std::unique_ptr<FunctionDefinition> FunctionDefinition::Convert(const Context& c
                                                 "' can exit without returning a value");
     }
 
-    SkASSERTF(!function.isIntrinsic(), "Intrinsic %s should not have a definition",
-              std::string(function.name()).c_str());
+    SkASSERTF(!function.isIntrinsic(), "Intrinsic function '%.*s' should not have a definition",
+              (int)function.name().size(), function.name().data());
     return std::make_unique<FunctionDefinition>(pos, &function, builtin, std::move(body));
 }
 

@@ -21,6 +21,7 @@ declare_args() {
   skia_enable_fontmgr_fuchsia = is_fuchsia
   skia_enable_fontmgr_win = is_win
   skia_enable_gpu = true
+  skia_enable_optimize_size = false
   skia_enable_pdf = !is_wasm
   skia_enable_skottie = !(is_win && is_component_build) ||
                         (is_wasm && skia_canvaskit_enable_skottie)
@@ -65,6 +66,7 @@ declare_args() {
   skia_use_metal = false
   skia_use_ndk_images = is_android && defined(ndk_api) && ndk_api >= 30
   skia_use_perfetto = is_linux || is_mac || is_android
+  skia_use_piet = false
   skia_use_piex = !is_win && !is_wasm
   skia_use_sfml = false
   skia_use_webgl = is_wasm
@@ -81,6 +83,9 @@ declare_args() {
   }
 
   skia_compare_vm_vs_rp = false
+
+  # Temporary GN arg for flutter to control updating their unit tests synchronously with new alg.
+  skia_use_legacy_layer_bounds = false
 }
 
 declare_args() {

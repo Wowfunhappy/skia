@@ -8,6 +8,7 @@
 #ifndef SKSL_FLOATLITERAL
 #define SKSL_FLOATLITERAL
 
+#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/ir/SkSLExpression.h"
 
@@ -107,14 +108,6 @@ public:
         }
         SkASSERT(this->type().isBoolean());
         return fValue ? "true" : "false";
-    }
-
-    bool hasProperty(Property property) const override {
-        return false;
-    }
-
-    bool isCompileTimeConstant() const override {
-        return true;
     }
 
     ComparisonResult compareConstant(const Expression& other) const override {

@@ -20,7 +20,6 @@
 #include "include/core/SkTileMode.h"
 #include "include/private/SkColorData.h"
 
-enum class SkBackend : uint8_t;
 enum class SkShaderType : uint32_t;
 class SkData;
 class SkPaintParamsKeyBuilder;
@@ -32,6 +31,14 @@ class SkKeyContext;
 // The KeyHelpers can be used to manually construct an SkPaintParamsKey
 
 struct PassthroughShaderBlock {
+
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*);
+
+};
+
+struct PassthroughBlenderBlock {
 
     static void BeginBlock(const SkKeyContext&,
                            SkPaintParamsKeyBuilder*,
@@ -237,6 +244,13 @@ struct GaussianColorFilterBlock {
 };
 
 struct BlendModeBlock {
+    static void BeginBlock(const SkKeyContext&,
+                           SkPaintParamsKeyBuilder*,
+                           SkPipelineDataGatherer*,
+                           SkBlendMode);
+};
+
+struct PrimitiveBlendModeBlock {
     static void BeginBlock(const SkKeyContext&,
                            SkPaintParamsKeyBuilder*,
                            SkPipelineDataGatherer*,

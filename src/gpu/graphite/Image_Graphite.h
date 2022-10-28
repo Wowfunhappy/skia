@@ -19,6 +19,7 @@ class Recorder;
 
 class Image final : public SkImage_Base {
 public:
+    Image(uint32_t uniqueID, TextureProxyView, const SkColorInfo&);
     Image(TextureProxyView, const SkColorInfo&);
     ~Image() override;
 
@@ -55,13 +56,11 @@ public:
 
     sk_sp<SkImage> onMakeColorTypeAndColorSpace(SkColorType,
                                                 sk_sp<SkColorSpace>,
-                                                GrDirectContext*) const override {
-        return nullptr;
-    }
+                                                GrDirectContext*) const override;
 
-    sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const override {
-        return nullptr;
-    }
+    sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const override;
+
+    TextureProxyView textureProxyView() const { return fTextureProxyView; }
 
 private:
 #if SK_SUPPORT_GPU
@@ -82,8 +81,7 @@ private:
     }
 #endif
 
-    std::tuple<TextureProxyView, SkColorType> onAsView(Recorder*,
-                                                       Mipmapped) const override;
+    sk_sp<SkImage> onMakeTextureImage(Recorder*, RequiredImageProperties) const override;
 
     TextureProxyView fTextureProxyView;
 };

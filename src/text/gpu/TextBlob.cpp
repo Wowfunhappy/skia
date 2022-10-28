@@ -121,6 +121,7 @@ public:
 #endif
 
     SkRect sourceBounds() const override { return fSourceBounds; }
+    SkRect sourceBoundsWithOrigin() const override { return fSourceBounds.makeOffset(fOrigin); }
     const SkPaint& initialPaint() const override { return fInitialPaint; }
 
     const SkMatrix& initialPositionMatrix() const { return fSubRuns->initialPosition(); }
@@ -269,11 +270,14 @@ auto TextBlob::Key::Make(const GlyphRunList& glyphRunList,
 
         // Do any runs use direct drawing types?.
         key.fHasSomeDirectSubRuns = false;
+        SkPoint glyphRunListLocation = glyphRunList.sourceBoundsWithOrigin().center();
         for (auto& run : glyphRunList) {
             SkScalar approximateDeviceTextSize =
-                    SkFontPriv::ApproximateTransformedTextSize(run.font(), drawMatrix);
+                    SkFontPriv::ApproximateTransformedTextSize(run.font(), drawMatrix,
+                                                               glyphRunListLocation);
             key.fHasSomeDirectSubRuns |=
-                    strikeDevice.fSDFTControl->isDirect(approximateDeviceTextSize, paint);
+                    strikeDevice.fSDFTControl->isDirect(approximateDeviceTextSize, paint,
+                                                        drawMatrix);
         }
 
         if (key.fHasSomeDirectSubRuns) {
@@ -371,12 +375,9 @@ bool TextBlob::hasPerspective() const {
 }
 
 bool TextBlob::canReuse(const SkPaint& paint, const SkMatrix& positionMatrix) const {
-    // A singular matrix will create a TextBlob with no SubRuns, but unknown glyphs can
-    // also cause empty runs. If there are no subRuns or perspective, then regenerate when the
-    // matrices don't match.
-    if ((fSubRuns->isEmpty() || this->hasPerspective()) &&
-        fSubRuns->initialPosition() != positionMatrix)
-    {
+    // A singular matrix will create a TextBlob with no SubRuns, but unknown glyphs can also
+    // cause empty runs. If there are no subRuns, then regenerate when the matrices don't match.
+    if (fSubRuns->isEmpty() && fSubRuns->initialPosition() != positionMatrix) {
         return false;
     }
 

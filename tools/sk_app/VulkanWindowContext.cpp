@@ -14,10 +14,11 @@
 #include "include/gpu/GrDirectContext.h"
 #include "src/core/SkAutoMalloc.h"
 
-#include "include/gpu/vk/GrVkExtensions.h"
 #include "include/gpu/vk/GrVkTypes.h"
+#include "include/gpu/vk/VulkanExtensions.h"
 #include "src/gpu/ganesh/vk/GrVkImage.h"
 #include "src/gpu/ganesh/vk/GrVkUtil.h"
+#include "src/gpu/vk/VulkanInterface.h"
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 // windows wants to define this as CreateSemaphoreA or CreateSemaphoreW
@@ -54,7 +55,7 @@ void VulkanWindowContext::initializeContext() {
 
     PFN_vkGetInstanceProcAddr getInstanceProc = fGetInstanceProcAddr;
     GrVkBackendContext backendContext;
-    GrVkExtensions extensions;
+    skgpu::VulkanExtensions extensions;
     VkPhysicalDeviceFeatures2 features;
     if (!sk_gpu_test::CreateVkBackendContext(getInstanceProc, &backendContext, &extensions,
                                              &features, &fDebugCallback, &fPresentQueueIndex,
@@ -88,9 +89,9 @@ void VulkanWindowContext::initializeContext() {
     localGetPhysicalDeviceProperties(backendContext.fPhysicalDevice, &physDeviceProperties);
     uint32_t physDevVersion = physDeviceProperties.apiVersion;
 
-    fInterface.reset(new GrVkInterface(backendContext.fGetProc, fInstance, fDevice,
-                                       backendContext.fInstanceVersion, physDevVersion,
-                                       &extensions));
+    fInterface.reset(new skgpu::VulkanInterface(backendContext.fGetProc, fInstance, fDevice,
+                                                backendContext.fInstanceVersion, physDevVersion,
+                                                &extensions));
 
     GET_PROC(DestroyInstance);
     if (fDebugCallback != VK_NULL_HANDLE) {
@@ -345,7 +346,7 @@ bool VulkanWindowContext::createBuffers(VkFormat format, VkImageUsageFlags usage
 
         GrVkImageInfo info;
         info.fImage = fImages[i];
-        info.fAlloc = GrVkAlloc();
+        info.fAlloc = skgpu::VulkanAlloc();
         info.fImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         info.fImageTiling = VK_IMAGE_TILING_OPTIMAL;
         info.fFormat = format;
