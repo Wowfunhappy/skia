@@ -101,6 +101,18 @@ class AndroidFlavor(default.DefaultFlavor):
                  timeout=180, abort_on_failure=False,
                  fail_build_on_failure=False)
       self.m.run(self.m.step,
+                 'adb reconnect offline after failure of \'%s\' (attempt %d)' % (
+                     title, attempt),
+                 cmd=[self.ADB_BINARY, 'reconnect', 'offline'],
+                 infra_step=True, timeout=30, abort_on_failure=False,
+                 fail_build_on_failure=False)
+      self.m.run(self.m.step,
+                 'wait for device after failure of \'%s\' (attempt %d)' % (
+                     title, attempt),
+                 cmd=[self.ADB_BINARY, 'wait-for-device'], infra_step=True,
+                 timeout=180, abort_on_failure=False,
+                 fail_build_on_failure=False)
+      self.m.run(self.m.step,
                  'adb reconnect device after failure of \'%s\' (attempt %d)' % (
                      title, attempt),
                  cmd=[self.ADB_BINARY, 'reconnect', 'device'],
@@ -112,7 +124,18 @@ class AndroidFlavor(default.DefaultFlavor):
                  cmd=[self.ADB_BINARY, 'wait-for-device'], infra_step=True,
                  timeout=180, abort_on_failure=False,
                  fail_build_on_failure=False)
-
+      self.m.run(self.m.step,
+                 'adb reboot after failure of \'%s\' (attempt %d)' % (
+                     title, attempt),
+                 cmd=[self.ADB_BINARY, 'reboot'],
+                 infra_step=True, timeout=30, abort_on_failure=False,
+                 fail_build_on_failure=False)
+      self.m.run(self.m.step,
+                 'wait for device after failure of \'%s\' (attempt %d)' % (
+                     title, attempt),
+                 cmd=[self.ADB_BINARY, 'wait-for-device'], infra_step=True,
+                 timeout=180, abort_on_failure=False,
+                 fail_build_on_failure=False)
     with self.m.context(cwd=self.m.path['start_dir'].join('skia')):
       with self.m.env({'ADB_VENDOR_KEYS': self.ADB_PUB_KEY}):
         return self.m.run.with_retry(self.m.step, title, attempts,
@@ -563,8 +586,8 @@ time.sleep(60)
     contents = self.m.file.glob_paths('ls %s/*' % host,
                                       host, '*',
                                       test_data=['foo.png', 'bar.jpg'])
-    args = ['--sync'] + contents + [device]
-    self._adb('push --sync %s/* %s' % (host, device), 'push', *args)
+    args = contents + [device]
+    self._adb('push %s/* %s' % (host, device), 'push', *args)
 
   def copy_directory_contents_to_host(self, device, host):
     # TODO(borenet): When all of our devices are on Android 6.0 and up, we can
