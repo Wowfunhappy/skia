@@ -567,12 +567,14 @@ private:
      *  In the following move methods, 'src' is destroyed leaving behind uninitialized raw storage.
      */
     void copy(const T* src) {
-        // Some types may be trivially copyable, in which case we *could* use memcopy; but
-        // MEM_MOVE == true implies that the type is trivially movable, and not necessarily
-        // trivially copyable (think sk_sp<>).  So short of adding another template arg, we
-        // must be conservative and use copy construction.
-        for (int i = 0; i < this->count(); ++i) {
-            new (fItemArray + i) T(src[i]);
+        if constexpr (std::is_trivially_copyable_v<T>) {
+            if (!this->empty() && src != nullptr) {
+                sk_careful_memcpy(fItemArray, src, this->size_bytes());
+            }
+        } else {
+            for (int i = 0; i < this->count(); ++i) {
+                new (fItemArray + i) T(src[i]);
+            }
         }
     }
 
@@ -617,16 +619,12 @@ private:
         // Return if there are enough remaining allocated elements to satisfy the request.
         if (SkToInt(fAllocCount) - fCount >= delta) { return; }
 
-        // Note: the maximum range for count is up to INT_MAX.
-        SkASSERT_RELEASE(delta <= INT_MAX - fCount);
+        // Don't overflow fCount or size_t later in the memory allocation. Overflowing memory
+        // allocation really only applies to fCounts on 32-bit machines; on 64-bit machines this
+        // will probably never produce a check. Since kMaxCapacity is bounded above by INT_MAX,
+        // this also checks the bounds of fCount.
+        SkASSERT_RELEASE(delta <= SkToInt(kMaxCapacity) - fCount);
         const int newCount = fCount + delta;
-
-        // Don't overflow size_t later in the memory allocation. This really only applies
-        // to fCounts on 32-bit machines; on 64-bit machines this will probably never produce a
-        // check. The check for newCount <= INT_MAX is the SkASSERT_RELEASE above.
-        if constexpr (SkTFitsIn<int>(kMaxCapacity)) {
-            SkASSERT_RELEASE(newCount <= SkToInt(kMaxCapacity));
-        }
 
         double growthFactor = reallocType == kExactFit ? 1.0 : 1.5;
         SkSpan<std::byte> allocation = Allocate(newCount, growthFactor);
