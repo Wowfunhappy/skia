@@ -11,29 +11,29 @@
 #include "include/private/SkSLString.h"
 #include "include/private/SkUniquePaintParamsID.h"
 #include "src/core/SkBlenderBase.h"
-#include "src/core/SkKeyContext.h"
-#include "src/core/SkPipelineData.h"
-#include "src/core/SkShaderCodeDictionary.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
+#include "src/gpu/graphite/KeyContext.h"
 #include "src/gpu/graphite/PaintParams.h"
+#include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/ResourceProvider.h"
+#include "src/gpu/graphite/ShaderCodeDictionary.h"
 #include "src/gpu/graphite/UniformManager.h"
 
 namespace skgpu::graphite {
 
-std::tuple<SkUniquePaintParamsID, const SkUniformDataBlock*, const SkTextureDataBlock*>
+std::tuple<SkUniquePaintParamsID, const UniformDataBlock*, const TextureDataBlock*>
 ExtractPaintData(Recorder* recorder,
-                 SkPipelineDataGatherer* gatherer,
-                 SkPaintParamsKeyBuilder* builder,
+                 PipelineDataGatherer* gatherer,
+                 PaintParamsKeyBuilder* builder,
                  const SkM44& local2Dev,
                  const PaintParams& p) {
 
     SkDEBUGCODE(gatherer->checkReset());
     SkDEBUGCODE(builder->checkReset());
 
-    SkKeyContext keyContext(recorder, local2Dev);
+    KeyContext keyContext(recorder, local2Dev);
 
     p.toKey(keyContext, builder, gatherer);
 
@@ -43,10 +43,10 @@ ExtractPaintData(Recorder* recorder,
 
     auto entry = dict->findOrCreate(builder);
 
-    const SkUniformDataBlock* uniforms =
+    const UniformDataBlock* uniforms =
             gatherer->hasUniforms() ? uniformDataCache->insert(gatherer->finishUniformDataBlock())
                                     : nullptr;
-    const SkTextureDataBlock* textures =
+    const TextureDataBlock* textures =
             gatherer->hasTextures() ? textureDataCache->insert(gatherer->textureDataBlock())
                                     : nullptr;
 
@@ -55,20 +55,20 @@ ExtractPaintData(Recorder* recorder,
     return { entry->uniqueID(), uniforms, textures };
 }
 
-std::tuple<const SkUniformDataBlock*, const SkTextureDataBlock*>
+std::tuple<const UniformDataBlock*, const TextureDataBlock*>
 ExtractRenderStepData(UniformDataCache* uniformDataCache,
                       TextureDataCache* textureDataCache,
-                      SkPipelineDataGatherer* gatherer,
+                      PipelineDataGatherer* gatherer,
                       const RenderStep* step,
                       const DrawParams& params) {
     SkDEBUGCODE(gatherer->checkReset());
 
     step->writeUniformsAndTextures(params, gatherer);
 
-    const SkUniformDataBlock* uniforms =
+    const UniformDataBlock* uniforms =
             gatherer->hasUniforms() ? uniformDataCache->insert(gatherer->finishUniformDataBlock())
                                     : nullptr;
-    const SkTextureDataBlock* textures =
+    const TextureDataBlock* textures =
             gatherer->hasTextures() ? textureDataCache->insert(gatherer->textureDataBlock())
                                     : nullptr;
 
@@ -86,11 +86,11 @@ std::string get_uniform_header(int bufferID, const char* name) {
     return result;
 }
 
-std::string get_uniforms(SkSpan<const SkUniform> uniforms, int* offset, int manglingSuffix) {
+std::string get_uniforms(SkSpan<const Uniform> uniforms, int* offset, int manglingSuffix) {
     std::string result;
     UniformOffsetCalculator offsetter(Layout::kMetal, *offset);
 
-    for (const SkUniform& u : uniforms) {
+    for (const Uniform& u : uniforms) {
         SkSL::String::appendf(&result,
                               "    layout(offset=%zu) %s %s",
                               offsetter.advanceOffset(u.type(), u.count()),
@@ -115,12 +115,12 @@ std::string get_uniforms(SkSpan<const SkUniform> uniforms, int* offset, int mang
 
 std::string EmitPaintParamsUniforms(int bufferID,
                                     const char* name,
-                                    const std::vector<SkPaintParamsKey::BlockReader>& readers) {
+                                    const std::vector<PaintParamsKey::BlockReader>& readers) {
     int offset = 0;
 
     std::string result = get_uniform_header(bufferID, name);
     for (int i = 0; i < (int) readers.size(); ++i) {
-        SkSpan<const SkUniform> uniforms = readers[i].entry()->fUniforms;
+        SkSpan<const Uniform> uniforms = readers[i].entry()->fUniforms;
 
         if (!uniforms.empty()) {
             SkSL::String::appendf(&result, "// %s uniforms\n", readers[i].entry()->fName);
@@ -133,7 +133,7 @@ std::string EmitPaintParamsUniforms(int bufferID,
 }
 
 std::string EmitRenderStepUniforms(int bufferID, const char* name,
-                                   SkSpan<const SkUniform> uniforms) {
+                                   SkSpan<const Uniform> uniforms) {
     int offset = 0;
 
     std::string result = get_uniform_header(bufferID, name);
@@ -147,18 +147,18 @@ std::string EmitPaintParamsStorageBuffer(
         int bufferID,
         const char* bufferTypePrefix,
         const char* bufferNamePrefix,
-        const std::vector<SkPaintParamsKey::BlockReader>& readers) {
+        const std::vector<PaintParamsKey::BlockReader>& readers) {
 
     std::string result;
     SkSL::String::appendf(&result, "struct %sUniformData {\n", bufferTypePrefix);
     for (int i = 0; i < (int)readers.size(); ++i) {
-        SkSpan<const SkUniform> uniforms = readers[i].entry()->fUniforms;
+        SkSpan<const Uniform> uniforms = readers[i].entry()->fUniforms;
         if (uniforms.empty()) {
             continue;
         }
         SkSL::String::appendf(&result, "// %s uniforms\n", readers[i].entry()->fName);
         int manglingSuffix = i;
-        for (const SkUniform& u : uniforms) {
+        for (const Uniform& u : uniforms) {
             SkSL::String::appendf(
                     &result, "    %s %s_%d", SkSLTypeString(u.type()), u.name(), manglingSuffix);
             if (u.count()) {
@@ -186,16 +186,16 @@ std::string EmitStorageBufferAccess(const char* bufferNamePrefix,
     return SkSL::String::printf("%sUniformData[%s].%s", bufferNamePrefix, ssboIndex, uniformName);
 }
 
-std::string EmitTexturesAndSamplers(const std::vector<SkPaintParamsKey::BlockReader>& readers,
+std::string EmitTexturesAndSamplers(const std::vector<PaintParamsKey::BlockReader>& readers,
                                     int* binding) {
     std::string result;
     for (int i = 0; i < (int) readers.size(); ++i) {
-        SkSpan<const SkTextureAndSampler> samplers = readers[i].entry()->fTexturesAndSamplers;
+        SkSpan<const TextureAndSampler> samplers = readers[i].entry()->fTexturesAndSamplers;
 
         if (!samplers.empty()) {
             SkSL::String::appendf(&result, "// %s samplers\n", readers[i].entry()->fName);
 
-            for (const SkTextureAndSampler& t : samplers) {
+            for (const TextureAndSampler& t : samplers) {
                 SkSL::String::appendf(&result,
                                       "layout(binding=%d) uniform sampler2D %s_%d;\n",
                                       *binding, t.name(), i);
@@ -318,7 +318,7 @@ std::string GetSkSLVS(const RenderStep* step,
     return sksl;
 }
 
-std::string GetSkSLFS(const SkShaderCodeDictionary* dict,
+std::string GetSkSLFS(const ShaderCodeDictionary* dict,
                       const SkRuntimeEffectDictionary* rteDict,
                       const RenderStep* step,
                       SkUniquePaintParamsID paintID,
@@ -331,7 +331,7 @@ std::string GetSkSLFS(const SkShaderCodeDictionary* dict,
     }
 
     const char* shadingSsboIndexVar = useStorageBuffers ? "shadingSsboIndexVar" : nullptr;
-    SkShaderInfo shaderInfo(rteDict, shadingSsboIndexVar);
+    ShaderInfo shaderInfo(rteDict, shadingSsboIndexVar);
 
     dict->getShaderInfo(paintID, &shaderInfo);
     *blendInfo = shaderInfo.blendInfo();

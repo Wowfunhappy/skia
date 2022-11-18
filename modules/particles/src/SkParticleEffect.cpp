@@ -22,6 +22,7 @@
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/codegen/SkSLVMCodeGenerator.h"
+#include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLProgram.h"
 
 // Cached state for a single program (either all Effect code, or all Particle code)
@@ -167,12 +168,12 @@ void SkParticleEffectParams::prepare(const skresources::ResourceProvider* resour
             return nullptr;
         }
 
-        std::unique_ptr<SkSL::UniformInfo> uniformInfo = SkSL::Program_GetUniformInfo(*program);
+        std::unique_ptr<SkSL::UniformInfo> uniformInfo = program->getUniformInfo();
 
         // For each entry point, convert to an skvm::Program. We need a fresh Builder and uniform
         // IDs (though we can reuse the Uniforms object, thanks to how it works).
         auto buildFunction = [&](const char* name){
-            auto fn = SkSL::Program_GetFunction(*program, name);
+            const SkSL::FunctionDeclaration* fn = program->getFunction(name);
             if (!fn) {
                 return skvm::Program{};
             }
@@ -186,7 +187,7 @@ void SkParticleEffectParams::prepare(const skresources::ResourceProvider* resour
             for (int i = 0; i < uniformInfo->fUniformSlotCount; ++i) {
                 uniformIDs.push_back(b.uniform32(skslUniformPtr, i * sizeof(int)).id);
             }
-            if (!SkSL::ProgramToSkVM(*program, *fn, &b, /*debugTrace=*/nullptr,
+            if (!SkSL::ProgramToSkVM(*program, *fn->definition(), &b, /*debugTrace=*/nullptr,
                                      SkSpan(uniformIDs))) {
                 return skvm::Program{};
             }
@@ -235,8 +236,8 @@ void SkParticleEffect::updateStorage() {
     // Ensure our storage block for uniforms is large enough
     if (this->uniformInfo()) {
         int newCount = this->uniformInfo()->fUniformSlotCount;
-        if (newCount > fUniforms.count()) {
-            fUniforms.push_back_n(newCount - fUniforms.count(), 0.0f);
+        if (newCount > fUniforms.size()) {
+            fUniforms.push_back_n(newCount - fUniforms.size(), 0.0f);
         } else {
             fUniforms.resize(newCount);
         }

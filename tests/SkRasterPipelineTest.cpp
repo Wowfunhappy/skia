@@ -7,6 +7,7 @@
 
 #include "include/private/SkHalf.h"
 #include "include/private/SkTo.h"
+#include "src/core/SkOpts.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/gpu/Swizzle.h"
 #include "tests/Test.h"
@@ -36,6 +37,156 @@ DEF_TEST(SkRasterPipeline, r) {
     REPORTER_ASSERT(r, ((result >> 48) & 0xffff) == 0x3c00);
 }
 
+DEF_TEST(SkRasterPipeline_ImmediateStoreUnmasked, r) {
+    float val[SkRasterPipeline_kMaxStride_highp + 1] = {};
+
+    float immVal = 123.0f;
+    const void* immValCtx = nullptr;
+    memcpy(&immValCtx, &immVal, sizeof(float));
+
+    SkRasterPipeline_<256> p;
+    p.append(SkRasterPipeline::immediate_f, immValCtx);
+    p.append(SkRasterPipeline::store_unmasked, val);
+    p.run(0,0,1,1);
+
+    // `val` should be populated with `123.0` in the frontmost positions
+    // (depending on the architecture that SkRasterPipeline is targeting).
+    size_t index = 0;
+    for (; index < SkOpts::raster_pipeline_highp_stride; ++index) {
+        REPORTER_ASSERT(r, val[index] == immVal);
+    }
+
+    // The remaining slots should have been left alone.
+    for (; index < std::size(val); ++index) {
+        REPORTER_ASSERT(r, val[index] == 0.0f);
+    }
+}
+
+DEF_TEST(SkRasterPipeline_LoadStoreUnmasked, r) {
+    float val[SkRasterPipeline_kMaxStride_highp] = {};
+    float data[] = {123.0f, 456.0f, 789.0f, -876.0f, -543.0f, -210.0f, 12.0f, -3.0f};
+    static_assert(std::size(data) == SkRasterPipeline_kMaxStride_highp);
+
+    SkRasterPipeline_<256> p;
+    p.append(SkRasterPipeline::load_unmasked, data);
+    p.append(SkRasterPipeline::store_unmasked, val);
+    p.run(0,0,1,1);
+
+    // `val` should be populated with `data` in the frontmost positions
+    // (depending on the architecture that SkRasterPipeline is targeting).
+    size_t index = 0;
+    for (; index < SkOpts::raster_pipeline_highp_stride; ++index) {
+        REPORTER_ASSERT(r, val[index] == data[index]);
+    }
+
+    // The remaining slots should have been left alone.
+    for (; index < std::size(val); ++index) {
+        REPORTER_ASSERT(r, val[index] == 0.0f);
+    }
+}
+
+DEF_TEST(SkRasterPipeline_LoadStoreMasked, r) {
+    for (size_t width = 0; width < SkRasterPipeline_kMaxStride_highp; ++width) {
+        float val[] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+        float data[] = {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f};
+        const int32_t mask[] = {0, ~0, ~0, ~0, ~0, ~0, 0, ~0};
+        static_assert(std::size(val) == SkRasterPipeline_kMaxStride_highp);
+        static_assert(std::size(data) == SkRasterPipeline_kMaxStride_highp);
+        static_assert(std::size(mask) == SkRasterPipeline_kMaxStride_highp);
+
+        SkRasterPipeline_<256> p;
+        p.append(SkRasterPipeline::init_lane_masks);
+        p.append(SkRasterPipeline::load_condition_mask, mask);
+        p.append(SkRasterPipeline::load_unmasked, data);
+        p.append(SkRasterPipeline::store_masked, val);
+        p.run(0, 0, width, 1);
+
+        // Where the mask is set, and the width is sufficient, `val` should be populated.
+        size_t index = 0;
+        for (; index < width; ++index) {
+            if (mask[index]) {
+                REPORTER_ASSERT(r, val[index] == 2.0f);
+            } else {
+                REPORTER_ASSERT(r, val[index] == 1.0f);
+            }
+        }
+
+        // The remaining slots should have been left alone.
+        for (; index < std::size(val); ++index) {
+            REPORTER_ASSERT(r, val[index] == 1.0f);
+        }
+    }
+}
+
+DEF_TEST(SkRasterPipeline_LoadStoreConditionMask, r) {
+    int32_t val[SkRasterPipeline_kMaxStride_highp] = {};
+    int32_t data[] = {~0, 0, ~0, 0, ~0, ~0, ~0, 0};
+    static_assert(std::size(data) == SkRasterPipeline_kMaxStride_highp);
+
+    SkRasterPipeline_<256> p;
+    p.append(SkRasterPipeline::load_condition_mask, data);
+    p.append(SkRasterPipeline::store_condition_mask, val);
+    p.run(0,0,1,1);
+
+    // `val` should be populated with `data` in the frontmost positions
+    // (depending on the architecture that SkRasterPipeline is targeting).
+    size_t index = 0;
+    for (; index < SkOpts::raster_pipeline_highp_stride; ++index) {
+        REPORTER_ASSERT(r, val[index] == data[index]);
+    }
+
+    // The remaining slots should have been left alone.
+    for (; index < std::size(val); ++index) {
+        REPORTER_ASSERT(r, val[index] == 0);
+    }
+}
+
+DEF_TEST(SkRasterPipeline_InitLaneMasks, r) {
+    for (size_t width = 1; width <= SkOpts::raster_pipeline_highp_stride; ++width) {
+        SkRasterPipeline_<256> p;
+
+        // Initialize dRGBA to unrelated values.
+        SkRasterPipeline_UniformColorCtx uniformCtx;
+        uniformCtx.a = 0.0f;
+        uniformCtx.r = 0.25f;
+        uniformCtx.g = 0.50f;
+        uniformCtx.b = 0.75f;
+        p.append(SkRasterPipeline::uniform_color_dst, &uniformCtx);
+
+        // Overwrite dRGB with lane masks up to the tail width.
+        p.append(SkRasterPipeline::init_lane_masks);
+
+        // Use the store_dst command to write out dRGBA for inspection.
+        int32_t dRGBA[4 * SkRasterPipeline_kMaxStride_highp] = {};
+        p.append(SkRasterPipeline::store_dst, dRGBA);
+
+        // Execute our program.
+        p.run(0,0,width,1);
+
+        // Initialized data should look like on/on/on/off (RGB are set, A is ignored) and is
+        // striped by the raster pipeline stride because we wrote it using store_dst.
+        size_t index = 0;
+        int32_t* channelR = dRGBA;
+        int32_t* channelG = channelR + SkOpts::raster_pipeline_highp_stride;
+        int32_t* channelB = channelG + SkOpts::raster_pipeline_highp_stride;
+        int32_t* channelA = channelB + SkOpts::raster_pipeline_highp_stride;
+        for (; index < width; ++index) {
+            REPORTER_ASSERT(r, *channelR++ == ~0);
+            REPORTER_ASSERT(r, *channelG++ == ~0);
+            REPORTER_ASSERT(r, *channelB++ == ~0);
+            REPORTER_ASSERT(r, *channelA++ ==  0);
+        }
+
+        // The rest of the output array should be untouched (all zero).
+        for (; index < SkOpts::raster_pipeline_highp_stride; ++index) {
+            REPORTER_ASSERT(r, *channelR++ == 0);
+            REPORTER_ASSERT(r, *channelG++ == 0);
+            REPORTER_ASSERT(r, *channelB++ == 0);
+            REPORTER_ASSERT(r, *channelA++ == 0);
+        }
+    }
+}
+
 DEF_TEST(SkRasterPipeline_empty, r) {
     // No asserts... just a test that this is safe to run.
     SkRasterPipeline_<256> p;
@@ -63,7 +214,7 @@ DEF_TEST(SkRasterPipeline_JIT, r) {
     };
 
     SkRasterPipeline_MemoryCtx src = { buf +  0, 0 },
-                       dst = { buf + 36, 0 };
+                               dst = { buf + 36, 0 };
 
     // Copy buf[x] to buf[x+36] for x in [15,35).
     SkRasterPipeline_<256> p;
