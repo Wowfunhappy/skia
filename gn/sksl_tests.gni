@@ -103,12 +103,12 @@ sksl_error_tests = [
   "errors/InvalidAssignment.rts",
   "errors/InvalidExtensionDirective.sksl",
   "errors/InvalidOutParams.rts",
-  "errors/InvalidThreadgroupCompute.compute",
-  "errors/InvalidThreadgroupRTS.rts",
   "errors/InvalidToken.rts",
   "errors/InvalidUnary.rts",
   "errors/InvalidUniformTypes.sksl",
   "errors/InvalidVersionDirective.sksl",
+  "errors/InvalidWorkgroupCompute.compute",
+  "errors/InvalidWorkgroupRTS.rts",
   "errors/InVarWithInitializerExpression.sksl",
   "errors/LayoutInFunctions.sksl",
   "errors/LayoutInInterfaceBlock.sksl",
@@ -305,13 +305,15 @@ sksl_glsl_tests = [
 
 sksl_metal_tests = [
   "compute/ArrayAdd.compute",
+  "compute/Barrier.compute",
+  "compute/BuiltinStageInputs.compute",
   "compute/Desaturate.compute",
   "compute/DesaturateFunction.compute",
   "compute/DesaturateReadWrite.compute",
   "compute/MatrixMultiply.compute",
   "compute/Raytrace.compute",
-  "compute/Threadgroup.compute",
   "compute/Uniforms.compute",
+  "compute/Workgroup.compute",
   "errors/InvalidInOutType.compute",
   "errors/InvalidMainParameters.compute",
   "errors/InvalidMainReturn.compute",
@@ -344,6 +346,7 @@ sksl_spirv_tests = [
   "shared/SwitchDefaultOnly.sksl",
   "shared/SwitchWithFallthrough.sksl",
   "shared/SwitchWithLoops.sksl",
+  "spirv/ArrayStrideInDifferentLayouts.sksl",
   "spirv/ConstantVectorFromVector.sksl",
   "spirv/ConstantVectorize.sksl",
   "spirv/FunctionParametersOfTextureAndSamplerType.sksl",
@@ -355,6 +358,8 @@ sksl_spirv_tests = [
   "spirv/Ossfuzz35916.sksl",
   "spirv/Ossfuzz37627.sksl",
   "spirv/Ossfuzz44096.sksl",
+  "spirv/Ossfuzz53202.sksl",
+  "spirv/StructArrayMemberInDifferentLayouts.sksl",
   "spirv/UnusedInterfaceBlock.sksl",
   "workarounds/RewriteMatrixVectorMultiply.sksl",
 ]
@@ -372,17 +377,20 @@ sksl_wgsl_tests = [
   "wgsl/VertexPositionOutputIsAlwaysDeclared.vert",
 ]
 
+sksl_inverse_hyperbolic_intrinsics_tests = [
+  "intrinsics/Acosh.sksl",
+  "intrinsics/Asinh.sksl",
+  "intrinsics/Atanh.sksl",
+]
+
 sksl_shared_tests = [
   "intrinsics/AbsFloat.sksl",
   "intrinsics/AbsInt.sksl",
   "intrinsics/Acos.sksl",
-  "intrinsics/Acosh.sksl",
   "intrinsics/All.sksl",
   "intrinsics/Any.sksl",
   "intrinsics/Asin.sksl",
-  "intrinsics/Asinh.sksl",
   "intrinsics/Atan.sksl",
-  "intrinsics/Atanh.sksl",
   "intrinsics/BitCount.sksl",
   "intrinsics/Ceil.sksl",
   "intrinsics/ClampFloat.sksl",
@@ -482,6 +490,8 @@ sksl_shared_tests = [
   "shared/CommaSideEffects.sksl",
   "shared/CompileTimeConstantVariables.sksl",
   "shared/ComplexDelete.sksl",
+  "shared/ConstantCompositeAccessViaConstantIndex.sksl",
+  "shared/ConstantCompositeAccessViaDynamicIndex.sksl",
   "shared/ConstantIf.sksl",
   "shared/ConstArray.sksl",
   "shared/ConstGlobal.sksl",
@@ -581,6 +591,7 @@ sksl_shared_tests = [
   "shared/StaticSwitchWithStaticConditionalBreak.sksl",
   "shared/StaticSwitchWithStaticConditionalBreakInsideBlock.sksl",
   "shared/StructArrayFollowedByScalar.sksl",
+  "shared/StructComparison.sksl",
   "shared/StructMaxDepth.sksl",
   "shared/Structs.sksl",
   "shared/StructsInFunctions.sksl",
@@ -830,17 +841,22 @@ sksl_rte_error_tests = [
 
 sksl_glsl_tests_sources =
     sksl_error_tests + sksl_glsl_tests + sksl_inliner_tests +
-    sksl_folding_tests + sksl_shared_tests
+    sksl_folding_tests + sksl_shared_tests +
+    sksl_inverse_hyperbolic_intrinsics_tests
 
 sksl_glsl_settings_tests_sources = sksl_blend_tests + sksl_settings_tests
 
 sksl_metal_tests_sources =
-    sksl_metal_tests + sksl_blend_tests + sksl_shared_tests
+    sksl_metal_tests + sksl_blend_tests + sksl_shared_tests +
+    sksl_inverse_hyperbolic_intrinsics_tests
+
+sksl_hlsl_tests_sources = sksl_blend_tests + sksl_shared_tests
 
 sksl_wgsl_tests_sources = sksl_wgsl_tests
 
 sksl_spirv_tests_sources =
-    sksl_blend_tests + sksl_shared_tests + sksl_spirv_tests
+    sksl_blend_tests + sksl_shared_tests +
+    sksl_inverse_hyperbolic_intrinsics_tests + sksl_spirv_tests
 
 sksl_skvm_tests_sources = sksl_rte_tests + sksl_rte_error_tests
 
