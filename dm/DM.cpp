@@ -186,6 +186,7 @@ int RuntimeCheckErrorFunc(int errorType, const char* filename, int linenumber,
 using namespace DM;
 using sk_gpu_test::GrContextFactory;
 using sk_gpu_test::ContextInfo;
+using skiatest::TestType;
 #ifdef SK_GL
 using sk_gpu_test::GLTestContext;
 #endif
@@ -874,7 +875,7 @@ void gather_file_srcs(const CommandLineFlags::StringArray& flags,
         src_name = ext;
     }
 
-    for (int i = 0; i < flags.count(); i++) {
+    for (int i = 0; i < flags.size(); i++) {
         const char* path = flags[i];
         if (sk_isdir(path)) {
             SkOSFile::Iter it(path, ext);
@@ -903,7 +904,7 @@ static bool gather_srcs() {
     if (!FLAGS_bisect.isEmpty()) {
         // An empty l/r trail string will draw all the paths.
         push_src("bisect", "",
-                 new BisectSrc(FLAGS_bisect[0], FLAGS_bisect.count() > 1 ? FLAGS_bisect[1] : ""));
+                 new BisectSrc(FLAGS_bisect[0], FLAGS_bisect.size() > 1 ? FLAGS_bisect[1] : ""));
     }
 
     SkTArray<SkString> images;
@@ -1035,7 +1036,7 @@ static Sink* create_via(const SkString& tag, Sink* wrapped) {
     VIA("pic",       ViaPicture,           wrapped);
     VIA("rtblend",   ViaRuntimeBlend,      wrapped);
 
-    if (FLAGS_matrix.count() == 4) {
+    if (FLAGS_matrix.size() == 4) {
         SkMatrix m;
         m.reset();
         m.setScaleX((SkScalar)atof(FLAGS_matrix[0]));
@@ -1108,7 +1109,7 @@ static bool match(const char* needle, const char* haystack) {
 
 static bool should_skip(const char* sink, const char* src,
                         const char* srcOptions, const char* name) {
-    for (int i = 0; i < FLAGS_skip.count() - 3; i += 4) {
+    for (int i = 0; i < FLAGS_skip.size() - 3; i += 4) {
         if (match(FLAGS_skip[i+0], sink) &&
             match(FLAGS_skip[i+1], src) &&
             match(FLAGS_skip[i+2], srcOptions) &&
@@ -1350,7 +1351,7 @@ struct Task {
 
         // Determine whether or not the OldestSupportedSkpVersion extra_config is provided.
         bool isOldestSupportedSkp = false;
-        for (int i = 1; i < FLAGS_key.count(); i += 2) {
+        for (int i = 1; i < FLAGS_key.size(); i += 2) {
             if (0 == strcmp(FLAGS_key[i-1], "extra_config") &&
                 0 == strcmp(FLAGS_key[i], "OldestSupportedSkpVersion")) {
                 isOldestSupportedSkp = true;
@@ -1459,8 +1460,9 @@ struct Task {
 
 // Unit tests don't fit so well into the Src/Sink model, so we give them special treatment.
 
-static SkTDArray<skiatest::Test>* gParallelTests = new SkTDArray<skiatest::Test>;
-static SkTDArray<skiatest::Test>* gSerialTests   = new SkTDArray<skiatest::Test>;
+static SkTDArray<skiatest::Test>* gCPUTests = new SkTDArray<skiatest::Test>;
+static SkTDArray<skiatest::Test>* gGaneshTests = new SkTDArray<skiatest::Test>;
+static SkTDArray<skiatest::Test>* gGraphiteTests = new SkTDArray<skiatest::Test>;
 
 static void gather_tests() {
     if (!FLAGS_src.contains("tests")) {
@@ -1473,27 +1475,38 @@ static void gather_tests() {
         if (CommandLineFlags::ShouldSkip(FLAGS_match, test.fName)) {
             continue;
         }
-        if (test.fNeedsGpu && FLAGS_gpu) {
-            gSerialTests->push_back(test);
-        } else if (test.fNeedsGraphite && FLAGS_graphite) {
-            gSerialTests->push_back(test);
-        } else if (!test.fNeedsGpu && !test.fNeedsGraphite && FLAGS_cpu) {
-            gParallelTests->push_back(test);
+        if (test.fTestType == TestType::kGanesh && FLAGS_gpu) {
+            gGaneshTests->push_back(test);
+        } else if (test.fTestType == TestType::kGraphite && FLAGS_graphite) {
+            gGraphiteTests->push_back(test);
+        } else if (test.fTestType == TestType::kCPU && FLAGS_cpu) {
+            gCPUTests->push_back(test);
         }
     }
 }
 
-static void run_test(skiatest::Test test, const GrContextOptions& grCtxOptions) {
-    struct : public skiatest::Reporter {
-        void reportFailed(const skiatest::Failure& failure) override {
-            fail(failure.toString());
-        }
-        bool allowExtendedTest() const override {
-            return FLAGS_pathOpsExtended;
-        }
-        bool verbose() const override { return FLAGS_veryVerbose; }
-    } reporter;
+struct DMReporter : public skiatest::Reporter {
+    void reportFailed(const skiatest::Failure& failure) override {
+        fail(failure.toString());
+    }
+    bool allowExtendedTest() const override {
+        return FLAGS_pathOpsExtended;
+    }
+    bool verbose() const override { return FLAGS_veryVerbose; }
+};
 
+static void run_cpu_test(skiatest::Test test) {
+    DMReporter reporter;
+    if (!FLAGS_dryRun && !should_skip("_", "tests", "_", test.fName)) {
+        skiatest::ReporterContext ctx(&reporter, SkString(test.fName));
+        start("unit", "test", "", test.fName);
+        test.cpu(&reporter);
+    }
+    done("unit", "test", "", test.fName);
+}
+
+static void run_ganesh_test(skiatest::Test test, const GrContextOptions& grCtxOptions) {
+    DMReporter reporter;
     if (!FLAGS_dryRun && !should_skip("_", "tests", "_", test.fName)) {
         AutoreleasePool pool;
         GrContextOptions options = grCtxOptions;
@@ -1501,7 +1514,18 @@ static void run_test(skiatest::Test test, const GrContextOptions& grCtxOptions) 
 
         skiatest::ReporterContext ctx(&reporter, SkString(test.fName));
         start("unit", "test", "", test.fName);
-        test.run(&reporter, options);
+        test.ganesh(&reporter, options);
+    }
+    done("unit", "test", "", test.fName);
+}
+
+static void run_graphite_test(skiatest::Test test) {
+    DMReporter reporter;
+    if (!FLAGS_dryRun && !should_skip("_", "tests", "_", test.fName)) {
+        AutoreleasePool pool;
+        skiatest::ReporterContext ctx(&reporter, SkString(test.fName));
+        start("unit", "test", "", test.fName);
+        test.graphite(&reporter);
     }
     done("unit", "test", "", test.fName);
 }
@@ -1585,9 +1609,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     gather_tests();
-    gPending = gSrcs->count() * gSinks->count() + gParallelTests->count() + gSerialTests->count();
+    int testCount = gCPUTests->size() + gGaneshTests->size() + gGraphiteTests->size();
+    gPending = gSrcs->count() * gSinks->count() + testCount;
     info("%d srcs * %d sinks + %d tests == %d tasks\n",
-         gSrcs->count(), gSinks->count(), gParallelTests->count() + gSerialTests->count(),
+         gSrcs->count(), gSinks->count(), testCount,
          gPending);
 
     // Kick off as much parallel work as we can, making note of any serial work we'll need to do.
@@ -1612,13 +1637,14 @@ int main(int argc, char** argv) {
             }
         }
     }
-    for (skiatest::Test& test : *gParallelTests) {
-        parallel.add([test, grCtxOptions] { run_test(test, grCtxOptions); });
+    for (skiatest::Test& test : *gCPUTests) {
+        parallel.add([test] { run_cpu_test(test); });
     }
 
     // With the parallel work running, run serial tasks and tests here on main thread.
     for (Task& task : serial) { Task::Run(task); }
-    for (skiatest::Test& test : *gSerialTests) { run_test(test, grCtxOptions); }
+    for (skiatest::Test& test : *gGaneshTests) { run_ganesh_test(test, grCtxOptions); }
+    for (skiatest::Test& test : *gGraphiteTests) { run_graphite_test(test); }
 
     // Wait for any remaining parallel work to complete (including any spun off of serial tasks).
     parallel.wait();

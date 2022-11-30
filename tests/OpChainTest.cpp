@@ -72,7 +72,7 @@ static void init_combinable(int numGroups, Combinable* combinable, SkRandom* ran
     SkTDArray<int> groups[kNumOps];
     for (int i = 0; i < kNumOps; ++i) {
         auto& group = groups[random->nextULessThan(numGroups)];
-        for (int g = 0; g < group.count(); ++g) {
+        for (int g = 0; g < group.size(); ++g) {
             int j = group[g];
             if (random->nextUScalar1() < mergeProbability) {
                 (*combinable)[combinable_index(i, j)] = GrOp::CombineResult::kMerged;
@@ -171,7 +171,7 @@ private:
  * adding the ops in all possible orders and verifies that the chained executions don't violate
  * painter's order.
  */
-DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/, CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST(OpChainTest, reporter, /*ctxInfo*/, CtsEnforcement::kApiLevel_T) {
     sk_sp<GrDirectContext> dContext = GrDirectContext::MakeMock(nullptr);
     SkASSERT(dContext);
     const GrCaps* caps = dContext->priv().caps();

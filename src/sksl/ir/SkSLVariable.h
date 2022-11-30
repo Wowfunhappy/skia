@@ -28,17 +28,11 @@ class Mangler;
 class SymbolTable;
 class VarDeclaration;
 
-namespace dsl {
-class DSLCore;
-class DSLFunction;
-} // namespace dsl
-
 enum class VariableStorage : int8_t {
     kGlobal,
     kInterfaceBlock,
     kLocal,
     kParameter,
-    kEliminated
 };
 
 /**
@@ -127,13 +121,6 @@ public:
 
     std::string mangledName() const;
 
-    void markEliminated() {
-        // We mark eliminated variables by changing their storage type.
-        // We can drop eliminated variables during dehydration to save a little space.
-        SkASSERT(!fDeclaration);
-        fStorage = Storage::kEliminated;
-    }
-
 private:
     VarDeclaration* fDeclaration = nullptr;
     // We don't store the position in the Modifiers object itself because they are pooled
@@ -143,10 +130,6 @@ private:
     bool fBuiltin;
 
     using INHERITED = Symbol;
-
-    friend class dsl::DSLCore;
-    friend class dsl::DSLFunction;
-    friend class VariableReference;
 };
 
 } // namespace SkSL

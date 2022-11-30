@@ -22,6 +22,7 @@
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/KeyBuilder.h"
+#include "src/gpu/ganesh/GrFPArgs.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/SkGr.h"
@@ -535,12 +536,10 @@ SkShaderBase::Context* SkPerlinNoiseShaderImpl::onMakeContext(const ContextRec& 
 
 static inline SkMatrix total_matrix(const SkShaderBase::ContextRec& rec,
                                     const SkShaderBase& shader) {
-    SkMatrix matrix = SkMatrix::Concat(*rec.fMatrix, shader.getLocalMatrix());
     if (rec.fLocalMatrix) {
-        matrix.preConcat(*rec.fLocalMatrix);
+        return SkMatrix::Concat(*rec.fMatrix, *rec.fLocalMatrix);
     }
-
-    return matrix;
+    return *rec.fMatrix;
 }
 
 SkPerlinNoiseShaderImpl::PerlinNoiseShaderContext::PerlinNoiseShaderContext(
@@ -923,8 +922,8 @@ std::unique_ptr<GrFragmentProcessor> SkPerlinNoiseShaderImpl::asFragmentProcesso
         const GrFPArgs& args) const {
     SkASSERT(args.fContext);
 
-    const auto localMatrix = this->totalLocalMatrix(args.fPreLocalMatrix);
-    const auto paintMatrix = SkMatrix::Concat(args.fMatrixProvider.localToDevice(), *localMatrix);
+    const auto& localMatrix = args.fLocalMatrix ? *args.fLocalMatrix : SkMatrix::I();
+    const auto  paintMatrix = SkMatrix::Concat(args.fMatrixProvider.localToDevice(), localMatrix);
 
     // Either we don't stitch tiles, either we have a valid tile size
     SkASSERT(!fStitchTiles || !fTileSize.isEmpty());
@@ -937,8 +936,8 @@ std::unique_ptr<GrFragmentProcessor> SkPerlinNoiseShaderImpl::asFragmentProcesso
                                                                   paintMatrix);
 
     SkMatrix m = args.fMatrixProvider.localToDevice();
-    m.setTranslateX(-localMatrix->getTranslateX() + SK_Scalar1);
-    m.setTranslateY(-localMatrix->getTranslateY() + SK_Scalar1);
+    m.setTranslateX(-localMatrix.getTranslateX() + SK_Scalar1);
+    m.setTranslateY(-localMatrix.getTranslateY() + SK_Scalar1);
 
     auto context = args.fContext;
 

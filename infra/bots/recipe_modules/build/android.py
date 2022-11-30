@@ -18,6 +18,7 @@ def compile_fn(api, checkout_root, out_dir):
   assert compiler == 'Clang'  # At this rate we might not ever support GCC.
 
   extra_cflags = []
+  extra_ldflags = []
   if configuration == 'Debug':
     extra_cflags.append('-O1')
 
@@ -47,10 +48,20 @@ def compile_fn(api, checkout_root, out_dir):
     args['skia_use_gl'] = 'false'
   if 'ASAN' in extra_tokens:
     args['sanitize'] = '"ASAN"'
+  if 'Graphite' in extra_tokens:
+    args['skia_enable_graphite'] = 'true'
   if 'HWASAN' in extra_tokens:
     args['sanitize'] = '"HWASAN"'
   if 'Wuffs' in extra_tokens:
     args['skia_use_wuffs'] = 'true'
+  if configuration == 'OptimizeForSize':
+    # build IDs are required for Bloaty if we want to use strip to ignore debug symbols.
+    # https://github.com/google/bloaty/blob/master/doc/using.md#debugging-stripped-binaries
+    extra_ldflags.append('-Wl,--build-id=sha1')
+    args.update({
+      'skia_use_runtime_icu': 'true',
+      'skia_enable_optimize_size': 'true',
+    })
 
   # The 'FrameworkWorkarounds' bot is used to test special behavior that's
   # normally enabled with SK_BUILD_FOR_ANDROID_FRAMEWORK.
@@ -66,6 +77,8 @@ def compile_fn(api, checkout_root, out_dir):
 
   if extra_cflags:
     args['extra_cflags'] = repr(extra_cflags).replace("'", '"')
+  if extra_ldflags:
+    args['extra_ldflags'] = repr(extra_ldflags).replace("'", '"')
 
   gn_args = ' '.join('%s=%s' % (k,v) for (k,v) in sorted(args.items()))
   gn      = skia_dir.join('bin', 'gn')
@@ -84,6 +97,9 @@ ANDROID_BUILD_PRODUCTS_LIST = [
   'dm',
   'nanobench',
   'skpbench',
+  # The following only exists when building for OptimizeForSize
+  # This is the only target we currently measure: skbug.com/13657
+  'skottie_tool_gpu',
 ]
 
 

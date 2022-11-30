@@ -51,11 +51,11 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/pathops:pathops_srcs",
 			}},
 		{Var: "skia_precompile_public",
-			Rules: []string{"//include/core:precompile_public_hdrs"}},
+			Rules: []string{"//include/gpu/graphite:precompile_public_hdrs"}},
 		{Var: "skia_precompile_sources",
 			Rules: []string{
-				"//src/core:precompile_hdrs",
-				"//src/core:precompile_srcs",
+				"//src/gpu/graphite:precompile_hdrs",
+				"//src/gpu/graphite:precompile_srcs",
 			}},
 		{Var: "skia_skpicture_public",
 			Rules: []string{"//include/core:skpicture_public_hdrs"}},
@@ -284,6 +284,11 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//include/private/gpu/vk:private_hdrs",
 				"//src/gpu/vk:vk_hdrs",
 				"//src/gpu/vk:vk_srcs"}},
+		{Var: "skia_shared_mtl_sources",
+			Rules: []string{
+				"//include/gpu/mtl:shared_public_hdrs",
+				"//src/gpu/mtl:shared_srcs",
+			}},
 		{Var: "skia_piet_gpu_sources",
 			Rules: []string{
 				"//src/gpu/piet:piet_hdrs",

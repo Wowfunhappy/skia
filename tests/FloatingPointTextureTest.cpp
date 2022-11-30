@@ -39,8 +39,8 @@ void runFPTest(skiatest::Reporter* reporter, GrDirectContext* dContext,
     }
 
     SkTDArray<T> controlPixelData, readBuffer;
-    controlPixelData.setCount(arraySize);
-    readBuffer.setCount(arraySize);
+    controlPixelData.resize(arraySize);
+    readBuffer.resize(arraySize);
 
     for (int i = 0; i < arraySize; i += 4) {
         controlPixelData[i + 0] = min;
@@ -68,17 +68,17 @@ void runFPTest(skiatest::Reporter* reporter, GrDirectContext* dContext,
         bool result = sc->readPixels(dContext, readPixmap, {0, 0});
         REPORTER_ASSERT(reporter, result);
         REPORTER_ASSERT(reporter,
-                        !memcmp(readBuffer.begin(), controlPixelData.begin(), readBuffer.bytes()));
+            !memcmp(readBuffer.begin(), controlPixelData.begin(), readBuffer.size_bytes()));
     }
 }
 
 static const int HALF_ALPHA_CONTROL_ARRAY_SIZE = DEV_W * DEV_H * 1 /*alpha-only*/;
 static const SkHalf kMaxIntegerRepresentableInHalfFloatingPoint = 0x6800;  // 2 ^ 11
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(HalfFloatAlphaTextureTest,
-                                   reporter,
-                                   ctxInfo,
-                                   CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(HalfFloatAlphaTextureTest,
+                                       reporter,
+                                       ctxInfo,
+                                       CtsEnforcement::kApiLevel_T) {
     auto direct = ctxInfo.directContext();
 
     runFPTest<SkHalf>(reporter, direct, SK_HalfMin, SK_HalfMax, SK_HalfEpsilon,
@@ -88,10 +88,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(HalfFloatAlphaTextureTest,
 
 static const int HALF_RGBA_CONTROL_ARRAY_SIZE = DEV_W * DEV_H * 4 /*RGBA*/;
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(HalfFloatRGBATextureTest,
-                                   reporter,
-                                   ctxInfo,
-                                   CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(HalfFloatRGBATextureTest,
+                                       reporter,
+                                       ctxInfo,
+                                       CtsEnforcement::kApiLevel_T) {
     auto direct = ctxInfo.directContext();
 
     runFPTest<SkHalf>(reporter, direct, SK_HalfMin, SK_HalfMax, SK_HalfEpsilon,

@@ -7,8 +7,8 @@
 
 #include "tests/Test.h"
 
-#include "include/core/SkCombinationBuilder.h"
 #include "include/effects/SkRuntimeEffect.h"
+#include "include/gpu/graphite/CombinationBuilder.h"
 #include "include/gpu/graphite/Context.h"
 #include "src/core/SkKeyHelpers.h"
 #include "src/core/SkRuntimeEffectPriv.h"
@@ -102,13 +102,13 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(RTEffectTest, reporter, context) {
     sk_sp<SkRuntimeEffect> redEffect = get_red_effect();
     sk_sp<SkRuntimeEffect> blueEffect = get_blue_effect();
 
-    SkBlenderID comboId = context->addUserDefinedBlender(comboEffect);
+    BlenderID comboId = context->addUserDefinedBlender(comboEffect);
     SkASSERT(comboId.isValid());
 
-    SkBlenderID redId = context->addUserDefinedBlender(redEffect);
+    BlenderID redId = context->addUserDefinedBlender(redEffect);
     SkASSERT(redId.isValid());
 
-    SkBlenderID blueId = context->addUserDefinedBlender(blueEffect);
+    BlenderID blueId = context->addUserDefinedBlender(blueEffect);
     SkASSERT(blueId.isValid());
 
     auto comboEntry = dict->getEntry(comboId);
@@ -206,26 +206,22 @@ DEF_GRAPHITE_TEST_FOR_CONTEXTS(ShaderUniforms_FindOrCreateSnippetForRuntimeEffec
     REPORTER_ASSERT(reporter, snippet);
 
     // The uniform span should match our expectations even though the runtime effect was deleted.
-    REPORTER_ASSERT(reporter, snippet->fUniforms.size() == 4);
+    REPORTER_ASSERT(reporter, snippet->fUniforms.size() == 3);
 
-    REPORTER_ASSERT(reporter, std::string_view(snippet->fUniforms[0].name()) == "localMatrix");
-    REPORTER_ASSERT(reporter, snippet->fUniforms[0].type() == SkSLType::kFloat4x4);
+    REPORTER_ASSERT(reporter,
+                    std::string_view(snippet->fUniforms[0].name()) == "MyFloat3x3Uniform");
+    REPORTER_ASSERT(reporter, snippet->fUniforms[0].type() == SkSLType::kFloat3x3);
     REPORTER_ASSERT(reporter, snippet->fUniforms[0].count() == 0);
 
     REPORTER_ASSERT(reporter,
-                    std::string_view(snippet->fUniforms[1].name()) == "MyFloat3x3Uniform");
-    REPORTER_ASSERT(reporter, snippet->fUniforms[1].type() == SkSLType::kFloat3x3);
-    REPORTER_ASSERT(reporter, snippet->fUniforms[1].count() == 0);
+                    std::string_view(snippet->fUniforms[1].name()) == "MyInt4ArrayUniform");
+    REPORTER_ASSERT(reporter, snippet->fUniforms[1].type() == SkSLType::kInt4);
+    REPORTER_ASSERT(reporter, snippet->fUniforms[1].count() == 1);
 
     REPORTER_ASSERT(reporter,
-                    std::string_view(snippet->fUniforms[2].name()) == "MyInt4ArrayUniform");
-    REPORTER_ASSERT(reporter, snippet->fUniforms[2].type() == SkSLType::kInt4);
-    REPORTER_ASSERT(reporter, snippet->fUniforms[2].count() == 1);
-
-    REPORTER_ASSERT(reporter,
-                    std::string_view(snippet->fUniforms[3].name()) == "MyHalf2ArrayUniform");
-    REPORTER_ASSERT(reporter, snippet->fUniforms[3].type() == SkSLType::kHalf2);
-    REPORTER_ASSERT(reporter, snippet->fUniforms[3].count() == 99);
+                    std::string_view(snippet->fUniforms[2].name()) == "MyHalf2ArrayUniform");
+    REPORTER_ASSERT(reporter, snippet->fUniforms[2].type() == SkSLType::kHalf2);
+    REPORTER_ASSERT(reporter, snippet->fUniforms[2].count() == 99);
 }
 
 DEF_GRAPHITE_TEST_FOR_CONTEXTS(ColorFilterUniforms_FindOrCreateSnippetForRuntimeEffect,

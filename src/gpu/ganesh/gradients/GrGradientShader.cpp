@@ -684,7 +684,7 @@ std::unique_ptr<GrFragmentProcessor> MakeGradientFP(const SkGradientShaderBase& 
 
     // Wrap the layout in a matrix effect to apply the gradient's matrix:
     SkMatrix matrix;
-    if (!shader.totalLocalMatrix(args.fPreLocalMatrix)->invert(&matrix)) {
+    if (args.fLocalMatrix && !args.fLocalMatrix->invert(&matrix)) {
         return nullptr;
     }
     // Some two-point conical gradients use a custom matrix here
@@ -693,7 +693,7 @@ std::unique_ptr<GrFragmentProcessor> MakeGradientFP(const SkGradientShaderBase& 
 
     // Convert all colors into destination space and into SkPMColor4fs, and handle
     // premul issues depending on the interpolation mode
-    bool inputPremul = shader.getGradFlags() & SkGradientShader::kInterpolateColorsInPremul_Flag;
+    bool inputPremul = shader.interpolateInPremul();
     bool allOpaque = true;
     SkAutoSTMalloc<4, SkPMColor4f> colors(shader.fColorCount);
     SkColor4fXformer xformedColors(shader.fOrigColors4f, shader.fColorCount,

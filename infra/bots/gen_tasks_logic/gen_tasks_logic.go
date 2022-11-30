@@ -929,10 +929,6 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 					log.Fatalf("Entry %q not found in Win GPU mapping.", b.parts["cpu_or_gpu_value"])
 				}
 				d["gpu"] = gpu
-				if b.parts["cpu_or_gpu_value"] == "IntelIrisXe" {
-					// The Intel Iris Xe devices have not updated.
-					d["os"] = "Windows-10-19043"
-				}
 			} else if b.isLinux() {
 				gpu, ok := map[string]string{
 					// Intel drivers come from CIPD, so no need to specify the version here.
@@ -961,8 +957,8 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 					d["os"] = "Debian-bookworm/sid"
 				}
 				if b.parts["cpu_or_gpu_value"] == "RadeonVega6" {
-					// The RadeonVega6 devices are Debian 11.4.
-					d["os"] = "Debian-11.4"
+					// The RadeonVega6 devices are Debian 11.5.
+					d["os"] = "Debian-11.5"
 				}
 
 			} else if b.matchOs("Mac") {
@@ -1482,14 +1478,21 @@ func (b *jobBuilder) buildstats() {
 // statistics to the GCS bucket belonging to the codesize.skia.org service.
 func (b *jobBuilder) codesize() {
 	compileTaskName := b.compile()
-	compileTaskNameNoPatch := compileTaskName + "-NoPatch"
+	compileTaskNameNoPatch := compileTaskName
+	if b.extraConfig("Android") {
+		compileTaskNameNoPatch += "_NoPatch" // add a second "extra config"
+	} else {
+		compileTaskNameNoPatch += "-NoPatch" // add the only "extra config"
+	}
+
 	bloatyCipdPkg := b.MustGetCipdPackageFromAsset("bloaty")
 
 	b.addTask(b.Name, func(b *taskBuilder) {
 		b.cas(CAS_EMPTY)
 		b.dep(b.buildTaskDrivers("linux", "amd64"), compileTaskName)
 		b.dep(b.buildTaskDrivers("linux", "amd64"), compileTaskNameNoPatch)
-		b.cmd("./codesize",
+		cmd := []string{
+			"./codesize",
 			"--local=false",
 			"--project_id", "skia-swarming-bots",
 			"--task_id", specs.PLACEHOLDER_TASK_ID,
@@ -1507,18 +1510,26 @@ func (b *jobBuilder) codesize() {
 			"--binary_name", b.parts["binary_name"],
 			"--bloaty_cipd_version", bloatyCipdPkg.Version,
 			"--bloaty_binary", "bloaty/bloaty",
-			"--strip_binary", "binutils_linux_x64/strip",
+
 			"--repo", specs.PLACEHOLDER_REPO,
 			"--revision", specs.PLACEHOLDER_REVISION,
 			"--patch_issue", specs.PLACEHOLDER_ISSUE,
 			"--patch_set", specs.PLACEHOLDER_PATCHSET,
 			"--patch_server", specs.PLACEHOLDER_CODEREVIEW_SERVER,
-		)
+		}
+		if strings.Contains(compileTaskName, "Android") {
+			b.asset("android_ndk_linux")
+			cmd = append(cmd, "--strip_binary",
+				"android_ndk_linux/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin/arm-linux-androideabi-strip")
+		} else {
+			b.asset("binutils_linux_x64")
+			cmd = append(cmd, "--strip_binary", "binutils_linux_x64/strip")
+		}
+		b.cmd(cmd...)
 		b.linuxGceDimensions(MACHINE_TYPE_SMALL)
 		b.cache(CACHES_WORKDIR...)
 		b.cipd(CIPD_PKG_LUCI_AUTH)
 		b.asset("bloaty")
-		b.asset("binutils_linux_x64")
 		b.serviceAccount("skia-external-codesize@skia-swarming-bots.iam.gserviceaccount.com")
 		b.timeout(20 * time.Minute)
 		b.attempts(1)
@@ -1808,17 +1819,7 @@ func (b *jobBuilder) puppeteer() {
 				"--cpu_or_gpu_value_trace", b.parts["cpu_or_gpu_value"],
 				"--webgl_version", webglversion, // ignore when running with cpu backend
 			)
-			// This CIPD package was made by hand with the following invocation:
-			//   cipd create -name skia/internal/lotties_with_assets -in ./lotties/ -tag version:0
-			//   cipd acl-edit skia/internal/lotties_with_assets -reader group:project-skia-external-task-accounts
-			//   cipd acl-edit skia/internal/lotties_with_assets -reader user:pool-skia@chromium-swarm.iam.gserviceaccount.com
-			// Where lotties is a hand-selected set of lottie animations and (optionally) assets used in
-			// them (e.g. fonts, images).
-			b.cipd(&specs.CipdPackage{
-				Name:    "skia/internal/lotties_with_assets",
-				Path:    "lotties_with_assets",
-				Version: "version:1",
-			})
+			b.needsLottiesWithAssets()
 		} else if b.extraConfig("RenderSKP") {
 			b.cmd(
 				"./perf_puppeteer_render_skps",
@@ -1887,7 +1888,7 @@ func (b *jobBuilder) perf() {
 	if !b.extraConfig("LottieWeb") {
 		compileTaskName = b.compile()
 	}
-	doUpload := b.release() && b.doUpload()
+	doUpload := !b.debug() && b.doUpload()
 	b.addTask(b.Name, func(b *taskBuilder) {
 		recipe := "perf"
 		cas := CAS_PERF
@@ -1942,6 +1943,8 @@ func (b *jobBuilder) perf() {
 			b.timeout(6 * time.Hour)
 		} else if b.extraConfig("LottieWeb", "SkottieWASM") {
 			b.asset("node", "lottie-samples")
+		} else if b.matchExtraConfig("SkottieTracing") {
+			b.needsLottiesWithAssets()
 		} else if b.matchExtraConfig("Skottie") {
 			b.asset("lottie-samples")
 		}

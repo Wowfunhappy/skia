@@ -40,7 +40,9 @@ public:
                                 int srcX,
                                 int srcY);
 
-    bool onHasMipmaps() const override { return false; }
+    bool onHasMipmaps() const override {
+        return fTextureProxyView.proxy()->mipmapped() == Mipmapped::kYes;
+    }
 
     bool isGraphiteBacked() const override { return true; }
 
@@ -60,6 +62,27 @@ public:
 
     sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const override;
 
+    void onAsyncReadPixels(const SkImageInfo&,
+                           SkIRect srcRect,
+                           ReadPixelsCallback,
+                           ReadPixelsContext) const override;
+
+    void onAsyncRescaleAndReadPixels(const SkImageInfo&,
+                                     SkIRect srcRect,
+                                     RescaleGamma,
+                                     RescaleMode,
+                                     ReadPixelsCallback,
+                                     ReadPixelsContext) const override;
+
+    void onAsyncRescaleAndReadPixelsYUV420(SkYUVColorSpace,
+                                           sk_sp<SkColorSpace>,
+                                           SkIRect srcRect,
+                                           SkISize dstSize,
+                                           RescaleGamma,
+                                           RescaleMode,
+                                           ReadPixelsCallback,
+                                           ReadPixelsContext) const override;
+
     TextureProxyView textureProxyView() const { return fTextureProxyView; }
 
 private:
@@ -70,9 +93,8 @@ private:
             const SkTileMode[2],
             const SkMatrix&,
             const SkRect* subset,
-            const SkRect* domain) const override {
-        return nullptr;
-    }
+            const SkRect* domain) const override;
+
     std::tuple<GrSurfaceProxyView, GrColorType> onAsView(
             GrRecordingContext*,
             GrMipmapped,

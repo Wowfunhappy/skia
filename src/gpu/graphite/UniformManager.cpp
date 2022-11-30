@@ -11,7 +11,6 @@
 #include "include/private/SkHalf.h"
 #include "include/private/SkTemplates.h"
 #include "src/core/SkPipelineData.h"
-#include "src/core/SkUniform.h"
 #include "src/gpu/graphite/DrawTypes.h"
 
 // ensure that these types are the sizes the uniform data is expecting
@@ -549,8 +548,8 @@ size_t UniformOffsetCalculator::calculateOffset(SkSLType type, unsigned int coun
 }
 
 SkUniformDataBlock UniformManager::finishUniformDataBlock() {
-    size_t size = SkAlignTo(fStorage.count(), fReqAlignment);
-    size_t paddingSize = size - fStorage.count();
+    size_t size = SkAlignTo(fStorage.size(), fReqAlignment);
+    size_t paddingSize = size - fStorage.size();
     char* padding = fStorage.append(paddingSize);
     memset(padding, 0, paddingSize);
     return SkUniformDataBlock(SkSpan(fStorage.begin(), size));
@@ -560,7 +559,7 @@ void UniformManager::reset() {
     fCurUBOOffset = 0;
     fOffset = 0;
     fReqAlignment = 0;
-    fStorage.rewind();
+    fStorage.clear();
 }
 
 void UniformManager::checkReset() const {

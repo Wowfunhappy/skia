@@ -422,6 +422,7 @@ skia_core_sources = [
   "$_src/core/SkSurfacePriv.h",
   "$_src/core/SkSwizzle.cpp",
   "$_src/core/SkTBlockList.h",
+  "$_src/core/SkTDArray.cpp",
   "$_src/core/SkTDPQueue.h",
   "$_src/core/SkTDynamicHash.h",
   "$_src/core/SkTInternalLList.h",
@@ -626,13 +627,13 @@ skia_pathops_sources = [
   "$_src/pathops/SkReduceOrder.h",
 ]
 
-skia_precompile_public = [ "$_include/core/SkCombinationBuilder.h" ]
+skia_precompile_public = [ "$_include/gpu/graphite/CombinationBuilder.h" ]
 
 skia_precompile_sources = [
-  "$_src/core/SkCombinationBuilder.cpp",
-  "$_src/core/SkFactoryFunctions.cpp",
-  "$_src/core/SkFactoryFunctions.h",
-  "$_src/core/SkPrecompile.h",
+  "$_src/gpu/graphite/CombinationBuilder.cpp",
+  "$_src/gpu/graphite/FactoryFunctions.cpp",
+  "$_src/gpu/graphite/FactoryFunctions.h",
+  "$_src/gpu/graphite/Precompile.h",
 ]
 
 skia_skpicture_public = [

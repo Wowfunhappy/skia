@@ -329,6 +329,7 @@ CORE_FILES = [
     "SkSurfacePriv.h",
     "SkSwizzle.cpp",
     "SkTBlockList.h",
+    "SkTDArray.cpp",
     "SkTDPQueue.h",
     "SkTDynamicHash.h",
     "SkTInternalLList.h",
@@ -407,19 +408,6 @@ SKSL_FILES = [
 split_srcs_and_hdrs(
     name = "sksl",
     files = SKSL_FILES,
-)
-
-# Mapped to skia_precompile_sources variable in //gn/core.gni.
-PRECOMPILE_FILES = [
-    "SkCombinationBuilder.cpp",
-    "SkFactoryFunctions.cpp",
-    "SkFactoryFunctions.h",
-    "SkPrecompile.h",
-]
-
-split_srcs_and_hdrs(
-    name = "precompile",
-    files = PRECOMPILE_FILES,
 )
 
 # SkPicture files are maintained as a separate filegroups for backward compatability

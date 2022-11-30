@@ -54,7 +54,9 @@ static void test_find_existing(skiatest::Reporter* reporter,
 
     skif::FilterResult foundImage;
     REPORTER_ASSERT(reporter, cache->get(key1, &foundImage));
-    REPORTER_ASSERT(reporter, offset == SkIPoint(foundImage.layerOrigin()));
+    REPORTER_ASSERT(reporter,
+            SkIRect::MakeXYWH(offset.fX, offset.fY, image->width(), image->height()) ==
+            SkIRect(foundImage.layerBounds()));
 
     REPORTER_ASSERT(reporter, !cache->get(key2, &foundImage));
 }
@@ -211,10 +213,10 @@ static GrSurfaceProxyView create_proxy_view(GrRecordingContext* rContext) {
     return std::get<0>(GrMakeUncachedBitmapProxyView(rContext, srcBM));
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ImageFilterCache_ImageBackedGPU,
-                                   reporter,
-                                   ctxInfo,
-                                   CtsEnforcement::kNever) {
+DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(ImageFilterCache_ImageBackedGPU,
+                                       reporter,
+                                       ctxInfo,
+                                       CtsEnforcement::kNever) {
     auto dContext = ctxInfo.directContext();
 
     GrSurfaceProxyView srcView = create_proxy_view(dContext);
@@ -255,10 +257,10 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ImageFilterCache_ImageBackedGPU,
     test_image_backed(reporter, dContext, srcImage);
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ImageFilterCache_GPUBacked,
-                                   reporter,
-                                   ctxInfo,
-                                   CtsEnforcement::kNever) {
+DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(ImageFilterCache_GPUBacked,
+                                       reporter,
+                                       ctxInfo,
+                                       CtsEnforcement::kNever) {
     auto dContext = ctxInfo.directContext();
 
     GrSurfaceProxyView srcView = create_proxy_view(dContext);

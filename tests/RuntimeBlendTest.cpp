@@ -5,7 +5,8 @@
  * found in the LICENSE file.
  */
 
-#include "gm/gm.h"
+#include "tests/Test.h"
+
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkPaint.h"
@@ -14,7 +15,6 @@
 #include "include/effects/SkRuntimeEffect.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
-#include "tests/Test.h"
 #include "tools/Resources.h"
 #include "tools/RuntimeBlendUtils.h"
 #include "tools/ToolUtils.h"
@@ -95,7 +95,10 @@ DEF_TEST(SkRuntimeBlender_CPU, r) {
     test_blend(r, surface.get());
 }
 
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(SkRuntimeBlender_GPU, r, ctxInfo, CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SkRuntimeBlender_GPU,
+                                       r,
+                                       ctxInfo,
+                                       CtsEnforcement::kApiLevel_T) {
     const SkImageInfo info = SkImageInfo::MakeN32Premul(/*width=*/1, /*height=*/1);
     sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(ctxInfo.directContext(),
                                                          SkBudgeted::kNo, info));

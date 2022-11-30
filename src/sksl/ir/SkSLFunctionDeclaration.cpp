@@ -35,10 +35,11 @@ namespace SkSL {
 static bool check_modifiers(const Context& context,
                             Position pos,
                             const Modifiers& modifiers) {
-    const int permitted = Modifiers::kHasSideEffects_Flag |
-                          Modifiers::kInline_Flag |
+    const int permitted = Modifiers::kInline_Flag |
                           Modifiers::kNoInline_Flag |
-                          (context.fConfig->fIsBuiltinCode ? Modifiers::kES3_Flag : 0);
+                          (context.fConfig->fIsBuiltinCode ? (Modifiers::kES3_Flag |
+                                                              Modifiers::kPure_Flag |
+                                                              Modifiers::kExport_Flag) : 0);
     modifiers.checkPermitted(context, pos, permitted, /*permittedLayoutFlags=*/0);
     if ((modifiers.fFlags & Modifiers::kInline_Flag) &&
         (modifiers.fFlags & Modifiers::kNoInline_Flag)) {
@@ -324,7 +325,7 @@ static bool type_generically_matches(const Type& concreteType, const Type& maybe
  * generic types.
  */
 static bool parameters_match(const std::vector<std::unique_ptr<Variable>>& params,
-                             const std::vector<const Variable*>& otherParams) {
+                             const std::vector<Variable*>& otherParams) {
     // If the param lists are different lengths, they're definitely not a match.
     if (params.size() != otherParams.size()) {
         return false;
@@ -378,51 +379,57 @@ static bool parameters_match(const std::vector<std::unique_ptr<Variable>>& param
 static bool find_existing_declaration(const Context& context,
                                       SymbolTable& symbols,
                                       Position pos,
+                                      const Modifiers* modifiers,
                                       std::string_view name,
                                       std::vector<std::unique_ptr<Variable>>& parameters,
                                       Position returnTypePos,
                                       const Type* returnType,
-                                      const FunctionDeclaration** outExistingDecl) {
+                                      FunctionDeclaration** outExistingDecl) {
+    auto invalidDeclDescription = [&]() -> std::string {
+        std::vector<Variable*> paramPtrs;
+        paramPtrs.reserve(parameters.size());
+        for (std::unique_ptr<Variable>& param : parameters) {
+            paramPtrs.push_back(param.get());
+        }
+        return FunctionDeclaration(pos,
+                                   modifiers,
+                                   name,
+                                   std::move(paramPtrs),
+                                   returnType,
+                                   context.fConfig->fIsBuiltinCode)
+                .description();
+    };
+
     ErrorReporter& errors = *context.fErrors;
-    const Symbol* entry = symbols[name];
+    Symbol* entry = symbols.findMutable(name);
     *outExistingDecl = nullptr;
     if (entry) {
         if (!entry->is<FunctionDeclaration>()) {
             errors.error(pos, "symbol '" + std::string(name) + "' was already defined");
             return false;
         }
-        for (const FunctionDeclaration* other = &entry->as<FunctionDeclaration>();
-             other; other = other->nextOverload()) {
+        for (FunctionDeclaration* other = &entry->as<FunctionDeclaration>(); other;
+             other = other->mutableNextOverload()) {
             SkASSERT(name == other->name());
             if (!parameters_match(parameters, other->parameters())) {
                 continue;
             }
             if (!type_generically_matches(*returnType, other->returnType())) {
-                std::vector<const Variable*> paramPtrs;
-                paramPtrs.reserve(parameters.size());
-                for (std::unique_ptr<Variable>& param : parameters) {
-                    paramPtrs.push_back(param.get());
-                }
-                FunctionDeclaration invalidDecl(pos,
-                                                &other->modifiers(),
-                                                name,
-                                                std::move(paramPtrs),
-                                                returnType,
-                                                context.fConfig->fIsBuiltinCode);
                 errors.error(returnTypePos,
-                             "functions '" + invalidDecl.description() + "' and '" +
+                             "functions '" + invalidDeclDescription() + "' and '" +
                              other->description() + "' differ only in return type");
                 return false;
             }
             for (size_t i = 0; i < parameters.size(); i++) {
                 if (parameters[i]->modifiers() != other->parameters()[i]->modifiers()) {
-                    errors.error(parameters[i]->fPosition, "modifiers on parameter " +
-                            std::to_string(i + 1) + " differ between declaration and definition");
+                    errors.error(parameters[i]->fPosition,
+                                 "modifiers on parameter " + std::to_string(i + 1) +
+                                 " differ between declaration and definition");
                     return false;
                 }
             }
-            if (other->definition() || other->isBuiltin()) {
-                errors.error(pos, "duplicate definition of " + other->description());
+            if (*modifiers != other->modifiers() || other->definition() || other->isBuiltin()) {
+                errors.error(pos, "duplicate definition of '" + invalidDeclDescription() + "'");
                 return false;
             }
             *outExistingDecl = other;
@@ -435,7 +442,7 @@ static bool find_existing_declaration(const Context& context,
 FunctionDeclaration::FunctionDeclaration(Position pos,
                                          const Modifiers* modifiers,
                                          std::string_view name,
-                                         std::vector<const Variable*> parameters,
+                                         std::vector<Variable*> parameters,
                                          const Type* returnType,
                                          bool builtin)
         : INHERITED(pos, kSymbolKind, name, /*type=*/nullptr)
@@ -450,28 +457,27 @@ FunctionDeclaration::FunctionDeclaration(Position pos,
     SkASSERT(std::count(fParameters.begin(), fParameters.end(), nullptr) == 0);
 }
 
-const FunctionDeclaration* FunctionDeclaration::Convert(
-        const Context& context,
-        SymbolTable& symbols,
-        Position pos,
-        Position modifiersPosition,
-        const Modifiers* modifiers,
-        std::string_view name,
-        std::vector<std::unique_ptr<Variable>> parameters,
-        Position returnTypePos,
-        const Type* returnType) {
+FunctionDeclaration* FunctionDeclaration::Convert(const Context& context,
+                                                  SymbolTable& symbols,
+                                                  Position pos,
+                                                  Position modifiersPosition,
+                                                  const Modifiers* modifiers,
+                                                  std::string_view name,
+                                                  std::vector<std::unique_ptr<Variable>> parameters,
+                                                  Position returnTypePos,
+                                                  const Type* returnType) {
     bool isMain = (name == "main");
 
-    const FunctionDeclaration* decl = nullptr;
+    FunctionDeclaration* decl = nullptr;
     if (!check_modifiers(context, modifiersPosition, *modifiers) ||
         !check_return_type(context, returnTypePos, *returnType) ||
         !check_parameters(context, parameters, isMain) ||
         (isMain && !check_main_signature(context, pos, *returnType, parameters)) ||
-        !find_existing_declaration(context, symbols, pos, name, parameters, returnTypePos,
-                                   returnType, &decl)) {
+        !find_existing_declaration(context, symbols, pos, modifiers, name, parameters,
+                                   returnTypePos, returnType, &decl)) {
         return nullptr;
     }
-    std::vector<const Variable*> finalParameters;
+    std::vector<Variable*> finalParameters;
     finalParameters.reserve(parameters.size());
     for (std::unique_ptr<Variable>& param : parameters) {
         finalParameters.push_back(symbols.takeOwnershipOfSymbol(std::move(param)));
@@ -511,11 +517,19 @@ std::string FunctionDeclaration::mangledName() const {
 }
 
 std::string FunctionDeclaration::description() const {
-    std::string result = this->returnType().displayName() + " " + std::string(this->name()) + "(";
+    int modifierFlags = this->modifiers().fFlags;
+    std::string result =
+            (modifierFlags ? Modifiers::DescribeFlags(modifierFlags) + " " : std::string()) +
+            this->returnType().displayName() + " " + std::string(this->name()) + "(";
     std::string separator;
     for (const Variable* p : this->parameters()) {
         result += separator;
         separator = ", ";
+        // We can't just say `p->description()` here, because occasionally might have added layout
+        // flags onto parameters (like `layout(builtin=10009)`) and don't want to reproduce that.
+        if (p->modifiers().fFlags) {
+            result += Modifiers::DescribeFlags(p->modifiers().fFlags) + " ";
+        }
         result += p->type().displayName();
         result += " ";
         result += p->name();
@@ -528,8 +542,8 @@ bool FunctionDeclaration::matches(const FunctionDeclaration& f) const {
     if (this->name() != f.name()) {
         return false;
     }
-    const std::vector<const Variable*>& parameters = this->parameters();
-    const std::vector<const Variable*>& otherParameters = f.parameters();
+    const std::vector<Variable*>& parameters = this->parameters();
+    const std::vector<Variable*>& otherParameters = f.parameters();
     if (parameters.size() != otherParameters.size()) {
         return false;
     }
@@ -544,7 +558,7 @@ bool FunctionDeclaration::matches(const FunctionDeclaration& f) const {
 bool FunctionDeclaration::determineFinalTypes(const ExpressionArray& arguments,
                                               ParamTypes* outParameterTypes,
                                               const Type** outReturnType) const {
-    const std::vector<const Variable*>& parameters = this->parameters();
+    const std::vector<Variable*>& parameters = this->parameters();
     SkASSERT(arguments.size() == parameters.size());
 
     outParameterTypes->reserve_back(arguments.size());

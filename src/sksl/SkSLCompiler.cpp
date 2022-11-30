@@ -7,7 +7,8 @@
 
 #include "src/sksl/SkSLCompiler.h"
 
-#include "include/private/SkSLStatement.h"
+#include "include/core/SkSpan.h"
+#include "include/private/SkSLDefines.h"
 #include "include/private/SkSLSymbol.h"
 #include "include/sksl/DSLCore.h"
 #include "include/sksl/DSLModifiers.h"
@@ -21,7 +22,6 @@
 #include "src/sksl/SkSLOutputStream.h"
 #include "src/sksl/SkSLParser.h"
 #include "src/sksl/SkSLProgramSettings.h"
-#include "src/sksl/SkSLRehydrator.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExternalFunction.h"
@@ -29,13 +29,9 @@
 #include "src/sksl/ir/SkSLField.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
-#include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLFunctionReference.h"
-#include "src/sksl/ir/SkSLInterfaceBlock.h"
 #include "src/sksl/ir/SkSLProgram.h"
-#include "src/sksl/ir/SkSLSymbolTable.h"
 #include "src/sksl/ir/SkSLTypeReference.h"
-#include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 #include "src/sksl/transform/SkSLTransform.h"
@@ -43,8 +39,11 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <stdio.h>
 #include <utility>
+
+#if defined(SKSL_STANDALONE)
+#include <fstream>
+#endif
 
 #if defined(SKSL_STANDALONE) || SK_SUPPORT_GPU || defined(SK_GRAPHITE_ENABLED)
 #include "src/sksl/codegen/SkSLGLSLCodeGenerator.h"
@@ -60,13 +59,6 @@
 
 #ifdef SK_ENABLE_WGSL_VALIDATION
 #include "tint/tint.h"
-#endif
-
-#ifdef SKSL_STANDALONE
-#define REHYDRATE 0
-#include <fstream>
-#else
-#define REHYDRATE 1
 #endif
 
 namespace SkSL {
@@ -97,17 +89,17 @@ public:
 
 class AutoProgramConfig {
 public:
-    AutoProgramConfig(std::shared_ptr<Context>& context, ProgramConfig* config)
-            : fContext(context.get())
-            , fOldConfig(fContext->fConfig) {
-        fContext->fConfig = config;
+    AutoProgramConfig(Context& context, ProgramConfig* config)
+            : fContext(context)
+            , fOldConfig(context.fConfig) {
+        fContext.fConfig = config;
     }
 
     ~AutoProgramConfig() {
-        fContext->fConfig = fOldConfig;
+        fContext.fConfig = fOldConfig;
     }
 
-    Context* fContext;
+    Context& fContext;
     ProgramConfig* fOldConfig;
 };
 
@@ -152,7 +144,7 @@ Compiler::Compiler(const ShaderCaps* caps) : fErrorReporter(this), fCaps(caps) {
 
 Compiler::~Compiler() {}
 
-const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
+const BuiltinMap* Compiler::moduleForProgramKind(ProgramKind kind) {
     auto m = ModuleLoader::Get();
     switch (kind) {
         case ProgramKind::kVertex:               return m.loadVertexModule(this);           break;
@@ -171,97 +163,38 @@ const ParsedModule& Compiler::moduleForProgramKind(ProgramKind kind) {
     SkUNREACHABLE;
 }
 
-LoadedModule Compiler::loadModule(ProgramKind kind,
-                                  ModuleData data,
-                                  ModifiersPool& modifiersPool,
-                                  std::shared_ptr<SymbolTable> base) {
+LoadedModule Compiler::compileModule(ProgramKind kind,
+                                     const char* moduleName,
+                                     std::string moduleSource,
+                                     const BuiltinMap* base,
+                                     ModifiersPool& modifiersPool,
+                                     bool shouldInline) {
     SkASSERT(base);
+    SkASSERT(!moduleSource.empty());
+    SkASSERT(this->errorCount() == 0);
+
     // Modules are shared and cannot rely on shader caps.
     AutoShaderCaps autoCaps(fContext, nullptr);
     AutoModifiersPool autoPool(fContext, &modifiersPool);
 
-#if REHYDRATE
-    ProgramConfig config;
-    config.fIsBuiltinCode = true;
-    config.fKind = kind;
-    AutoProgramConfig autoConfig(fContext, &config);
-    SkASSERT(data.fData && (data.fSize != 0));
-    Rehydrator rehydrator(*this, data.fData, data.fSize, std::move(base));
-    LoadedModule module = {kind, rehydrator.symbolTable(), rehydrator.elements()};
-#else
-    SkASSERT(this->errorCount() == 0);
-    SkASSERT(data.fPath);
-    std::ifstream in(data.fPath);
-    std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-    if (in.rdstate()) {
-        printf("error reading %s\n", data.fPath);
-        abort();
-    }
-    ParsedModule baseModule = {std::move(base), /*fElements=*/nullptr};
-    // Built-in modules always use default program settings.
+    // Compile the module from source, using default program settings.
     ProgramSettings settings;
-    LoadedModule module = Parser(this, settings, kind, std::move(text))
-                                  .moduleInheritingFrom(baseModule);
-    if (this->errorCount()) {
-        printf("Unexpected errors: %s\n", this->fErrorText.c_str());
-        SkDEBUGFAILF("%s %s\n", data.fPath, this->fErrorText.c_str());
+    SkSL::Parser parser{this, settings, kind, std::move(moduleSource)};
+    LoadedModule module = parser.moduleInheritingFrom(base);
+    if (this->errorCount() != 0) {
+        SK_ABORT("Unexpected errors compiling %s:\n\n%s\n", moduleName, this->errorText().c_str());
     }
-    this->optimizeModuleForDehydration(module, baseModule);
-#endif
-
+    if (shouldInline) {
+        this->optimizeModuleAfterLoading(kind, module, base);
+    }
     return module;
 }
 
-ParsedModule Compiler::parseModule(ProgramKind kind,
-                                   ModuleData data,
-                                   const ParsedModule& base,
-                                   ModifiersPool& modifiersPool) {
-    LoadedModule module = this->loadModule(kind, data, modifiersPool, base.fSymbols);
-    this->optimizeRehydratedModule(module, base, modifiersPool);
+std::unique_ptr<BuiltinMap> LoadedModule::convertToBuiltinMap(const BuiltinMap* parent) {
+    auto elements = std::make_unique<BuiltinMap>(parent, std::move(fSymbols), SkSpan(fElements));
+    fElements = std::vector<std::unique_ptr<ProgramElement>>{};
 
-    // For modules that just declare (but don't define) intrinsic functions, there will be no new
-    // program elements. In that case, we can share our parent's element map:
-    if (module.fElements.empty()) {
-        return ParsedModule{module.fSymbols, base.fElements};
-    }
-
-    auto elements = std::make_shared<BuiltinMap>(base.fElements.get());
-
-    // Now, transfer all of the program elements to a builtin element map. This maps certain types
-    // of global objects to the declaring ProgramElement.
-    for (std::unique_ptr<ProgramElement>& element : module.fElements) {
-        switch (element->kind()) {
-            case ProgramElement::Kind::kFunction: {
-                const FunctionDefinition& f = element->as<FunctionDefinition>();
-                SkASSERT(f.declaration().isBuiltin());
-                elements->insertOrDie(f.declaration().description(), std::move(element));
-                break;
-            }
-            case ProgramElement::Kind::kFunctionPrototype: {
-                // These are already in the symbol table.
-                break;
-            }
-            case ProgramElement::Kind::kGlobalVar: {
-                const GlobalVarDeclaration& global = element->as<GlobalVarDeclaration>();
-                const Variable& var = global.declaration()->as<VarDeclaration>().var();
-                SkASSERT(var.isBuiltin());
-                elements->insertOrDie(std::string(var.name()), std::move(element));
-                break;
-            }
-            case ProgramElement::Kind::kInterfaceBlock: {
-                const Variable& var = element->as<InterfaceBlock>().variable();
-                SkASSERT(var.isBuiltin());
-                elements->insertOrDie(std::string(var.name()), std::move(element));
-                break;
-            }
-            default:
-                printf("Unsupported element: %s\n", element->description().c_str());
-                SkASSERT(false);
-                break;
-        }
-    }
-
-    return ParsedModule{module.fSymbols, std::move(elements)};
+    return elements;
 }
 
 std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
@@ -321,7 +254,7 @@ std::unique_ptr<Program> Compiler::convertProgram(ProgramKind kind,
 }
 
 std::unique_ptr<Expression> Compiler::convertIdentifier(Position pos, std::string_view name) {
-    const Symbol* result = (*fSymbolTable)[name];
+    const Symbol* result = fSymbolTable->find(name);
     if (!result) {
         this->errorReporter().error(pos, "unknown identifier '" + std::string(name) + "'");
         return nullptr;
@@ -358,17 +291,59 @@ std::unique_ptr<Expression> Compiler::convertIdentifier(Position pos, std::strin
     }
 }
 
-bool Compiler::optimizeRehydratedModule(LoadedModule& module,
-                                        const ParsedModule& base,
-                                        ModifiersPool& modifiersPool) {
-    SkASSERT(!this->errorCount());
+bool Compiler::optimizeModuleBeforeMinifying(ProgramKind kind,
+                                             LoadedModule& module,
+                                             const BuiltinMap* base) {
+    SkASSERT(this->errorCount() == 0);
+
+    auto m = SkSL::ModuleLoader::Get();
 
     // Create a temporary program configuration with default settings.
     ProgramConfig config;
     config.fIsBuiltinCode = true;
-    config.fKind = module.fKind;
-    AutoProgramConfig autoConfig(fContext, &config);
-    AutoModifiersPool autoPool(fContext, &modifiersPool);
+    config.fKind = kind;
+    AutoProgramConfig autoConfig(this->context(), &config);
+    AutoModifiersPool autoPool(fContext, &m.coreModifiers());
+
+    std::unique_ptr<ProgramUsage> usage = Analysis::GetUsage(module, base);
+
+    // Look for local variables in functions and give them shorter names.
+    Transform::RenamePrivateSymbols(this->context(), module, usage.get());
+
+    // Replace constant variables with their literal values to save space.
+    Transform::ReplaceConstVarsWithLiterals(module, usage.get());
+
+    // Remove any unreachable code.
+    Transform::EliminateUnreachableCode(module, usage.get());
+
+    while (Transform::EliminateDeadLocalVariables(this->context(), module, usage.get())) {
+        // Removing dead variables may cause more variables to become unreferenced. Try again.
+    }
+
+    // We only eliminate private globals (prefixed with `$`) to avoid changing the meaning of the
+    // module code.
+    while (Transform::EliminateDeadGlobalVariables(this->context(), module, usage.get(),
+                                                   /*onlyPrivateGlobals=*/true)) {
+        // Repeat until no changes occur.
+    }
+
+    // We eliminate empty statements to avoid runs of `;;;;;;` caused by the previous passes.
+    SkSL::Transform::EliminateEmptyStatements(module);
+
+    return this->errorCount() == 0;
+}
+
+bool Compiler::optimizeModuleAfterLoading(ProgramKind kind,
+                                          LoadedModule& module,
+                                          const BuiltinMap* base) {
+    SkASSERT(this->errorCount() == 0);
+
+#ifndef SK_ENABLE_OPTIMIZE_SIZE
+    // Create a temporary program configuration with default settings.
+    ProgramConfig config;
+    config.fIsBuiltinCode = true;
+    config.fKind = kind;
+    AutoProgramConfig autoConfig(this->context(), &config);
 
     std::unique_ptr<ProgramUsage> usage = Analysis::GetUsage(module, base);
 
@@ -379,34 +354,8 @@ bool Compiler::optimizeRehydratedModule(LoadedModule& module,
             break;
         }
     }
-    return this->errorCount() == 0;
-}
+#endif
 
-bool Compiler::optimizeModuleForDehydration(LoadedModule& module, const ParsedModule& base) {
-    SkASSERT(!this->errorCount());
-
-    // Create a temporary program configuration with default settings.
-    ProgramConfig config;
-    config.fIsBuiltinCode = true;
-    config.fKind = module.fKind;
-    AutoProgramConfig autoConfig(fContext, &config);
-
-    std::unique_ptr<ProgramUsage> usage = Analysis::GetUsage(module, base);
-
-    // Remove any unreachable code.
-    Transform::EliminateUnreachableCode(module, usage.get());
-
-    while (Transform::EliminateDeadLocalVariables(*fContext, module, usage.get())) {
-        // Removing dead variables may cause more variables to become unreferenced. Try again.
-    }
-
-    // Save space by eliminating empty statements from the code.
-    Transform::EliminateEmptyStatements(module);
-
-    // Note that we intentionally don't attempt to eliminate unreferenced global variables or
-    // functions here, since those can be referenced by the finished program even if they're
-    // unreferenced now. We also don't run the inliner to avoid growing the program; that is done in
-    // `optimizeRehydratedModule` above.
     return this->errorCount() == 0;
 }
 
@@ -419,13 +368,14 @@ bool Compiler::optimize(Program& program) {
     AutoShaderCaps autoCaps(fContext, fCaps);
 
     SkASSERT(!this->errorCount());
-    ProgramUsage* usage = program.fUsage.get();
-
     if (this->errorCount() == 0) {
+#ifndef SK_ENABLE_OPTIMIZE_SIZE
         // Run the inliner only once; it is expensive! Multiple passes can occasionally shake out
         // more wins, but it's diminishing returns.
+        ProgramUsage* usage = program.fUsage.get();
         Inliner inliner(fContext.get());
         this->runInliner(&inliner, program.fOwnedElements, program.fSymbols, usage);
+#endif
 
         // Unreachable code can confuse some drivers, so it's worth removing. (skia:12012)
         Transform::EliminateUnreachableCode(program);
@@ -447,6 +397,9 @@ bool Compiler::runInliner(Inliner* inliner,
                           const std::vector<std::unique_ptr<ProgramElement>>& elements,
                           std::shared_ptr<SymbolTable> symbols,
                           ProgramUsage* usage) {
+#ifdef SK_ENABLE_OPTIMIZE_SIZE
+    return true;
+#else
     // The program's SymbolTable was taken out of fSymbolTable when the program was bundled, but
     // the inliner relies (indirectly) on having a valid SymbolTable.
     // In particular, inlining can turn a non-optimizable expression like `normalize(myVec)` into
@@ -462,6 +415,7 @@ bool Compiler::runInliner(Inliner* inliner,
 
     fSymbolTable = nullptr;
     return result;
+#endif
 }
 
 bool Compiler::finalize(Program& program) {

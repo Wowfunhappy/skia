@@ -6,8 +6,8 @@
  */
 
 #include "tests/Test.h"
-#include "tests/TestUtils.h"
 
+#ifdef SK_GL
 #include "include/core/SkColorSpace.h"
 #include "include/gpu/GrDirectContext.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
@@ -16,10 +16,9 @@
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/SurfaceFillContext.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
-#ifdef SK_GL
 #include "src/gpu/ganesh/gl/GrGLGpu.h"
 #include "src/gpu/ganesh/gl/GrGLUtil.h"
-#endif
+#include "tests/TestUtils.h"
 #include "tools/gpu/ProxyUtils.h"
 
 // skbug.com/5932
@@ -116,11 +115,10 @@ static void test_copy_to_surface(skiatest::Reporter* reporter,
     }
 }
 
-#ifdef SK_GL
-DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(RectangleTexture,
-                                      reporter,
-                                      ctxInfo,
-                                      CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(RectangleTexture,
+                                          reporter,
+                                          ctxInfo,
+                                          CtsEnforcement::kApiLevel_T) {
     auto dContext = ctxInfo.directContext();
 
     GrProxyProvider* proxyProvider = dContext->priv().proxyProvider();

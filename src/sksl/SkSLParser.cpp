@@ -21,7 +21,6 @@
 #include "include/sksl/SkSLVersion.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLConstantFolder.h"
-#include "src/sksl/SkSLParsedModule.h"
 #include "src/sksl/SkSLThreadContext.h"
 #include "src/sksl/dsl/priv/DSLWriter.h"
 #include "src/sksl/dsl/priv/DSL_priv.h"
@@ -40,6 +39,8 @@ using namespace SkSL::dsl;
 
 namespace SkSL {
 
+class BuiltinMap;
+
 static constexpr int kMaxParseDepth = 50;
 
 static int parse_modifier_token(Token::Kind token) {
@@ -51,12 +52,13 @@ static int parse_modifier_token(Token::Kind token) {
         case Token::Kind::TK_INOUT:          return Modifiers::kIn_Flag | Modifiers::kOut_Flag;
         case Token::Kind::TK_FLAT:           return Modifiers::kFlat_Flag;
         case Token::Kind::TK_NOPERSPECTIVE:  return Modifiers::kNoPerspective_Flag;
-        case Token::Kind::TK_HASSIDEEFFECTS: return Modifiers::kHasSideEffects_Flag;
+        case Token::Kind::TK_PURE:           return Modifiers::kPure_Flag;
         case Token::Kind::TK_INLINE:         return Modifiers::kInline_Flag;
         case Token::Kind::TK_NOINLINE:       return Modifiers::kNoInline_Flag;
         case Token::Kind::TK_HIGHP:          return Modifiers::kHighp_Flag;
         case Token::Kind::TK_MEDIUMP:        return Modifiers::kMediump_Flag;
         case Token::Kind::TK_LOWP:           return Modifiers::kLowp_Flag;
+        case Token::Kind::TK_EXPORT:         return Modifiers::kExport_Flag;
         case Token::Kind::TK_ES3:            return Modifiers::kES3_Flag;
         case Token::Kind::TK_THREADGROUP:    return Modifiers::kThreadgroup_Flag;
         case Token::Kind::TK_READONLY:       return Modifiers::kReadOnly_Flag;
@@ -66,7 +68,7 @@ static int parse_modifier_token(Token::Kind token) {
     }
 }
 
-class AutoDepth {
+class Parser::AutoDepth {
 public:
     AutoDepth(Parser* p)
     : fParser(p)
@@ -294,15 +296,14 @@ std::unique_ptr<Program> Parser::program() {
     return result;
 }
 
-SkSL::LoadedModule Parser::moduleInheritingFrom(SkSL::ParsedModule baseModule) {
+SkSL::LoadedModule Parser::moduleInheritingFrom(const SkSL::BuiltinMap* baseModule) {
     ErrorReporter* errorReporter = &fCompiler.errorReporter();
-    StartModule(&fCompiler, fKind, fSettings, std::move(baseModule));
+    StartModule(&fCompiler, fKind, fSettings, baseModule);
     SetErrorReporter(errorReporter);
     errorReporter->setSource(*fText);
     this->declarations();
     CurrentSymbolTable()->takeOwnershipOfString(std::move(*fText));
-    SkSL::LoadedModule result{ fKind, CurrentSymbolTable(),
-            std::move(ThreadContext::ProgramElements()) };
+    SkSL::LoadedModule result{CurrentSymbolTable(), std::move(ThreadContext::ProgramElements())};
     errorReporter->setSource(std::string_view());
     End();
     return result;
@@ -482,7 +483,9 @@ bool Parser::functionDeclarationEnd(Position start,
     if (hasFunctionBody) {
         AutoSymbolTable symbols;
         for (DSLParameter* var : parameterPointers) {
-            AddToSymbolTable(*var);
+            if (!var->name().empty()) {
+                AddToSymbolTable(*var);
+            }
         }
         Token bodyStart = this->peek();
         std::optional<DSLBlock> body = this->block();
@@ -801,8 +804,6 @@ std::optional<DSLParameter> Parser::parameter(size_t paramIndex) {
         paramText = this->text(name);
         paramPos = this->position(name);
     } else {
-        std::string anonymousName = String::printf("_skAnonymousParam%zu", paramIndex);
-        paramText = *CurrentSymbolTable()->takeOwnershipOfString(std::move(anonymousName));
         paramPos = this->rangeFrom(pos);
     }
     if (!this->parseArrayDimensions(pos, &type)) {
@@ -951,11 +952,6 @@ DSLModifiers Parser::modifiers() {
             break;
         }
         Token modifier = this->nextToken();
-        // We have to check for this (internal) modifier here. It's automatically added to user
-        // functions before the IR is built, so testing for it in Convert gives false positives.
-        if (tokenFlag == Modifiers::kHasSideEffects_Flag && !ThreadContext::IsModule()) {
-            this->error(modifier, "'sk_has_side_effects' is not permitted here");
-        }
         if (int duplicateFlags = (tokenFlag & flags)) {
             this->error(modifier, "'" + Modifiers::DescribeFlags(duplicateFlags) +
                                   "' appears more than once");
@@ -1479,7 +1475,7 @@ DSLStatement Parser::expressionStatement() {
     return {};
 }
 
-bool Parser::operatorRight(AutoDepth& depth,
+bool Parser::operatorRight(Parser::AutoDepth& depth,
                            Operator::Kind op,
                            BinaryParseFn rightFn,
                            DSLExpression& result) {

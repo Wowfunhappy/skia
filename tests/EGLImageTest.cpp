@@ -5,6 +5,11 @@
  * found in the LICENSE file.
  */
 
+
+#include "tests/Test.h"
+
+
+#ifdef SK_GL
 #include "include/core/SkColorSpace.h"
 #include "include/gpu/GrDirectContext.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
@@ -15,13 +20,10 @@
 #include "src/gpu/ganesh/SurfaceFillContext.h"
 #include "src/gpu/ganesh/gl/GrGLGpu.h"
 #include "src/gpu/ganesh/gl/GrGLUtil.h"
-#include "tests/Test.h"
 #include "tests/TestUtils.h"
 #include "tools/gpu/GrContextFactory.h"
 #include "tools/gpu/ManagedBackendTexture.h"
 #include "tools/gpu/gl/GLTestContext.h"
-
-#ifdef SK_GL
 
 using sk_gpu_test::GLTestContext;
 
@@ -43,10 +45,10 @@ static void cleanup(GLTestContext* glctx0,
     }
 }
 
-DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(EGLImageTest,
-                                      reporter,
-                                      ctxInfo,
-                                      CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(EGLImageTest,
+                                          reporter,
+                                          ctxInfo,
+                                          CtsEnforcement::kApiLevel_T) {
     auto context0 = ctxInfo.directContext();
     sk_gpu_test::GLTestContext* glCtx0 = ctxInfo.glContext();
 

@@ -12,6 +12,7 @@
 #include "include/private/SkSLSymbol.h"
 #include "include/private/SkTArray.h"
 #include "include/sksl/SkSLErrorReporter.h"
+#include "include/sksl/SkSLOperator.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLConstantFolder.h"
@@ -35,7 +36,7 @@ std::unique_ptr<Expression> FieldAccess::Convert(const Context& context,
     if (baseType.isEffectChild()) {
         // Turn the field name into a free function name, prefixed with '$':
         std::string methodName = "$" + std::string(field);
-        const Symbol* result = symbolTable[methodName];
+        const Symbol* result = symbolTable.find(methodName);
         if (result && result->is<FunctionDeclaration>()) {
             return std::make_unique<MethodReference>(context, pos, std::move(base),
                                                      &result->as<FunctionDeclaration>());
@@ -99,6 +100,11 @@ std::unique_ptr<Expression> FieldAccess::Make(const Context& context,
     }
 
     return std::make_unique<FieldAccess>(pos, std::move(base), fieldIndex, ownerKind);
+}
+
+std::string FieldAccess::description(OperatorPrecedence) const {
+    return this->base()->description(OperatorPrecedence::kPostfix) + "." +
+           std::string(this->base()->type().fields()[this->fieldIndex()].fName);
 }
 
 }  // namespace SkSL

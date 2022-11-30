@@ -5,6 +5,10 @@
  * found in the LICENSE file.
  */
 
+#include "tests/Test.h"
+
+#ifdef SK_GL
+
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrDirectContext.h"
@@ -12,14 +16,11 @@
 #include "src/gpu/ganesh/gl/GrGLDefines_impl.h"
 #include "src/gpu/ganesh/gl/GrGLGpu.h"
 #include "src/gpu/ganesh/gl/GrGLUtil.h"
-#include "tests/Test.h"
 
-#ifdef SK_GL
-
-DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
-                                      reporter,
-                                      ctxInfo,
-                                      CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
+                                          reporter,
+                                          ctxInfo,
+                                          CtsEnforcement::kApiLevel_T) {
 #define GL(F) GR_GL_CALL(ctxInfo.glContext()->gl(), F)
 
     auto dContext = ctxInfo.directContext();
@@ -43,8 +44,8 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
     GrGLint numUnits = 0;
     GL(GetIntegerv(GR_GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &numUnits));
     SkTDArray<GrGLuint> claimedIDs;
-    claimedIDs.setCount(numUnits * targets.count());
-    GL(GenTextures(claimedIDs.count(), claimedIDs.begin()));
+    claimedIDs.resize(numUnits * targets.size());
+    GL(GenTextures(claimedIDs.size(), claimedIDs.begin()));
 
     auto resetBindings = [&] {
         int i = 0;
@@ -167,7 +168,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
         }
     }
 
-    GL(DeleteTextures(claimedIDs.count(), claimedIDs.begin()));
+    GL(DeleteTextures(claimedIDs.size(), claimedIDs.begin()));
 
 #undef GL
 }

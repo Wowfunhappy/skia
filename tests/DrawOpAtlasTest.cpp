@@ -30,6 +30,7 @@
 #include "src/gpu/ganesh/GrOpFlushState.h"
 #include "src/gpu/ganesh/GrTextureProxy.h"
 #include "src/gpu/ganesh/GrXferProcessor.h"
+#include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/ops/AtlasTextOp.h"
 #include "src/gpu/ganesh/ops/GrDrawOp.h"
 #include "src/gpu/ganesh/ops/GrOp.h"
@@ -40,6 +41,7 @@
 #include <memory>
 #include <utility>
 
+using namespace skgpu::ganesh;
 using MaskFormat = skgpu::MaskFormat;
 
 class GrResourceProvider;
@@ -132,10 +134,10 @@ static bool fill_plot(GrDrawOpAtlas* atlas,
 
 // This is a basic DrawOpAtlas test. It simply verifies that multitexture atlases correctly
 // add and remove pages. Note that this is simulating flush-time behavior.
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(BasicDrawOpAtlas,
-                                   reporter,
-                                   ctxInfo,
-                                   CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(BasicDrawOpAtlas,
+                                       reporter,
+                                       ctxInfo,
+                                       CtsEnforcement::kApiLevel_T) {
     auto context = ctxInfo.directContext();
     auto proxyProvider = context->priv().proxyProvider();
     auto resourceProvider = context->priv().resourceProvider();
@@ -194,15 +196,12 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(BasicDrawOpAtlas,
     check(reporter, atlas.get(), 1, 4, 1);
 }
 
-#if SK_GPU_V1
-#include "src/gpu/ganesh/SurfaceDrawContext.h"
-
 // This test verifies that the AtlasTextOp::onPrepare method correctly handles a failure
 // when allocating an atlas page.
-DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation,
-                                   reporter,
-                                   ctxInfo,
-                                   CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation,
+                                       reporter,
+                                       ctxInfo,
+                                       CtsEnforcement::kApiLevel_T) {
     auto dContext = ctxInfo.directContext();
 
     auto gpu = dContext->priv().getGpu();
@@ -222,14 +221,14 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation,
     const char* text = "a";
     SkMatrixProvider matrixProvider(SkMatrix::I());
 
-    GrOp::Owner op = skgpu::v1::AtlasTextOp::CreateOpTestingOnly(sdc.get(), paint,
-                                                                 font, matrixProvider,
-                                                                 text, 16, 16);
+    GrOp::Owner op = AtlasTextOp::CreateOpTestingOnly(sdc.get(), paint,
+                                                      font, matrixProvider,
+                                                      text, 16, 16);
     if (!op) {
         return;
     }
 
-    auto atlasTextOp = (skgpu::v1::AtlasTextOp*)op.get();
+    auto atlasTextOp = (AtlasTextOp*)op.get();
     atlasTextOp->finalize(*dContext->priv().caps(), nullptr, GrClampType::kAuto);
 
     TestingUploadTarget uploadTarget;
@@ -256,7 +255,6 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrAtlasTextOpPreparation,
     op->prepare(&flushState);
     flushState.setOpArgs(nullptr);
 }
-#endif // SK_GPU_V1
 
 void test_atlas_config(skiatest::Reporter* reporter, int maxTextureSize, size_t maxBytes,
                        MaskFormat maskFormat, SkISize expectedDimensions,
@@ -266,7 +264,7 @@ void test_atlas_config(skiatest::Reporter* reporter, int maxTextureSize, size_t 
     REPORTER_ASSERT(reporter, config.plotDimensions(maskFormat) == expectedPlotDimensions);
 }
 
-DEF_GPUTEST(GrDrawOpAtlasConfig_Basic, reporter, options, CtsEnforcement::kApiLevel_T) {
+DEF_GANESH_TEST(GrDrawOpAtlasConfig_Basic, reporter, options, CtsEnforcement::kApiLevel_T) {
     // 1/4 MB
     test_atlas_config(reporter, 65536, 256 * 1024, MaskFormat::kARGB,
                       { 256, 256 }, { 256, 256 });

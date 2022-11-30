@@ -17,8 +17,6 @@
 
 #include <memory>
 
-class SkBlenderID;
-class SkCombinationBuilder;
 class SkRuntimeEffect;
 
 namespace skgpu { struct VulkanBackendContext; }
@@ -28,12 +26,18 @@ namespace skgpu::graphite {
 class BackendTexture;
 class Context;
 class ContextPriv;
+struct DawnBackendContext;
 class GlobalCache;
 struct MtlBackendContext;
 class QueueManager;
 class Recording;
 class ResourceProvider;
 class SharedContext;
+
+#ifdef SK_ENABLE_PRECOMPILE
+class BlenderID;
+class CombinationBuilder;
+#endif
 
 class SK_API Context final {
 public:
@@ -44,6 +48,9 @@ public:
 
     ~Context();
 
+#ifdef SK_DAWN
+    static std::unique_ptr<Context> MakeDawn(const DawnBackendContext&, const ContextOptions&);
+#endif
 #ifdef SK_METAL
     static std::unique_ptr<Context> MakeMetal(const MtlBackendContext&, const ContextOptions&);
 #endif
@@ -65,11 +72,11 @@ public:
     void checkAsyncWorkCompletion();
 
 #ifdef SK_ENABLE_PRECOMPILE
-    // TODO: add "SkShaderID addUserDefinedShader(sk_sp<SkRuntimeEffect>)" here
-    // TODO: add "SkColorFilterID addUserDefinedColorFilter(sk_sp<SkRuntimeEffect>)" here
-    SkBlenderID addUserDefinedBlender(sk_sp<SkRuntimeEffect>);
+    // TODO: add "ShaderID addUserDefinedShader(sk_sp<SkRuntimeEffect>)" here
+    // TODO: add "ColorFilterID addUserDefinedColorFilter(sk_sp<SkRuntimeEffect>)" here
+    BlenderID addUserDefinedBlender(sk_sp<SkRuntimeEffect>);
 
-    void precompile(SkCombinationBuilder*);
+    void precompile(CombinationBuilder*);
 #endif
 
     /**

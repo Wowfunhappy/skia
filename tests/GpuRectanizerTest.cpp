@@ -34,7 +34,7 @@ static void test_rectanizer_inserts(skiatest::Reporter*,
                                     Rectanizer* rectanizer,
                                     const SkTDArray<SkISize>& rects) {
     int i;
-    for (i = 0; i < rects.count(); ++i) {
+    for (i = 0; i < rects.size(); ++i) {
         SkIPoint16 loc;
         if (!rectanizer->addRect(rects[i].fWidth, rects[i].fHeight, &loc)) {
             break;
@@ -58,7 +58,7 @@ static void test_pow2(skiatest::Reporter* reporter, const SkTDArray<SkISize>& re
     test_rectanizer_inserts(reporter, &pow2Rectanizer, rects);
 }
 
-DEF_GPUTEST(GpuRectanizer, reporter, factory, CtsEnforcement::kNever) {
+DEF_GANESH_TEST(GpuRectanizer, reporter, factory, CtsEnforcement::kNever) {
     SkTDArray<SkISize> rects;
     SkRandom rand;
 

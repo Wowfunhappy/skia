@@ -523,7 +523,6 @@ GrSurfaceProxyView SkImage_Lazy::lockTextureProxyView(GrRecordingContext* rConte
         ScopedGenerator generator(fSharedGenerator);
         if (auto view = generator->generateTexture(rContext,
                                                    this->imageInfo(),
-                                                   {0,0},
                                                    mipmapped,
                                                    texGenPolicy)) {
             installKey(view);
@@ -597,10 +596,14 @@ sk_sp<SkImage> SkImage_Lazy::onMakeTextureImage(skgpu::graphite::Recorder* recor
 
     // 1. Ask the generator to natively create one.
     {
+        // Disable mipmaps here bc Graphite doesn't currently support mipmap regeneration
+        // In this case, we would allocate the mipmaps and fill in the base layer but the mipmap
+        // levels would never be filled out - yielding incorrect draws. Please see: b/238754357.
+        requiredProps.fMipmapped = Mipmapped::kNo;
+
         ScopedGenerator generator(fSharedGenerator);
         sk_sp<SkImage> newImage = generator->makeTextureImage(recorder,
                                                               this->imageInfo(),
-                                                              {0,0},
                                                               requiredProps.fMipmapped);
         if (newImage) {
             SkASSERT(as_IB(newImage)->isGraphiteBacked());
@@ -613,6 +616,7 @@ sk_sp<SkImage> SkImage_Lazy::onMakeTextureImage(skgpu::graphite::Recorder* recor
         return skgpu::graphite::MakeFromBitmap(recorder,
                                                this->imageInfo().colorInfo(),
                                                bitmap,
+                                               nullptr,
                                                SkBudgeted::kNo,
                                                requiredProps);
     }

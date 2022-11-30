@@ -1022,7 +1022,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLSwitchDefaultOnly_GPU") // skia:12465
 	}
 
-	if b.extraConfig("ANGLE") && b.matchOs("Win") && b.matchGpu("IntelIris(540|655)") {
+	if b.extraConfig("ANGLE") && b.matchOs("Win") && b.matchGpu("IntelIris(540|655|Xe)") {
 		skip(ALL, "tests", ALL, "SkSLSwitchDefaultOnly_GPU") // skia:12465
 	}
 
@@ -1231,6 +1231,12 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	if b.arch("arm64") && b.extraConfig("ASAN") {
 		// skbug.com/13155 the use of longjmp may cause ASAN stack check issues.
 		skip(ALL, "test", ALL, "SkPDF_JpegIdentification")
+	}
+
+	if b.extraConfig("HWASAN") {
+		// HWASAN adds tag bytes to pointers. That's incompatible with this test -- it compares
+		// pointers from unrelated stack frames to check that RP isn't growing the stack.
+		skip(ALL, "test", ALL, "SkRasterPipeline_stack_rewind")
 	}
 
 	if b.matchOs("Mac") && b.gpu("IntelHD6000") {
