@@ -105,13 +105,42 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorDarkGreenTest, r) {
          SkColor4f{0.0f, 0.499f, 0.0f, 1.0f});
 }
 
-DEF_TEST(SkSLRasterPipelineCodeGeneratorWhite_Unsupported, r) {
+DEF_TEST(SkSLRasterPipelineCodeGeneratorTransparentGrayTest, r) {
     // Add in your SkSL here.
     test(r,
          R"__SkSL__(
              half4 main(float2 coords) {
-                 return half4(1.0);
+                 return half4(0.499);
              }
          )__SkSL__",
-         std::nullopt);
+         SkColor4f{0.499f, 0.499f, 0.499f, 0.499f});
+}
+
+DEF_TEST(SkSLRasterPipelineCodeGeneratorVariableGreenTest, r) {
+    // Add in your SkSL here.
+    test(r,
+         R"__SkSL__(
+             half4 main(float2 coords) {
+                 half _1 = 1, _0 = 0;
+                 half2 _0_1;
+                 _0_1 = half2(_0, _1);
+                 return half4(_0, _1, _0_1);
+             }
+         )__SkSL__",
+         SkColor4f{0.0f, 1.0f, 0.0f, 1.0f});
+}
+
+DEF_TEST(SkSLRasterPipelineCodeGeneratorAdditionTest, r) {
+    // Add in your SkSL here.
+    test(r,
+         R"__SkSL__(
+             half4 main(float2 coords) {
+                 half4 x = half4(0, 1, 0, -1);
+                 half4 y = half4(0, 0, 0,  1);
+                 half4 z = x;
+                 z += y;
+                 return y + z;
+             }
+         )__SkSL__",
+         SkColor4f{0.0f, 1.0f, 0.0f, 1.0f});
 }

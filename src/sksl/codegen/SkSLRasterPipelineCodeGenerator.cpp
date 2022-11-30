@@ -13,19 +13,25 @@
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTHash.h"
+#include "include/sksl/SkSLOperator.h"
 #include "include/sksl/SkSLPosition.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
 #include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
+#include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLConstructorCompound.h"
+#include "src/sksl/ir/SkSLConstructorSplat.h"
 #include "src/sksl/ir/SkSLExpression.h"
+#include "src/sksl/ir/SkSLExpressionStatement.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
 #include "src/sksl/ir/SkSLType.h"
+#include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
+#include "src/sksl/ir/SkSLVariableReference.h"
 
 #include <optional>
 #include <string>
@@ -61,6 +67,9 @@ public:
     /** Looks up the slots associated with an SkSL variable; creates the slot if necessary. */
     SlotRange getSlots(const Variable& v);
 
+    /** Returns the number of slots needed by the program. */
+    int slotCount() const { return fSlotCount; }
+
     /**
      * Looks up the slots associated with an SkSL function's return value; creates the range if
      * necessary. Note that recursion is never supported, so we don't need to maintain return values
@@ -74,15 +83,35 @@ public:
     /** Appends a statement to the program. */
     bool writeStatement(const Statement& s);
     bool writeBlock(const Block& b);
+    bool writeExpressionStatement(const ExpressionStatement& b);
     bool writeReturnStatement(const ReturnStatement& r);
+    bool writeVarDeclaration(const VarDeclaration& v);
 
     /** Pushes an expression to the value stack. */
+    bool pushAssignmentExpression(const BinaryExpression& e);
     bool pushExpression(const Expression& e);
+    bool pushBinaryExpression(const BinaryExpression& e);
     bool pushConstructorCompound(const ConstructorCompound& c);
+    bool pushConstructorSplat(const ConstructorSplat& c);
     bool pushLiteral(const Literal& l);
+    bool pushVariableReference(const VariableReference& v);
+
+    /** Copies an expression from the value stack and copies it into slots. */
+    void copyToSlotRange(SlotRange r) { fBuilder.copy_stack_to_slots(r); }
 
     /** Pops an expression from the value stack and copies it into slots. */
     void popToSlotRange(SlotRange r) { fBuilder.pop_slots(r); }
+    void popToSlotRangeUnmasked(SlotRange r) { fBuilder.pop_slots_unmasked(r); }
+
+    /** Pops an expression from the value stack and discards it. */
+    void discardExpression(int slots) { fBuilder.discard_stack(slots); }
+
+    /** Zeroes out a range of slots. */
+    void zeroSlotRangeUnmasked(SlotRange r) { fBuilder.zero_slots_unmasked(r); }
+
+    /** Expression utilities. */
+    void add(SkSL::Type::NumberKind numberKind, int slots);
+    bool assign(const Expression& e);
 
 private:
     [[maybe_unused]] const SkSL::Program& fProgram;
@@ -93,6 +122,38 @@ private:
 
     SkTArray<SlotRange> fFunctionStack;
 };
+
+struct LValue {
+    virtual ~LValue() = default;
+
+    /**
+     * Returns an LValue for the passed-in expression; if the expression isn't supported as an
+     * LValue, returns nullptr.
+     */
+    static std::unique_ptr<LValue> Make(const Expression& e);
+
+    /** Copies the top-of-stack value into this lvalue, without discarding it from the stack. */
+    virtual bool store(Generator* gen) = 0;
+};
+
+struct VariableLValue : public LValue {
+    VariableLValue(const Variable* v) : fVariable(v) {}
+
+    bool store(Generator* gen) override {
+        gen->copyToSlotRange(gen->getSlots(*fVariable));
+        return true;
+    }
+
+    const Variable* fVariable;
+};
+
+std::unique_ptr<LValue> LValue::Make(const Expression& e) {
+    if (e.is<VariableReference>()) {
+        return std::make_unique<VariableLValue>(e.as<VariableReference>().variable());
+    }
+    // TODO(skia:13676): add support for other kinds of lvalues
+    return nullptr;
+}
 
 SlotRange Generator::createSlots(int numSlots) {
     SlotRange range = {fSlotCount, numSlots};
@@ -154,11 +215,17 @@ bool Generator::writeStatement(const Statement& s) {
         case Statement::Kind::kBlock:
             return this->writeBlock(s.as<Block>());
 
-        case Statement::Kind::kReturn:
-            return this->writeReturnStatement(s.as<ReturnStatement>());
+        case Statement::Kind::kExpression:
+            return this->writeExpressionStatement(s.as<ExpressionStatement>());
 
         case Statement::Kind::kNop:
             return true;
+
+        case Statement::Kind::kReturn:
+            return this->writeReturnStatement(s.as<ReturnStatement>());
+
+        case Statement::Kind::kVarDeclaration:
+            return this->writeVarDeclaration(s.as<VarDeclaration>());
 
         default:
             // Unsupported statement
@@ -175,6 +242,14 @@ bool Generator::writeBlock(const Block& b) {
     return true;
 }
 
+bool Generator::writeExpressionStatement(const ExpressionStatement& e) {
+    if (!this->pushExpression(*e.expression())) {
+        return false;
+    }
+    this->discardExpression(e.expression()->type().slotCount());
+    return true;
+}
+
 bool Generator::writeReturnStatement(const ReturnStatement& r) {
     // TODO(skia:13676): update the return mask!
     if (r.expression()) {
@@ -186,18 +261,88 @@ bool Generator::writeReturnStatement(const ReturnStatement& r) {
     return true;
 }
 
+bool Generator::writeVarDeclaration(const VarDeclaration& v) {
+    if (v.value()) {
+        if (!this->pushExpression(*v.value())) {
+            return false;
+        }
+        this->popToSlotRangeUnmasked(this->getSlots(*v.var()));
+    } else {
+        this->zeroSlotRangeUnmasked(this->getSlots(*v.var()));
+    }
+    return true;
+}
+
 bool Generator::pushExpression(const Expression& e) {
     switch (e.kind()) {
+        case Expression::Kind::kBinary:
+            return this->pushBinaryExpression(e.as<BinaryExpression>());
+
         case Expression::Kind::kConstructorCompound:
             return this->pushConstructorCompound(e.as<ConstructorCompound>());
 
+        case Expression::Kind::kConstructorSplat:
+            return this->pushConstructorSplat(e.as<ConstructorSplat>());
+
         case Expression::Kind::kLiteral:
             return this->pushLiteral(e.as<Literal>());
+
+        case Expression::Kind::kVariableReference:
+            return this->pushVariableReference(e.as<VariableReference>());
 
         default:
             // Unsupported expression
             return false;
     }
+}
+
+void Generator::add(SkSL::Type::NumberKind numberKind, int slots) {
+    switch (numberKind) {
+        case Type::NumberKind::kFloat:    fBuilder.add_floats(slots); return;
+        case Type::NumberKind::kSigned:
+        case Type::NumberKind::kUnsigned: fBuilder.add_ints(slots); return;
+        default:                          SkUNREACHABLE;
+    }
+}
+
+bool Generator::assign(const Expression& e) {
+    std::unique_ptr<LValue> lvalue = LValue::Make(e);
+    return lvalue && lvalue->store(this);
+}
+
+bool Generator::pushBinaryExpression(const BinaryExpression& e) {
+    // TODO: add support for non-matching types (e.g. matrix-vector ops)
+    if (!e.left()->type().matches(e.right()->type())) {
+        return false;
+    }
+
+    // Handle simple assignment (`var = expr`).
+    if (e.getOperator().kind() == OperatorKind::EQ) {
+        return this->pushExpression(*e.right()) &&
+               this->assign(*e.left());
+    }
+
+    const Type& type = e.left()->type();
+
+    this->pushExpression(*e.left());
+    this->pushExpression(*e.right());
+    Type::NumberKind numberKind = type.componentType().numberKind();
+
+    switch (e.getOperator().removeAssignment().kind()) {
+        case OperatorKind::PLUS:
+            this->add(numberKind, type.slotCount());
+            break;
+
+        default:
+            return false;
+    }
+
+    // Handle compound assignment (`var *= expr`).
+    if (e.getOperator().isAssignment()) {
+        return this->assign(*e.left());
+    }
+
+    return true;
 }
 
 bool Generator::pushConstructorCompound(const ConstructorCompound& c) {
@@ -206,6 +351,14 @@ bool Generator::pushConstructorCompound(const ConstructorCompound& c) {
             return false;
         }
     }
+    return true;
+}
+
+bool Generator::pushConstructorSplat(const ConstructorSplat& c) {
+    if (!this->pushExpression(*c.argument())) {
+        return false;
+    }
+    fBuilder.duplicate(c.type().slotCount() - 1);
     return true;
 }
 
@@ -230,6 +383,11 @@ bool Generator::pushLiteral(const Literal& l) {
         default:
             SkUNREACHABLE;
     }
+}
+
+bool Generator::pushVariableReference(const VariableReference& v) {
+    fBuilder.push_slots(this->getSlots(*v.variable()));
+    return true;
 }
 
 bool Generator::writeProgram(const FunctionDefinition& function) {
@@ -292,7 +450,7 @@ std::unique_ptr<RP::Program> MakeRasterPipelineProgram(const SkSL::Program& prog
     if (!generator.writeProgram(function)) {
         return nullptr;
     }
-    return generator.builder()->finish();
+    return generator.builder()->finish(generator.slotCount());
 }
 
 }  // namespace SkSL
