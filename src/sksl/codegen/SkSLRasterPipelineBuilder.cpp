@@ -19,6 +19,55 @@ namespace RP {
 
 using SkRP = SkRasterPipeline;
 
+#define ALL_SINGLE_SLOT_UNARY_OP_CASES \
+         BuilderOp::bitwise_not
+
+#define ALL_SINGLE_SLOT_BINARY_OP_CASES \
+         BuilderOp::bitwise_and:        \
+    case BuilderOp::bitwise_or:         \
+    case BuilderOp::bitwise_xor
+
+#define ALL_MULTI_SLOT_BINARY_OP_CASES \
+         BuilderOp::add_n_floats:      \
+    case BuilderOp::add_n_ints:        \
+    case BuilderOp::cmple_n_floats:    \
+    case BuilderOp::cmple_n_ints:      \
+    case BuilderOp::cmplt_n_floats:    \
+    case BuilderOp::cmplt_n_ints:      \
+    case BuilderOp::cmpeq_n_floats:    \
+    case BuilderOp::cmpeq_n_ints:      \
+    case BuilderOp::cmpne_n_floats:    \
+    case BuilderOp::cmpne_n_ints
+
+void Builder::unary_op(BuilderOp op, int32_t slots) {
+    switch (op) {
+        case ALL_SINGLE_SLOT_UNARY_OP_CASES:
+            SkASSERT(slots == 1);
+            fInstructions.push_back({op, {}, slots});
+            break;
+
+        default:
+            SkDEBUGFAIL("not a unary op");
+            break;
+    }
+}
+
+void Builder::binary_op(BuilderOp op, int32_t slots) {
+    switch (op) {
+        case ALL_SINGLE_SLOT_BINARY_OP_CASES:
+            SkASSERT(slots == 1);
+            [[fallthrough]];
+
+        case ALL_MULTI_SLOT_BINARY_OP_CASES:
+            fInstructions.push_back({op, {}, slots});
+            break;
+
+        default:
+            SkDEBUGFAIL("not a binary op");
+            break;
+    }
+}
+
 std::unique_ptr<Program> Builder::finish(int numValueSlots) {
     return std::make_unique<Program>(std::move(fInstructions), numValueSlots);
 }
@@ -33,6 +82,7 @@ int Program::numTempStackSlots() {
     for (const Instruction& inst : fInstructions) {
         switch (inst.fOp) {
             case BuilderOp::push_literal_f:
+            case BuilderOp::store_condition_mask:
                 ++current;
                 largest = std::max(current, largest);
                 break;
@@ -47,8 +97,12 @@ int Program::numTempStackSlots() {
                 largest = std::max(current, largest);
                 break;
 
-            case BuilderOp::add_n_floats:
-            case BuilderOp::add_n_ints:
+            case BuilderOp::load_condition_mask:
+            case ALL_SINGLE_SLOT_BINARY_OP_CASES:
+                current -= 1;
+                break;
+
+            case ALL_MULTI_SLOT_BINARY_OP_CASES:
             case BuilderOp::discard_stack:
                 current -= inst.fImmA;
                 break;
@@ -64,37 +118,11 @@ int Program::numTempStackSlots() {
     return largest;
 }
 
-int Program::numConditionMaskSlots() {
-    int largest = 0;
-    int current = 0;
-    for (const Instruction& inst : fInstructions) {
-        switch (inst.fOp) {
-            case BuilderOp::store_condition_mask:
-                ++current;
-                largest = std::max(current, largest);
-                break;
-
-            case BuilderOp::load_condition_mask:
-                --current;
-                SkASSERTF(current >= 0, "unbalanced condition-mask push/pop");
-                break;
-
-            default:
-                // This op doesn't affect the stack.
-                break;
-        }
-    }
-
-    SkASSERTF(current == 0, "unbalanced condition-mask push/pop");
-    return largest;
-}
-
 Program::Program(SkTArray<Instruction> instrs, int numValueSlots)
         : fInstructions(std::move(instrs))
         , fNumValueSlots(numValueSlots) {
     this->optimize();
     fNumTempStackSlots = this->numTempStackSlots();
-    fNumConditionMaskSlots = this->numConditionMaskSlots();
 }
 
 template <typename T>
@@ -110,22 +138,18 @@ void Program::appendStages(SkRasterPipeline* pipeline, SkArenaAlloc* alloc) {
 #if !defined(SKSL_STANDALONE)
     // Allocate a contiguous slab of slot data.
     const int N = SkOpts::raster_pipeline_highp_stride;
-    const int totalSlots = fNumValueSlots + fNumTempStackSlots + fNumConditionMaskSlots;
+    const int totalSlots = fNumValueSlots + fNumTempStackSlots;
     const int vectorWidth = N * sizeof(float);
     const int allocSize = vectorWidth * totalSlots;
     float* slotPtr = static_cast<float*>(alloc->makeBytesAlignedTo(allocSize, vectorWidth));
     sk_bzero(slotPtr, allocSize);
 
-    // Store the stacks immediately after the values.
+    // Store the temp stack immediately after the values.
     float* slotPtrEnd = slotPtr + (N * fNumValueSlots);
     float* tempStackBase = slotPtrEnd;
-    float* tempStackEnd  = tempStackBase + (N * fNumTempStackSlots);
-    float* conditionStackBase = tempStackEnd;
-    [[maybe_unused]] float* conditionStackEnd  = conditionStackBase + (N * fNumConditionMaskSlots);
-
-    // Track our current position for each stack.
     float* tempStackPtr = tempStackBase;
-    float* conditionStackPtr = conditionStackBase;
+    [[maybe_unused]] float* tempStackEnd = tempStackBase + (N * fNumTempStackSlots);
+
     for (const Instruction& inst : fInstructions) {
         auto SlotA = [&]() { return &slotPtr[N * inst.fSlotA]; };
         auto SlotB = [&]() { return &slotPtr[N * inst.fSlotB]; };
@@ -171,12 +195,22 @@ void Program::appendStages(SkRasterPipeline* pipeline, SkArenaAlloc* alloc) {
                 pipeline->append(SkRP::store_masked, SlotA());
                 break;
 
-            case BuilderOp::add_n_floats:
-            case BuilderOp::add_n_ints: {
+            case ALL_SINGLE_SLOT_UNARY_OP_CASES: {
+                float* dst = tempStackPtr - N;  // overwrite the dest value
+                pipeline->append((SkRP::Stage)inst.fOp, dst);
+                break;
+            }
+            case ALL_SINGLE_SLOT_BINARY_OP_CASES: {
+                tempStackPtr -= N;              // pop the source value
+                float* dst = tempStackPtr - N;  // overwrite the dest value
+                pipeline->append_adjacent_single_slot_op((SkRP::Stage)inst.fOp, dst, tempStackPtr);
+                break;
+            }
+            case ALL_MULTI_SLOT_BINARY_OP_CASES: {
                 tempStackPtr -= N * inst.fImmA;              // pop the source value
                 float* dst = tempStackPtr - N * inst.fImmA;  // overwrite the dest value
-                pipeline->append_adjacent_math_op(alloc, (SkRP::Stage)inst.fOp,
-                                                  dst, tempStackPtr, inst.fImmA);
+                pipeline->append_adjacent_multi_slot_op(alloc, (SkRP::Stage)inst.fOp,
+                                                        dst, tempStackPtr, inst.fImmA);
                 break;
             }
             case BuilderOp::copy_slot_masked:
@@ -197,13 +231,13 @@ void Program::appendStages(SkRasterPipeline* pipeline, SkArenaAlloc* alloc) {
                 break;
 
             case BuilderOp::store_condition_mask:
-                pipeline->append(SkRP::store_condition_mask, conditionStackPtr);
-                conditionStackPtr += N;
+                pipeline->append(SkRP::store_condition_mask, tempStackPtr);
+                tempStackPtr += N;
                 break;
 
             case BuilderOp::load_condition_mask:
-                conditionStackPtr -= N;
-                pipeline->append(SkRP::load_condition_mask, conditionStackPtr);
+                tempStackPtr -= N;
+                pipeline->append(SkRP::load_condition_mask, tempStackPtr);
                 break;
 
             case BuilderOp::push_literal_f:
@@ -244,8 +278,6 @@ void Program::appendStages(SkRasterPipeline* pipeline, SkArenaAlloc* alloc) {
         }
         SkASSERT(tempStackPtr >= tempStackBase);
         SkASSERT(tempStackPtr <= tempStackEnd);
-        SkASSERT(conditionStackPtr >= conditionStackBase);
-        SkASSERT(conditionStackPtr <= conditionStackEnd);
     }
 #endif
 }
