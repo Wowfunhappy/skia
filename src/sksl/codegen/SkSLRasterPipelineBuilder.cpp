@@ -9,6 +9,7 @@
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkOpts.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
+#include "src/sksl/tracing/SkRPDebugTrace.h"
 
 #include <algorithm>
 #include <cstring>
@@ -68,8 +69,8 @@ void Builder::binary_op(BuilderOp op, int32_t slots) {
     }
 }
 
-std::unique_ptr<Program> Builder::finish(int numValueSlots) {
-    return std::make_unique<Program>(std::move(fInstructions), numValueSlots);
+std::unique_ptr<Program> Builder::finish(int numValueSlots, SkRPDebugTrace* debugTrace) {
+    return std::make_unique<Program>(std::move(fInstructions), numValueSlots, debugTrace);
 }
 
 void Program::optimize() {
@@ -82,7 +83,7 @@ int Program::numTempStackSlots() {
     for (const Instruction& inst : fInstructions) {
         switch (inst.fOp) {
             case BuilderOp::push_literal_f:
-            case BuilderOp::store_condition_mask:
+            case BuilderOp::push_condition_mask:
                 ++current;
                 largest = std::max(current, largest);
                 break;
@@ -97,7 +98,7 @@ int Program::numTempStackSlots() {
                 largest = std::max(current, largest);
                 break;
 
-            case BuilderOp::load_condition_mask:
+            case BuilderOp::pop_condition_mask:
             case ALL_SINGLE_SLOT_BINARY_OP_CASES:
                 current -= 1;
                 break;
@@ -118,11 +119,18 @@ int Program::numTempStackSlots() {
     return largest;
 }
 
-Program::Program(SkTArray<Instruction> instrs, int numValueSlots)
+Program::Program(SkTArray<Instruction> instrs, int numValueSlots, SkRPDebugTrace* debugTrace)
         : fInstructions(std::move(instrs))
-        , fNumValueSlots(numValueSlots) {
+        , fNumValueSlots(numValueSlots)
+        , fDebugTrace(debugTrace) {
     this->optimize();
     fNumTempStackSlots = this->numTempStackSlots();
+}
+
+void Program::dump(SkWStream* s) {
+    if (fDebugTrace) {
+        fDebugTrace->dump(s);
+    }
 }
 
 template <typename T>
@@ -230,12 +238,12 @@ void Program::appendStages(SkRasterPipeline* pipeline, SkArenaAlloc* alloc) {
                 tempStackPtr += N * inst.fImmA;
                 break;
 
-            case BuilderOp::store_condition_mask:
-                pipeline->append(SkRP::store_condition_mask, tempStackPtr);
+            case BuilderOp::push_condition_mask:
+                pipeline->append(SkRP::combine_condition_mask, tempStackPtr - N);
                 tempStackPtr += N;
                 break;
 
-            case BuilderOp::load_condition_mask:
+            case BuilderOp::pop_condition_mask:
                 tempStackPtr -= N;
                 pipeline->append(SkRP::load_condition_mask, tempStackPtr);
                 break;
@@ -270,6 +278,10 @@ void Program::appendStages(SkRasterPipeline* pipeline, SkArenaAlloc* alloc) {
 
             case BuilderOp::discard_stack:
                 tempStackPtr -= N * inst.fImmA;
+                break;
+
+            case BuilderOp::update_return_mask:
+                pipeline->append(SkRP::update_return_mask);
                 break;
 
             default:

@@ -17,6 +17,7 @@
 #include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLProgram.h"
+#include "src/sksl/tracing/SkRPDebugTrace.h"
 #include "tests/Test.h"
 
 #include <memory>
@@ -28,7 +29,6 @@ static void test(skiatest::Reporter* r,
                  std::optional<SkColor4f> color) {
     SkSL::Compiler compiler(SkSL::ShaderCapsFactory::Default());
     SkSL::ProgramSettings settings;
-    settings.fOptimize = false; // TEMP: dead-code elimination will remove test code
     std::unique_ptr<SkSL::Program> program =
             compiler.convertProgram(SkSL::ProgramKind::kFragment, std::string(src), settings);
     if (!program) {
@@ -42,8 +42,9 @@ static void test(skiatest::Reporter* r,
     }
     SkArenaAlloc alloc(/*firstHeapAllocation=*/1000);
     SkRasterPipeline pipeline(&alloc);
+    SkSL::SkRPDebugTrace debugTrace;
     std::unique_ptr<SkSL::RP::Program> rasterProg =
-            SkSL::MakeRasterPipelineProgram(*program, *main->definition());
+            SkSL::MakeRasterPipelineProgram(*program, *main->definition(), &debugTrace);
     if (!rasterProg && !color.has_value()) {
         // We didn't get a program, as expected. Test passes.
         return;
@@ -125,11 +126,6 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorVariableGreenTest, r) {
                  half _1 = 1, _0 = 0;
                  half2 _0_1;
                  _0_1 = half2(_0, _1);
-                 bool lt;
-                 lt = _0 < _1;
-                 bool gt = _1 > _0;
-                 bool match = (lt == gt);
-                 bool mismatch = (_0_1 != half2(_0, _1));
                  return half4(_0, _1, _0_1);
              }
          )__SkSL__",
@@ -146,6 +142,44 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorAdditionTest, r) {
                  half4 z = x;
                  z += y;
                  return y + z;
+             }
+         )__SkSL__",
+         SkColor4f{0.0f, 1.0f, 0.0f, 1.0f});
+}
+
+DEF_TEST(SkSLRasterPipelineCodeGeneratorIfElseTest, r) {
+    // Add in your SkSL here.
+    test(r,
+         R"__SkSL__(
+             half4 main(float2 coords) {
+                 half4 colorBlue  = half4(0,0,1,1),
+                       colorGreen = half4(0,1,0,1),
+                       colorRed   = half4(1,0,0,1),
+                       colorWhite = half4(1);
+                 half4 result = half4(0);
+                 if (colorWhite != colorBlue) {    // TRUE
+                     if (colorGreen == colorRed) { // FALSE
+                         result = colorRed;
+                     } else {
+                         result = colorGreen;
+                     }
+                 } else {
+                     if (colorRed != colorGreen) { // TRUE, but in a false branch
+                         result = colorBlue;
+                     } else {                      // FALSE, and in a false branch
+                         result = colorWhite;
+                     }
+                 }
+                 if (colorRed == colorBlue) { // FALSE
+                     return colorWhite;
+                 }
+                 if (colorRed != colorGreen) { // TRUE
+                     return result;
+                 }
+                 if (colorRed == colorWhite) { // FALSE
+                     return colorBlue;
+                 }
+                 return colorRed;
              }
          )__SkSL__",
          SkColor4f{0.0f, 1.0f, 0.0f, 1.0f});
