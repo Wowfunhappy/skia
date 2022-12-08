@@ -16,10 +16,14 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSpan.h"
 
+#include <functional>
 #include <optional>
 #include <vector>
 
 class SkRuntimeEffect;
+
+// TODO: move SkUniquePaintParamsID to the skgpu::graphite namespace
+class SkUniquePaintParamsID;
 
 namespace skgpu::graphite {
 
@@ -53,16 +57,54 @@ public:
     PrecompileBasePriv priv();
     const PrecompileBasePriv priv() const;  // NOLINT(readability-const-return-type)
 
+protected:
+    // In general, derived classes should use AddToKey to select the desired child option from
+    // a vector and then have it added to the key with its reduced/nested child option.
+    template<typename T>
+    static void AddToKey(const KeyContext&,
+                         PaintParamsKeyBuilder*,
+                         const std::vector<sk_sp<T>>& options,
+                         int desiredOption);
+
 private:
+    friend class PaintOptions;
     friend class PrecompileBasePriv;
+
+    virtual bool isALocalMatrixShader() const { return false; }
+
+    virtual void addToKey(const KeyContext&,
+                          int desiredCombination,
+                          PaintParamsKeyBuilder*) const = 0;
 
     Type fType;
 };
 
 //--------------------------------------------------------------------------------------------------
+template<typename T>
+void PrecompileBase::AddToKey(const KeyContext& keyContext,
+                              PaintParamsKeyBuilder* builder,
+                              const std::vector<sk_sp<T>>& options,
+                              int desiredOption) {
+    for (const sk_sp<T>& option : options) {
+        if (desiredOption < option->numCombinations()) {
+            option->priv().addToKey(keyContext, desiredOption, builder);
+            break;
+        }
+
+        desiredOption -= option->numCombinations();
+    }
+}
+
+//--------------------------------------------------------------------------------------------------
+class PrecompileColorFilter;
+
 class PrecompileShader : public PrecompileBase {
 public:
     PrecompileShader() : PrecompileBase(Type::kShader) {}
+
+    sk_sp<PrecompileShader> makeWithLocalMatrix();
+
+    sk_sp<PrecompileShader> makeWithColorFilter(sk_sp<PrecompileColorFilter>);
 };
 
 class PrecompileMaskFilter : public PrecompileBase {
@@ -134,6 +176,11 @@ private:
     int numBlendModeCombinations() const;
 
     int numCombinations() const;
+    // 'desiredCombination' must be less than the result of the numCombinations call
+    void createKey(const KeyContext&, int desiredCombination, PaintParamsKeyBuilder*) const;
+    void buildCombinations(
+        ShaderCodeDictionary*,
+        const std::function<void(SkUniquePaintParamsID)>& processCombination) const;
 
     std::vector<sk_sp<PrecompileShader>> fShaderOptions;
     std::vector<sk_sp<PrecompileMaskFilter>> fMaskFilterOptions;
