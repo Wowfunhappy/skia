@@ -12,7 +12,9 @@
   { include: ["<__algorithm/is_sorted.h>", "private", "<algorithm>", "public"] },
   { include: ["<__algorithm/lower_bound.h>", "private", "<algorithm>", "public"] },
   { include: ["<__algorithm/max.h>", "private", "<algorithm>", "public"] },
+  { include: ["<__algorithm/max_element.h>", "private", "<algorithm>", "public"] },
   { include: ["<__algorithm/min.h>", "private", "<algorithm>", "public"] },
+  { include: ["<__algorithm/min_element.h>", "private", "<algorithm>", "public"] },
   { include: ["<__algorithm/move.h>", "private", "<algorithm>", "public"] },
   { include: ["<__algorithm/remove_if.h>", "private", "<algorithm>", "public"] },
   { include: ["<__algorithm/reverse.h>", "private", "<algorithm>", "public"] },
@@ -114,6 +116,7 @@
   { include: ["<__locale>", "private", "<locale>", "public"] },
 
   { include: ["<__numeric/accumulate.h>", "private", "<numeric>", "public"] },
+  { include: ["<__numeric/iota.h>", "private", "<numeric>", "public"] },
 
   { include: ["<__memory/shared_ptr.h>", "private", "<memory>", "public"] },
   { include: ["<__memory/unique_ptr.h>", "private", "<memory>", "public"] },

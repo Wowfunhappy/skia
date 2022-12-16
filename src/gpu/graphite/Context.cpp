@@ -10,7 +10,6 @@
 #include "include/core/SkPathTypes.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/graphite/BackendTexture.h"
-#include "include/gpu/graphite/CombinationBuilder.h"
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Recording.h"
 #include "include/gpu/graphite/TextureInfo.h"
@@ -23,11 +22,14 @@
 #include "src/gpu/graphite/GlobalCache.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
 #include "src/gpu/graphite/Image_Graphite.h"
+#include "src/gpu/graphite/KeyContext.h"
+#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/QueueManager.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/RecordingPriv.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/ResourceProvider.h"
+#include "src/gpu/graphite/RuntimeEffectDictionary.h"
 #include "src/gpu/graphite/ShaderCodeDictionary.h"
 #include "src/gpu/graphite/SharedContext.h"
 #include "src/gpu/graphite/Surface_Graphite.h"
@@ -178,11 +180,12 @@ bool Context::insertRecording(const InsertRecordingInfo& info) {
     return fQueueManager->addRecording(info, fResourceProvider.get());
 }
 
-void Context::submit(SyncToCpu syncToCpu) {
+bool Context::submit(SyncToCpu syncToCpu) {
     ASSERT_SINGLE_OWNER
 
-    fQueueManager->submitToGpu();
+    bool success = fQueueManager->submitToGpu();
     fQueueManager->checkForFinishedWork(syncToCpu);
+    return success;
 }
 
 void Context::asyncReadPixels(const SkImage* image,
@@ -279,22 +282,30 @@ void Context::asyncReadPixels(const TextureProxy* proxy,
                                             rowBytes,
                                             fMappedBufferManager.get(),
                                             std::move(transferResult)};
-    GpuFinishedProc finishCallback = [](GpuFinishedContext c, CallbackResult) {
+    GpuFinishedProc finishCallback = [](GpuFinishedContext c, CallbackResult status) {
         const auto* context = reinterpret_cast<const FinishContext*>(c);
-        ClientMappedBufferManager* manager = context->fMappedBufferManager;
-        auto result = std::make_unique<AsyncReadResult>(manager->ownerID());
-        if (!result->addTransferResult(context->fTransferResult, context->fSize,
-                                       context->fRowBytes, manager)) {
-            result.reset();
+        if (status == CallbackResult::kSuccess) {
+            ClientMappedBufferManager* manager = context->fMappedBufferManager;
+            auto result = std::make_unique<AsyncReadResult>(manager->ownerID());
+            if (!result->addTransferResult(context->fTransferResult, context->fSize,
+                                        context->fRowBytes, manager)) {
+                result.reset();
+            }
+            (*context->fClientCallback)(context->fClientContext, std::move(result));
+        } else {
+            (*context->fClientCallback)(context->fClientContext, nullptr);
         }
-        (*context->fClientCallback)(context->fClientContext, std::move(result));
         delete context;
     };
 
     InsertFinishInfo info;
     info.fFinishedContext = finishContext;
     info.fFinishedProc = finishCallback;
-    fQueueManager->addFinishInfo(info, fResourceProvider.get());
+    // If addFinishInfo() fails, it invokes the finish callback automatically, which handles all the
+    // required clean up for us, just log an error message.
+    if (!fQueueManager->addFinishInfo(info, fResourceProvider.get())) {
+        SKGPU_LOG_E("Failed to register finish callbacks for asyncReadPixels.");
+    }
 }
 
 Context::PixelTransferResult Context::transferPixels(const TextureProxy* proxy,
@@ -338,16 +349,13 @@ Context::PixelTransferResult Context::transferPixels(const TextureProxy* proxy,
                                                                             buffer,
                                                                             /*bufferOffset=*/0,
                                                                             rowBytes);
-    if (!copyTask) {
+    if (!copyTask || !fQueueManager->addTask(copyTask.get(), fResourceProvider.get())) {
         return {};
     }
     sk_sp<SynchronizeToCpuTask> syncTask = SynchronizeToCpuTask::Make(buffer);
-    if (!syncTask) {
+    if (!syncTask || !fQueueManager->addTask(syncTask.get(), fResourceProvider.get())) {
         return {};
     }
-
-    fQueueManager->addTask(copyTask.get(), fResourceProvider.get());
-    fQueueManager->addTask(syncTask.get(), fResourceProvider.get());
 
     PixelTransferResult result;
     result.fTransferBuffer = std::move(buffer);
@@ -376,14 +384,18 @@ void Context::checkAsyncWorkCompletion() {
 void Context::precompile(const PaintOptions& options) {
     ASSERT_SINGLE_OWNER
 
+    auto rtEffectDict = std::make_unique<RuntimeEffectDictionary>();
+
+    KeyContext keyContext(fSharedContext->shaderCodeDictionary(), rtEffectDict.get());
+
     options.priv().buildCombinations(
-        fSharedContext->shaderCodeDictionary(),
-        [&](SkUniquePaintParamsID uniqueID) {
+        keyContext,
+        [&](UniquePaintParamsID uniqueID) {
             for (const Renderer* r : fSharedContext->rendererProvider()->renderers()) {
                 for (auto&& s : r->steps()) {
                     if (s->performsShading()) {
-                        GraphicsPipelineDesc desc(s, uniqueID);
-                        (void) desc;
+                        GraphicsPipelineDesc pipelineDesc(s, uniqueID);
+                        (void) pipelineDesc;
 
                         // TODO: Combine the desc with the renderpass description set to generate a
                         // full GraphicsPipeline and MSL program. Cache that compiled pipeline on
@@ -393,34 +405,6 @@ void Context::precompile(const PaintOptions& options) {
                 }
             }
         });
-}
-
-BlenderID Context::addUserDefinedBlender(sk_sp<SkRuntimeEffect> effect) {
-    return fSharedContext->shaderCodeDictionary()->addUserDefinedBlender(std::move(effect));
-}
-
-void Context::precompile(CombinationBuilder* combinationBuilder) {
-    ASSERT_SINGLE_OWNER
-
-    combinationBuilder->buildCombinations(
-            fSharedContext->shaderCodeDictionary(),
-            [&](SkUniquePaintParamsID uniqueID) {
-                for (const Renderer* r : fSharedContext->rendererProvider()->renderers()) {
-                    for (auto&& s : r->steps()) {
-                        if (s->performsShading()) {
-                            GraphicsPipelineDesc desc(s, uniqueID);
-                            (void) desc;
-                            // TODO: Combine with renderpass description set to generate full
-                            // GraphicsPipeline and MSL program. Cache that compiled pipeline on
-                            // the resource provider in a map from desc -> pipeline so that any
-                            // later desc created from equivalent RenderStep + Combination get it.
-                        }
-                    }
-                }
-            });
-
-    // TODO: Iterate over the renderers and make descriptions for the steps that don't perform
-    // shading, and just use ShaderType::kNone.
 }
 
 #endif // SK_ENABLE_PRECOMPILE

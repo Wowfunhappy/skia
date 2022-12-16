@@ -10,12 +10,14 @@
 #include "include/private/SkSLIRNode.h"
 #include "include/private/SkSLLayout.h"
 #include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLProgramElement.h"
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkStringView.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTHash.h"
 #include "include/sksl/SkSLOperator.h"
 #include "include/sksl/SkSLPosition.h"
+#include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
 #include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
@@ -35,6 +37,7 @@
 #include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
+#include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLTernaryExpression.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
@@ -44,6 +47,8 @@
 #include "src/sksl/tracing/SkSLDebugInfo.h"
 
 #include <cstddef>
+#include <cstdint>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -112,29 +117,31 @@ public:
     Builder* builder() { return &fBuilder; }
 
     /** Appends a statement to the program. */
-    bool writeStatement(const Statement& s);
-    bool writeBlock(const Block& b);
-    bool writeBreakStatement(const BreakStatement& b);
-    bool writeContinueStatement(const ContinueStatement& b);
-    bool writeDoStatement(const DoStatement& d);
-    bool writeExpressionStatement(const ExpressionStatement& e);
-    bool writeIfStatement(const IfStatement& i);
-    bool writeReturnStatement(const ReturnStatement& r);
-    bool writeVarDeclaration(const VarDeclaration& v);
+    [[nodiscard]] bool writeStatement(const Statement& s);
+    [[nodiscard]] bool writeBlock(const Block& b);
+    [[nodiscard]] bool writeBreakStatement(const BreakStatement& b);
+    [[nodiscard]] bool writeContinueStatement(const ContinueStatement& b);
+    [[nodiscard]] bool writeDoStatement(const DoStatement& d);
+    [[nodiscard]] bool writeExpressionStatement(const ExpressionStatement& e);
+    [[nodiscard]] bool writeGlobals();
+    [[nodiscard]] bool writeIfStatement(const IfStatement& i);
+    [[nodiscard]] bool writeReturnStatement(const ReturnStatement& r);
+    [[nodiscard]] bool writeVarDeclaration(const VarDeclaration& v);
 
     /** Pushes an expression to the value stack. */
-    bool pushAssignmentExpression(const BinaryExpression& e);
-    bool pushBinaryExpression(const BinaryExpression& e);
-    bool pushConstructorCast(const AnyConstructor& c);
-    bool pushConstructorCompound(const ConstructorCompound& c);
-    bool pushConstructorSplat(const ConstructorSplat& c);
-    bool pushExpression(const Expression& e);
-    bool pushLiteral(const Literal& l);
-    bool pushTernaryExpression(const TernaryExpression& t);
-    bool pushVariableReference(const VariableReference& v);
-
-    /** Copies an expression from the value stack and copies it into slots. */
-    void copyToSlotRange(SlotRange r) { fBuilder.copy_stack_to_slots(r); }
+    [[nodiscard]] bool pushAssignmentExpression(const BinaryExpression& e);
+    [[nodiscard]] bool pushBinaryExpression(const BinaryExpression& e);
+    [[nodiscard]] bool pushConstructorCast(const AnyConstructor& c);
+    [[nodiscard]] bool pushConstructorCompound(const ConstructorCompound& c);
+    [[nodiscard]] bool pushConstructorSplat(const ConstructorSplat& c);
+    [[nodiscard]] bool pushExpression(const Expression& e);
+    [[nodiscard]] bool pushLiteral(const Literal& l);
+    [[nodiscard]] bool pushSwizzle(const Swizzle& s);
+    [[nodiscard]] bool pushTernaryExpression(const TernaryExpression& t);
+    [[nodiscard]] bool pushTernaryExpression(const Expression& test,
+                                             const Expression& ifTrue,
+                                             const Expression& ifFalse);
+    [[nodiscard]] bool pushVariableReference(const VariableReference& v);
 
     /** Pops an expression from the value stack and copies it into slots. */
     void popToSlotRange(SlotRange r) { fBuilder.pop_slots(r); }
@@ -154,8 +161,8 @@ public:
         BuilderOp fBooleanOp;
     };
 
-    bool assign(const Expression& e);
-    bool binaryOp(SkSL::Type::NumberKind numberKind, int slots, const BinaryOps& ops);
+    [[nodiscard]] bool assign(const Expression& e);
+    [[nodiscard]] bool binaryOp(SkSL::Type::NumberKind numberKind, int slots, const BinaryOps& ops);
     void foldWithOp(BuilderOp op, int elements);
     void nextTempStack() {
         fBuilder.set_current_stack(++fCurrentTempStack);
@@ -187,26 +194,97 @@ struct LValue {
     static std::unique_ptr<LValue> Make(const Expression& e);
 
     /** Copies the top-of-stack value into this lvalue, without discarding it from the stack. */
-    virtual bool store(Generator* gen) = 0;
+    bool store(Generator* gen);
+
+    /**
+     * Returns the value slots associated with this LValue. For instance, a plain four-slot Variable
+     * will have monotonically increasing slots like {5,6,7,8}.
+     */
+    struct SlotMap {
+        SkTArray<int> slots;  // the destination slots
+    };
+    virtual SlotMap getSlotMap(Generator* gen) = 0;
 };
 
 struct VariableLValue : public LValue {
     VariableLValue(const Variable* v) : fVariable(v) {}
 
-    bool store(Generator* gen) override {
-        gen->copyToSlotRange(gen->getSlots(*fVariable));
-        return true;
+    SlotMap getSlotMap(Generator* gen) override {
+        // Map every slot in the variable, in consecutive order, e.g. a half4 at slot 5 = {5,6,7,8}.
+        SlotMap out;
+        SlotRange range = gen->getSlots(*fVariable);
+        out.slots.resize(range.count);
+        std::iota(out.slots.begin(), out.slots.end(), range.index);
+        return out;
     }
 
     const Variable* fVariable;
+};
+
+struct SwizzleLValue : public LValue {
+    SwizzleLValue(std::unique_ptr<LValue> p, const ComponentArray& c)
+            : fParent(std::move(p))
+            , fComponents(c) {}
+
+    SlotMap getSlotMap(Generator* gen) override {
+        // Get slots from the parent expression.
+        SlotMap in = fParent->getSlotMap(gen);
+
+        // Rearrange the slots based to honor the swizzle components.
+        SlotMap out;
+        out.slots.resize(fComponents.size());
+        for (int index = 0; index < fComponents.size(); ++index) {
+            SkASSERT(fComponents[index] < in.slots.size());
+            out.slots[index] = in.slots[fComponents[index]];
+        }
+
+        return out;
+    }
+
+    std::unique_ptr<LValue> fParent;
+    const ComponentArray& fComponents;
 };
 
 std::unique_ptr<LValue> LValue::Make(const Expression& e) {
     if (e.is<VariableReference>()) {
         return std::make_unique<VariableLValue>(e.as<VariableReference>().variable());
     }
+    if (e.is<Swizzle>()) {
+        if (std::unique_ptr<LValue> base = LValue::Make(*e.as<Swizzle>().base())) {
+            return std::make_unique<SwizzleLValue>(std::move(base), e.as<Swizzle>().components());
+        }
+    }
     // TODO(skia:13676): add support for other kinds of lvalues
     return nullptr;
+}
+
+bool LValue::store(Generator* gen) {
+    SlotMap out = this->getSlotMap(gen);
+
+    if (!out.slots.empty()) {
+        // Coalesce our list of slots into ranges of consecutive slots.
+        SkTArray<SlotRange> ranges;
+        ranges.push_back({out.slots.front(), 1});
+
+        for (int index = 1; index < out.slots.size(); ++index) {
+            Slot dst = out.slots[index];
+            if (dst == ranges.back().index + ranges.back().count) {
+                ++ranges.back().count;
+            } else {
+                ranges.push_back({dst, 1});
+            }
+        }
+
+        // Copy our coalesced slot ranges from the stack.
+        int offsetFromStackTop = out.slots.size();
+        for (const SlotRange& r : ranges) {
+            gen->builder()->copy_stack_to_slots(r, offsetFromStackTop);
+            offsetFromStackTop -= r.count;
+        }
+        SkASSERT(offsetFromStackTop == 0);
+    }
+
+    return true;
 }
 
 static bool unsupported() {
@@ -378,6 +456,53 @@ std::optional<SlotRange> Generator::writeFunction(const IRNode& callSite,
     }
 
     return functionResult;
+}
+
+bool Generator::writeGlobals() {
+    for (const ProgramElement* e : fProgram.elements()) {
+        if (e->is<GlobalVarDeclaration>()) {
+            const GlobalVarDeclaration& gvd = e->as<GlobalVarDeclaration>();
+            const VarDeclaration& decl = gvd.varDeclaration();
+            const Variable* var = decl.var();
+
+            if (var->type().isEffectChild()) {
+                // TODO(skia:13676): handle child effects
+                return unsupported();
+            }
+
+            // Opaque types include child processors and GL objects (samplers, textures, etc).
+            // Of those, only child processors are legal variables.
+            SkASSERT(!var->type().isVoid());
+            SkASSERT(!var->type().isOpaque());
+            [[maybe_unused]] SlotRange r = this->getSlots(*var);
+
+            // builtin variables are system-defined, with special semantics. The only builtin
+            // variable exposed to runtime effects is sk_FragCoord.
+            if (int builtin = var->modifiers().fLayout.fBuiltin; builtin >= 0) {
+                switch (builtin) {
+                    case SK_FRAGCOORD_BUILTIN:
+                        SkASSERT(r.count == 4);
+                        // TODO: populate slots with device coordinates xy01
+                        return unsupported();
+
+                    default:
+                        SkDEBUGFAILF("Unsupported builtin %d", builtin);
+                        return unsupported();
+                }
+            }
+
+            if (var->modifiers().fFlags & Modifiers::kUniform_Flag) {
+                return unsupported();
+            }
+
+            // Other globals are treated as normal variable declarations.
+            if (!this->writeVarDeclaration(decl)) {
+                return unsupported();
+            }
+        }
+    }
+
+    return true;
 }
 
 bool Generator::writeStatement(const Statement& s) {
@@ -560,6 +685,9 @@ bool Generator::pushExpression(const Expression& e) {
         case Expression::Kind::kLiteral:
             return this->pushLiteral(e.as<Literal>());
 
+        case Expression::Kind::kSwizzle:
+            return this->pushSwizzle(e.as<Swizzle>());
+
         case Expression::Kind::kTernary:
             return this->pushTernaryExpression(e.as<TernaryExpression>());
 
@@ -615,27 +743,91 @@ bool Generator::pushBinaryExpression(const BinaryExpression& e) {
     Type::NumberKind numberKind = type.componentType().numberKind();
     Operator basicOp = e.getOperator().removeAssignment();
 
+    // Handle binary ops which require short-circuiting.
+    switch (basicOp.kind()) {
+        case OperatorKind::LOGICALAND:
+            if (Analysis::HasSideEffects(*e.right())) {
+                // If the RHS has side effects, we rewrite `a && b` as `a ? b : false`. This
+                // generates pretty solid code and gives us the required short-circuit behavior.
+                SkASSERT(!e.getOperator().isAssignment());
+                SkASSERT(numberKind == Type::NumberKind::kBoolean);
+                Literal falseLiteral{Position{}, 0.0, &e.right()->type()};
+                return this->pushTernaryExpression(*e.left(), *e.right(), falseLiteral);
+            }
+            break;
+
+        case OperatorKind::LOGICALOR:
+            if (Analysis::HasSideEffects(*e.right())) {
+                // If the RHS has side effects, we rewrite `a || b` as `a ? true : b`.
+                SkASSERT(!e.getOperator().isAssignment());
+                SkASSERT(numberKind == Type::NumberKind::kBoolean);
+                Literal trueLiteral{Position{}, 1.0, &e.right()->type()};
+                return this->pushTernaryExpression(*e.left(), trueLiteral, *e.right());
+            }
+            break;
+
+        default:
+            break;
+    }
+
+    // Push both expressions on the stack.
     switch (basicOp.kind()) {
         case OperatorKind::GT:
         case OperatorKind::GTEQ:
             // We replace `x > y` with `y < x`, and `x >= y` with `y <= x`.
-            this->pushExpression(*e.right());
-            this->pushExpression(*e.left());
+            if (!this->pushExpression(*e.right()) ||
+                !this->pushExpression(*e.left())) {
+                return false;
+            }
             break;
 
         default:
-            this->pushExpression(*e.left());
-            this->pushExpression(*e.right());
+            if (!this->pushExpression(*e.left()) ||
+                !this->pushExpression(*e.right())) {
+                return false;
+            }
             break;
     }
 
     switch (basicOp.kind()) {
         case OperatorKind::PLUS: {
-            static constexpr auto kPlus = BinaryOps{BuilderOp::add_n_floats,
-                                                    BuilderOp::add_n_ints,
-                                                    BuilderOp::add_n_ints,
-                                                    BuilderOp::unsupported};
-            if (!this->binaryOp(numberKind, type.slotCount(), kPlus)) {
+            static constexpr auto kAdd = BinaryOps{BuilderOp::add_n_floats,
+                                                   BuilderOp::add_n_ints,
+                                                   BuilderOp::add_n_ints,
+                                                   BuilderOp::unsupported};
+            if (!this->binaryOp(numberKind, type.slotCount(), kAdd)) {
+                return unsupported();
+            }
+            break;
+        }
+        case OperatorKind::MINUS: {
+            static constexpr auto kSubtract = BinaryOps{BuilderOp::sub_n_floats,
+                                                        BuilderOp::sub_n_ints,
+                                                        BuilderOp::sub_n_ints,
+                                                        BuilderOp::unsupported};
+            if (!this->binaryOp(numberKind, type.slotCount(), kSubtract)) {
+                return unsupported();
+            }
+            break;
+        }
+        case OperatorKind::STAR: {
+            // TODO(skia:13676): add support for unsigned *
+            static constexpr auto kMultiply = BinaryOps{BuilderOp::mul_n_floats,
+                                                        BuilderOp::mul_n_ints,
+                                                        BuilderOp::unsupported,
+                                                        BuilderOp::unsupported};
+            if (!this->binaryOp(numberKind, type.slotCount(), kMultiply)) {
+                return unsupported();
+            }
+            break;
+        }
+        case OperatorKind::SLASH: {
+            // TODO(skia:13676): add support for unsigned /
+            static constexpr auto kDivide = BinaryOps{BuilderOp::div_n_floats,
+                                                      BuilderOp::div_n_ints,
+                                                      BuilderOp::unsupported,
+                                                      BuilderOp::unsupported};
+            if (!this->binaryOp(numberKind, type.slotCount(), kDivide)) {
                 return unsupported();
             }
             break;
@@ -688,6 +880,21 @@ bool Generator::pushBinaryExpression(const BinaryExpression& e) {
             this->foldWithOp(BuilderOp::bitwise_or, type.slotCount());  // fold vector result
             break;
         }
+        case OperatorKind::LOGICALAND:
+            // We verified above that the RHS does not have side effects, so we don't need to worry
+            // about short-circuiting side effects.
+            SkASSERT(numberKind == Type::NumberKind::kBoolean);
+            SkASSERT(type.slotCount() == 1);  // operator&& only works with scalar types
+            fBuilder.binary_op(BuilderOp::bitwise_and, /*slots=*/1);
+            break;
+
+        case OperatorKind::LOGICALOR:
+            // We verified above that the RHS does not have side effects.
+            SkASSERT(numberKind == Type::NumberKind::kBoolean);
+            SkASSERT(type.slotCount() == 1);  // operator|| only works with scalar types
+            fBuilder.binary_op(BuilderOp::bitwise_or, /*slots=*/1);
+            break;
+
         default:
             return unsupported();
     }
@@ -756,38 +963,86 @@ bool Generator::pushLiteral(const Literal& l) {
     }
 }
 
+bool Generator::pushSwizzle(const Swizzle& s) {
+    // Push the input expression.
+    if (!this->pushExpression(*s.base())) {
+        return false;
+    }
+    // Perform the swizzle.
+    fBuilder.swizzle(s.base()->type().slotCount(), s.components());
+    return true;
+}
+
 bool Generator::pushTernaryExpression(const TernaryExpression& t) {
-    // Merge the current condition-mask with the test-expression in a separate stack.
-    this->nextTempStack();
-    fBuilder.push_condition_mask();
-    if (!this->pushExpression(*t.test())) {
-        return unsupported();
+    return this->pushTernaryExpression(*t.test(), *t.ifTrue(), *t.ifFalse());
+}
+
+bool Generator::pushTernaryExpression(const Expression& test,
+                                      const Expression& ifTrue,
+                                      const Expression& ifFalse) {
+    if (!Analysis::HasSideEffects(ifTrue) && !Analysis::HasSideEffects(ifFalse)) {
+        // We can take some shortcuts if the true- and false-expressions are side-effect free.
+        // First, push the false-expression onto the primary stack.
+        int cleanupLabelID = fBuilder.nextLabelID();
+        if (!this->pushExpression(ifFalse)) {
+            return unsupported();
+        }
+
+        // Next, merge the current condition-mask with the test-expression in a separate stack.
+        this->nextTempStack();
+        fBuilder.push_condition_mask();
+        if (!this->pushExpression(test)) {
+            return unsupported();
+        }
+        fBuilder.merge_condition_mask();
+        this->previousTempStack();
+
+        // If no lanes are active, we can skip the true-expression entirely. This isn't super likely
+        // to happen, so it's probably only a win for non-trivial true-expressions.
+        if (!Analysis::IsTrivialExpression(ifTrue)) {
+            fBuilder.branch_if_no_active_lanes(cleanupLabelID);
+        }
+
+        // Push the true-expression onto the primary stack, immediately after the false-expression.
+        if (!this->pushExpression(ifTrue)) {
+            return unsupported();
+        }
+
+        // Use a select to conditionally mask-merge the true-expression and false-expression lanes.
+        fBuilder.select(/*slots=*/ifTrue.type().slotCount());
+        fBuilder.label(cleanupLabelID);
+    } else {
+        // Merge the current condition-mask with the test-expression in a separate stack.
+        this->nextTempStack();
+        fBuilder.push_condition_mask();
+        if (!this->pushExpression(test)) {
+            return unsupported();
+        }
+        fBuilder.merge_condition_mask();
+        this->previousTempStack();
+
+        // Push the true-expression onto the primary stack.
+        if (!this->pushExpression(ifTrue)) {
+            return unsupported();
+        }
+
+        // Switch back to the test-expression stack temporarily, and negate the test condition.
+        this->nextTempStack();
+        fBuilder.unary_op(BuilderOp::bitwise_not, /*slots=*/1);
+        fBuilder.merge_condition_mask();
+        this->previousTempStack();
+
+        // Push the false-expression onto the primary stack, immediately after the true-expression.
+        if (!this->pushExpression(ifFalse)) {
+            return unsupported();
+        }
+
+        // Use a select to conditionally mask-merge the true-expression and false-expression lanes;
+        // the mask is already set up for this.
+        fBuilder.select(/*slots=*/ifTrue.type().slotCount());
     }
-    fBuilder.merge_condition_mask();
-    this->previousTempStack();
 
-    // Push the true-expression onto the primary stack.
-    if (!this->pushExpression(*t.ifTrue())) {
-        return unsupported();
-    }
-
-    // Switch back to the test-expression stack temporarily, and negate the test condition.
-    this->nextTempStack();
-    fBuilder.unary_op(BuilderOp::bitwise_not, /*slots=*/1);
-    fBuilder.merge_condition_mask();
-    this->previousTempStack();
-
-    // Push the false-expression onto the primary stack, immediately after the true-expression.
-    if (!this->pushExpression(*t.ifFalse())) {
-        return unsupported();
-    }
-
-    // Use a select to conditionally mask-merge the true-expression and false-expression lanes;
-    // the mask is already set up for this.
-    fBuilder.select(/*slots=*/t.ifTrue()->type().slotCount());
-
-    // Switch back to the test-expression stack one last time, in order to restore the
-    // condition-mask to its original state and jettison the test-expression.
+    // Restore the condition-mask to its original state and jettison the test-expression.
     this->nextTempStack();
     this->discardExpression(/*slots=*/1);
     fBuilder.pop_condition_mask();
@@ -843,6 +1098,11 @@ bool Generator::writeProgram(const FunctionDefinition& function) {
 
     // Initialize the program.
     fBuilder.init_lane_masks();
+
+    // Emit global variables.
+    if (!this->writeGlobals()) {
+        return unsupported();
+    }
 
     // Invoke main().
     std::optional<SlotRange> mainResult = this->writeFunction(function, function, args);

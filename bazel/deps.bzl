@@ -22,7 +22,7 @@ def git_repos_from_deps():
     new_git_repository(
         name = "dawn",
         build_file = "@//bazel/external/dawn:BUILD.bazel",
-        commit = "ca01ec46895f3f3cd6fd7160677d5c284d31ab5f",
+        commit = "7bacdfab4cb282cdd40bcb9f445e0ca1713e00dd",
         remote = "https://dawn.googlesource.com/dawn.git",
     )
 
@@ -146,33 +146,33 @@ def git_repos_from_deps():
     new_git_repository(
         name = "spirv_cross",
         build_file = "@//bazel/external/spirv_cross:BUILD.bazel",
-        commit = "c77b09b57c27837dc2d41aa371ed3d236ce9ce47",
+        commit = "a89dea3c499b1e322b39c7e6127af2777c4aa49b",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Cross",
     )
 
     git_repository(
         name = "spirv_headers",
-        commit = "1d31a100405cf8783ca7a31e31cdd727c9fc54c3",
+        commit = "34d04647d384e0aed037e7a2662a655fc39841bb",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers.git",
     )
 
     git_repository(
         name = "spirv_tools",
-        commit = "9c6a925c87d4c6e203e440ecc8a57018e5bb8c4b",
+        commit = "5a78d798f7b0c4c9481ce5db76b4d38eec036fc6",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git",
     )
 
     new_git_repository(
         name = "vulkan_headers",
         build_file = "@//bazel/external/vulkan_headers:BUILD.bazel",
-        commit = "bf3b3fb14e088c189be88edfc70f514b7d679656",
+        commit = "75a6b83f213da085ba33b82f053b956219a48730",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Headers",
     )
 
     new_git_repository(
         name = "vulkan_tools",
         build_file = "@//bazel/external/vulkan_tools:BUILD.bazel",
-        commit = "f846ef57a009cd2a3e475830b10f8dec399dfdc6",
+        commit = "dda9ae0f9113ad3816ba5f84e1a59b1529e82630",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Tools",
     )
 

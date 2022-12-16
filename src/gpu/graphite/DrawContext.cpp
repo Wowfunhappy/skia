@@ -106,14 +106,39 @@ bool DrawContext::recordUpload(Recorder* recorder,
                                sk_sp<TextureProxy> targetProxy,
                                SkColorType colorType,
                                const std::vector<MipLevel>& levels,
-                               const SkIRect& dstRect) {
+                               const SkIRect& dstRect,
+                               std::unique_ptr<ConditionalUploadContext> condContext) {
+    if (!recorder->priv().caps()->areColorTypeAndTextureInfoCompatible(
+                colorType, targetProxy->textureInfo())) {
+        return false;
+    }
+    // Src and dst colorInfo are the same
+    SkColorInfo colorInfo(colorType, kUnknown_SkAlphaType, nullptr);
+
+    return this->recordUpload(recorder,
+                              std::move(targetProxy),
+                              colorInfo, colorInfo,
+                              levels,
+                              dstRect,
+                              std::move(condContext));
+}
+
+bool DrawContext::recordUpload(Recorder* recorder,
+                               sk_sp<TextureProxy> targetProxy,
+                               const SkColorInfo& srcColorInfo,
+                               const SkColorInfo& dstColorInfo,
+                               const std::vector<MipLevel>& levels,
+                               const SkIRect& dstRect,
+                               std::unique_ptr<ConditionalUploadContext> condContext) {
     // Our caller should have clipped to the bounds of the surface already.
     SkASSERT(SkIRect::MakeSize(targetProxy->dimensions()).contains(dstRect));
     return fPendingUploads->recordUpload(recorder,
                                          std::move(targetProxy),
-                                         colorType,
+                                         srcColorInfo,
+                                         dstColorInfo,
                                          levels,
-                                         dstRect);
+                                         dstRect,
+                                         std::move(condContext));
 }
 
 #ifdef SK_ENABLE_PIET_GPU

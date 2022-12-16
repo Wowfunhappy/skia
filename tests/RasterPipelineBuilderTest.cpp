@@ -185,8 +185,8 @@ R"(    1. copy_2_slots_masked            v0..1 = Mask(v2..3)
 DEF_TEST(RasterPipelineBuilderCopySlotsUnmasked, r) {
     // Create a very simple nonsense program.
     SkSL::RP::Builder builder;
-    builder.copy_slots_unmasked(three_slots_at(0),  three_slots_at(2));
-    builder.copy_slots_unmasked(five_slots_at(1), five_slots_at(5));
+    builder.copy_slots_unmasked(three_slots_at(0), three_slots_at(2));
+    builder.copy_slots_unmasked(five_slots_at(1),  five_slots_at(5));
     std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/10);
 
     check(r, *program,
@@ -199,40 +199,56 @@ R"(    1. copy_3_slots_unmasked          v0..2 = v2..4
 DEF_TEST(RasterPipelineBuilderPushPopSlots, r) {
     // Create a very simple nonsense program.
     SkSL::RP::Builder builder;
-    builder.push_slots(four_slots_at(10));           // push from 10~13 into 50~53
-    builder.pop_slots_unmasked(two_slots_at(20));    // pop from 52~53 into 20~21 (unmasked)
-    builder.push_slots(three_slots_at(30));          // push from 30~32 into 52~54
-    builder.pop_slots(five_slots_at(0));             // pop from 50~54 into 0~4 (masked)
+    builder.push_slots(four_slots_at(10));           // push from 10~13 into $0~$3
+    builder.copy_stack_to_slots(one_slot_at(5), 3);  // copy from $1 into 5
+    builder.pop_slots_unmasked(two_slots_at(20));    // pop from $2~$3 into 20~21 (unmasked)
+    builder.copy_stack_to_slots_unmasked(one_slot_at(4), 2);  // copy from $0 into 4
+    builder.push_slots(three_slots_at(30));          // push from 30~32 into $2~$4
+    builder.pop_slots(five_slots_at(0));             // pop from $0~$4 into 0~4 (masked)
     std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/50);
 
     check(r, *program,
 R"(    1. copy_4_slots_unmasked          $0..3 = v10..13
-    2. copy_2_slots_unmasked          v20..21 = $2..3
-    3. copy_3_slots_unmasked          $2..4 = v30..32
-    4. copy_4_slots_masked            v0..3 = Mask($0..3)
-    5. copy_slot_masked               v4 = Mask($4)
+    2. copy_slot_masked               v5 = Mask($1)
+    3. copy_2_slots_unmasked          v20..21 = $2..3
+    4. copy_slot_unmasked             v4 = $0
+    5. copy_3_slots_unmasked          $2..4 = v30..32
+    6. copy_4_slots_masked            v0..3 = Mask($0..3)
+    7. copy_slot_masked               v4 = Mask($4)
 )");
 }
 
-DEF_TEST(RasterPipelineBuilderDuplicateAndSelectSlots, r) {
+DEF_TEST(RasterPipelineBuilderDuplicateSelectAndSwizzleSlots, r) {
     // Create a very simple nonsense program.
     SkSL::RP::Builder builder;
-    builder.push_literal_f(1.0f);           // push into 1
-    builder.duplicate(3);                   // duplicate into 2~4
-    builder.select(2);                      // combine 1~2 and 3~4 into 1~2
-    builder.select(1);                      // combine 1 and 2 into 1
+    builder.push_literal_f(1.0f);           // push into 0
+    builder.duplicate(1);                   // duplicate into 1
+    builder.duplicate(2);                   // duplicate into 2~3
+    builder.duplicate(3);                   // duplicate into 4~6
+    builder.duplicate(5);                   // duplicate into 7~11
+    builder.select(4);                      // select from 4~7 and 8~11 into 4~7
+    builder.select(3);                      // select from 2~4 and 5~7 into 2~4
+    builder.select(1);                      // select from 3 and 4 into 3
+    builder.swizzle(4, {3, 2, 1, 0});       // reverse the order of 0~3 (value.wzyx)
+    builder.swizzle(4, {1, 2});             // eliminate elements 0 and 3 (value.yz)
+    builder.swizzle(2, {0});                // eliminate element 1 (value.x)
     builder.discard_stack(1);               // balance stack
     std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/1);
 
     check(r, *program,
 R"(    1. immediate_f                    src.r = 0x3F800000 (1.0)
     2. store_unmasked                 $0 = src.r
-    3. load_unmasked                  src.r = $0
-    4. store_unmasked                 $1 = src.r
-    5. store_unmasked                 $2 = src.r
-    6. store_unmasked                 $3 = src.r
-    7. copy_2_slots_masked            $0..1 = Mask($2..3)
-    8. copy_slot_masked               $0 = Mask($1)
+    3. swizzle_2                      $0..1 = ($0..1).xx
+    4. swizzle_3                      $1..3 = ($1..3).xxx
+    5. swizzle_4                      $3..6 = ($3..6).xxxx
+    6. swizzle_4                      $6..9 = ($6..9).xxxx
+    7. swizzle_3                      $9..11 = ($9..11).xxx
+    8. copy_4_slots_masked            $4..7 = Mask($8..11)
+    9. copy_3_slots_masked            $2..4 = Mask($5..7)
+   10. copy_slot_masked               $3 = Mask($4)
+   11. swizzle_4                      $0..3 = ($0..3).wzyx
+   12. swizzle_2                      $0..1 = ($0..2).yz
+   13. swizzle_1                      $0 = ($0).x
 )");
 }
 
@@ -272,37 +288,55 @@ DEF_TEST(RasterPipelineBuilderUnaryAndBinaryOps, r) {
 
     // Create a very simple nonsense program.
     SkSL::RP::Builder builder;
+    builder.push_literal_f(0.0f);                  // push into 0
     builder.push_literal_f(1.0f);                  // push into 1
     builder.push_literal_f(2.0f);                  // push into 2
     builder.push_literal_f(3.0f);                  // push into 3
     builder.push_literal_f(4.0f);                  // push into 4
     builder.binary_op(BuilderOp::add_n_floats, 2); // compute (1,2)+(3,4) and store into 1~2
-    builder.push_literal_i(5);                     // push into 3
-    builder.push_literal_i(6);                     // push into 4
-    builder.binary_op(BuilderOp::add_n_ints, 1);   // compute 5+6 and store into 3
+    builder.binary_op(BuilderOp::mul_n_floats, 1); // compute 1*2 and store into 1
+    builder.push_literal_i(5);                     // push into 2
+    builder.push_literal_i(6);                     // push into 3
+    builder.push_literal_i(7);                     // push into 4
+    builder.push_literal_i(8);                     // push into 5
+    builder.push_literal_i(9);                     // push into 6
+    builder.push_literal_i(10);                    // push into 7
+    builder.binary_op(BuilderOp::div_n_floats, 3); // compute (2,3,4)/(5,6,7) and store into 2~4
+    builder.binary_op(BuilderOp::sub_n_ints, 1);   // compute 3-4 and store into 3
     builder.binary_op(BuilderOp::bitwise_and, 1);  // compute 2&11 and store into 2
     builder.binary_op(BuilderOp::bitwise_xor, 1);  // compute 1^2 and store into 1
     builder.unary_op(BuilderOp::bitwise_not, 1);   // compute ~3 and store into 1
-    builder.discard_stack(1);                      // balance stack
-    std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/1);
+    builder.discard_stack(2);                      // balance stack
+    std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/0);
 
     check(r, *program,
-R"(    1. immediate_f                    src.r = 0x3F800000 (1.0)
-    2. store_unmasked                 $0 = src.r
-    3. immediate_f                    src.r = 0x40000000 (2.0)
-    4. store_unmasked                 $1 = src.r
-    5. immediate_f                    src.r = 0x40400000 (3.0)
-    6. store_unmasked                 $2 = src.r
-    7. immediate_f                    src.r = 0x40800000 (4.0)
-    8. store_unmasked                 $3 = src.r
-    9. add_2_floats                   $0..1 += $2..3
-   10. immediate_f                    src.r = 0x00000005 (7.006492e-45)
-   11. store_unmasked                 $2 = src.r
-   12. immediate_f                    src.r = 0x00000006 (8.407791e-45)
-   13. store_unmasked                 $3 = src.r
-   14. add_int                        $2 += $3
-   15. bitwise_and                    $1 &= $2
-   16. bitwise_xor                    $0 ^= $1
-   17. bitwise_not                    $0 = ~$0
+R"(    1. zero_slot_unmasked             $0 = 0
+    2. immediate_f                    src.r = 0x3F800000 (1.0)
+    3. store_unmasked                 $1 = src.r
+    4. immediate_f                    src.r = 0x40000000 (2.0)
+    5. store_unmasked                 $2 = src.r
+    6. immediate_f                    src.r = 0x40400000 (3.0)
+    7. store_unmasked                 $3 = src.r
+    8. immediate_f                    src.r = 0x40800000 (4.0)
+    9. store_unmasked                 $4 = src.r
+   10. add_2_floats                   $1..2 += $3..4
+   11. mul_float                      $1 *= $2
+   12. immediate_f                    src.r = 0x00000005 (7.006492e-45)
+   13. store_unmasked                 $2 = src.r
+   14. immediate_f                    src.r = 0x00000006 (8.407791e-45)
+   15. store_unmasked                 $3 = src.r
+   16. immediate_f                    src.r = 0x00000007 (9.809089e-45)
+   17. store_unmasked                 $4 = src.r
+   18. immediate_f                    src.r = 0x00000008 (1.121039e-44)
+   19. store_unmasked                 $5 = src.r
+   20. immediate_f                    src.r = 0x00000009 (1.261169e-44)
+   21. store_unmasked                 $6 = src.r
+   22. immediate_f                    src.r = 0x0000000A (1.401298e-44)
+   23. store_unmasked                 $7 = src.r
+   24. div_3_floats                   $2..4 /= $5..7
+   25. sub_int                        $3 -= $4
+   26. bitwise_and                    $2 &= $3
+   27. bitwise_xor                    $1 ^= $2
+   28. bitwise_not                    $1 = ~$1
 )");
 }

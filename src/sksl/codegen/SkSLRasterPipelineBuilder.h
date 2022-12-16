@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTHash.h"
@@ -13,6 +14,7 @@
 
 #include <cstdint>
 #include <initializer_list>
+#include <iterator>
 #include <memory>
 
 class SkArenaAlloc;
@@ -62,15 +64,8 @@ enum class BuilderOp {
 
 // Represents a single raster-pipeline SkSL instruction.
 struct Instruction {
-    Instruction(BuilderOp op, std::initializer_list<Slot> slots) : fOp(op), fImmA(0) {
-        auto iter = slots.begin();
-        if (iter != slots.end()) { fSlotA = *iter++; }
-        if (iter != slots.end()) { fSlotB = *iter++; }
-        if (iter != slots.end()) { fSlotC = *iter++; }
-        SkASSERT(iter == slots.end());
-    }
-
-    Instruction(BuilderOp op, std::initializer_list<Slot> slots, int i) : fOp(op), fImmA(i) {
+    Instruction(BuilderOp op, std::initializer_list<Slot> slots, int a = 0, int b = 0)
+            : fOp(op), fImmA(a), fImmB(b) {
         auto iter = slots.begin();
         if (iter != slots.end()) { fSlotA = *iter++; }
         if (iter != slots.end()) { fSlotB = *iter++; }
@@ -83,6 +78,7 @@ struct Instruction {
     Slot      fSlotB = NA;
     Slot      fSlotC = NA;
     int       fImmA = 0;
+    int       fImmB = 0;
 };
 
 class Program {
@@ -216,15 +212,25 @@ public:
     }
 
     void copy_stack_to_slots(SlotRange dst) {
+        this->copy_stack_to_slots(dst, /*offsetFromStackTop=*/dst.count);
+    }
+
+    void copy_stack_to_slots(SlotRange dst, int offsetFromStackTop) {
         // Translates into copy_slots_masked (from temp stack to values) in Raster Pipeline.
         // Does not discard any values on the temp stack.
-        fInstructions.push_back({BuilderOp::copy_stack_to_slots, {dst.index}, dst.count});
+        fInstructions.push_back({BuilderOp::copy_stack_to_slots, {dst.index},
+                                 dst.count, offsetFromStackTop});
     }
 
     void copy_stack_to_slots_unmasked(SlotRange dst) {
+        this->copy_stack_to_slots_unmasked(dst, /*offsetFromStackTop=*/dst.count);
+    }
+
+    void copy_stack_to_slots_unmasked(SlotRange dst, int offsetFromStackTop) {
         // Translates into copy_slots_unmasked (from temp stack to values) in Raster Pipeline.
         // Does not discard any values on the temp stack.
-        fInstructions.push_back({BuilderOp::copy_stack_to_slots_unmasked, {dst.index}, dst.count});
+        fInstructions.push_back({BuilderOp::copy_stack_to_slots_unmasked, {dst.index},
+                                 dst.count, offsetFromStackTop});
     }
 
     // Performs a unary op (like `bitwise_not`), given a slot count of `slots`. The stack top is
@@ -250,7 +256,14 @@ public:
     void duplicate(int count) {
         // Creates duplicates of the top item on the temp stack.
         SkASSERT(count >= 0);
-        fInstructions.push_back({BuilderOp::duplicate, {}, count});
+        for (; count >= 3; count -= 3) {
+            this->swizzle(/*inputSlots=*/1, {0, 0, 0, 0});
+        }
+        switch (count) {
+            case 2:  this->swizzle(/*inputSlots=*/1, {0, 0, 0}); break;
+            case 1:  this->swizzle(/*inputSlots=*/1, {0, 0});    break;
+            default: break;
+        }
     }
 
     void select(int slots) {
@@ -291,6 +304,21 @@ public:
 
     void zero_slots_unmasked(SlotRange dst) {
         fInstructions.push_back({BuilderOp::zero_slot_unmasked, {dst.index}, dst.count});
+    }
+
+    void swizzle(int inputSlots, SkSpan<const int8_t> components) {
+        // Consumes `inputSlots` elements on the stack, then generates `components.size()` elements.
+        SkASSERT(components.size() >= 1 && components.size() <= 4);
+        // Squash .xwww into 0x3330, or .zyx into 0x012. (Packed nybbles, in reverse order.)
+        int componentBits = 0;
+        for (auto iter = components.rbegin(); iter != components.rend(); ++iter) {
+            SkASSERT(*iter >= 0 && *iter < inputSlots);
+            componentBits <<= 4;
+            componentBits |= *iter;
+        }
+
+        int op = (int)BuilderOp::swizzle_1 + components.size() - 1;
+        fInstructions.push_back({(BuilderOp)op, {}, inputSlots, componentBits});
     }
 
     void push_condition_mask() {
