@@ -9,15 +9,17 @@
 #define SkRasterPipeline_DEFINED
 
 #include "include/core/SkColor.h"
-#include "include/core/SkImageInfo.h"
-#include "include/core/SkMatrix.h"
-#include "include/core/SkRefCnt.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkTArray.h"
+#include "include/private/SkMacros.h"
 #include "src/core/SkArenaAlloc.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 
+class SkMatrix;
+enum SkColorType : int;
+struct SkImageInfo;
 struct skcms_TransferFunction;
 
 /**
@@ -130,9 +132,10 @@ struct skcms_TransferFunction;
     M(reenable_loop_mask)  M(merge_loop_mask)                                                 \
     M(load_return_mask)    M(store_return_mask)    M(mask_off_return_mask)                    \
     M(branch_if_any_active_lanes) M(branch_if_no_active_lanes) M(jump)                        \
-    M(bitwise_and) M(bitwise_or) M(bitwise_xor) M(bitwise_not)                                \
-    M(copy_slot_masked)    M(copy_2_slots_masked)                                             \
-    M(copy_3_slots_masked) M(copy_4_slots_masked)                                             \
+    M(bitwise_and) M(bitwise_or) M(bitwise_xor)                                               \
+    M(bitwise_not) M(bitwise_not_2) M(bitwise_not_3) M(bitwise_not_4)                         \
+    M(copy_constant)    M(copy_2_constants)    M(copy_3_constants)    M(copy_4_constants)     \
+    M(copy_slot_masked) M(copy_2_slots_masked) M(copy_3_slots_masked) M(copy_4_slots_masked)  \
     M(copy_slot_unmasked)    M(copy_2_slots_unmasked)                                         \
     M(copy_3_slots_unmasked) M(copy_4_slots_unmasked)                                         \
     M(zero_slot_unmasked)    M(zero_2_slots_unmasked)                                         \
@@ -289,7 +292,8 @@ struct SkRasterPipeline_TablesCtx {
 };
 
 struct SkRasterPipeline_CopySlotsCtx {
-    float *dst, *src;
+    float *dst;
+    const float *src;
 };
 
 struct SkRasterPipeline_SwizzleCtx {
@@ -365,28 +369,6 @@ public:
     void append_set_rgb(SkArenaAlloc* alloc, const SkColor4f& color) {
         this->append_set_rgb(alloc, color.vec());
     }
-
-    // Appends one or more `copy_n_slots_[un]masked` stages, based on `numSlots`.
-    void append_copy_slots_masked(SkArenaAlloc* alloc, float* dst, float* src, int numSlots);
-    void append_copy_slots_unmasked(SkArenaAlloc* alloc, float* dst, float* src, int numSlots);
-
-    // Appends one or more `zero_n_slots_unmasked` stages, based on `numSlots`.
-    void append_zero_slots_unmasked(float* dst, int numSlots);
-
-    // Appends a multi-slot math operation. `src` must be _immediately_ after `dst` in memory.
-    // `baseStage` must refer to an unbounded "apply_to_n_slots" stage, which must be immediately
-    // followed by specializations for 1-4 slots. For instance, {`add_n_floats`, `add_float`,
-    // `add_2_floats`, `add_3_floats`, `add_4_floats`} must be contiguous ops in the stage list,
-    // listed in that order; pass `add_n_floats` and we pick the appropriate op based on `numSlots`.
-    void append_adjacent_multi_slot_op(SkArenaAlloc* alloc,
-                                       SkRasterPipeline::Stage baseStage,
-                                       float* dst,
-                                       float* src,
-                                       int numSlots);
-
-    // Appends a math operation with two inputs (dst op src) and one output (dst).
-    // `src` must be _immediately_ after `dst` in memory.
-    void append_adjacent_single_slot_op(SkRasterPipeline::Stage stage, float* dst, float* src);
 
     void append_load    (SkColorType, const SkRasterPipeline_MemoryCtx*);
     void append_load_dst(SkColorType, const SkRasterPipeline_MemoryCtx*);

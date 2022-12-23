@@ -3151,6 +3151,33 @@ STAGE(zero_4_slots_unmasked, F* dst) {
     sk_bzero(dst, sizeof(F) * 4);
 }
 
+STAGE(copy_constant, SkRasterPipeline_CopySlotsCtx* ctx) {
+    const float* src = ctx->src;
+    F* dst = (F*)ctx->dst;
+    dst[0] = src[0];
+}
+STAGE(copy_2_constants, SkRasterPipeline_CopySlotsCtx* ctx) {
+    const float* src = ctx->src;
+    F* dst = (F*)ctx->dst;
+    dst[0] = src[0];
+    dst[1] = src[1];
+}
+STAGE(copy_3_constants, SkRasterPipeline_CopySlotsCtx* ctx) {
+    const float* src = ctx->src;
+    F* dst = (F*)ctx->dst;
+    dst[0] = src[0];
+    dst[1] = src[1];
+    dst[2] = src[2];
+}
+STAGE(copy_4_constants, SkRasterPipeline_CopySlotsCtx* ctx) {
+    const float* src = ctx->src;
+    F* dst = (F*)ctx->dst;
+    dst[0] = src[0];
+    dst[1] = src[1];
+    dst[2] = src[2];
+    dst[3] = src[3];
+}
+
 STAGE(copy_slot_unmasked, SkRasterPipeline_CopySlotsCtx* ctx) {
     // We don't even bother masking off the tail; we're filling slots, not the destination surface.
     memcpy(ctx->dst, ctx->src, sizeof(F) * 1);
@@ -3228,6 +3255,21 @@ STAGE(bitwise_xor, I32* dst) {
 }
 STAGE(bitwise_not, I32* dst) {
     dst[0] = ~dst[0];
+}
+STAGE(bitwise_not_2, I32* dst) {
+    dst[0] = ~dst[0];
+    dst[1] = ~dst[1];
+}
+STAGE(bitwise_not_3, I32* dst) {
+    dst[0] = ~dst[0];
+    dst[1] = ~dst[1];
+    dst[2] = ~dst[2];
+}
+STAGE(bitwise_not_4, I32* dst) {
+    dst[0] = ~dst[0];
+    dst[1] = ~dst[1];
+    dst[2] = ~dst[2];
+    dst[3] = ~dst[3];
 }
 
 template <typename T, void (*ApplyFn)(T*, T*)>

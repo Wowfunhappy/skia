@@ -2,6 +2,11 @@ Skia Graphics Release Notes
 
 This file includes a list of high level updates for each milestone release.
 
+Milestone 111
+-------------
+  * SkToBool is no longer part of the public API.
+  * A float version of SkCanvas::saveLayerAlpha now exists as SkCanvas::saveLayerAlphaf.
+
 Milestone 110
 -------------
   * SkParsePath::ToSVGString now returns the string, rather than modifying a passed-in string.

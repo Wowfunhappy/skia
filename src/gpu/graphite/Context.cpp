@@ -20,6 +20,7 @@
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/CopyTask.h"
 #include "src/gpu/graphite/GlobalCache.h"
+#include "src/gpu/graphite/GraphicsPipeline.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/KeyContext.h"
@@ -36,26 +37,6 @@
 #include "src/gpu/graphite/SynchronizeToCpuTask.h"
 #include "src/gpu/graphite/TextureProxyView.h"
 #include "src/gpu/graphite/UploadTask.h"
-
-#ifdef SK_DAWN
-#include "include/gpu/graphite/dawn/DawnBackendContext.h"
-#include "src/gpu/graphite/dawn/DawnQueueManager.h"
-#include "src/gpu/graphite/dawn/DawnSharedContext.h"
-#endif
-
-#ifdef SK_METAL
-#include "src/gpu/graphite/mtl/MtlTrampoline.h"
-#endif
-
-#ifdef SK_VULKAN
-#include "include/gpu/vk/VulkanBackendContext.h"
-#include "src/gpu/graphite/vk/VulkanQueueManager.h"
-#include "src/gpu/graphite/vk/VulkanSharedContext.h"
-#endif
-
-#ifdef SK_ENABLE_PRECOMPILE
-#include "src/gpu/graphite/PaintOptionsPriv.h"
-#endif
 
 namespace skgpu::graphite {
 
@@ -97,71 +78,6 @@ Context::~Context() {
 
 BackendApi Context::backend() const { return fSharedContext->backend(); }
 
-#ifdef SK_DAWN
-std::unique_ptr<Context> Context::MakeDawn(const DawnBackendContext& backendContext,
-                                           const ContextOptions& options) {
-    sk_sp<SharedContext> sharedContext = DawnSharedContext::Make(backendContext, options);
-    if (!sharedContext) {
-        return nullptr;
-    }
-
-    auto queueManager =
-            std::make_unique<DawnQueueManager>(backendContext.fQueue, sharedContext.get());
-    if (!queueManager) {
-        return nullptr;
-    }
-
-    auto context = std::unique_ptr<Context>(new Context(std::move(sharedContext),
-                                                        std::move(queueManager),
-                                                        options));
-    SkASSERT(context);
-    return context;
-}
-#endif
-
-#ifdef SK_METAL
-std::unique_ptr<Context> Context::MakeMetal(const MtlBackendContext& backendContext,
-                                            const ContextOptions& options) {
-    sk_sp<SharedContext> sharedContext = MtlTrampoline::MakeSharedContext(backendContext, options);
-    if (!sharedContext) {
-        return nullptr;
-    }
-
-    auto queueManager = MtlTrampoline::MakeQueueManager(backendContext, sharedContext.get());
-    if (!queueManager) {
-        return nullptr;
-    }
-
-    auto context = std::unique_ptr<Context>(new Context(std::move(sharedContext),
-                                                        std::move(queueManager),
-                                                        options));
-    SkASSERT(context);
-    return context;
-}
-#endif
-
-#ifdef SK_VULKAN
-std::unique_ptr<Context> Context::MakeVulkan(const VulkanBackendContext& backendContext,
-                                             const ContextOptions& options) {
-    sk_sp<SharedContext> sharedContext = VulkanSharedContext::Make(backendContext, options);
-    if (!sharedContext) {
-        return nullptr;
-    }
-
-    std::unique_ptr<QueueManager> queueManager(new VulkanQueueManager(backendContext.fQueue,
-                                                                      sharedContext.get()));
-    if (!queueManager) {
-        return nullptr;
-    }
-
-    auto context = std::unique_ptr<Context>(new Context(std::move(sharedContext),
-                                                        std::move(queueManager),
-                                                        options));
-    SkASSERT(context);
-    return context;
-}
-#endif
-
 std::unique_ptr<Recorder> Context::makeRecorder(const RecorderOptions& options) {
     ASSERT_SINGLE_OWNER
 
@@ -177,7 +93,7 @@ std::unique_ptr<Recorder> Context::makeRecorder(const RecorderOptions& options) 
 bool Context::insertRecording(const InsertRecordingInfo& info) {
     ASSERT_SINGLE_OWNER
 
-    return fQueueManager->addRecording(info, fResourceProvider.get());
+    return fQueueManager->addRecording(info, this);
 }
 
 bool Context::submit(SyncToCpu syncToCpu) {
@@ -334,7 +250,7 @@ Context::PixelTransferResult Context::transferPixels(const TextureProxy* proxy,
 
     size_t rowBytes = caps->getAlignedTextureDataRowBytes(
                               SkColorTypeBytesPerPixel(supportedColorType) * srcRect.width());
-    size_t size = rowBytes * srcRect.height();
+    size_t size = SkAlignTo(rowBytes * srcRect.height(), caps->requiredTransferBufferAlignment());
     sk_sp<Buffer> buffer = fResourceProvider->findOrCreateBuffer(
             size,
             BufferType::kXferCpuToGpu,
@@ -343,29 +259,30 @@ Context::PixelTransferResult Context::transferPixels(const TextureProxy* proxy,
         return {};
     }
 
-    // Set up copy task
+    // Set up copy task. Since we always use a new buffer the offset can be 0 and we don't need to
+    // worry about aligning it to the required transfer buffer alignment.
     sk_sp<CopyTextureToBufferTask> copyTask = CopyTextureToBufferTask::Make(sk_ref_sp(proxy),
                                                                             srcRect,
                                                                             buffer,
                                                                             /*bufferOffset=*/0,
                                                                             rowBytes);
-    if (!copyTask || !fQueueManager->addTask(copyTask.get(), fResourceProvider.get())) {
+    if (!copyTask || !fQueueManager->addTask(copyTask.get(), this)) {
         return {};
     }
     sk_sp<SynchronizeToCpuTask> syncTask = SynchronizeToCpuTask::Make(buffer);
-    if (!syncTask || !fQueueManager->addTask(syncTask.get(), fResourceProvider.get())) {
+    if (!syncTask || !fQueueManager->addTask(syncTask.get(), this)) {
         return {};
     }
 
     PixelTransferResult result;
     result.fTransferBuffer = std::move(buffer);
     if (srcImageInfo.colorInfo() != dstColorInfo) {
-        result.fPixelConverter = [dims = srcRect.size(), dstColorInfo, srcImageInfo](
+        result.fPixelConverter = [dims = srcRect.size(), dstColorInfo, srcImageInfo, rowBytes](
                 void* dst, const void* src) {
             SkImageInfo srcInfo = SkImageInfo::Make(dims, srcImageInfo.colorInfo());
             SkImageInfo dstInfo = SkImageInfo::Make(dims, dstColorInfo);
             SkAssertResult(SkConvertPixels(dstInfo, dst, dstInfo.minRowBytes(),
-                                           srcInfo, src, srcInfo.minRowBytes()));
+                                           srcInfo, src, rowBytes));
         };
     }
 
@@ -378,36 +295,6 @@ void Context::checkAsyncWorkCompletion() {
 
     fQueueManager->checkForFinishedWork(SyncToCpu::kNo);
 }
-
-#ifdef SK_ENABLE_PRECOMPILE
-
-void Context::precompile(const PaintOptions& options) {
-    ASSERT_SINGLE_OWNER
-
-    auto rtEffectDict = std::make_unique<RuntimeEffectDictionary>();
-
-    KeyContext keyContext(fSharedContext->shaderCodeDictionary(), rtEffectDict.get());
-
-    options.priv().buildCombinations(
-        keyContext,
-        [&](UniquePaintParamsID uniqueID) {
-            for (const Renderer* r : fSharedContext->rendererProvider()->renderers()) {
-                for (auto&& s : r->steps()) {
-                    if (s->performsShading()) {
-                        GraphicsPipelineDesc pipelineDesc(s, uniqueID);
-                        (void) pipelineDesc;
-
-                        // TODO: Combine the desc with the renderpass description set to generate a
-                        // full GraphicsPipeline and MSL program. Cache that compiled pipeline on
-                        // the resource provider in a map from desc -> pipeline so that any
-                        // later desc created from equivalent RenderStep + Combination maps to it.
-                    }
-                }
-            }
-        });
-}
-
-#endif // SK_ENABLE_PRECOMPILE
 
 void Context::deleteBackendTexture(BackendTexture& texture) {
     ASSERT_SINGLE_OWNER
@@ -464,5 +351,16 @@ void ContextPriv::deregisterRecorder(const Recorder* recorder) {
 }
 
 #endif
+
+///////////////////////////////////////////////////////////////////////////////////
+
+std::unique_ptr<Context> ContextCtorAccessor::MakeContext(
+        sk_sp<SharedContext> sharedContext,
+        std::unique_ptr<QueueManager> queueManager,
+        const ContextOptions& options) {
+    return std::unique_ptr<Context>(new Context(std::move(sharedContext),
+                                                std::move(queueManager),
+                                                options));
+}
 
 } // namespace skgpu::graphite
