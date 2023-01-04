@@ -177,10 +177,8 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorIfElseTest, r) {
     test(r,
          R"__SkSL__(
              const half4 colorWhite = half4(1);
-             half4 colorBlue  = colorWhite.00b1,
-                   colorGreen = colorWhite.0g01,
-                   colorRed   = colorWhite.r001;
-             half4 main(half4) {
+
+             half4 ifElseTest(half4 colorBlue, half4 colorGreen, half4 colorRed) {
                  half4 result = half4(0);
                  if (colorWhite != colorBlue) {    // TRUE
                      if (colorGreen == colorRed) { // FALSE
@@ -205,6 +203,10 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorIfElseTest, r) {
                      return colorBlue;
                  }
                  return colorRed;
+             }
+
+             half4 main(half4) {
+                 return ifElseTest(colorWhite.00b1, colorWhite.0g01, colorWhite.r001);
              }
          )__SkSL__",
          /*uniforms=*/{},
@@ -531,7 +533,6 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorCoercedTypeTest, r) {
 
 DEF_TEST(SkSLRasterPipelineCodeGeneratorVectorScalarFoldingTest, r) {
     // This test matches the floating-point test in VectorScalarFolding.rts.
-    // (The function call has been manually inlined.)
     static constexpr float kUniforms[] = {0.0, 1.0, 0.0, 1.0,
                                           1.0, 0.0, 0.0, 1.0,
                                           1.0};
@@ -540,7 +541,7 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorVectorScalarFoldingTest, r) {
             uniform half4 colorGreen, colorRed;
             uniform half  unknownInput;
 
-            half4 main(vec4) {
+            bool test_half() {
                 bool ok = true;
 
                 // Vector op scalar
@@ -638,12 +639,34 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorVectorScalarFoldingTest, r) {
                 x = x / 1;
                 ok = ok && (x == half4(unknown));
 
-                return ok ? colorGreen : colorRed;
+                return ok;
+            }
+
+            half4 main(vec4) {
+                return test_half() ? colorGreen : colorRed;
             }
          )__SkSL__",
          kUniforms,
          /*startingColor=*/SkColor4f{0.0, 0.0, 0.0, 0.0},
          /*expectedResult=*/SkColor4f{0.0, 1.0, 0.0, 1.0});
+}
+
+DEF_TEST(SkSLRasterPipelineCodeGeneratorIdentitySwizzle, r) {
+    static constexpr float kUniforms[] = {0.0, 1.0, 0.0, 1.0,
+                                          1.0, 0.0, 0.0, 1.0};
+    test(r,
+         R"__SkSL__(
+            uniform half4 colorGreen, colorRed;
+            half4 main(vec4 color) {
+                return (color.r   == 0.5             &&
+                        color.rg  == half2(0.5, 1.0) &&
+                        color.rgb == half3(0.5, 1.0, 0.0)) ? colorGreen : colorRed;
+            }
+         )__SkSL__",
+         kUniforms,
+         /*startingColor=*/SkColor4f{0.5, 1.0, 0.0, 0.25},
+         /*expectedResult=*/SkColor4f{0.0, 1.0, 0.0, 1.0});
+
 }
 
 DEF_TEST(SkSLRasterPipelineCodeGeneratorLumaTernaryTest, r) {
@@ -792,4 +815,69 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorBitwiseNotTest, r) {
          SkSpan((const float*)kUniforms, std::size(kUniforms)),
          /*startingColor=*/SkColor4f{0.0, 0.0, 0.0, 0.0},
          /*expectedResult=*/SkColor4f{0.0, 1.0, 0.0, 1.0});
+}
+
+DEF_TEST(SkSLRasterPipelineCodeGeneratorComparisonIntrinsicTest, r) {
+    test(r,
+         R"__SkSL__(
+            half4 main(vec4) {
+                const half4 colorGreen = half4(0,1,0,1), colorRed = half4(1,0,0,1);
+                half4 a = half4(1, 2, 0, 1),
+                      b = half4(2, 2, 1, 0);
+                int3  c = int3(1111, 3333, 5555),
+                      d = int3(1111, 5555, 3333);
+                uint2 e = uint2(1111111111u, 222),
+                      f = uint2(3333333333u, 222);
+                return (lessThan(a, b)         == bool4(true, false, true, false)  &&
+                        lessThan(c, d)         == bool3(false, true, false)        &&
+                        lessThan(e, f)         == bool2(true, false)               &&
+                        greaterThan(a, b)      == bool4(false, false, false, true) &&
+                        greaterThan(c, d)      == bool3(false, false, true)        &&
+                        greaterThan(e, f)      == bool2(false, false)              &&
+                        lessThanEqual(a, b)    == bool4(true, true, true, false)   &&
+                        lessThanEqual(c, d)    == bool3(true, true, false)         &&
+                        lessThanEqual(e, f)    == bool2(true, true)                &&
+                        greaterThanEqual(a, b) == bool4(false, true, false, true)  &&
+                        greaterThanEqual(c, d) == bool3(true, false, true)         &&
+                        greaterThanEqual(e, f) == bool2(false, true)               &&
+                        equal(a, b)            == bool4(false, true, false, false) &&
+                        equal(c, d)            == bool3(true, false, false)        &&
+                        equal(e, f)            == bool2(false, true)               &&
+                        notEqual(a, b)         == bool4(true, false, true, true)   &&
+                        notEqual(c, d)         == bool3(false, true, true)         &&
+                        notEqual(e, f)         == bool2(true, false)               &&
+                        max(a, b)              == half4(2, 2, 1, 1)                &&
+                        max(c, d)              == int3(1111, 5555, 5555)           &&
+                        max(e, f)              == uint2(3333333333u, 222)          &&
+                        max(a, 1)              == half4(1, 2, 1, 1)                &&
+                        max(c, 3333)           == int3(3333, 3333, 5555)           &&
+                        max(e, 7777)           == uint2(1111111111u, 7777)         &&
+                        min(a, b)              == half4(1, 2, 0, 0)                &&
+                        min(c, d)              == int3(1111, 3333, 3333)           &&
+                        min(e, f)              == uint2(1111111111u, 222)          &&
+                        min(a, 1)              == half4(1, 1, 0, 1)                &&
+                        min(c, 3333)           == int3(1111, 3333, 3333)           &&
+                        min(e, 7777)           == uint2(7777, 222)) ? colorGreen : colorRed;
+            }
+         )__SkSL__",
+         /*uniforms=*/{},
+         /*startingColor=*/SkColor4f{0.0, 0.0, 0.0, 0.0},
+         /*expectedResult=*/SkColor4f{0.0, 1.0, 0.0, 1.0});
+}
+
+DEF_TEST(SkSLRasterPipelineCodeGeneratorUnpremulTest, r) {
+    test(r,
+         R"__SkSL__(
+            // This is `unpremul` verbatim from sksl_shared, but marked noinline.
+            noinline half4 MyUnpremul(half4 color) {
+                return half4(color.rgb / max(color.a, 0.0001), color.a);
+            }
+
+            half4 main(vec4 color) {
+                return MyUnpremul(color);
+            }
+         )__SkSL__",
+         /*uniforms=*/{},
+         /*startingColor=*/SkColor4f{0.5, 0.25, 0.125, 0.5},
+         /*expectedResult=*/SkColor4f{1.0, 0.5, 0.25, 0.5});
 }

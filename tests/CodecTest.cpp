@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/base/SkAlign.h"
 #include "include/codec/SkAndroidCodec.h"
 #include "include/codec/SkCodec.h"
 #include "include/core/SkAlphaType.h"
@@ -43,6 +44,8 @@
 #include "tests/Test.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
+
+using namespace skia::internal;
 
 #ifdef SK_ENABLE_ANDROID_UTILS
 #include "client_utils/android/FrontBufferedStream.h"

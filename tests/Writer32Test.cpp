@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/base/SkAlign.h"
 #include "include/core/SkData.h"
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
@@ -20,6 +21,8 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+
+using namespace skia::internal;
 
 static void check_contents(skiatest::Reporter* reporter, const SkWriter32& writer,
                            const void* expected, size_t size) {

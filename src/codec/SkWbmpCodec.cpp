@@ -7,6 +7,7 @@
 
 #include "src/codec/SkWbmpCodec.h"
 
+#include "include/base/SkAlign.h"
 #include "include/codec/SkCodec.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkEncodedImageFormat.h"
@@ -19,6 +20,8 @@
 #include "src/codec/SkCodecPriv.h"
 
 #include <utility>
+
+using namespace skia::internal;
 
 // Each bit represents a pixel, so width is actually a number of bits.
 // A row will always be stored in bytes, so we round width up to the
