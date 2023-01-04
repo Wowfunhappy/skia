@@ -138,7 +138,7 @@ private:
     CGAffineTransform fInvTransform;
 
     SkUniqueCFRef<CGFontRef> fCGFont;
-	SkAutoTMalloc<GlyphRect> fFBoundingBoxes;
+    skia::internal::SkAutoTMalloc<GlyphRect> fFBoundingBoxes;
     uint16_t fFBoundingBoxesGlyphOffset;
     uint16_t fGlyphCount;
     bool fGeneratedFBoundingBoxes;
