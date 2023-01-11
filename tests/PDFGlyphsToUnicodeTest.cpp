@@ -12,7 +12,7 @@
 #include "include/core/SkStream.h"
 #include "include/private/SkTDArray.h"
 #include "include/private/SkTemplates.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "src/pdf/SkPDFGlyphUse.h"
 #include "src/pdf/SkPDFMakeToUnicodeCmap.h"
 #include "tests/Test.h"
@@ -20,8 +20,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-
-using namespace skia::internal;
 
 static constexpr SkGlyphID kMaximumGlyphIndex = UINT16_MAX;
 

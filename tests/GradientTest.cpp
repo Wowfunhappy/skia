@@ -28,7 +28,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/mock/GrMockTypes.h"
 #include "include/private/SkTemplates.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkTLazy.h"
@@ -40,8 +40,6 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
-
-using namespace skia::internal;
 
 // https://code.google.com/p/chromium/issues/detail?id=448299
 // Giant (inverse) matrix causes overflow when converting/computing using 32.32

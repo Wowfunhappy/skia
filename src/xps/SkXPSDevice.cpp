@@ -37,7 +37,7 @@
 #include "include/core/SkVertices.h"
 #include "include/pathops/SkPathOps.h"
 #include "include/private/SkTDArray.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "src/core/SkDraw.h"
 #include "src/core/SkEndian.h"
 #include "src/core/SkGeometry.h"
@@ -57,8 +57,6 @@
 #include "src/utils/win/SkIStream.h"
 #include "src/utils/win/SkTScopedComPtr.h"
 #include "src/xps/SkXPSDevice.h"
-
-using namespace skia::internal;
 
 //Windows defines a FLOAT type,
 //make it clear when converting a scalar that this is what is wanted.

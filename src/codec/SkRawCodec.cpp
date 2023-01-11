@@ -15,9 +15,9 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkEncodedInfo.h"
-#include "include/private/SkMutex.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTemplates.h"
+#include "include/private/base/SkMutex.h"
 #include "modules/skcms/skcms.h"
 #include "src/codec/SkCodecPriv.h"
 #include "src/codec/SkJpegCodec.h"
@@ -57,8 +57,6 @@
 
 #include "src/piex.h"
 #include "src/piex_types.h"
-
-using namespace skia::internal;
 
 template <typename T> struct sk_is_trivially_relocatable;
 template <> struct sk_is_trivially_relocatable<dng_exception> : std::true_type {};

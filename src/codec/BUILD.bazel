@@ -88,6 +88,10 @@ DECODE_JPEG_FILES = [
     "SkJpegDecoderMgr.h",
     "SkJpegUtility.cpp",
     "SkJpegUtility.h",
+    "SkJpegMultiPicture.cpp",
+    "SkJpegMultiPicture.h",
+    "SkJpegSegmentScan.cpp",
+    "SkJpegSegmentScan.h",
     "SkParseEncodedOrigin.cpp",
     "SkParseEncodedOrigin.h",
 ]
@@ -149,6 +153,15 @@ split_srcs_and_hdrs(
         "SkJpegxlCodec.cpp",
         "SkJpegxlCodec.h",
         "SkScalingCodec.h",
+    ],
+)
+
+split_srcs_and_hdrs(
+    name = "decode_jpegr",
+    files = [
+        "SkJpegRCodec.cpp",
+        "SkJpegRCodec.h",
+        "SkStubJpegRDecoderAPI.h",
     ],
 )
 

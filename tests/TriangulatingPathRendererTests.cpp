@@ -31,6 +31,7 @@
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkPathPriv.h"
+#include "src/gpu/SkBackingFit.h"
 #include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrEagerVertexAllocator.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
@@ -56,8 +57,6 @@
 #include <map>
 #include <memory>
 #include <utility>
-
-using namespace skia::internal;
 
 class GrRecordingContext;
 class SkShader;

@@ -11,12 +11,10 @@
 #include "include/core/SkMath.h"
 #include "include/private/SkTPin.h"
 #include "include/private/SkTemplates.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "src/core/SkEndian.h"
 #include "src/core/SkMaskBlurFilter.h"
 #include "src/core/SkMathPriv.h"
-
-using namespace skia::internal;
 
 // This constant approximates the scaling done in the software path's
 // "high quality" mode, in SkBlurMask::Blur() (1 / sqrt(3)).
@@ -374,7 +372,7 @@ void SkBlurMask::ComputeBlurredScanline(uint8_t *pixels, const uint8_t *profile,
                                         unsigned int width, SkScalar sigma) {
 
     unsigned int profile_size = SkScalarCeilToInt(6*sigma);
-    skia::internal::SkAutoTMalloc<uint8_t> horizontalScanline(width);
+    SkAutoTMalloc<uint8_t> horizontalScanline(width);
 
     unsigned int sw = width - profile_size;
     // nearest odd number less than the profile size represents the center

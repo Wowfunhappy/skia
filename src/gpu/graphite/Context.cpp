@@ -20,6 +20,7 @@
 #include "src/gpu/graphite/CommandBuffer.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/CopyTask.h"
+#include "src/gpu/graphite/DrawAtlas.h"
 #include "src/gpu/graphite/GlobalCache.h"
 #include "src/gpu/graphite/GraphicsPipeline.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
@@ -67,6 +68,7 @@ Context::Context(sk_sp<SharedContext> sharedContext,
     // SingleOwner object and it is declared last
     fResourceProvider = fSharedContext->makeResourceProvider(&fSingleOwner);
     fMappedBufferManager = std::make_unique<ClientMappedBufferManager>(this->contextID());
+    fPlotUploadTracker = std::make_unique<PlotUploadTracker>();
 }
 
 Context::~Context() {
@@ -82,7 +84,8 @@ bool Context::finishInitialization() {
     SkASSERT(!fSharedContext->rendererProvider()); // Can only initialize once
 
     StaticBufferManager bufferManager{fResourceProvider.get(), fSharedContext->caps()};
-    std::unique_ptr<RendererProvider> renderers{new RendererProvider(&bufferManager)};
+    std::unique_ptr<RendererProvider> renderers{
+            new RendererProvider(fSharedContext->caps(), &bufferManager)};
 
     auto result = bufferManager.finalize(this, fQueueManager.get(), fSharedContext->globalCache());
     if (result == StaticBufferManager::FinishResult::kFailure) {

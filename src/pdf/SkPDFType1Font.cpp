@@ -4,12 +4,10 @@
 #include "src/pdf/SkPDFType1Font.h"
 
 #include "include/private/SkTemplates.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "src/core/SkStrikeSpec.h"
 
 #include <ctype.h>
-
-using namespace skia::internal;
 
 /*
   "A standard Type 1 font program, as described in the Adobe Type 1

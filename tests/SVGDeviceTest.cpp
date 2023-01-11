@@ -18,7 +18,7 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkTextBlob.h"
 #include "include/effects/SkDashPathEffect.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "include/svg/SkSVGCanvas.h"
 #include "include/utils/SkParse.h"
 #include "src/shaders/SkImageShader.h"
@@ -29,8 +29,6 @@
 #include "tools/ToolUtils.h"
 
 #include <string>
-
-using namespace skia::internal;
 
 #define ABORT_TEST(r, cond, ...)                                   \
     do {                                                           \

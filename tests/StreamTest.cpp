@@ -11,7 +11,7 @@
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkTemplates.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "include/utils/SkRandom.h"
 #include "src/core/SkAutoMalloc.h"
 #include "src/core/SkBuffer.h"
@@ -30,8 +30,6 @@
 #include <limits>
 #include <memory>
 #include <string>
-
-using namespace skia::internal;
 
 #ifdef SK_ENABLE_ANDROID_UTILS
 #include "client_utils/android/FrontBufferedStream.h"

@@ -11,16 +11,16 @@
 // All of these files should be independent of things users can set via the user config file.
 // They should also be able to be included in any order.
 // IWYU pragma: begin_exports
-#include "include/base/SkAPI.h"
-#include "include/base/SkAttributes.h"
-#include "include/base/SkFeatures.h"
+#include "include/private/base/SkAPI.h"
+#include "include/private/base/SkAttributes.h"
+#include "include/private/base/SkFeatures.h"
 
 // Load and verify defines from the user config file.
-#include "include/base/SkLoadUserConfig.h"
+#include "include/private/base/SkLoadUserConfig.h"
 
 // Any includes or defines below can be configured by the user config file.
-#include "include/base/SkAssert.h"
-#include "include/base/SkDebug.h"
+#include "include/private/base/SkAssert.h"
+#include "include/private/base/SkDebug.h"
 // IWYU pragma: end_exports
 
 #include <climits>
@@ -157,7 +157,9 @@
 #endif
 
 #if defined(SK_BUILD_FOR_LIBFUZZER) || defined(SK_BUILD_FOR_AFL_FUZZ)
+#if !defined(SK_BUILD_FOR_FUZZER)
     #define SK_BUILD_FOR_FUZZER
+#endif
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -240,21 +242,5 @@ static constexpr uint32_t SK_InvalidGenID = 0;
 */
 static constexpr uint32_t SK_InvalidUniqueID = 0;
 
-////////////////////////////////////////////////////////////////////////////////
-
-/** Indicates whether an allocation should count against a cache budget.
-*/
-enum class SkBudgeted : bool {
-    kNo  = false,
-    kYes = true
-};
-
-/** Indicates whether a backing store needs to be an exact match or can be
-    larger than is strictly necessary
-*/
-enum class SkBackingFit {
-    kApprox,
-    kExact
-};
 
 #endif

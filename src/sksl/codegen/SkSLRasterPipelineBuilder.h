@@ -8,13 +8,12 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkTArray.h"
-#include "include/private/SkTHash.h"
 #include "src/core/SkRasterPipeline.h"
+#include "src/core/SkTHash.h"
 #include "src/core/SkUtils.h"
 
 #include <cstdint>
 #include <initializer_list>
-#include <iterator>
 #include <memory>
 
 class SkArenaAlloc;
@@ -48,10 +47,11 @@ enum class BuilderOp {
     push_slots,
     push_uniform,
     push_zeros,
+    push_clone,
+    push_clone_from_stack,
     copy_stack_to_slots,
     copy_stack_to_slots_unmasked,
     discard_stack,
-    duplicate,
     select,
     push_condition_mask,
     pop_condition_mask,
@@ -270,7 +270,12 @@ public:
 
     void push_zeros(int count) {
         // Translates into zero_slot_unmasked in Raster Pipeline.
-        fInstructions.push_back({BuilderOp::push_zeros, {}, count});
+        if (!fInstructions.empty() && fInstructions.back().fOp == BuilderOp::push_zeros) {
+            // Coalesce adjacent push_zero ops into a single op.
+            fInstructions.back().fImmA += count;
+        } else {
+            fInstructions.push_back({BuilderOp::push_zeros, {}, count});
+        }
     }
 
     void push_slots(SlotRange src) {
@@ -327,17 +332,20 @@ public:
         this->discard_stack(dst.count);
     }
 
-    void duplicate(int count) {
-        // Creates duplicates of the top item on the temp stack.
-        SkASSERT(count >= 0);
-        for (; count >= 3; count -= 3) {
-            this->swizzle(/*inputSlots=*/1, {0, 0, 0, 0});
-        }
-        switch (count) {
-            case 2:  this->swizzle(/*inputSlots=*/1, {0, 0, 0}); break;
-            case 1:  this->swizzle(/*inputSlots=*/1, {0, 0});    break;
-            default: break;
-        }
+    // Creates many clones of the top single-slot item on the temp stack.
+    void push_duplicates(int count);
+
+    // Creates a single clone of an item on the current temp stack. The cloned item can consist of
+    // any number of slots, and can be copied from an earlier position on the stack.
+    void push_clone(int numSlots, int offsetFromStackTop = 0) {
+        fInstructions.push_back({BuilderOp::push_clone, {}, numSlots,
+                                 numSlots + offsetFromStackTop});
+    }
+
+    // Creates a single clone from an item on any temp stack. The cloned item can consist of any
+    // number of slots.
+    void push_clone_from_stack(int numSlots, int otherStackIndex) {
+        fInstructions.push_back({BuilderOp::push_clone_from_stack, {}, numSlots, otherStackIndex});
     }
 
     void select(int slots) {
@@ -380,20 +388,8 @@ public:
         fInstructions.push_back({BuilderOp::zero_slot_unmasked, {dst.index}, dst.count});
     }
 
-    void swizzle(int inputSlots, SkSpan<const int8_t> components) {
-        // Consumes `inputSlots` elements on the stack, then generates `components.size()` elements.
-        SkASSERT(components.size() >= 1 && components.size() <= 4);
-        // Squash .xwww into 0x3330, or .zyx into 0x012. (Packed nybbles, in reverse order.)
-        int componentBits = 0;
-        for (auto iter = components.rbegin(); iter != components.rend(); ++iter) {
-            SkASSERT(*iter >= 0 && *iter < inputSlots);
-            componentBits <<= 4;
-            componentBits |= *iter;
-        }
-
-        int op = (int)BuilderOp::swizzle_1 + components.size() - 1;
-        fInstructions.push_back({(BuilderOp)op, {}, inputSlots, componentBits});
-    }
+    // Consumes `inputSlots` elements on the stack, then generates `components.size()` elements.
+    void swizzle(int inputSlots, SkSpan<const int8_t> components);
 
     void push_condition_mask() {
         fInstructions.push_back({BuilderOp::push_condition_mask, {}});

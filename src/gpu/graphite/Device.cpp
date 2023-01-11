@@ -38,11 +38,11 @@
 #include "include/core/SkPath.h"
 #include "include/core/SkPathEffect.h"
 #include "include/core/SkStrokeRec.h"
-#include "include/private/SkImageInfoPriv.h"
 
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkConvertPixels.h"
+#include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkPaintPriv.h"
 #include "src/core/SkRRectPriv.h"
@@ -216,7 +216,7 @@ private:
 
 sk_sp<Device> Device::Make(Recorder* recorder,
                            const SkImageInfo& ii,
-                           SkBudgeted budgeted,
+                           skgpu::Budgeted budgeted,
                            Mipmapped mipmapped,
                            const SkSurfaceProps& props,
                            bool addInitialClear) {
@@ -330,8 +330,13 @@ SkBaseDevice* Device::onCreateDevice(const CreateInfo& info, const SkPaint*) {
     // Skia's convention is to only clear a device if it is non-opaque.
     bool addInitialClear = !info.fInfo.isOpaque();
 
-    return Make(fRecorder, info.fInfo, SkBudgeted::kYes, Mipmapped::kNo,
-                props, addInitialClear).release();
+    return Make(fRecorder,
+                info.fInfo,
+                skgpu::Budgeted::kYes,
+                Mipmapped::kNo,
+                props,
+                addInitialClear)
+            .release();
 }
 
 sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& ii, const SkSurfaceProps& props) {
@@ -355,7 +360,7 @@ TextureProxyView Device::createCopy(const SkIRect* subset, Mipmapped mipmapped) 
                                                   mipmapped,
                                                   srcView.proxy()->textureInfo().isProtected(),
                                                   Renderable::kNo,
-                                                  SkBudgeted::kNo);
+                                                  skgpu::Budgeted::kNo);
     if (!dest) {
         return {};
     }
@@ -1065,7 +1070,7 @@ void Device::flushPendingWorkToRecorder() {
 
     // push any pending uploads from the atlasmanager
     auto atlasManager = fRecorder->priv().atlasManager();
-    if (!atlasManager->recordUploads(fDC.get())) {
+    if (!fDC->recordTextUploads(atlasManager)) {
         SKGPU_LOG_E("AtlasManager uploads have failed -- may see invalid results.");
     }
 

@@ -8,15 +8,13 @@
 #if defined(SK_BUILD_FOR_WIN)
 
 #include "include/core/SkTypes.h"
-#include "include/private/SkTFitsIn.h"
 #include "include/private/SkTemplates.h"
+#include "include/private/base/SkTFitsIn.h"
 #include "src/utils/win/SkDWriteFontFileStream.h"
 #include "src/utils/win/SkHRESULT.h"
 #include "src/utils/win/SkTScopedComPtr.h"
 
 #include <dwrite.h>
-
-using namespace skia::internal;
 
 ///////////////////////////////////////////////////////////////////////////////
 //  SkIDWriteFontFileStream

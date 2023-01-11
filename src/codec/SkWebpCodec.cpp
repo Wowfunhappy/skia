@@ -7,7 +7,6 @@
 
 #include "src/codec/SkWebpCodec.h"
 
-#include "include/base/SkAlign.h"
 #include "include/codec/SkCodec.h"
 #include "include/codec/SkCodecAnimation.h"
 #include "include/core/SkAlphaType.h"
@@ -18,9 +17,10 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkStream.h"
-#include "include/private/SkTFitsIn.h"
 #include "include/private/SkTemplates.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkAlign.h"
+#include "include/private/base/SkTFitsIn.h"
+#include "include/private/base/SkTo.h"
 #include "modules/skcms/skcms.h"
 #include "src/codec/SkParseEncodedOrigin.h"
 #include "src/codec/SkSampler.h"

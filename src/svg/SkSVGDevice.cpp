@@ -39,10 +39,10 @@
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypeface.h"
 #include "include/private/SkNoncopyable.h"
-#include "include/private/SkTHash.h"
 #include "include/private/SkTPin.h"
 #include "include/private/SkTemplates.h"
-#include "include/private/SkTo.h"
+#include "src/core/SkTHash.h"
+#include "include/private/base/SkTo.h"
 #include "include/svg/SkSVGCanvas.h"
 #include "include/utils/SkBase64.h"
 #include "src/core/SkAnnotationKeys.h"
@@ -59,8 +59,6 @@
 #include <memory>
 #include <string>
 #include <utility>
-
-using namespace skia::internal;
 
 #if SK_SUPPORT_GPU
 class SkMesh;

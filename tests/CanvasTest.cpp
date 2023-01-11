@@ -33,8 +33,8 @@
 #include "include/core/SkTypes.h"
 #include "include/core/SkVertices.h"
 #include "include/effects/SkImageFilters.h"
-#include "include/private/SkMalloc.h"
 #include "include/private/SkTemplates.h"
+#include "include/private/base/SkMalloc.h"
 #include "include/utils/SkNWayCanvas.h"
 #include "include/utils/SkPaintFilterCanvas.h"
 #include "src/core/SkBigPicture.h"
@@ -49,8 +49,6 @@
 #include <initializer_list>
 #include <memory>
 #include <utility>
-
-using namespace skia::internal;
 
 class SkPicture;
 class SkReadBuffer;

@@ -9,6 +9,7 @@
 
 #include "include/gpu/graphite/Recorder.h"
 #include "include/private/SkSLString.h"
+#include "src/gpu/graphite/ContextUtils.h"
 #include "src/gpu/graphite/DrawParams.h"
 #include "src/gpu/graphite/DrawWriter.h"
 #include "src/gpu/graphite/PipelineData.h"
@@ -53,7 +54,7 @@ SDFTextRenderStep::SDFTextRenderStep(bool isA8)
 
 SDFTextRenderStep::~SDFTextRenderStep() {}
 
-const char* SDFTextRenderStep::vertexSkSL() const {
+std::string SDFTextRenderStep::vertexSkSL() const {
     return R"(
         float2 baseCoords = float2(float(sk_VertexID >> 1), float(sk_VertexID & 1));
         baseCoords.xy *= float2(size);
@@ -69,13 +70,13 @@ const char* SDFTextRenderStep::vertexSkSL() const {
     )";
 }
 
-std::string SDFTextRenderStep::texturesAndSamplersSkSL(int binding) const {
+std::string SDFTextRenderStep::texturesAndSamplersSkSL(
+        const ResourceBindingRequirements& bindingReqs, int binding) const {
     std::string result;
 
     for (unsigned int i = 0; i < kNumSDFAtlasTextures; ++i) {
-        SkSL::String::appendf(&result,
-                              "layout(binding=%d) uniform sampler2D sdf_atlas_%d;\n", binding, i);
-        binding++;
+        result += EmitSamplerLayout(bindingReqs, &binding);
+        SkSL::String::appendf(&result, " uniform sampler2D sdf_atlas_%d;\n", i);
     }
 
     return result;
