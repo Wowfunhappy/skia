@@ -8,6 +8,7 @@
 #ifndef skgpu_graphite_Context_DEFINED
 #define skgpu_graphite_Context_DEFINED
 
+#include "include/core/SkImage.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkShader.h"
 #include "include/gpu/graphite/ContextOptions.h"
@@ -24,6 +25,8 @@ namespace skgpu { struct VulkanBackendContext; }
 namespace skgpu::graphite {
 
 class BackendTexture;
+class Buffer;
+class ClientMappedBufferManager;
 class Context;
 class ContextPriv;
 struct DawnBackendContext;
@@ -33,6 +36,7 @@ class QueueManager;
 class Recording;
 class ResourceProvider;
 class SharedContext;
+class TextureProxy;
 
 #ifdef SK_ENABLE_PRECOMPILE
 class BlenderID;
@@ -63,8 +67,20 @@ public:
 
     std::unique_ptr<Recorder> makeRecorder(const RecorderOptions& = {});
 
-    void insertRecording(const InsertRecordingInfo&);
+    bool insertRecording(const InsertRecordingInfo&);
     void submit(SyncToCpu = SyncToCpu::kNo);
+
+    void asyncReadPixels(const SkImage* image,
+                         const SkColorInfo& dstColorInfo,
+                         const SkIRect& srcRect,
+                         SkImage::ReadPixelsCallback callback,
+                         SkImage::ReadPixelsContext context);
+
+    void asyncReadPixels(const SkSurface* surface,
+                         const SkColorInfo& dstColorInfo,
+                         const SkIRect& srcRect,
+                         SkImage::ReadPixelsCallback callback,
+                         SkImage::ReadPixelsContext context);
 
     /**
      * Checks whether any asynchronous work is complete and if so calls related callbacks.
@@ -94,21 +110,60 @@ public:
     ContextPriv priv();
     const ContextPriv priv() const;  // NOLINT(readability-const-return-type)
 
+    class ContextID {
+    public:
+        static Context::ContextID Next();
+
+        ContextID() : fID(SK_InvalidUniqueID) {}
+
+        bool operator==(const ContextID& that) const { return fID == that.fID; }
+        bool operator!=(const ContextID& that) const { return !(*this == that); }
+
+        void makeInvalid() { fID = SK_InvalidUniqueID; }
+        bool isValid() const { return fID != SK_InvalidUniqueID; }
+
+    private:
+        constexpr ContextID(uint32_t id) : fID(id) {}
+        uint32_t fID;
+    };
+
+    ContextID contextID() const { return fContextID; }
+
 protected:
-    Context(sk_sp<SharedContext>, std::unique_ptr<QueueManager>);
+    Context(sk_sp<SharedContext>, std::unique_ptr<QueueManager>, const ContextOptions&);
 
 private:
     friend class ContextPriv;
 
     SingleOwner* singleOwner() const { return &fSingleOwner; }
 
+    void asyncReadPixels(Recorder* recorder,
+                         const TextureProxy* textureProxy,
+                         const SkImageInfo& srcImageInfo,
+                         const SkColorInfo& dstColorInfo,
+                         const SkIRect& srcRect,
+                         SkImage::ReadPixelsCallback callback,
+                         SkImage::ReadPixelsContext context);
+
     sk_sp<SharedContext> fSharedContext;
     std::unique_ptr<ResourceProvider> fResourceProvider;
     std::unique_ptr<QueueManager> fQueueManager;
+    std::unique_ptr<ClientMappedBufferManager> fMappedBufferManager;
 
     // In debug builds we guard against improper thread handling. This guard is passed to the
     // ResourceCache for the Context.
     mutable SingleOwner fSingleOwner;
+
+#if GRAPHITE_TEST_UTILS
+    // In test builds a Recorder may track the Context that was used to create it.
+    bool fStoreContextRefInRecorder = false;
+    // If this tracking is on, to allow the client to safely delete this Context or its Recorders
+    // in any order we must also track the Recorders created here.
+    std::vector<Recorder*> fTrackedRecorders;
+#endif
+
+    // Needed for MessageBox handling
+    const ContextID fContextID;
 };
 
 } // namespace skgpu::graphite

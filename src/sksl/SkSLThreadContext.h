@@ -9,19 +9,18 @@
 #define SKSL_THREADCONTEXT
 
 #include "include/core/SkTypes.h"
-#include "include/private/SkSLProgramKind.h"
 #include "include/sksl/SkSLErrorReporter.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/ir/SkSLProgram.h"
 
+#include <cstdint>
 #include <memory>
 #include <string_view>
 #include <vector>
 
 namespace SkSL {
 
-class BuiltinMap;
 class Compiler;
 class ModifiersPool;
 class Pool;
@@ -29,7 +28,9 @@ class Position;
 class ProgramElement;
 class SymbolTable;
 class Variable;
+enum class ProgramKind : int8_t;
 struct Modifiers;
+struct Module;
 
 namespace dsl {
 
@@ -45,7 +46,7 @@ public:
     ThreadContext(SkSL::Compiler* compiler,
                   SkSL::ProgramKind kind,
                   const SkSL::ProgramSettings& settings,
-                  const SkSL::BuiltinMap* module,
+                  const SkSL::Module* module,
                   bool isModule);
     ~ThreadContext();
 

@@ -5,9 +5,14 @@
  * found in the LICENSE file.
  */
 #include "include/core/SkPoint.h"
+#include "include/core/SkScalar.h"
 #include "include/private/SkTDArray.h"
 #include "src/utils/SkPolyUtils.h"
 #include "tests/Test.h"
+
+#include <cstdint>
+
+#if !defined(SK_ENABLE_OPTIMIZE_SIZE)
 
 DEF_TEST(PolyUtils, reporter) {
 
@@ -414,3 +419,5 @@ DEF_TEST(PolyUtils, reporter) {
     REPORTER_ASSERT(reporter, SkTriangulateSimplePolygon(poly.begin(), indexMap, poly.size(),
                                                           &triangleIndices));
 }
+
+#endif // !defined(SK_ENABLE_OPTIMIZE_SIZE)

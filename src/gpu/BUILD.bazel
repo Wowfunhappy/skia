@@ -6,12 +6,12 @@ exports_files_legacy()
 
 # In own group for exporting to //gn/gpu.gni:skia_shared_gpu_sources.
 SHARED_FILES = [
+    "AsyncReadTypes.h",
     "AtlasTypes.cpp",
     "AtlasTypes.h",
     "Blend.cpp",
     "Blend.h",
     "BufferWriter.h",
-    "ClientMappedBufferManager.h",
     "KeyBuilder.h",
     "MutableTextureStateRef.h",
     "Rectanizer.h",

@@ -70,10 +70,9 @@ BackendTexture create_backend_texture(skiatest::Reporter* reporter,
                                       bool withMips,
                                       Renderable renderable,
                                       const SkColor4f colors[6]) {
-    int numMipLevels = withMips ? kNumMipLevels : 1;
-
+    Mipmapped mipmapped = withMips ? Mipmapped::kYes : Mipmapped::kNo;
     TextureInfo info = caps->getDefaultSampledTextureInfo(ct,
-                                                          numMipLevels,
+                                                          mipmapped,
                                                           Protected::kNo,
                                                           renderable);
 
@@ -157,23 +156,22 @@ void check_levels(skiatest::Reporter* reporter,
             return;
         }
 
-        // We're going to get pre-mul back
-        SkColor4f expected;
-        expected.fR = colors[i].fR * colors[i].fA;
-        expected.fG = colors[i].fG * colors[i].fA;
-        expected.fB = colors[i].fB * colors[i].fA;
-        expected.fA = colors[i].fA;
-
         SkString str;
         str.appendf("mip-level %d", i);
 
-        check_solid_pixmap(reporter, expected, actual, image->colorType(), str.c_str());
+        check_solid_pixmap(reporter, colors[i], actual, image->colorType(), str.c_str());
     }
 }
 
 } // anonymous namespace
 
-DEF_GRAPHITE_TEST_FOR_CONTEXTS(UpdateImageBackendTextureTest, reporter, context) {
+DEF_GRAPHITE_TEST_FOR_RENDERING_CONTEXTS(UpdateImageBackendTextureTest, reporter, context) {
+    // TODO: Remove this check once Vulkan supports creating default TexutreInfo from caps and we
+    // implement createBackendTexture.
+    if (context->backend() == BackendApi::kVulkan) {
+        return;
+    }
+
     const Caps* caps = context->priv().caps();
     std::unique_ptr<Recorder> recorder = context->makeRecorder();
 

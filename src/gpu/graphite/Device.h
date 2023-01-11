@@ -68,11 +68,6 @@ public:
 
     bool readPixels(Context*, Recorder*, const SkPixmap& dst, int x, int y);
 
-    void asyncReadPixels(const SkImageInfo& info,
-                         SkIRect srcRect,
-                         SkImage::ReadPixelsCallback callback,
-                         SkImage::ReadPixelsContext context);
-
     void asyncRescaleAndReadPixels(const SkImageInfo& info,
                                    SkIRect srcRect,
                                    SkImage::RescaleGamma rescaleGamma,
@@ -96,7 +91,7 @@ public:
 #if GRAPHITE_TEST_UTILS
     TextureProxy* proxy();
 #endif
-    TextureProxyView readSurfaceView();
+    TextureProxyView readSurfaceView() const;
 
 private:
     class IntersectionTreeSet;

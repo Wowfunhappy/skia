@@ -5,10 +5,21 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkRefCnt.h"
+#include "include/core/SkSpan.h"
+#include "include/core/SkString.h"
+#include "include/private/SkTArray.h"
+#include "src/core/SkTInternalLList.h"
+#include "src/gpu/ganesh/GrRenderTask.h"
 #include "src/gpu/ganesh/GrRenderTaskCluster.h"
+#include "src/gpu/ganesh/GrSurfaceProxy.h"
 #include "src/gpu/ganesh/mock/GrMockRenderTask.h"
 #include "src/gpu/ganesh/mock/GrMockSurfaceProxy.h"
 #include "tests/Test.h"
+
+#include <array>
+#include <cstddef>
+#include <utility>
 
 typedef void (*CreateGraphPF)(SkTArray<sk_sp<GrMockRenderTask>>* graph,
                               SkTArray<sk_sp<GrMockRenderTask>>* expected);
@@ -143,6 +154,13 @@ DEF_TEST(GrRenderTaskCluster, reporter) {
 
         if (expectedOutput.empty()) {
             REPORTER_ASSERT(reporter, !actualResult);
+            size_t newCount = 0;
+            for (const GrRenderTask* t : llist) {
+                REPORTER_ASSERT(reporter, newCount < graphSpan.size() &&
+                                          t == graph[newCount].get());
+                ++newCount;
+            }
+            REPORTER_ASSERT(reporter, newCount == graphSpan.size());
         } else {
             REPORTER_ASSERT(reporter, actualResult);
             // SkTInternalLList::countEntries is debug-only and these tests run in release.

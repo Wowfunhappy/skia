@@ -10,6 +10,7 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkOpts_spi.h"
+#include "include/private/SkSLIRNode.h"
 #include "include/private/SkSLProgramElement.h"
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkSLSymbol.h"
@@ -25,6 +26,7 @@
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLConstantFolder.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLIntrinsicList.h"
 #include "src/sksl/SkSLModifiersPool.h"
@@ -71,9 +73,9 @@
 #include "src/sksl/ir/SkSLVariableReference.h"
 
 #include <cmath>
+#include <cstring>
 #include <set>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 #define kLast_Capability SpvCapabilityMultiViewport
@@ -716,7 +718,7 @@ SpvId SPIRVCodeGenerator::writeOpConstant(const Type& type, int32_t valueBits) {
 
 SpvId SPIRVCodeGenerator::writeOpConstantComposite(const Type& type,
                                                    const SkTArray<SpvId>& values) {
-    SkASSERT(values.size() == (type.isStruct() ? type.fields().size() : (size_t)type.columns()));
+    SkASSERT(values.size() == (type.isStruct() ? (int)type.fields().size() : type.columns()));
 
     Words words;
     words.push_back(this->getType(type));
@@ -1140,31 +1142,52 @@ SpvId SPIRVCodeGenerator::getFunctionType(const FunctionDeclaration& function) {
     words.push_back(Word::Result());
     words.push_back(this->getType(function.returnType()));
     for (const Variable* parameter : function.parameters()) {
-        // glslang seems to treat all function arguments as pointers whether they need to be or
-        // not. I was initially puzzled by this until I ran bizarre failures with certain
-        // patterns of function calls and control constructs, as exemplified by this minimal
-        // failure case:
-        //
-        // void sphere(float x) {
-        // }
-        //
-        // void map() {
-        //     sphere(1.0);
-        // }
-        //
-        // void main() {
-        //     for (int i = 0; i < 1; i++) {
-        //         map();
-        //     }
-        // }
-        //
-        // As of this writing, compiling this in the "obvious" way (with sphere taking a float)
-        // crashes. Making it take a float* and storing the argument in a temporary variable,
-        // as glslang does, fixes it. It's entirely possible I simply missed whichever part of
-        // the spec makes this make sense.
-        words.push_back(this->getPointerType(parameter->type(), SpvStorageClassFunction));
+        words.push_back(this->getFunctionParameterType(parameter->type()));
     }
     return this->writeInstruction(SpvOpTypeFunction, words, fConstantBuffer);
+}
+
+SpvId SPIRVCodeGenerator::getFunctionParameterType(const Type& parameterType) {
+    // glslang treats all function arguments as pointers whether they need to be or
+    // not. I was initially puzzled by this until I ran bizarre failures with certain
+    // patterns of function calls and control constructs, as exemplified by this minimal
+    // failure case:
+    //
+    // void sphere(float x) {
+    // }
+    //
+    // void map() {
+    //     sphere(1.0);
+    // }
+    //
+    // void main() {
+    //     for (int i = 0; i < 1; i++) {
+    //         map();
+    //     }
+    // }
+    //
+    // As of this writing, compiling this in the "obvious" way (with sphere taking a float)
+    // crashes. Making it take a float* and storing the argument in a temporary variable,
+    // as glslang does, fixes it.
+    //
+    // The consensus among shader compiler authors seems to be that GPU driver generally don't
+    // handle value-based parameters consistently. It is highly likely that they fit their
+    // implementations to conform to glslang. We take care to do so ourselves.
+    //
+    // Our implementation first stores every parameter value into a function storage-class pointer
+    // before calling a function. The exception is for opaque handle types (samplers and textures)
+    // which must be stored in a pointer with UniformConstant storage-class. This prevents
+    // unnecessary temporaries (becuase opaque handles are always rooted in a pointer variable),
+    // matches glslang's behavior, and translates into WGSL more easily when targeting Dawn.
+    SpvStorageClass_ storageClass;
+    if (parameterType.typeKind() == Type::TypeKind::kSampler ||
+        parameterType.typeKind() == Type::TypeKind::kSeparateSampler ||
+        parameterType.typeKind() == Type::TypeKind::kTexture) {
+        storageClass = SpvStorageClassUniformConstant;
+    } else {
+        storageClass = SpvStorageClassFunction;
+    }
+    return this->getPointerType(parameterType, storageClass);
 }
 
 SpvId SPIRVCodeGenerator::getPointerType(const Type& type, SpvStorageClass_ storageClass) {
@@ -1252,7 +1275,7 @@ SpvId SPIRVCodeGenerator::writeIntrinsicCall(const FunctionCall& c, OutputStream
             SkTArray<SpvId> argumentIds;
             std::vector<TempVar> tempVars;
             argumentIds.reserve_back(arguments.size());
-            for (size_t i = 0; i < arguments.size(); i++) {
+            for (int i = 0; i < arguments.size(); i++) {
                 argumentIds.push_back(this->writeFunctionCallArgument(c, i, &tempVars, out));
             }
             this->writeOpCode(SpvOpExtInst, 5 + (int32_t) argumentIds.size(), out);
@@ -1275,7 +1298,7 @@ SpvId SPIRVCodeGenerator::writeIntrinsicCall(const FunctionCall& c, OutputStream
             SkTArray<SpvId> argumentIds;
             std::vector<TempVar> tempVars;
             argumentIds.reserve_back(arguments.size());
-            for (size_t i = 0; i < arguments.size(); i++) {
+            for (int i = 0; i < arguments.size(); i++) {
                 argumentIds.push_back(this->writeFunctionCallArgument(c, i, &tempVars, out));
             }
             if (!c.type().isVoid()) {
@@ -1472,11 +1495,10 @@ SpvId SPIRVCodeGenerator::writeSpecialIntrinsic(const FunctionCall& c, SpecialIn
             SpvId type = this->getType(callType);
             SpvId sampler = this->writeExpression(*arguments[0], out);
             SpvId uv = this->writeExpression(*arguments[1], out);
-            this->writeInstruction(op, type, result, sampler, uv,
-                                   SpvImageOperandsGradMask,
-                                   this->writeExpression(*arguments[2], out),
-                                   this->writeExpression(*arguments[3], out),
-                                   out);
+            SpvId dPdx = this->writeExpression(*arguments[2], out);
+            SpvId dPdy = this->writeExpression(*arguments[3], out);
+            this->writeInstruction(op, type, result, sampler, uv, SpvImageOperandsGradMask,
+                                   dPdx, dPdy, out);
             break;
         }
         case kTextureLod_SpecialIntrinsic: {
@@ -1633,9 +1655,23 @@ SpvId SPIRVCodeGenerator::writeFunctionCallArgument(const FunctionCall& call,
     } else if (funcDecl.isIntrinsic()) {
         // Unlike user function calls, non-out intrinsic arguments don't need pointer parameters.
         return this->writeExpression(arg, out);
+    } else if (arg.is<VariableReference>() &&
+               (arg.type().typeKind() == Type::TypeKind::kSampler ||
+                arg.type().typeKind() == Type::TypeKind::kSeparateSampler ||
+                arg.type().typeKind() == Type::TypeKind::kTexture)) {
+        // Opaque handle (sampler/texture) arguments are always declared as pointers but never
+        // stored in intermediates when calling user-defined functions.
+        //
+        // The case for intrinsics (which take opaque arguments by value) is handled above just like
+        // regular pointers.
+        //
+        // See getFunctionParameterType for further explanation.
+        SpvId* entry = fVariableMap.find(arg.as<VariableReference>().variable());
+        SkASSERTF(entry, "%s", arg.description().c_str());
+        return *entry;
     } else {
         // We always use pointer parameters when calling user functions.
-        // See getFunctionType for further explanation.
+        // See getFunctionParameterType for further explanation.
         tmpValueId = this->writeExpression(arg, out);
         tmpVar = this->nextId(nullptr);
     }
@@ -1674,7 +1710,7 @@ SpvId SPIRVCodeGenerator::writeFunctionCall(const FunctionCall& c, OutputStream&
     std::vector<TempVar> tempVars;
     SkTArray<SpvId> argumentIds;
     argumentIds.reserve_back(arguments.size());
-    for (size_t i = 0; i < arguments.size(); i++) {
+    for (int i = 0; i < arguments.size(); i++) {
         argumentIds.push_back(this->writeFunctionCallArgument(c, i, &tempVars, out));
     }
     SpvId result = this->nextId(nullptr);
@@ -1961,7 +1997,7 @@ SpvId SPIRVCodeGenerator::writeMatrixConstructor(const ConstructorCompound& c, O
     SkSTArray<4, SpvId> columnIds;
     // SpvIds of scalars we have written to the current column so far.
     SkSTArray<4, SpvId> currentColumn;
-    for (size_t i = 0; i < arguments.size(); i++) {
+    for (int i = 0; i < arguments.size(); i++) {
         const Type& argType = c.arguments()[i]->type();
         if (currentColumn.empty() && argType.isVector() && argType.columns() == rows) {
             // This vector is a complete matrix column by itself and can be used as-is.
@@ -1994,7 +2030,7 @@ SpvId SPIRVCodeGenerator::writeVectorConstructor(const ConstructorCompound& c, O
     SkASSERT(type.isVector());
 
     SkSTArray<4, SpvId> arguments;
-    for (size_t i = 0; i < c.arguments().size(); i++) {
+    for (int i = 0; i < c.arguments().size(); i++) {
         const Type& argType = c.arguments()[i]->type();
         SkASSERT(componentType.numberKind() == argType.componentType().numberKind());
 
@@ -2124,8 +2160,10 @@ SpvId SPIRVCodeGenerator::writeConstructorMatrixResize(const ConstructorMatrixRe
     return this->writeMatrixCopy(argument, c.argument()->type(), c.type(), out);
 }
 
-static SpvStorageClass_ get_storage_class(const Variable& var,
-                                          SpvStorageClass_ fallbackStorageClass) {
+static SpvStorageClass_ get_storage_class_for_global_variable(
+        const Variable& var, SpvStorageClass_ fallbackStorageClass) {
+    SkASSERT(var.storage() == Variable::Storage::kGlobal);
+
     const Modifiers& modifiers = var.modifiers();
     if (modifiers.fFlags & Modifiers::kIn_Flag) {
         SkASSERT(!(modifiers.fLayout.fFlags & Layout::kPushConstant_Flag));
@@ -2156,7 +2194,7 @@ static SpvStorageClass_ get_storage_class(const Expression& expr) {
             if (var.storage() != Variable::Storage::kGlobal) {
                 return SpvStorageClassFunction;
             }
-            return get_storage_class(var, SpvStorageClassPrivate);
+            return get_storage_class_for_global_variable(var, SpvStorageClassPrivate);
         }
         case Expression::Kind::kFieldAccess:
             return get_storage_class(*expr.as<FieldAccess>().base());
@@ -2299,7 +2337,7 @@ public:
             // value from the left side
             int offset = i;
             // check to see if we are writing this component
-            for (size_t j = 0; j < fComponents.size(); j++) {
+            for (int j = 0; j < fComponents.size(); j++) {
                 if (fComponents[j] == i) {
                     // we're writing to this component, so adjust the offset to pull from
                     // the correct component of the right side instead of preserving the
@@ -2396,8 +2434,12 @@ std::unique_ptr<SPIRVCodeGenerator::LValue> SPIRVCodeGenerator::getLValue(const 
         default: {
             // expr isn't actually an lvalue, create a placeholder variable for it. This case
             // happens due to the need to store values in temporary variables during function
-            // calls (see comments in getFunctionType); erroneous uses of rvalues as lvalues
-            // should have been caught before code generation
+            // calls (see comments in getFunctionParameterType); erroneous uses of rvalues as
+            // lvalues should have been caught before code generation.
+            //
+            // This is with the exception of opaque handle types (textures/samplers) which are
+            // always defined as UniformConstant pointers and don't need to be explicitly stored
+            // into a temporary (which is handled explicitly in writeFunctionCallArgument).
             SpvId result = this->nextId(nullptr);
             SpvId pointerType = this->getPointerType(type, SpvStorageClassFunction);
             this->writeInstruction(SpvOpVariable, pointerType, result, SpvStorageClassFunction,
@@ -2514,10 +2556,16 @@ SpvId SPIRVCodeGenerator::writeVariableReference(const VariableReference& ref, O
                                                            deviceClockwise)).release(),
                                          out);
         }
-        default:
+        default: {
+            // Constant-propagate variables that have a known compile-time value.
+            if (const Expression* expr = ConstantFolder::GetConstantValueOrNullForVariable(ref)) {
+                return this->writeExpression(*expr, out);
+            }
+            // Variable references to opaque handles (texture/sampler) that appear as the argument
+            // of a user-defined function call are explicitly handled in writeFunctionCallArgument.
             return this->getLValue(ref, out)->load(out);
+        }
     }
-
 }
 
 SpvId SPIRVCodeGenerator::writeIndexExpression(const IndexExpression& expr, OutputStream& out) {
@@ -3277,7 +3325,8 @@ SpvId SPIRVCodeGenerator::writeFunctionStart(const FunctionDeclaration& f, Outpu
     for (const Variable* parameter : f.parameters()) {
         SpvId id = this->nextId(nullptr);
         fVariableMap.set(parameter, id);
-        SpvId type = this->getPointerType(parameter->type(), SpvStorageClassFunction);
+
+        SpvId type = this->getFunctionParameterType(parameter->type());
         this->writeInstruction(SpvOpFunctionParameter, type, id, out);
     }
     return result;
@@ -3374,16 +3423,17 @@ MemoryLayout SPIRVCodeGenerator::memoryLayoutForVariable(const Variable& v) cons
 }
 
 SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool appendRTFlip) {
-    MemoryLayout memoryLayout = this->memoryLayoutForVariable(intf.variable());
+    MemoryLayout memoryLayout = this->memoryLayoutForVariable(*intf.var());
     SpvId result = this->nextId(nullptr);
-    const Variable& intfVar = intf.variable();
+    const Variable& intfVar = *intf.var();
     const Type& type = intfVar.type();
     if (!memoryLayout.isSupported(type)) {
         fContext.fErrors->error(type.fPosition, "type '" + type.displayName() +
-                                            "' is not permitted here");
+                                                "' is not permitted here");
         return this->nextId(nullptr);
     }
-    SpvStorageClass_ storageClass = get_storage_class(intf.variable(), SpvStorageClassFunction);
+    SpvStorageClass_ storageClass =
+            get_storage_class_for_global_variable(intfVar, SpvStorageClassFunction);
     if (fProgram.fInputs.fUseFlipRTUniform && appendRTFlip && type.isStruct()) {
         // We can only have one interface block (because we use push_constant and that is limited
         // to one per program), so we need to append rtflip to this one rather than synthesize an
@@ -3404,28 +3454,25 @@ SpvId SPIRVCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf, bool a
                             fContext.fTypes.fFloat2.get());
         {
             AutoAttachPoolToThread attach(fProgram.fPool.get());
-            const Type* rtFlipStructType =
-                    fProgram.fSymbols->takeOwnershipOfSymbol(Type::MakeStructType(
-                            type.fPosition, type.name(), std::move(fields),
-                            /*interfaceBlock=*/true));
-            const Variable* modifiedVar = fProgram.fSymbols->takeOwnershipOfSymbol(
-                    std::make_unique<Variable>(intfVar.fPosition,
-                                               intfVar.modifiersPosition(),
-                                               &intfVar.modifiers(),
-                                               intfVar.name(),
-                                               rtFlipStructType,
-                                               intfVar.isBuiltin(),
-                                               intfVar.storage()));
+            const Type* rtFlipStructType = fProgram.fSymbols->takeOwnershipOfSymbol(
+                    Type::MakeStructType(fContext,
+                                         type.fPosition,
+                                         type.name(),
+                                         std::move(fields),
+                                         /*interfaceBlock=*/true));
+            InterfaceBlockVariable* modifiedVar = fProgram.fSymbols->takeOwnershipOfSymbol(
+                    std::make_unique<InterfaceBlockVariable>(intfVar.fPosition,
+                                                             intfVar.modifiersPosition(),
+                                                             &intfVar.modifiers(),
+                                                             intfVar.name(),
+                                                             rtFlipStructType,
+                                                             intfVar.isBuiltin(),
+                                                             intfVar.storage()));
             fSPIRVBonusVariables.add(modifiedVar);
-            InterfaceBlock modifiedCopy(intf.fPosition,
-                                        *modifiedVar,
-                                        intf.typeName(),
-                                        intf.instanceName(),
-                                        intf.arraySize(),
-                                        intf.typeOwner());
-            result = this->writeInterfaceBlock(modifiedCopy, false);
-            fProgram.fSymbols->add(std::make_unique<Field>(Position(), modifiedVar,
-                    rtFlipStructType->fields().size() - 1));
+            InterfaceBlock modifiedCopy(intf.fPosition, modifiedVar, intf.typeOwner());
+            result = this->writeInterfaceBlock(modifiedCopy, /*appendRTFlip=*/false);
+            fProgram.fSymbols->add(std::make_unique<Field>(
+                    Position(), modifiedVar, rtFlipStructType->fields().size() - 1));
         }
         fVariableMap.set(&intfVar, result);
         fWroteRTFlip = true;
@@ -3464,33 +3511,49 @@ bool SPIRVCodeGenerator::isDead(const Variable& var) const {
              (Modifiers::kIn_Flag | Modifiers::kOut_Flag | Modifiers::kUniform_Flag));
 }
 
+static bool is_vardecl_compile_time_constant(const VarDeclaration& varDecl) {
+    return varDecl.var()->modifiers().fFlags & Modifiers::kConst_Flag &&
+           (ConstantFolder::GetConstantValueOrNullForVariable(*varDecl.value()) ||
+            Analysis::IsCompileTimeConstant(*varDecl.value()));
+}
+
 void SPIRVCodeGenerator::writeGlobalVar(ProgramKind kind, const VarDeclaration& varDecl) {
-    const Variable& var = varDecl.var();
-    if (var.modifiers().fLayout.fBuiltin == SK_FRAGCOLOR_BUILTIN &&
+    // If this global variable is a compile-time constant then we'll emit OpConstant or
+    // OpConstantComposite later when the variable is referenced. Avoid declaring an OpVariable now.
+    if (is_vardecl_compile_time_constant(varDecl)) {
+        return;
+    }
+
+    const Variable* var = varDecl.var();
+    if (var->modifiers().fLayout.fBuiltin == SK_FRAGCOLOR_BUILTIN &&
         !ProgramConfig::IsFragment(kind)) {
         SkASSERT(!fProgram.fConfig->fSettings.fFragColorIsInOut);
         return;
     }
-    if (this->isDead(var)) {
+    if (this->isDead(*var)) {
         return;
     }
-    SpvStorageClass_ storageClass = get_storage_class(var, SpvStorageClassPrivate);
+
+    SpvStorageClass_ storageClass =
+            get_storage_class_for_global_variable(*var, SpvStorageClassPrivate);
     if (storageClass == SpvStorageClassUniform) {
         // Top-level uniforms are emitted in writeUniformBuffer.
         fTopLevelUniforms.push_back(&varDecl);
         return;
     }
     // Add this global to the variable map.
-    const Type& type = var.type();
+    const Type& type = var->type();
     SpvId id = this->nextId(&type);
-    fVariableMap.set(&var, id);
-    Layout layout = var.modifiers().fLayout;
+    fVariableMap.set(var, id);
+
+    Layout layout = var->modifiers().fLayout;
     if (layout.fSet < 0 && storageClass == SpvStorageClassUniformConstant) {
         layout.fSet = fProgram.fConfig->fSettings.fDefaultUniformSet;
     }
+
     SpvId typeId = this->getPointerType(type, storageClass);
     this->writeInstruction(SpvOpVariable, typeId, id, storageClass, fConstantBuffer);
-    this->writeInstruction(SpvOpName, id, var.name(), fNameBuffer);
+    this->writeInstruction(SpvOpName, id, var->name(), fNameBuffer);
     if (varDecl.value()) {
         SkASSERT(!fCurrentBlock);
         fCurrentBlock = NA;
@@ -3498,23 +3561,29 @@ void SPIRVCodeGenerator::writeGlobalVar(ProgramKind kind, const VarDeclaration& 
         this->writeOpStore(storageClass, id, value, fGlobalInitializersBuffer);
         fCurrentBlock = 0;
     }
-    this->writeLayout(layout, id, var.fPosition);
-    if (var.modifiers().fFlags & Modifiers::kFlat_Flag) {
+    this->writeLayout(layout, id, var->fPosition);
+    if (var->modifiers().fFlags & Modifiers::kFlat_Flag) {
         this->writeInstruction(SpvOpDecorate, id, SpvDecorationFlat, fDecorationBuffer);
     }
-    if (var.modifiers().fFlags & Modifiers::kNoPerspective_Flag) {
+    if (var->modifiers().fFlags & Modifiers::kNoPerspective_Flag) {
         this->writeInstruction(SpvOpDecorate, id, SpvDecorationNoPerspective,
                                fDecorationBuffer);
     }
 }
 
 void SPIRVCodeGenerator::writeVarDeclaration(const VarDeclaration& varDecl, OutputStream& out) {
-    const Variable& var = varDecl.var();
-    SpvId id = this->nextId(&var.type());
-    fVariableMap.set(&var, id);
-    SpvId type = this->getPointerType(var.type(), SpvStorageClassFunction);
+    // If this variable is a compile-time constant then we'll emit OpConstant or
+    // OpConstantComposite later when the variable is referenced. Avoid declaring an OpVariable now.
+    if (is_vardecl_compile_time_constant(varDecl)) {
+        return;
+    }
+
+    const Variable* var = varDecl.var();
+    SpvId id = this->nextId(&var->type());
+    fVariableMap.set(var, id);
+    SpvId type = this->getPointerType(var->type(), SpvStorageClassFunction);
     this->writeInstruction(SpvOpVariable, type, id, SpvStorageClassFunction, fVariableBuffer);
-    this->writeInstruction(SpvOpName, id, var.name(), fNameBuffer);
+    this->writeInstruction(SpvOpName, id, var->name(), fNameBuffer);
     if (varDecl.value()) {
         SpvId value = this->writeExpression(*varDecl.value(), out);
         this->writeOpStore(SpvStorageClassFunction, id, value, out);
@@ -3740,7 +3809,7 @@ void SPIRVCodeGenerator::writeSwitchStatement(const SwitchStatement& s, OutputSt
     this->writeOpCode(SpvOpSwitch, size, out);
     this->writeWord(value, out);
     this->writeWord(defaultLabel, out);
-    for (size_t i = 0; i < cases.size(); ++i) {
+    for (int i = 0; i < cases.size(); ++i) {
         const SwitchCase& c = cases[i]->as<SwitchCase>();
         if (c.isDefault()) {
             continue;
@@ -3748,7 +3817,7 @@ void SPIRVCodeGenerator::writeSwitchStatement(const SwitchStatement& s, OutputSt
         this->writeWord(c.value(), out);
         this->writeWord(labels[i], out);
     }
-    for (size_t i = 0; i < cases.size(); ++i) {
+    for (int i = 0; i < cases.size(); ++i) {
         const SwitchCase& c = cases[i]->as<SwitchCase>();
         if (i == 0) {
             this->writeLabel(labels[i], kBranchIsOnPreviousLine, out);
@@ -3855,12 +3924,17 @@ void SPIRVCodeGenerator::writeUniformBuffer(std::shared_ptr<SymbolTable> topLeve
     std::vector<Type::Field> fields;
     fields.reserve(fTopLevelUniforms.size());
     for (const VarDeclaration* topLevelUniform : fTopLevelUniforms) {
-        const Variable* var = &topLevelUniform->var();
+        const Variable* var = topLevelUniform->var();
         fTopLevelUniformMap.set(var, (int)fields.size());
-        fields.emplace_back(var->fPosition, var->modifiers(), var->name(), &var->type());
+        Modifiers modifiers = var->modifiers();
+        modifiers.fFlags &= ~Modifiers::kUniform_Flag;
+        fields.emplace_back(var->fPosition, modifiers, var->name(), &var->type());
     }
-    fUniformBuffer.fStruct = Type::MakeStructType(Position(), kUniformBufferName, std::move(fields),
-            /*interfaceBlock=*/true);
+    fUniformBuffer.fStruct = Type::MakeStructType(fContext,
+                                                  Position(),
+                                                  kUniformBufferName,
+                                                  std::move(fields),
+                                                  /*interfaceBlock=*/true);
 
     // Create a global variable to contain this struct.
     Layout layout;
@@ -3868,15 +3942,16 @@ void SPIRVCodeGenerator::writeUniformBuffer(std::shared_ptr<SymbolTable> topLeve
     layout.fSet     = fProgram.fConfig->fSettings.fDefaultUniformSet;
     Modifiers modifiers{layout, Modifiers::kUniform_Flag};
 
-    fUniformBuffer.fInnerVariable = std::make_unique<Variable>(
+    fUniformBuffer.fInnerVariable = std::make_unique<InterfaceBlockVariable>(
             /*pos=*/Position(), /*modifiersPosition=*/Position(),
             fContext.fModifiersPool->add(modifiers), kUniformBufferName,
             fUniformBuffer.fStruct.get(), /*builtin=*/false, Variable::Storage::kGlobal);
 
     // Create an interface block object for this global variable.
-    fUniformBuffer.fInterfaceBlock = std::make_unique<InterfaceBlock>(
-            Position(), *fUniformBuffer.fInnerVariable, kUniformBufferName,
-            kUniformBufferName, /*arraySize=*/0, topLevelSymbolTable);
+    fUniformBuffer.fInterfaceBlock =
+            std::make_unique<InterfaceBlock>(Position(),
+                                             fUniformBuffer.fInnerVariable.get(),
+                                             topLevelSymbolTable);
 
     // Generate an interface block and hold onto its ID.
     fUniformBufferId = this->writeInterfaceBlock(*fUniformBuffer.fInterfaceBlock);
@@ -3909,7 +3984,7 @@ void SPIRVCodeGenerator::addRTFlipUniform(Position pos) {
                         fContext.fTypes.fFloat2.get());
     std::string_view name = "sksl_synthetic_uniforms";
     const Type* intfStruct = fSynthetics.takeOwnershipOfSymbol(
-            Type::MakeStructType(Position(), name, fields, /*interfaceBlock=*/true));
+            Type::MakeStructType(fContext, Position(), name, fields, /*interfaceBlock=*/true));
     bool usePushConstants = fProgram.fConfig->fSettings.fUsePushConstants;
     int binding = -1, set = -1;
     if (!usePushConstants) {
@@ -3937,26 +4012,20 @@ void SPIRVCodeGenerator::addRTFlipUniform(Position pos) {
                             Modifiers::kUniform_Flag);
         modsPtr = fContext.fModifiersPool->add(modifiers);
     }
-    const Variable* intfVar = fSynthetics.takeOwnershipOfSymbol(
-            std::make_unique<Variable>(/*pos=*/Position(),
-                                       /*modifiersPosition=*/Position(),
-                                       modsPtr,
-                                       name,
-                                       intfStruct,
-                                       /*builtin=*/false,
-                                       Variable::Storage::kGlobal));
+    InterfaceBlockVariable* intfVar = fSynthetics.takeOwnershipOfSymbol(
+            std::make_unique<InterfaceBlockVariable>(/*pos=*/Position(),
+                                                     /*modifiersPosition=*/Position(),
+                                                     modsPtr,
+                                                     name,
+                                                     intfStruct,
+                                                     /*builtin=*/false,
+                                                     Variable::Storage::kGlobal));
     fSPIRVBonusVariables.add(intfVar);
     {
         AutoAttachPoolToThread attach(fProgram.fPool.get());
         fProgram.fSymbols->add(std::make_unique<Field>(Position(), intfVar, /*field=*/0));
     }
-    InterfaceBlock intf(Position(),
-                        *intfVar,
-                        name,
-                        /*instanceName=*/"",
-                        /*arraySize=*/0,
-                        std::make_shared<SymbolTable>(/*builtin=*/false));
-
+    InterfaceBlock intf(Position(), intfVar, std::make_shared<SymbolTable>(/*builtin=*/false));
     this->writeInterfaceBlock(intf, false);
 }
 
@@ -3987,9 +4056,9 @@ void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream&
             const InterfaceBlock& intf = e->as<InterfaceBlock>();
             SpvId id = this->writeInterfaceBlock(intf);
 
-            const Modifiers& modifiers = intf.variable().modifiers();
+            const Modifiers& modifiers = intf.var()->modifiers();
             if ((modifiers.fFlags & (Modifiers::kIn_Flag | Modifiers::kOut_Flag)) &&
-                modifiers.fLayout.fBuiltin == -1 && !this->isDead(intf.variable())) {
+                modifiers.fLayout.fBuiltin == -1 && !this->isDead(*intf.var())) {
                 interfaceVars.insert(id);
             }
         }
@@ -3998,7 +4067,7 @@ void SPIRVCodeGenerator::writeInstructions(const Program& program, OutputStream&
     for (const ProgramElement* e : program.elements()) {
         if (e->is<GlobalVarDeclaration>()) {
             this->writeGlobalVar(program.fConfig->fKind,
-                                 e->as<GlobalVarDeclaration>().declaration()->as<VarDeclaration>());
+                                 e->as<GlobalVarDeclaration>().varDeclaration());
         }
     }
     // Emit top-level uniforms into a dedicated uniform buffer.

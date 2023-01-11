@@ -71,7 +71,7 @@ public:
     Index insert(const T& data) {
         Index* index = fDataToIndex.find(data);
         if (!index) {
-            SkASSERT(fIndexToData.size() < kInvalidIndex - 1);
+            SkASSERT(SkToU32(fIndexToData.size()) < kInvalidIndex - 1);
             index = fDataToIndex.set(data, (Index) fIndexToData.count());
             fIndexToData.push_back(C{data});
         }
@@ -203,7 +203,7 @@ public:
             return UniformSsboCache::kInvalidIndex;
         }
 
-        if (pipelineIndex >= fPerPipelineCaches.size()) {
+        if (pipelineIndex >= SkToU32(fPerPipelineCaches.size())) {
             fPerPipelineCaches.resize(pipelineIndex + 1);
         }
 
@@ -250,7 +250,7 @@ public:
         if (ssboIndex >= UniformSsboCache::kInvalidIndex) {
             return false;
         }
-        SkASSERT(pipelineIndex < fPerPipelineCaches.size() &&
+        SkASSERT(pipelineIndex < SkToU32(fPerPipelineCaches.size()) &&
                  ssboIndex < fPerPipelineCaches[pipelineIndex].size());
 
         if (fUseStorageBuffers) {
@@ -462,7 +462,7 @@ std::unique_ptr<DrawPass> DrawPass::Make(Recorder* recorder,
         if (draw.fPaintParams.has_value()) {
             std::tie(shaderID, shadingUniforms, paintTextures) =
                     ExtractPaintData(recorder, &gatherer, &builder,
-                                     draw.fDrawParams.transform().inverse(),
+                                     draw.fDrawParams.transform(),
                                      draw.fPaintParams.value());
         } // else depth-only
 
@@ -606,7 +606,7 @@ bool DrawPass::prepareResources(ResourceProvider* resourceProvider,
             SKGPU_LOG_W("Failed to validate sampled texture. Will not create renderpass!");
             return false;
         }
-        if (!fSampledTextures[i]->instantiate(resourceProvider)) {
+        if (!TextureProxy::InstantiateIfNotLazy(resourceProvider, fSampledTextures[i].get())) {
             SKGPU_LOG_W("Failed to instantiate sampled texture. Will not create renderpass!");
             return false;
         }
@@ -632,25 +632,25 @@ bool DrawPass::prepareResources(ResourceProvider* resourceProvider,
 }
 
 void DrawPass::addResourceRefs(CommandBuffer* commandBuffer) const {
-    for (size_t i = 0; i < fFullPipelines.size(); ++i) {
+    for (int i = 0; i < fFullPipelines.size(); ++i) {
         commandBuffer->trackResource(fFullPipelines[i]);
     }
-    for (size_t i = 0; i < fSampledTextures.size(); ++i) {
+    for (int i = 0; i < fSampledTextures.size(); ++i) {
         commandBuffer->trackResource(fSampledTextures[i]->refTexture());
     }
-    for (size_t i = 0; i < fSamplers.size(); ++i) {
+    for (int i = 0; i < fSamplers.size(); ++i) {
         commandBuffer->trackResource(fSamplers[i]);
     }
 }
 
 const Texture* DrawPass::getTexture(size_t index) const {
-    SkASSERT(index < fSampledTextures.size());
+    SkASSERT(index < SkToSizeT(fSampledTextures.size()));
     SkASSERT(fSampledTextures[index]);
     SkASSERT(fSampledTextures[index]->texture());
     return fSampledTextures[index]->texture();
 }
 const Sampler* DrawPass::getSampler(size_t index) const {
-    SkASSERT(index < fSamplers.size());
+    SkASSERT(index < SkToSizeT(fSamplers.size()));
     SkASSERT(fSamplers[index]);
     return fSamplers[index].get();
 }

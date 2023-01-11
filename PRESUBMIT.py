@@ -251,7 +251,8 @@ def _CheckBazelBUILDFiles(input_api, output_api):
     # This list lines up with the one in autoroller_lib.py (see G3).
     excluded_paths = ["infra/", "bazel/rbe/", "bazel/external/", "bazel/common_config_settings/",
                       "modules/canvaskit/go/", "experimental/", "bazel/platform", "third_party/",
-                      "tests/", "resources/"]
+                      "tests/", "resources/", "bazel/deps_parser/", "bazel/exporter_tool/",
+                      "tools/gpu/gl/interface/"]
     is_excluded = any(affected_file_path.startswith(n) for n in excluded_paths)
     if is_bazel and not is_excluded:
       with open(affected_file_path, 'r') as file:
@@ -411,6 +412,29 @@ def _CheckBannedAPIs(input_api, output_api):
   return []
 
 
+def _CheckDEPS(input_api, output_api):
+  """If DEPS was modified, run the deps_parser to update bazel/deps.bzl"""
+  needs_running = False
+  for affected_file in input_api.AffectedFiles(include_deletes=False):
+    affected_file_path = affected_file.LocalPath()
+    if affected_file_path.endswith('DEPS') or affected_file_path.endswith('deps.bzl'):
+      needs_running = True
+      break
+  if not needs_running:
+    return []
+  try:
+    subprocess.check_output(
+        ['bazelisk', '--version'],
+        stderr=subprocess.STDOUT)
+  except:
+    return [output_api.PresubmitNotifyResult(
+      'Skipping DEPS check because bazelisk is not on PATH. \n' +
+      'You can download it from https://github.com/bazelbuild/bazelisk/releases/tag/v1.14.0')]
+
+  return _RunCommandAndCheckGitDiff(
+    output_api, ['bazelisk', 'run', '//bazel/deps_parser'])
+
+
 def _CommonChecks(input_api, output_api):
   """Presubmit checks common to upload and commit."""
   results = []
@@ -456,6 +480,8 @@ def CheckChangeOnUpload(input_api, output_api):
   results.extend(_CheckPublicBzl(input_api, output_api))
   # Buildifier might not be on the CI machines.
   results.extend(_CheckBuildifier(input_api, output_api))
+  # We don't want this to block the CQ (for now).
+  results.extend(_CheckDEPS(input_api, output_api))
   return results
 
 

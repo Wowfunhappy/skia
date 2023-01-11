@@ -7,6 +7,8 @@
 
 #include "tools/debugger/DebugCanvas.h"
 
+#include "include/core/SkBlendMode.h"
+#include "include/core/SkClipOp.h"
 #include "include/core/SkData.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
@@ -133,7 +135,12 @@ DebugCanvas::DebugCanvas(int width, int height)
 DebugCanvas::DebugCanvas(SkIRect bounds)
         : DebugCanvas(bounds.width(), bounds.height()) {}
 
-DebugCanvas::~DebugCanvas() { fCommandVector.deleteAll(); }
+DebugCanvas::~DebugCanvas() {
+    for (DrawCommand* p : fCommandVector) {
+        delete p;
+    }
+    fCommandVector.reset();
+}
 
 void DebugCanvas::addDrawCommand(DrawCommand* command) { fCommandVector.push_back(command); }
 

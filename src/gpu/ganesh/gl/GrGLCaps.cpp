@@ -1389,13 +1389,10 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
     if (fDriverBugWorkarounds.disable_texture_storage) {
         texStorageSupported = false;
     }
-#ifdef SK_BUILD_FOR_ANDROID
-    // crbug.com/945506. Telemetry reported a memory usage regression for Android Go Chrome/WebView
-    // when using glTexStorage2D. This appears to affect OOP-R (so not just over command buffer).
-    if (!formatWorkarounds.fDontDisableTexStorageOnAndroid) {
+
+    if (formatWorkarounds.fDisableTexStorage) {
         texStorageSupported = false;
     }
-#endif
 
     // ES 2.0 requires that the internal/external formats match so we can't use sized internal
     // formats for glTexImage until ES 3.0. TODO: Support sized internal formats in WebGL2.
@@ -3372,6 +3369,15 @@ void GrGLCaps::setupSampleCounts(const GrGLContextInfo& ctxInfo, const GrGLInter
     sk_ignore_unused_variable(standard);
     GrGLVersion version = ctxInfo.version();
 
+    int maxSampleCnt = 1;
+    if (GrGLCaps::kES_IMG_MsToTexture_MSFBOType == fMSFBOType) {
+        GR_GL_GetIntegerv(gli, GR_GL_MAX_SAMPLES_IMG, &maxSampleCnt);
+    } else if (GrGLCaps::kNone_MSFBOType != fMSFBOType) {
+        GR_GL_GetIntegerv(gli, GR_GL_MAX_SAMPLES, &maxSampleCnt);
+    }
+    // Chrome has a mock GL implementation that returns 0.
+    maxSampleCnt = std::max(1, maxSampleCnt);
+
     for (int i = 0; i < kGrGLColorFormatCount; ++i) {
         if (FormatInfo::kFBOColorAttachmentWithMSAA_Flag & fFormatTable[i].fFlags) {
             // We assume that MSAA rendering is supported only if we support non-MSAA rendering.
@@ -3380,6 +3386,10 @@ void GrGLCaps::setupSampleCounts(const GrGLContextInfo& ctxInfo, const GrGLInter
                   (version >= GR_GL_VER(4,2) ||
                    ctxInfo.hasExtension("GL_ARB_internalformat_query"))) ||
                 (GR_IS_GR_GL_ES(standard) && version >= GR_GL_VER(3,0))) {
+                // Implicite resolve may have a lower max samples than the per format MSAA.
+                const bool multisampleIsImplicit =
+                        GrGLCaps::kES_IMG_MsToTexture_MSFBOType == fMSFBOType ||
+                        GrGLCaps::kES_EXT_MsToTexture_MSFBOType == fMSFBOType;
                 int count;
                 GrGLFormat grGLFormat = static_cast<GrGLFormat>(i);
                 GrGLenum glFormat = this->getRenderbufferInternalFormat(grGLFormat);
@@ -3394,32 +3404,27 @@ void GrGLCaps::setupSampleCounts(const GrGLContextInfo& ctxInfo, const GrGLInter
                         --count;
                         SkASSERT(!count || temp[count -1] > 1);
                     }
-                    fFormatTable[i].fColorSampleCounts.resize(count+1);
+                    fFormatTable[i].fColorSampleCounts.reserve(count + 1);
                     // We initialize our supported values with 1 (no msaa) and reverse the order
                     // returned by GL so that the array is ascending.
-                    fFormatTable[i].fColorSampleCounts[0] = 1;
+                    fFormatTable[i].fColorSampleCounts.push_back(1);
                     for (int j = 0; j < count; ++j) {
 #if defined(SK_BUILD_FOR_IOS) && TARGET_OS_SIMULATOR
                         // The iOS simulator is reporting incorrect values for sample counts,
                         // so force them to be a power of 2.
-                        fFormatTable[i].fColorSampleCounts[j+1] = SkPrevPow2(temp[count - j - 1]);
+                        int sampleCnt = SkPrevPow2(temp[count - j - 1]);
 #else
-                        fFormatTable[i].fColorSampleCounts[j+1] = temp[count - j - 1];
+                        int sampleCnt = temp[count - j - 1];
 #endif
+                        if (multisampleIsImplicit && sampleCnt > maxSampleCnt) {
+                            break;
+                        }
+                        fFormatTable[i].fColorSampleCounts.push_back(sampleCnt);
                     }
                 }
             } else {
                 // Fake out the table using some semi-standard counts up to the max allowed sample
                 // count.
-                int maxSampleCnt = 1;
-                if (GrGLCaps::kES_IMG_MsToTexture_MSFBOType == fMSFBOType) {
-                    GR_GL_GetIntegerv(gli, GR_GL_MAX_SAMPLES_IMG, &maxSampleCnt);
-                } else if (GrGLCaps::kNone_MSFBOType != fMSFBOType) {
-                    GR_GL_GetIntegerv(gli, GR_GL_MAX_SAMPLES, &maxSampleCnt);
-                }
-                // Chrome has a mock GL implementation that returns 0.
-                maxSampleCnt = std::max(1, maxSampleCnt);
-
                 static constexpr int kDefaultSamples[] = {1, 2, 4, 8};
                 int count = std::size(kDefaultSamples);
                 for (; count > 0; --count) {
@@ -4269,7 +4274,14 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     // with the same GPU running on Android P (driver 1.10) which did not have this issue. We don't
     // know when the bug appeared in the driver so for now we disable tessellation path renderer for
     // all matching gpus regardless of driver version.
-    if (ctxInfo.renderer() == GrGLRenderer::kPowerVRRogue) {
+    //
+    // 2022-10-28 Update: Testing via Flutter found this is not a problem on driver version 1.15.
+    // See https://github.com/flutter/flutter/issues/113596
+    // GL_VERSION : OpenGL ES 3.1 build 1.15@6133109
+    // GL_RENDERER: PowerVR Rogue AXE-1-16M
+    // GL_VENDOR  : Imagination Technologies
+    if (ctxInfo.renderer() == GrGLRenderer::kPowerVRRogue &&
+        ctxInfo.driverVersion() < GR_GL_DRIVER_VER(1, 15, 0)) {
         fDisableTessellationPathRenderer = true;
     }
 
@@ -4283,6 +4295,16 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         fTransferFromBufferToBufferSupport = false;
     }
 
+    // The Wembley device fails shader compilations with no error message when there is a const
+    // parameter. Given that we've already passed through SkSL compilation and enforced that the
+    // parameter is never written, it is harmless to strip the const off when writing GLSL.
+    // Android API: 31
+    // GL_VERSION : OpenGL ES 3.2 build 1.13@5720833
+    // GL_RENDERER: PowerVR Rogue GE8300
+    // GL_VENDOR  : Imagination Technologies
+    if (ctxInfo.renderer() == GrGLRenderer::kPowerVRRogue) {
+        fShaderCaps->fRemoveConstFromFunctionParameters = true;
+    }
 #ifdef SK_BUILD_FOR_WIN
     // glDrawElementsIndirect fails GrMeshTest on every Win10 Intel bot.
     if (ctxInfo.driver() == GrGLDriver::kIntel ||
@@ -4355,16 +4377,17 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
 #endif
 
 #ifdef SK_BUILD_FOR_ANDROID
-    // We don't usually use glTexStorage() on Android for performance reasons. (crbug.com/945506).
-    // On a NVIDIA Shield TV running Android 7.0 creating a texture with glTexImage2D() with
-    // internal format GL_LUMINANCE8 fails. However, it succeeds with glTexStorage2D().
+    // crbug.com/945506. Telemetry reported a memory usage regression for Android Go Chrome/WebView
+    // when using glTexStorage2D. This appears to affect OOP-R (so not just over command buffer).
+    // Update 10/2023, it looks like this may just effect chrome Android GO devices which are
+    // running on Mali-T720. It does not seem to impact Qualcomm devices. We have no tests to verify
+    // if newer ARM devices are impacted, so for now we keep this disabled on all ARM by default.
     //
-    // Additionally, on the Nexus 9 running Android 6.0.1 formats added by GL_EXT_texture_rg and
-    // GL_EXT_texture_norm16 cause errors if they are created with glTexImage2D() with
-    // an unsized internal format. We wouldn't normally do that but Chrome can limit us
-    // artificially to ES2. (crbug.com/1003481)
-    if (ctxInfo.vendor() == GrGLVendor::kNVIDIA) {
-        formatWorkarounds->fDontDisableTexStorageOnAndroid = true;
+    // We allow the client to pass in a GrContextOption flag to say they prefer having tex storage
+    // support regadless of memory usage impacts. This is important for supporting Protected
+    // textures as they require tex storage support.
+    if (ctxInfo.vendor() == GrGLVendor::kARM && !contextOptions.fAlwaysUseTexStorageWhenAvailable) {
+        formatWorkarounds->fDisableTexStorage = true;
     }
 #endif
 

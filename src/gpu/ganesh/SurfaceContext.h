@@ -79,14 +79,6 @@ public:
     using RescaleGamma       = SkImage::RescaleGamma;
     using RescaleMode        = SkImage::RescaleMode;
 
-    // GPU implementation for SkImage:: and SkSurface::asyncReadPixels.
-    // Used as the async read step of asyncRescaleAndReadPixels().
-    void asyncReadPixels(GrDirectContext*,
-                         const SkIRect& srcRect,
-                         SkColorType,
-                         ReadPixelsCallback,
-                         ReadPixelsContext);
-
     // GPU implementation for SkImage:: and SkSurface::asyncRescaleAndReadPixels.
     void asyncRescaleAndReadPixels(GrDirectContext*,
                                    const SkImageInfo& info,
@@ -206,6 +198,13 @@ protected:
     };
     PixelTransferResult transferPixels(GrColorType colorType, const SkIRect& rect);
 
+    // The async read step of asyncRescaleAndReadPixels()
+    void asyncReadPixels(GrDirectContext*,
+                         const SkIRect& srcRect,
+                         SkColorType,
+                         ReadPixelsCallback,
+                         ReadPixelsContext);
+
 private:
     friend class ::GrRecordingContextPriv; // for validate
     friend class ::GrSurfaceProxy; // for copy
@@ -229,12 +228,30 @@ private:
      */
     sk_sp<GrRenderTask> copy(sk_sp<GrSurfaceProxy> src, SkIRect srcRect, SkIPoint dstPoint);
 
+    /**
+     * Copy and scale 'src' into the proxy backing this context. This call will not do any draw
+     * fallback. Currently only rescaleInto() calls this directly, which handles drawing fallback
+     * automatically.
+     *
+     * @param src        src of pixels
+     * @param srcRect    the subset of src that is copied to this proxy
+     * @param dstRect    the subset of dst that receives the copied data, possibly with different
+     *                   dimensions than 'srcRect'.
+     * @param filterMode the filter mode to apply when scaling src
+     * @return           a task (that may be skippable by calling canSkip) if successful and
+     *                   null otherwise.
+     *
+     * Note: Unlike copy(rect,point), 'srcRect' and 'dstRect' are not adjusted to fit within the
+     * surfaces. If they are not contained, then nullptr is returned. The 'src' must have the same
+     * origin as the backing proxy of this context.
+     */
+    sk_sp<GrRenderTask> copyScaled(sk_sp<GrSurfaceProxy> src, SkIRect srcRect, SkIRect dstRect,
+                                   GrSamplerState::Filter filterMode);
+
     bool internalWritePixels(GrDirectContext* dContext,
                              const GrCPixmap src[],
                              int numLevels,
                              SkIPoint);
-
-    class AsyncReadResult;
 
     GrColorInfo fColorInfo;
 

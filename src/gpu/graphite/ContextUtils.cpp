@@ -27,13 +27,13 @@ std::tuple<SkUniquePaintParamsID, const SkUniformDataBlock*, const SkTextureData
 ExtractPaintData(Recorder* recorder,
                  SkPipelineDataGatherer* gatherer,
                  SkPaintParamsKeyBuilder* builder,
-                 const SkM44& dev2Local,
+                 const SkM44& local2Dev,
                  const PaintParams& p) {
 
     SkDEBUGCODE(gatherer->checkReset());
     SkDEBUGCODE(builder->checkReset());
 
-    SkKeyContext keyContext(recorder, dev2Local);
+    SkKeyContext keyContext(recorder, local2Dev);
 
     p.toKey(keyContext, builder, gatherer);
 
@@ -91,8 +91,9 @@ std::string get_uniforms(SkSpan<const SkUniform> uniforms, int* offset, int mang
     UniformOffsetCalculator offsetter(Layout::kMetal, *offset);
 
     for (const SkUniform& u : uniforms) {
-        SkSL::String::appendf(&result, "    layout(offset=%zu) %s %s",
-                              offsetter.calculateOffset(u.type(), u.count()),
+        SkSL::String::appendf(&result,
+                              "    layout(offset=%zu) %s %s",
+                              offsetter.advanceOffset(u.type(), u.count()),
                               SkSLTypeString(u.type()),
                               u.name());
         if (manglingSuffix >= 0) {
@@ -110,25 +111,11 @@ std::string get_uniforms(SkSpan<const SkUniform> uniforms, int* offset, int mang
     *offset = offsetter.size();
     return result;
 }
-
-bool have_uniforms(const std::vector<SkPaintParamsKey::BlockReader>& readers) {
-    for (const SkPaintParamsKey::BlockReader& r : readers) {
-        if (r.entry()->fUniforms.size() > 0) {
-            return true;
-        }
-    }
-    return false;
-}
 }  // anonymous namespace
 
 std::string EmitPaintParamsUniforms(int bufferID,
                                     const char* name,
-                                    const std::vector<SkPaintParamsKey::BlockReader>& readers,
-                                    bool needsLocalCoords) {
-    if (!needsLocalCoords && !have_uniforms(readers)) {
-        return {};
-    }
-
+                                    const std::vector<SkPaintParamsKey::BlockReader>& readers) {
     int offset = 0;
 
     std::string result = get_uniform_header(bufferID, name);
@@ -139,11 +126,6 @@ std::string EmitPaintParamsUniforms(int bufferID,
             SkSL::String::appendf(&result, "// %s uniforms\n", readers[i].entry()->fName);
             result += get_uniforms(uniforms, &offset, i);
         }
-    }
-    if (needsLocalCoords) {
-        static constexpr SkUniform kDev2LocalUniform[] = {{ "dev2LocalUni", SkSLType::kFloat4x4 }};
-        result += "// NeedsLocalCoords\n";
-        result += get_uniforms(SkSpan<const SkUniform>(kDev2LocalUniform, 1), &offset, -1);
     }
     result.append("};\n\n");
 
@@ -161,14 +143,11 @@ std::string EmitRenderStepUniforms(int bufferID, const char* name,
     return result;
 }
 
-std::string EmitPaintParamsStorageBuffer(int bufferID,
-                                         const char* bufferTypePrefix,
-                                         const char* bufferNamePrefix,
-                                         const std::vector<SkPaintParamsKey::BlockReader>& readers,
-                                         bool needsLocalCoords) {
-    if (!needsLocalCoords && !have_uniforms(readers)) {
-        return {};
-    }
+std::string EmitPaintParamsStorageBuffer(
+        int bufferID,
+        const char* bufferTypePrefix,
+        const char* bufferNamePrefix,
+        const std::vector<SkPaintParamsKey::BlockReader>& readers) {
 
     std::string result;
     SkSL::String::appendf(&result, "struct %sUniformData {\n", bufferTypePrefix);
@@ -187,11 +166,6 @@ std::string EmitPaintParamsStorageBuffer(int bufferID,
             }
             result.append(";\n");
         }
-    }
-    if (needsLocalCoords) {
-        result.append(
-                "// NeedsLocalCoords\n"
-                "    float4x4 dev2LocalUni;\n");
     }
     result.append("};\n\n");
 
@@ -328,7 +302,7 @@ std::string GetSkSLVS(const RenderStep* step,
     // Vertex shader body
     sksl += step->vertexSkSL();
     sksl += "sk_Position = float4(devPosition.xy * rtAdjust.xy + devPosition.ww * rtAdjust.zw,"
-            "                     devPosition.zw);";
+            "devPosition.zw);";
 
     if (defineShadingSsboIndexVarying) {
         // Assign SSBO index value to the SSBO index varying

@@ -41,7 +41,7 @@ public:
     sk_sp<SkCapabilities> capabilities() const;
 
     virtual TextureInfo getDefaultSampledTextureInfo(SkColorType,
-                                                     uint32_t levelCount,
+                                                     Mipmapped mipmapped,
                                                      Protected,
                                                      Renderable) const = 0;
 
@@ -164,6 +164,7 @@ protected:
     // Used in format tables.
     struct ColorTypeInfo {
         SkColorType fColorType = kUnknown_SkColorType;
+        SkColorType fTransferColorType = kUnknown_SkColorType;
         enum {
             kUploadData_Flag = 0x1,
             // Does Graphite itself support rendering to this colorType & format pair. Renderability

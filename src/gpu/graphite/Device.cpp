@@ -231,6 +231,9 @@ sk_sp<Device> Device::Make(Recorder* recorder,
     if (!recorder) {
         return nullptr;
     }
+    if (colorInfo.alphaType() != kPremul_SkAlphaType) {
+        return nullptr;
+    }
 
     sk_sp<DrawContext> dc = DrawContext::Make(std::move(target), colorInfo, props);
     if (!dc) {
@@ -346,35 +349,27 @@ TextureProxyView Device::createCopy(const SkIRect* subset, Mipmapped mipmapped) 
     return { std::move(dest), srcView.swizzle() };
 }
 
-bool Device::onReadPixels(const SkPixmap& pm, int x, int y) {
+bool Device::onReadPixels(const SkPixmap& pm, int srcX, int srcY) {
+#if GRAPHITE_TEST_UTILS
+    if (Context* context = fRecorder->priv().context()) {
+        this->flushPendingWorkToRecorder();
+        return context->priv().readPixels(fRecorder, pm, fDC->target(), this->imageInfo(),
+                                          srcX, srcY);
+    }
+#endif
     // We have no access to a context to do a read pixels here.
     return false;
 }
 
+// TODO: remove this?
 bool Device::readPixels(Context* context,
                         Recorder* recorder,
                         const SkPixmap& pm,
                         int srcX,
                         int srcY) {
-    return ReadPixelsHelper([this]() {
-                                this->flushPendingWorkToRecorder();
-                            },
-                            context,
-                            recorder,
-                            fDC->target(),
-                            pm.info(),
-                            pm.writable_addr(),
-                            pm.rowBytes(),
-                            srcX,
-                            srcY);
-}
-
-void Device::asyncReadPixels(const SkImageInfo& info,
-                             SkIRect srcRect,
-                             ReadPixelsCallback callback,
-                             ReadPixelsContext context) {
-    // TODO: implement for Graphite
-    callback(context, nullptr);
+    this->flushPendingWorkToRecorder();
+    return context->priv().readPixels(recorder, pm, fDC->target(), this->imageInfo(),
+                                      srcX, srcY);
 }
 
 void Device::asyncRescaleAndReadPixels(const SkImageInfo& info,
@@ -383,7 +378,7 @@ void Device::asyncRescaleAndReadPixels(const SkImageInfo& info,
                                        RescaleMode rescaleMode,
                                        ReadPixelsCallback callback,
                                        ReadPixelsContext context) {
-    // TODO: implement for Graphite
+    // Not supported for Graphite
     callback(context, nullptr);
 }
 
@@ -777,7 +772,7 @@ void Device::drawGeometry(const Transform& localToDevice,
         if (paint.getPathEffect()->filterPath(&dst, geometry.shape().asPath(), &newStyle,
                                               nullptr, localToDevice)) {
             // Recurse using the path and new style, while disabling downstream path effect handling
-            this->drawGeometry(localToDevice, Geometry(Shape(dst)), paint, style,
+            this->drawGeometry(localToDevice, Geometry(Shape(dst)), paint, newStyle,
                                flags | DrawFlags::kIgnorePathEffect, std::move(primitiveBlender),
                                skipColorXform);
             return;
@@ -864,6 +859,15 @@ void Device::drawGeometry(const Transform& localToDevice,
 
     // A draw's order always depends on the clips that must be drawn before it
     order.dependsOnPaintersOrder(clipOrder);
+
+    // A primitive blender should be ignored if there is no primitive color to blend against.
+    // Additionally, if a renderer emits a primitive color, then a null primitive blender should
+    // be interpreted as SrcOver blending mode.
+    if (!renderer->emitsPrimitiveColor()) {
+        primitiveBlender = nullptr;
+    } else if (!SkToBool(primitiveBlender)) {
+        primitiveBlender = SkBlender::Mode(SkBlendMode::kSrcOver);
+    }
 
     // If a draw is not opaque, it must be drawn after the most recent draw it intersects with in
     // order to blend correctly. We always query the most recent draw (even when opaque) because it
@@ -1149,7 +1153,10 @@ TextureProxy* Device::proxy() {
 }
 #endif
 
-TextureProxyView Device::readSurfaceView() {
+TextureProxyView Device::readSurfaceView() const {
+    if (!fRecorder) {
+        return {};
+    }
     return fDC->readSurfaceView(fRecorder->priv().caps());
 }
 

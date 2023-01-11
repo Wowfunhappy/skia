@@ -10,7 +10,6 @@
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/shaders/SkLocalMatrixShader.h"
-#include "src/shaders/gradients/Sk4fLinearGradient.h"
 
 #ifdef SK_ENABLE_SKSL
 #include "src/core/SkKeyHelpers.h"
@@ -62,29 +61,6 @@ void SkLinearGradient::flatten(SkWriteBuffer& buffer) const {
     buffer.writePoint(fStart);
     buffer.writePoint(fEnd);
 }
-
-#ifdef SK_ENABLE_LEGACY_SHADERCONTEXT
-SkShaderBase::Context* SkLinearGradient::onMakeContext(
-    const ContextRec& rec, SkArenaAlloc* alloc) const
-{
-#if defined(SK_SUPPORT_LEGACY_RASTER_GRADIENTS)
-    // make sure our colorspaces are compatible with legacy blits
-    if (!rec.isLegacyCompatible(fColorSpace.get())) {
-        return nullptr;
-    }
-    // Can't use legacy blit if we can't represent our colors as SkColors
-    if (!this->colorsCanConvertToSkColor()) {
-        return nullptr;
-    }
-
-    return fTileMode != SkTileMode::kDecal
-        ? CheckedMakeContext<LinearGradient4fContext>(alloc, *this, rec)
-        : nullptr;
-#else
-    return nullptr;
-#endif
-}
-#endif
 
 void SkLinearGradient::appendGradientStages(SkArenaAlloc*, SkRasterPipeline*,
                                             SkRasterPipeline*) const {
@@ -152,7 +128,7 @@ sk_sp<SkShader> SkGradientShader::MakeLinear(const SkPoint pts[2],
     if (!pts || !SkScalarIsFinite((pts[1] - pts[0]).length())) {
         return nullptr;
     }
-    if (!SkGradientShaderBase::ValidGradient(colors, pos, colorCount, mode)) {
+    if (!SkGradientShaderBase::ValidGradient(colors, colorCount, mode, interpolation)) {
         return nullptr;
     }
     if (1 == colorCount) {

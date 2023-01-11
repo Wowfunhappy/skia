@@ -42,12 +42,12 @@ CopyTextureToBufferTask::CopyTextureToBufferTask(sk_sp<TextureProxy> textureProx
 CopyTextureToBufferTask::~CopyTextureToBufferTask() {}
 
 bool CopyTextureToBufferTask::prepareResources(ResourceProvider* resourceProvider,
-                                                const SkRuntimeEffectDictionary*) {
+                                               const SkRuntimeEffectDictionary*) {
     if (!fTextureProxy) {
         SKGPU_LOG_E("No texture proxy specified for CopyTextureToBufferTask");
         return false;
     }
-    if (!fTextureProxy->instantiate(resourceProvider)) {
+    if (!TextureProxy::InstantiateIfNotLazy(resourceProvider, fTextureProxy.get())) {
         SKGPU_LOG_E("Could not instantiate texture proxy for CopyTextureToBufferTask!");
         return false;
     }
@@ -92,7 +92,7 @@ bool CopyTextureToTextureTask::prepareResources(ResourceProvider* resourceProvid
         SKGPU_LOG_E("No src texture proxy specified for CopyTextureToTextureTask");
         return false;
     }
-    if (!fSrcProxy->instantiate(resourceProvider)) {
+    if (!TextureProxy::InstantiateIfNotLazy(resourceProvider, fSrcProxy.get())) {
         SKGPU_LOG_E("Could not instantiate src texture proxy for CopyTextureToTextureTask!");
         return false;
     }
@@ -100,7 +100,7 @@ bool CopyTextureToTextureTask::prepareResources(ResourceProvider* resourceProvid
         SKGPU_LOG_E("No dst texture proxy specified for CopyTextureToTextureTask");
         return false;
     }
-    if (!fDstProxy->instantiate(resourceProvider)) {
+    if (!TextureProxy::InstantiateIfNotLazy(resourceProvider, fDstProxy.get())) {
         SKGPU_LOG_E("Could not instantiate dst texture proxy for CopyTextureToTextureTask!");
         return false;
     }

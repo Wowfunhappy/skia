@@ -5,13 +5,18 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkScalar.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypes.h"
+#include "include/private/SkTArray.h"
+#include "src/core/SkStringUtils.h"
 #include "tests/Test.h"
 
-#include "include/core/SkString.h"
-#include "src/core/SkStringUtils.h"
-
-#include <math.h>
-#include <stdio.h>
+#include <cmath>
+#include <cstdarg>
+#include <cstdint>
+#include <cstring>
+#include <string_view>
 #include <thread>
 
 DEF_TEST(String, reporter) {
@@ -28,7 +33,7 @@ DEF_TEST(String, reporter) {
     b.set("hellox", 5);
     c.set(a);
     d.resize(5);
-    memcpy(d.writable_str(), "helloz", 5);
+    memcpy(d.data(), "helloz", 5);
     v.set(std::string_view("hellooooo").substr(0, 5));
 
     REPORTER_ASSERT(reporter, !a.isEmpty());
