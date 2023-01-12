@@ -1143,6 +1143,7 @@ optional("gpu") {
     public_defines += [ "SK_METAL" ]
     public += skia_gpu_metal_public
     sources += skia_gpu_metal_private
+    sources += skia_gpu_metal_cpp
     if (skia_enable_metal_debug_info) {
       public_defines += [ "SK_ENABLE_MTL_DEBUG_INFO" ]
     }
@@ -2254,6 +2255,10 @@ if (skia_enable_tools) {
     }
     if (skia_use_gl) {
       sources += gl_tests_sources
+    }
+    if (skia_use_vulkan) {
+      sources += skia_gpu_vk_chromium_public
+      sources += skia_gpu_vk_chromium_private
     }
     if (skia_enable_graphite) {
       sources += graphite_tests_sources

@@ -22,7 +22,7 @@ def git_repos_from_deps():
     new_git_repository(
         name = "dawn",
         build_file = "@//bazel/external/dawn:BUILD.bazel",
-        commit = "410b5acc7f3fa2ffb38d91335c7498e837dde745",
+        commit = "46e3e213b0464d7c0ecb99fcb30701d69fa9fe24",
         remote = "https://dawn.googlesource.com/dawn.git",
     )
 
@@ -158,14 +158,14 @@ def git_repos_from_deps():
 
     git_repository(
         name = "spirv_tools",
-        commit = "f62e121b0df5374d1f043d1fbda98467406af0b1",
+        commit = "7e8813bb4cf32fd9c4d696c09d4e68e17a8f57f1",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git",
     )
 
     new_git_repository(
         name = "vulkan_headers",
         build_file = "@//bazel/external/vulkan_headers:BUILD.bazel",
-        commit = "bc6beaa9602e94fa9c66a41c4a890884f6aaa661",
+        commit = "50f8b24b8530ed9eec00367d7b19af777ae1f6c0",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Headers",
     )
 
