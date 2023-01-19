@@ -10,7 +10,7 @@
 #ifdef SK_SUPPORT_PDF
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
-#include "include/private/SkTemplates.h"
+#include "include/private/base/SkTemplates.h"
 #include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkTo.h"
 #include "include/utils/SkRandom.h"
@@ -21,6 +21,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+
+using namespace skia_private;
 
 namespace {
 
@@ -118,7 +120,7 @@ DEF_TEST(SkPDF_DeflateWStream, r) {
     SkRandom random(123456);
     for (int loop = 0; loop < 50; ++loop) {
         uint32_t size = random.nextULessThan(10000);
-        SkAutoTMalloc<uint8_t> buffer(size);
+        AutoTMalloc<uint8_t> buffer(size);
         for (uint32_t j = 0; j < size; ++j) {
             buffer[j] = random.nextU() & 0xff;
         }

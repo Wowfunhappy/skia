@@ -10,8 +10,8 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkFontMgr.h"
-#include "include/private/SkTPin.h"
-#include "include/private/SkTemplates.h"
+#include "include/private/base/SkTPin.h"
+#include "include/private/base/SkTemplates.h"
 #include "modules/skshaper/include/SkShaper.h"
 #include "modules/skunicode/include/SkUnicode.h"
 #include "src/core/SkFontPriv.h"
@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <limits.h>
 #include <numeric>
+
+using namespace skia_private;
 
 namespace skottie {
 namespace {
@@ -404,9 +406,9 @@ private:
     SkFont                    fFont;
     std::unique_ptr<SkShaper> fShaper;
 
-    SkAutoSTMalloc<64, SkGlyphID>          fLineGlyphs;
-    SkAutoSTMalloc<64, SkPoint>            fLinePos;
-    SkAutoSTMalloc<64, uint32_t>           fLineClusters;
+    AutoSTMalloc<64, SkGlyphID>          fLineGlyphs;
+    AutoSTMalloc<64, SkPoint>            fLinePos;
+    AutoSTMalloc<64, uint32_t>           fLineClusters;
     SkSTArray<16, skottie::Shaper::RunRec> fLineRuns;
     size_t                                 fLineGlyphCount = 0;
 

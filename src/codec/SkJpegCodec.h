@@ -17,7 +17,7 @@
 #include "include/core/SkTypes.h"
 #include "include/core/SkYUVAPixmaps.h"
 #include "include/private/SkEncodedInfo.h"
-#include "include/private/SkTemplates.h"
+#include "include/private/base/SkTemplates.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -150,7 +150,7 @@ private:
     const int                          fReadyState;
 
 
-    SkAutoTMalloc<uint8_t>             fStorage;
+    skia_private::AutoTMalloc<uint8_t>             fStorage;
     uint8_t* fSwizzleSrcRow = nullptr;
     uint32_t* fColorXformSrcRow = nullptr;
 

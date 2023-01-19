@@ -23,11 +23,13 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/private/SkSLProgramElement.h"
 #include "include/private/SkSLProgramKind.h"
-#include "include/private/SkTArray.h"
+#include "include/private/base/SkTArray.h"
 #include "include/sksl/DSLCore.h"
 #include "include/sksl/SkSLVersion.h"
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkRasterPipeline.h"
+#include "src/core/SkRasterPipelineOpContexts.h"
+#include "src/core/SkRasterPipelineOpList.h"
 #include "src/core/SkRuntimeEffectPriv.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
@@ -429,7 +431,7 @@ static void test_raster_pipeline(skiatest::Reporter* r, const char* testFile, in
     // Move the float values from RGBA into an 8888 memory buffer.
     uint32_t out[SkRasterPipeline_kMaxStride_highp] = {};
     SkRasterPipeline_MemoryCtx outCtx{/*pixels=*/out, /*stride=*/SkRasterPipeline_kMaxStride_highp};
-    pipeline.append(SkRasterPipeline::store_8888, &outCtx);
+    pipeline.append(SkRasterPipelineOp::store_8888, &outCtx);
     pipeline.run(0, 0, 1, 1);
 
     // Make sure the first pixel (exclusively) of `out` is green. If the program compiled
@@ -503,7 +505,7 @@ SKSL_TEST(RP + VM + GPU, kApiLevel_T, StructFieldFolding,              "folding/
 SKSL_TEST(VM + GPU,      kApiLevel_T, StructFieldNoFolding,            "folding/StructFieldNoFolding.rts")
 SKSL_TEST(VM + GPU,      kApiLevel_T, SwitchCaseFolding,               "folding/SwitchCaseFolding.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, SwizzleFolding,                  "folding/SwizzleFolding.rts")
-SKSL_TEST(VM + GPU,      kApiLevel_T, TernaryFolding,                  "folding/TernaryFolding.rts")
+SKSL_TEST(RP + VM + GPU, kApiLevel_T, TernaryFolding,                  "folding/TernaryFolding.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, VectorScalarFolding,             "folding/VectorScalarFolding.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, VectorVectorFolding,             "folding/VectorVectorFolding.rts")
 
@@ -523,7 +525,7 @@ SKSL_TEST(RP + VM + GPU, kApiLevel_T, InlinerAvoidsVariableNameOverlap,         
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, InlinerElidesTempVarForReturnsInsideBlock,        "inliner/InlinerElidesTempVarForReturnsInsideBlock.sksl")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, InlinerUsesTempVarForMultipleReturns,             "inliner/InlinerUsesTempVarForMultipleReturns.sksl")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, InlinerUsesTempVarForReturnsInsideBlockWithVar,   "inliner/InlinerUsesTempVarForReturnsInsideBlockWithVar.sksl")
-SKSL_TEST(VM + GPU,      kApiLevel_T, InlineThreshold,                                  "inliner/InlineThreshold.sksl")
+SKSL_TEST(RP + VM + GPU, kApiLevel_T, InlineThreshold,                                  "inliner/InlineThreshold.sksl")
 SKSL_TEST(RP + GPU_ES3,  kApiLevel_T, InlineUnscopedVariable,                           "inliner/InlineUnscopedVariable.sksl")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, InlineWithModifiedArgument,                       "inliner/InlineWithModifiedArgument.sksl")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, InlineWithNestedBigCalls,                         "inliner/InlineWithNestedBigCalls.sksl")
@@ -589,7 +591,7 @@ SKSL_TEST(GPU_ES3,       kNever,      ArrayNarrowingConversions,       "runtime/
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, LoopFloat,                       "runtime/LoopFloat.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, LoopInt,                         "runtime/LoopInt.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, Ossfuzz52603,                    "runtime/Ossfuzz52603.rts")
-SKSL_TEST(VM + GPU,      kApiLevel_T, QualifierOrder,                  "runtime/QualifierOrder.rts")
+SKSL_TEST(RP + VM + GPU, kApiLevel_T, QualifierOrder,                  "runtime/QualifierOrder.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, PrecisionQualifiers,             "runtime/PrecisionQualifiers.rts")
 
 SKSL_TEST(RP + GPU_ES3 + UsesNaN, kNever, RecursiveComparison_Arrays,  "runtime/RecursiveComparison_Arrays.rts")
@@ -604,8 +606,8 @@ SKSL_TEST(RP + VM + GPU_ES3, kNever,      ArrayFollowedByScalar,           "shar
 SKSL_TEST(VM + GPU,          kApiLevel_T, ArrayTypes,                      "shared/ArrayTypes.sksl")
 SKSL_TEST(VM + GPU,          kApiLevel_T, Assignment,                      "shared/Assignment.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CastsRoundTowardZero,            "shared/CastsRoundTowardZero.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, CommaMixedTypes,                 "shared/CommaMixedTypes.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, CommaSideEffects,                "shared/CommaSideEffects.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CommaMixedTypes,                 "shared/CommaMixedTypes.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CommaSideEffects,                "shared/CommaSideEffects.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CompileTimeConstantVariables,    "shared/CompileTimeConstantVariables.sksl")
 SKSL_TEST(GPU_ES3,           kNever,      ConstantCompositeAccessViaConstantIndex, "shared/ConstantCompositeAccessViaConstantIndex.sksl")
 SKSL_TEST(GPU_ES3,           kNever,      ConstantCompositeAccessViaDynamicIndex,  "shared/ConstantCompositeAccessViaDynamicIndex.sksl")
@@ -628,14 +630,14 @@ SKSL_TEST(RP + VM + GPU,     kApiLevel_T, ForLoopControlFlow,              "shar
 SKSL_TEST(VM + GPU,          kApiLevel_T, FunctionAnonymousParameters,     "shared/FunctionAnonymousParameters.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, FunctionArgTypeMatch,            "shared/FunctionArgTypeMatch.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, FunctionReturnTypeMatch,         "shared/FunctionReturnTypeMatch.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, Functions,                       "shared/Functions.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, Functions,                       "shared/Functions.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, FunctionPrototype,               "shared/FunctionPrototype.sksl")
 SKSL_TEST(VM + GPU,          kApiLevel_T, GeometricIntrinsics,             "shared/GeometricIntrinsics.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, HelloWorld,                      "shared/HelloWorld.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, Hex,                             "shared/Hex.sksl")
 SKSL_TEST(RP + GPU_ES3,      kNever,      HexUnsigned,                     "shared/HexUnsigned.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, InoutParameters,                 "shared/InoutParameters.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, InoutParamsAreDistinct,          "shared/InoutParamsAreDistinct.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, InoutParameters,                 "shared/InoutParameters.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, InoutParamsAreDistinct,          "shared/InoutParamsAreDistinct.sksl")
 SKSL_TEST(RP + GPU_ES3,      kApiLevel_T, IntegerDivisionES3,              "shared/IntegerDivisionES3.sksl")
 SKSL_TEST(VM + GPU,          kApiLevel_T, Matrices,                        "shared/Matrices.sksl")
 SKSL_TEST(GPU_ES3,           kNever,      MatricesNonsquare,               "shared/MatricesNonsquare.sksl")
@@ -652,12 +654,12 @@ SKSL_TEST(RP + VM + GPU,     kApiLevel_T, NumberCasts,                     "shar
 SKSL_TEST(VM + GPU,          kApiLevel_T, OperatorsES2,                    "shared/OperatorsES2.sksl")
 SKSL_TEST(GPU_ES3,           kNever,      OperatorsES3,                    "shared/OperatorsES3.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, Ossfuzz36852,                    "shared/Ossfuzz36852.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, OutParams,                       "shared/OutParams.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, OutParamsAreDistinct,            "shared/OutParamsAreDistinct.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, OutParamsAreDistinctFromGlobal,  "shared/OutParamsAreDistinctFromGlobal.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, OutParamsTricky,                 "shared/OutParamsTricky.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, ResizeMatrix,                    "shared/ResizeMatrix.sksl")
-SKSL_TEST(GPU_ES3,           kNever,      ResizeMatrixNonsquare,           "shared/ResizeMatrixNonsquare.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, OutParams,                       "shared/OutParams.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, OutParamsAreDistinct,            "shared/OutParamsAreDistinct.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, OutParamsAreDistinctFromGlobal,  "shared/OutParamsAreDistinctFromGlobal.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, OutParamsTricky,                 "shared/OutParamsTricky.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, ResizeMatrix,                    "shared/ResizeMatrix.sksl")
+SKSL_TEST(RP + GPU_ES3,      kNever,      ResizeMatrixNonsquare,           "shared/ResizeMatrixNonsquare.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, ReturnsValueOnEveryPathES2,      "shared/ReturnsValueOnEveryPathES2.sksl")
 SKSL_TEST(GPU_ES3,           kNever,      ReturnsValueOnEveryPathES3,      "shared/ReturnsValueOnEveryPathES3.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, ScalarConversionConstructorsES2, "shared/ScalarConversionConstructorsES2.sksl")
@@ -689,7 +691,7 @@ SKSL_TEST(RP + VM + GPU,     kApiLevel_T, TernaryAsLValueFoldableTest,     "shar
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, TernaryExpression,               "shared/TernaryExpression.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UnaryPositiveNegative,           "shared/UnaryPositiveNegative.sksl")
 SKSL_TEST(VM + GPU,          kApiLevel_T, UniformArray,                    "shared/UniformArray.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, UniformMatrixResize,             "shared/UniformMatrixResize.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UniformMatrixResize,             "shared/UniformMatrixResize.sksl")
 SKSL_TEST(VM + GPU,          kApiLevel_T, UnusedVariables,                 "shared/UnusedVariables.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, VectorConstructors,              "shared/VectorConstructors.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, VectorToMatrixCast,              "shared/VectorToMatrixCast.sksl")

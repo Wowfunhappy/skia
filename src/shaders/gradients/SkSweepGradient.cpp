@@ -5,7 +5,7 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/SkFloatingPoint.h"
+#include "include/private/base/SkFloatingPoint.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
@@ -109,7 +109,7 @@ void SkSweepGradient::flatten(SkWriteBuffer& buffer) const {
 
 void SkSweepGradient::appendGradientStages(SkArenaAlloc* alloc, SkRasterPipeline* p,
                                            SkRasterPipeline*) const {
-    p->append(SkRasterPipeline::xy_to_unit_angle);
+    p->append(SkRasterPipelineOp::xy_to_unit_angle);
     p->append_matrix(alloc, SkMatrix::Scale(fTScale, 1) * SkMatrix::Translate(fTBias, 0));
 }
 

@@ -18,7 +18,7 @@
 #include "include/core/SkRSXform.h"
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkTemplates.h"
+#include "include/private/base/SkTemplates.h"
 #include "src/core/SkGlyphBuffer.h"
 #include "src/core/SkZip.h"
 
@@ -182,9 +182,9 @@ private:
             const SkTextBlob* blob, const SkRect& bounds, SkPoint origin);
 
     int fMaxTotalRunSize{0};
-    SkAutoTMalloc<SkPoint> fPositions;
+    skia_private::AutoTMalloc<SkPoint> fPositions;
     int fMaxScaledRotations{0};
-    SkAutoTMalloc<SkVector> fScaledRotations;
+    skia_private::AutoTMalloc<SkVector> fScaledRotations;
 
     std::vector<GlyphRun> fGlyphRunListStorage;
     std::optional<GlyphRunList> fGlyphRunList;  // Defaults to no value;
