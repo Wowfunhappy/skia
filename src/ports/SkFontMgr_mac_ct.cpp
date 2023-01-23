@@ -37,7 +37,6 @@
 #include "src/core/SkFontDescriptor.h"
 #include "src/ports/SkTypeface_mac_ct.h"
 #include "src/utils/mac/SkCTFont.h"
-#include "src/utils/SkUTF.h"
 
 #include <string.h>
 #include <memory>
