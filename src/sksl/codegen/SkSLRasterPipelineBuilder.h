@@ -133,6 +133,12 @@ private:
     void appendCopyConstants(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
                              float* dst, const float* src, int numSlots);
 
+    // Appends a single-slot single-input math operation to the pipeline. The op `stage` will
+    // appended `numSlots` times, starting at position `dst` and advancing one slot for each
+    // subsequent invocation.
+    void appendSingleSlotUnaryOp(SkTArray<Stage>* pipeline, SkRasterPipelineOp stage,
+                                 float* dst, int numSlots);
+
     // Appends a multi-slot single-input math operation to the pipeline. `baseStage` must refer to
     // an single-slot "apply_op" stage, which must be immediately followed by specializations for
     // 2-4 slots. For instance, {`zero_slot`, `zero_2_slots`, `zero_3_slots`, `zero_4_slots`}
@@ -362,12 +368,9 @@ public:
         fInstructions.push_back({BuilderOp::select, {}, slots});
     }
 
-    void pop_slots_unmasked(SlotRange dst) {
-        // The opposite of push_slots; copies values from the temp stack into value slots, then
-        // shrinks the temp stack.
-        this->copy_stack_to_slots_unmasked(dst);
-        this->discard_stack(dst.count);
-    }
+    // The opposite of push_slots; copies values from the temp stack into value slots, then
+    // shrinks the temp stack.
+    void pop_slots_unmasked(SlotRange dst);
 
     void load_unmasked(Slot slot) {
         fInstructions.push_back({BuilderOp::load_unmasked, {slot}});
@@ -391,9 +394,8 @@ public:
         fInstructions.push_back({BuilderOp::copy_slot_unmasked, {dst.index, src.index}, dst.count});
     }
 
-    void zero_slots_unmasked(SlotRange dst) {
-        fInstructions.push_back({BuilderOp::zero_slot_unmasked, {dst.index}, dst.count});
-    }
+    // Stores zeros across the entire slot range.
+    void zero_slots_unmasked(SlotRange dst);
 
     // Consumes `consumedSlots` elements on the stack, then generates `components.size()` elements.
     void swizzle(int consumedSlots, SkSpan<const int8_t> components);
@@ -445,9 +447,7 @@ public:
         fInstructions.push_back({BuilderOp::push_return_mask, {}});
     }
 
-    void pop_return_mask() {
-        fInstructions.push_back({BuilderOp::pop_return_mask, {}});
-    }
+    void pop_return_mask();
 
     void mask_off_return_mask() {
         fInstructions.push_back({BuilderOp::mask_off_return_mask, {}});

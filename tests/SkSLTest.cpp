@@ -26,7 +26,7 @@
 #include "include/private/base/SkTArray.h"
 #include "include/sksl/DSLCore.h"
 #include "include/sksl/SkSLVersion.h"
-#include "src/core/SkArenaAlloc.h"
+#include "src/base/SkArenaAlloc.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkRasterPipelineOpContexts.h"
 #include "src/core/SkRasterPipelineOpList.h"
@@ -500,7 +500,7 @@ SKSL_TEST(RP + VM + GPU, kApiLevel_T, Negation,                        "folding/
 // on Vulkan when granular GPU backend selection is supported.
 SKSL_TEST(VM,            kApiLevel_T, PreserveSideEffects,             "folding/PreserveSideEffects.rts")
 SKSL_TEST(VM + GPU,      kApiLevel_T, SelfAssignment,                  "folding/SelfAssignment.rts")
-SKSL_TEST(VM + GPU,      kApiLevel_T, ShortCircuitBoolFolding,         "folding/ShortCircuitBoolFolding.rts")
+SKSL_TEST(RP + VM + GPU, kApiLevel_T, ShortCircuitBoolFolding,         "folding/ShortCircuitBoolFolding.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, StructFieldFolding,              "folding/StructFieldFolding.rts")
 SKSL_TEST(VM + GPU,      kApiLevel_T, StructFieldNoFolding,            "folding/StructFieldNoFolding.rts")
 SKSL_TEST(VM + GPU,      kApiLevel_T, SwitchCaseFolding,               "folding/SwitchCaseFolding.rts")
@@ -582,12 +582,14 @@ SKSL_TEST(GPU_ES3,       kNever,      IntrinsicRoundEven,              "intrinsi
 SKSL_TEST(RP + VM + GPU, kNever,      IntrinsicSaturate,               "intrinsics/Saturate.sksl")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, IntrinsicSignFloat,              "intrinsics/SignFloat.sksl")
 SKSL_TEST(RP + GPU_ES3,  kNever,      IntrinsicSignInt,                "intrinsics/SignInt.sksl")
+SKSL_TEST(RP + VM + GPU, kNever,      IntrinsicSqrt,                   "intrinsics/Sqrt.sksl")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, IntrinsicStep,                   "intrinsics/Step.sksl")
 SKSL_TEST(GPU_ES3,       kNever,      IntrinsicTrunc,                  "intrinsics/Trunc.sksl")
 SKSL_TEST(RP + GPU_ES3,  kNever,      IntrinsicTranspose,              "intrinsics/Transpose.sksl")
 SKSL_TEST(RP + GPU_ES3,  kNever,      IntrinsicUintBitsToFloat,        "intrinsics/UintBitsToFloat.sksl")
 
 SKSL_TEST(GPU_ES3,       kNever,      ArrayNarrowingConversions,       "runtime/ArrayNarrowingConversions.rts")
+SKSL_TEST(RP + GPU_ES3,  kNever,      Commutative,                     "runtime/Commutative.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, LoopFloat,                       "runtime/LoopFloat.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, LoopInt,                         "runtime/LoopInt.rts")
 SKSL_TEST(RP + VM + GPU, kApiLevel_T, Ossfuzz52603,                    "runtime/Ossfuzz52603.rts")
@@ -651,7 +653,7 @@ SKSL_TEST(VM + GPU,          kApiLevel_T, MatrixScalarMath,                "shar
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, MatrixToVectorCast,              "shared/MatrixToVectorCast.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, MultipleAssignments,             "shared/MultipleAssignments.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, NumberCasts,                     "shared/NumberCasts.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, OperatorsES2,                    "shared/OperatorsES2.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, OperatorsES2,                    "shared/OperatorsES2.sksl")
 SKSL_TEST(GPU_ES3,           kNever,      OperatorsES3,                    "shared/OperatorsES3.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, Ossfuzz36852,                    "shared/Ossfuzz36852.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, OutParams,                       "shared/OutParams.sksl")
@@ -692,7 +694,7 @@ SKSL_TEST(RP + VM + GPU,     kApiLevel_T, TernaryExpression,               "shar
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UnaryPositiveNegative,           "shared/UnaryPositiveNegative.sksl")
 SKSL_TEST(VM + GPU,          kApiLevel_T, UniformArray,                    "shared/UniformArray.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UniformMatrixResize,             "shared/UniformMatrixResize.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, UnusedVariables,                 "shared/UnusedVariables.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UnusedVariables,                 "shared/UnusedVariables.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, VectorConstructors,              "shared/VectorConstructors.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, VectorToMatrixCast,              "shared/VectorToMatrixCast.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, VectorScalarMath,                "shared/VectorScalarMath.sksl")

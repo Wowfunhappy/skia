@@ -11,12 +11,12 @@
 #include "include/core/SkData.h"
 #include "include/core/SkPixelRef.h"
 #include "include/core/SkSurface.h"
+#include "src/base/SkTLazy.h"
 #include "src/codec/SkColorTable.h"
 #include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkConvertPixels.h"
 #include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkImagePriv.h"
-#include "src/core/SkTLazy.h"
 #include "src/image/SkImage_Base.h"
 #include "src/shaders/SkBitmapProcShader.h"
 
@@ -173,6 +173,10 @@ private:
 #ifdef SK_GRAPHITE_ENABLED
     sk_sp<SkImage> onMakeTextureImage(skgpu::graphite::Recorder*,
                                       RequiredImageProperties) const override;
+    sk_sp<SkImage> onMakeColorTypeAndColorSpace(SkColorType,
+                                                sk_sp<SkColorSpace>,
+                                                skgpu::graphite::Recorder*,
+                                                RequiredImageProperties) const override;
 #endif
 
     SkBitmap fBitmap;
@@ -586,4 +590,13 @@ sk_sp<SkImage> SkImage_Raster::onMakeTextureImage(skgpu::graphite::Recorder* rec
                                            skgpu::Budgeted::kNo,
                                            requiredProps);
 }
+
+sk_sp<SkImage> SkImage_Raster::onMakeColorTypeAndColorSpace(
+        SkColorType targetCT,
+        sk_sp<SkColorSpace> targetCS,
+        skgpu::graphite::Recorder* recorder,
+        RequiredImageProperties requiredProps) const {
+    return nullptr;
+}
+
 #endif

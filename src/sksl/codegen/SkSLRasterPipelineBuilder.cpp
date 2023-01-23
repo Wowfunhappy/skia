@@ -9,7 +9,7 @@
 #include "include/private/SkSLString.h"
 #include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkTo.h"
-#include "src/core/SkArenaAlloc.h"
+#include "src/base/SkArenaAlloc.h"
 #include "src/core/SkOpts.h"
 #include "src/core/SkRasterPipelineOpContexts.h"
 #include "src/core/SkRasterPipelineOpList.h"
@@ -34,6 +34,12 @@ namespace SkSL {
 namespace RP {
 
 using RPOp = SkRasterPipelineOp;
+
+#define ALL_SINGLE_SLOT_UNARY_OP_CASES  \
+         BuilderOp::cos_float:          \
+    case BuilderOp::sin_float:          \
+    case BuilderOp::sqrt_float:         \
+    case BuilderOp::tan_float
 
 #define ALL_MULTI_SLOT_UNARY_OP_CASES        \
          BuilderOp::abs_float:               \
@@ -81,6 +87,7 @@ using RPOp = SkRasterPipelineOp;
 
 void Builder::unary_op(BuilderOp op, int32_t slots) {
     switch (op) {
+        case ALL_SINGLE_SLOT_UNARY_OP_CASES:
         case ALL_MULTI_SLOT_UNARY_OP_CASES:
             fInstructions.push_back({op, {}, slots});
             break;
@@ -237,15 +244,39 @@ void Builder::push_duplicates(int count) {
     }
 }
 
-static int pack_nybbles(SkSpan<const int8_t> components) {
-    // Pack up to 8 elements into nybbles, in reverse order.
-    int packed = 0;
-    for (auto iter = components.rbegin(); iter != components.rend(); ++iter) {
-        SkASSERT(*iter >= 0 && *iter <= 0xF);
-        packed <<= 4;
-        packed |= *iter;
+void Builder::pop_slots_unmasked(SlotRange dst) {
+    SkASSERT(dst.count >= 0);
+
+    SkTArray<Instruction> constantsToPush;
+    while (!fInstructions.empty() && dst.count > 0) {
+        Instruction& lastInstruction = fInstructions.back();
+
+        // If the last instructions is pushing a constant, we can save a step by copying those
+        // constants directly into the destination slot.
+        if (lastInstruction.fOp == BuilderOp::push_literal_f) {
+            int immValue = lastInstruction.fImmA;
+            fInstructions.pop_back();
+
+            // We need to fill the _last_ slot of the passed-in slot range.
+            Slot dstSlot = dst.index + dst.count - 1;
+            constantsToPush.push_back({BuilderOp::copy_constant, {dstSlot}, immValue});
+            --dst.count;
+            continue;
+        }
+
+        break;
     }
-    return packed;
+
+    // Append our constant-push instructions (if any) to the instruction list. Reverse their order
+    // so that they run forwards in memory.
+    for (int index = constantsToPush.size(); index--;) {
+        fInstructions.push_back(constantsToPush[index]);
+    }
+
+    if (dst.count > 0) {
+        this->copy_stack_to_slots_unmasked(dst);
+        this->discard_stack(dst.count);
+    }
 }
 
 void Builder::copy_stack_to_slots(SlotRange dst, int offsetFromStackTop) {
@@ -267,6 +298,58 @@ void Builder::copy_stack_to_slots(SlotRange dst, int offsetFromStackTop) {
 
     fInstructions.push_back({BuilderOp::copy_stack_to_slots, {dst.index},
                              dst.count, offsetFromStackTop});
+}
+
+void Builder::pop_return_mask() {
+    // This instruction is going to overwrite the return mask. If the previous instruction was
+    // masking off the return mask, that's wasted work and it can be eliminated.
+    if (!fInstructions.empty()) {
+        Instruction& lastInstruction = fInstructions.back();
+
+        if (lastInstruction.fOp == BuilderOp::mask_off_return_mask) {
+            fInstructions.pop_back();
+        }
+    }
+
+    fInstructions.push_back({BuilderOp::pop_return_mask, {}});
+}
+
+void Builder::zero_slots_unmasked(SlotRange dst) {
+    if (!fInstructions.empty()) {
+        Instruction& lastInstruction = fInstructions.back();
+
+        if (lastInstruction.fOp == BuilderOp::zero_slot_unmasked) {
+            if (lastInstruction.fSlotA + lastInstruction.fImmA == dst.index) {
+                // The previous instruction was zeroing the range immediately before this range.
+                // Combine the ranges.
+                lastInstruction.fImmA += dst.count;
+                return;
+            }
+        }
+
+        if (lastInstruction.fOp == BuilderOp::zero_slot_unmasked) {
+            if (lastInstruction.fSlotA == dst.index + dst.count) {
+                // The previous instruction was zeroing the range immediately after this range.
+                // Combine the ranges.
+                lastInstruction.fSlotA = dst.index;
+                lastInstruction.fImmA += dst.count;
+                return;
+            }
+        }
+    }
+
+    fInstructions.push_back({BuilderOp::zero_slot_unmasked, {dst.index}, dst.count});
+}
+
+static int pack_nybbles(SkSpan<const int8_t> components) {
+    // Pack up to 8 elements into nybbles, in reverse order.
+    int packed = 0;
+    for (auto iter = components.rbegin(); iter != components.rend(); ++iter) {
+        SkASSERT(*iter >= 0 && *iter <= 0xF);
+        packed <<= 4;
+        packed |= *iter;
+    }
+    return packed;
 }
 
 void Builder::swizzle(int consumedSlots, SkSpan<const int8_t> elementSpan) {
@@ -440,6 +523,7 @@ static int stack_usage(const Instruction& inst) {
             int generated = inst.fImmA & 0xFFFF;
             return generated - consumed;
         }
+        case ALL_SINGLE_SLOT_UNARY_OP_CASES:
         case ALL_MULTI_SLOT_UNARY_OP_CASES:
         default:
             return 0;
@@ -549,6 +633,15 @@ void Program::appendCopyConstants(SkTArray<Stage>* pipeline,
                      dst, /*dstStride=*/SkOpts::raster_pipeline_highp_stride,
                      src, /*srcStride=*/1,
                      numSlots);
+}
+
+void Program::appendSingleSlotUnaryOp(SkTArray<Stage>* pipeline, SkRasterPipelineOp stage,
+                                      float* dst, int numSlots) {
+    SkASSERT(numSlots >= 0);
+    while (numSlots--) {
+        pipeline->push_back({stage, dst});
+        dst += SkOpts::raster_pipeline_highp_stride;
+    }
 }
 
 void Program::appendMultiSlotUnaryOp(SkTArray<Stage>* pipeline, SkRasterPipelineOp baseStage,
@@ -764,6 +857,11 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                 pipeline->push_back({RPOp::store_masked, SlotA()});
                 break;
 
+            case ALL_SINGLE_SLOT_UNARY_OP_CASES: {
+                float* dst = tempStackPtr - (inst.fImmA * N);
+                this->appendSingleSlotUnaryOp(pipeline, (RPOp)inst.fOp, dst, inst.fImmA);
+                break;
+            }
             case ALL_MULTI_SLOT_UNARY_OP_CASES: {
                 float* dst = tempStackPtr - (inst.fImmA * N);
                 this->appendMultiSlotUnaryOp(pipeline, (RPOp)inst.fOp, dst, inst.fImmA);
@@ -906,8 +1004,9 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                 pipeline->push_back({RPOp::mask_off_return_mask, nullptr});
                 break;
 
+            case BuilderOp::copy_constant:
             case BuilderOp::push_literal_f: {
-                float* dst = tempStackPtr;
+                float* dst = (inst.fOp == BuilderOp::push_literal_f) ? tempStackPtr : SlotA();
                 if (inst.fImmA == 0) {
                     pipeline->push_back({RPOp::zero_slot_unmasked, dst});
                     break;
@@ -1270,7 +1369,11 @@ void Program::dump(SkWStream* out) {
             case RPOp::cast_to_int_from_float: case RPOp::cast_to_uint_from_float:
             case RPOp::abs_float:              case RPOp::abs_int:
             case RPOp::ceil_float:
+            case RPOp::cos_float:
             case RPOp::floor_float:
+            case RPOp::sin_float:
+            case RPOp::sqrt_float:
+            case RPOp::tan_float:
                 opArg1 = PtrCtx(stage.ctx, 1);
                 break;
 
@@ -1637,6 +1740,22 @@ void Program::dump(SkWStream* out) {
             case RPOp::ceil_3_floats:
             case RPOp::ceil_4_floats:
                 opText = opArg1 + " = ceil(" + opArg1 + ")";
+                break;
+
+            case RPOp::cos_float:
+                opText = opArg1 + " = cos(" + opArg1 + ")";
+                break;
+
+            case RPOp::sin_float:
+                opText = opArg1 + " = sin(" + opArg1 + ")";
+                break;
+
+            case RPOp::sqrt_float:
+                opText = opArg1 + " = sqrt(" + opArg1 + ")";
+                break;
+
+            case RPOp::tan_float:
+                opText = opArg1 + " = tan(" + opArg1 + ")";
                 break;
 
             case RPOp::floor_float:
