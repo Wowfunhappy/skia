@@ -148,7 +148,7 @@ void Builder::discard_stack(int32_t count) {
                 }
                 continue;
 
-            case BuilderOp::push_literal_f:
+            case BuilderOp::push_literal:
             case BuilderOp::push_condition_mask:
             case BuilderOp::push_loop_mask:
             case BuilderOp::push_return_mask:
@@ -225,6 +225,15 @@ void Builder::push_uniform(SlotRange src) {
 }
 
 void Builder::push_duplicates(int count) {
+    if (!fInstructions.empty()) {
+        Instruction& lastInstruction = fInstructions.back();
+
+        // If the previous op is pushing a zero, we can just push more of them.
+        if (lastInstruction.fOp == BuilderOp::push_zeros) {
+            lastInstruction.fImmA += count;
+            return;
+        }
+    }
     SkASSERT(count >= 0);
     if (count >= 3) {
         // Use a swizzle to splat the input into a 4-slot value.
@@ -247,32 +256,53 @@ void Builder::push_duplicates(int count) {
 void Builder::pop_slots_unmasked(SlotRange dst) {
     SkASSERT(dst.count >= 0);
 
-    SkTArray<Instruction> constantsToPush;
+    SkTArray<int32_t> constantsToPush;
     while (!fInstructions.empty() && dst.count > 0) {
         Instruction& lastInstruction = fInstructions.back();
 
         // If the last instructions is pushing a constant, we can save a step by copying those
         // constants directly into the destination slot.
-        if (lastInstruction.fOp == BuilderOp::push_literal_f) {
+        if (lastInstruction.fOp == BuilderOp::push_literal) {
             int immValue = lastInstruction.fImmA;
             fInstructions.pop_back();
 
             // We need to fill the _last_ slot of the passed-in slot range.
-            Slot dstSlot = dst.index + dst.count - 1;
-            constantsToPush.push_back({BuilderOp::copy_constant, {dstSlot}, immValue});
-            --dst.count;
+            constantsToPush.push_back(immValue);
+            continue;
+        }
+
+        // If the last instruction is pushing a zero, we can save a step by directly zeroing out
+        // the destination slot.
+        if (lastInstruction.fOp == BuilderOp::push_zeros) {
+            lastInstruction.fImmA--;
+            if (lastInstruction.fImmA == 0) {
+                fInstructions.pop_back();
+            }
+
+            // We need to zero the _last_ slot of the passed-in slot range.
+            constantsToPush.push_back(0);
             continue;
         }
 
         break;
     }
 
-    // Append our constant-push instructions (if any) to the instruction list. Reverse their order
-    // so that they run forwards in memory.
-    for (int index = constantsToPush.size(); index--;) {
-        fInstructions.push_back(constantsToPush[index]);
+    if (!constantsToPush.empty()) {
+        // Write constants directly to their destination (avoiding a trip through the stack).
+        dst.count -= constantsToPush.size();
+        Slot constantWriteSlot = dst.index + dst.count;
+
+        for (int index = constantsToPush.size(); index--;) {
+            int constantValue = constantsToPush[index];
+            if (constantValue != 0) {
+                this->copy_constant(constantWriteSlot++, constantValue);
+            } else {
+                this->zero_slots_unmasked({constantWriteSlot++, 1});
+            }
+        }
     }
 
+    // Copy non-constants from the stack to their destination.
     if (dst.count > 0) {
         this->copy_stack_to_slots_unmasked(dst);
         this->discard_stack(dst.count);
@@ -280,6 +310,12 @@ void Builder::pop_slots_unmasked(SlotRange dst) {
 }
 
 void Builder::copy_stack_to_slots(SlotRange dst, int offsetFromStackTop) {
+    // If the execution mask is known to be all-true, then we can ignore the write mask.
+    if (!this->executionMaskWritesAreEnabled()) {
+        this->copy_stack_to_slots_unmasked(dst, offsetFromStackTop);
+        return;
+    }
+
     // If the last instruction copied the previous stack slots, just extend it.
     if (!fInstructions.empty()) {
         Instruction& lastInstruction = fInstructions.back();
@@ -300,7 +336,30 @@ void Builder::copy_stack_to_slots(SlotRange dst, int offsetFromStackTop) {
                              dst.count, offsetFromStackTop});
 }
 
+void Builder::copy_stack_to_slots_unmasked(SlotRange dst, int offsetFromStackTop) {
+    // If the last instruction copied the previous stack slots, just extend it.
+    if (!fInstructions.empty()) {
+        Instruction& lastInstruction = fInstructions.back();
+
+        // If the last op is copy-stack-to-slots-unmasked...
+        if (lastInstruction.fOp == BuilderOp::copy_stack_to_slots_unmasked &&
+            // and this op's destination is immediately after the last copy-slots-op's destination
+            lastInstruction.fSlotA + lastInstruction.fImmA == dst.index &&
+            // and this op's source is immediately after the last copy-slots-op's source
+            lastInstruction.fImmB - lastInstruction.fImmA == offsetFromStackTop) {
+            // then we can just extend the copy!
+            lastInstruction.fImmA += dst.count;
+            return;
+        }
+    }
+
+    fInstructions.push_back({BuilderOp::copy_stack_to_slots_unmasked, {dst.index},
+                             dst.count, offsetFromStackTop});
+}
+
 void Builder::pop_return_mask() {
+    SkASSERT(this->executionMaskWritesAreEnabled());
+
     // This instruction is going to overwrite the return mask. If the previous instruction was
     // masking off the return mask, that's wasted work and it can be eliminated.
     if (!fInstructions.empty()) {
@@ -473,6 +532,9 @@ void Builder::matrix_resize(int origColumns, int origRows, int newColumns, int n
 std::unique_ptr<Program> Builder::finish(int numValueSlots,
                                          int numUniformSlots,
                                          SkRPDebugTrace* debugTrace) {
+    // Verify that calls to enableExecutionMaskWrites and disableExecutionMaskWrites are balanced.
+    SkASSERT(fExecutionMaskWritesEnabled == 0);
+
     return std::make_unique<Program>(std::move(fInstructions), numValueSlots, numUniformSlots,
                                      fNumLabels, fNumBranches, debugTrace);
 }
@@ -483,7 +545,7 @@ void Program::optimize() {
 
 static int stack_usage(const Instruction& inst) {
     switch (inst.fOp) {
-        case BuilderOp::push_literal_f:
+        case BuilderOp::push_literal:
         case BuilderOp::push_condition_mask:
         case BuilderOp::push_loop_mask:
         case BuilderOp::push_return_mask:
@@ -1005,12 +1067,8 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                 break;
 
             case BuilderOp::copy_constant:
-            case BuilderOp::push_literal_f: {
-                float* dst = (inst.fOp == BuilderOp::push_literal_f) ? tempStackPtr : SlotA();
-                if (inst.fImmA == 0) {
-                    pipeline->push_back({RPOp::zero_slot_unmasked, dst});
-                    break;
-                }
+            case BuilderOp::push_literal: {
+                float* dst = (inst.fOp == BuilderOp::push_literal) ? tempStackPtr : SlotA();
                 int* constantPtr;
                 if (int** lookup = constantLookupMap.find(inst.fImmA)) {
                     constantPtr = *lookup;

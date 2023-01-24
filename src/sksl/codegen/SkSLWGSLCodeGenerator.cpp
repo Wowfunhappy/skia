@@ -48,6 +48,7 @@
 #include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
+#include "src/sksl/ir/SkSLStructDefinition.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 #include "src/sksl/ir/SkSLType.h"
@@ -124,9 +125,17 @@ std::string to_wgsl_type(const Type& type) {
     switch (type.typeKind()) {
         case Type::TypeKind::kScalar:
             return std::string(to_scalar_type(type));
-        case Type::TypeKind::kVector:
-            return "vec" + std::to_string(type.columns()) + "<" +
-                   std::string(to_scalar_type(type.componentType())) + ">";
+        case Type::TypeKind::kVector: {
+            std::string_view ct = to_scalar_type(type.componentType());
+            return String::printf("vec%d<%.*s>", type.columns(), (int)ct.length(), ct.data());
+        }
+        case Type::TypeKind::kArray: {
+            std::string elementType = to_wgsl_type(type.componentType());
+            if (type.isUnsizedArray()) {
+                return String::printf("array<%s>", elementType.c_str());
+            }
+            return String::printf("array<%s, %d>", elementType.c_str(), type.columns());
+        }
         default:
             break;
     }
@@ -394,6 +403,11 @@ int count_pipeline_inputs(const Program* program) {
     return inputCount;
 }
 
+static bool is_in_global_uniforms(const Variable& var) {
+    SkASSERT(var.storage() == VariableStorage::kGlobal);
+    return var.modifiers().fFlags & Modifiers::kUniform_Flag && !var.type().isOpaque();
+}
+
 }  // namespace
 
 bool WGSLCodeGenerator::generateCode() {
@@ -407,10 +421,10 @@ bool WGSLCodeGenerator::generateCode() {
     {
         AutoOutputStream outputToHeader(this, &header, &fIndentation);
         // TODO(skia:13092): Implement the following:
-        // - struct definitions
         // - global uniform/storage resource declarations, including interface blocks.
         this->writeStageInputStruct();
         this->writeStageOutputStruct();
+        this->writeNonBlockUniformsForTests();
     }
     StringStream body;
     {
@@ -473,6 +487,14 @@ void WGSLCodeGenerator::writeName(std::string_view name) {
     this->write(name);
 }
 
+void WGSLCodeGenerator::writeVariableDecl(const Type& type,
+                                          std::string_view name,
+                                          Delimiter delimiter) {
+    this->writeName(name);
+    this->write(": " + to_wgsl_type(type));
+    this->writeLine(delimiter_to_str(delimiter));
+}
+
 void WGSLCodeGenerator::writePipelineIODeclaration(Modifiers modifiers,
                                                    const Type& type,
                                                    std::string_view name,
@@ -513,9 +535,7 @@ void WGSLCodeGenerator::writeUserDefinedIODecl(const Type& type,
         this->write("@interpolate(flat) ");
     }
 
-    this->writeName(name);
-    this->write(": " + to_wgsl_type(type));
-    this->writeLine(delimiter_to_str(delimiter));
+    this->writeVariableDecl(type, name, delimiter);
 }
 
 void WGSLCodeGenerator::writeBuiltinIODecl(const Type& type,
@@ -873,6 +893,8 @@ void WGSLCodeGenerator::writeVariableReference(const VariableReference& r) {
             this->write("_stageIn.");
         } else if (v.modifiers().fFlags & Modifiers::kOut_Flag) {
             this->write("(*_stageOut).");
+        } else if (is_in_global_uniforms(v)) {
+            this->write("_globalUniforms.");
         }
     }
 
@@ -922,16 +944,14 @@ void WGSLCodeGenerator::writeProgramElement(const ProgramElement& e) {
             // WGSL extensions aside from the hypotheticals listed in the spec.
             break;
         case ProgramElement::Kind::kGlobalVar:
-            // All global declarations are handled explicitly as the "program header" in
-            // generateCode().
+            this->writeGlobalVarDeclaration(e.as<GlobalVarDeclaration>());
             break;
         case ProgramElement::Kind::kInterfaceBlock:
             // All interface block declarations are handled explicitly as the "program header" in
             // generateCode().
             break;
         case ProgramElement::Kind::kStructDefinition:
-            // All struct type declarations are handled explicitly as the "program header" in
-            // generateCode().
+            this->writeStructDefinition(e.as<StructDefinition>());
             break;
         case ProgramElement::Kind::kFunctionPrototype:
             // A WGSL function declaration must contain its body and the function name is in scope
@@ -946,6 +966,40 @@ void WGSLCodeGenerator::writeProgramElement(const ProgramElement& e) {
         default:
             SkDEBUGFAILF("unsupported program element: %s\n", e.description().c_str());
             break;
+    }
+}
+
+void WGSLCodeGenerator::writeGlobalVarDeclaration(const GlobalVarDeclaration& d) {
+    const Variable& var = *d.declaration()->as<VarDeclaration>().var();
+    if ((var.modifiers().fFlags & (Modifiers::kIn_Flag | Modifiers::kOut_Flag)) ||
+        is_in_global_uniforms(var)) {
+        // Pipeline stage I/O parameters and top-level (non-block) uniforms are handled specially
+        // in generateCode().
+        return;
+    }
+
+    // TODO(skia:13092): Implement workgroup variable decoration
+    this->write("var<private> ");
+    this->writeVariableDecl(var.type(), var.name(), Delimiter::kSemicolon);
+}
+
+void WGSLCodeGenerator::writeStructDefinition(const StructDefinition& s) {
+    const Type& type = s.type();
+    this->writeLine("struct " + type.displayName() + " {");
+    fIndentation++;
+    this->writeFields(SkSpan(type.fields()), type.fPosition);
+    fIndentation--;
+    this->writeLine("};");
+}
+
+void WGSLCodeGenerator::writeFields(SkSpan<const Type::Field> fields,
+                                    Position parentPos,
+                                    const MemoryLayout*) {
+    // TODO(skia:13092): Check alignment against `layout` constraints, if present. A layout
+    // constraint will be specified for interface blocks and for structs that appear in a block.
+    for (const Type::Field& field : fields) {
+        const Type* fieldType = field.fType;
+        this->writeVariableDecl(*fieldType, field.fName, Delimiter::kComma);
     }
 }
 
@@ -1070,6 +1124,31 @@ void WGSLCodeGenerator::writeStageOutputStruct() {
     // sk_PointSize when using the Dawn backend.
     if (ProgramConfig::IsVertex(fProgram.fConfig->fKind) && requiresPointSizeBuiltin) {
         this->writeLine("/* unsupported */ var<private> sk_PointSize: f32;");
+    }
+}
+
+void WGSLCodeGenerator::writeNonBlockUniformsForTests() {
+    for (const ProgramElement* e : fProgram.elements()) {
+        if (e->is<GlobalVarDeclaration>()) {
+            const GlobalVarDeclaration& decls = e->as<GlobalVarDeclaration>();
+            const Variable& var = *decls.varDeclaration().var();
+            if (is_in_global_uniforms(var)) {
+                if (!fDeclaredUniformsStruct) {
+                    this->write("struct _GlobalUniforms {\n");
+                    fDeclaredUniformsStruct = true;
+                }
+                this->write("    ");
+                this->writeVariableDecl(var.type(), var.mangledName(), Delimiter::kComma);
+            }
+        }
+    }
+    if (fDeclaredUniformsStruct) {
+        int binding = fProgram.fConfig->fSettings.fDefaultUniformBinding;
+        int set = fProgram.fConfig->fSettings.fDefaultUniformSet;
+        this->write("};\n");
+        this->write("@binding(" + std::to_string(binding) + ") ");
+        this->write("@group(" + std::to_string(set) + ") ");
+        this->writeLine("var<uniform> _globalUniforms: _GlobalUniforms;");
     }
 }
 
