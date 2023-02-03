@@ -26,31 +26,6 @@
 #include "src/gpu/graphite/PaintParamsKey.h"
 #endif
 
-namespace {
-
-struct LocalMatrixStageRec final : public SkStageRec {
-    LocalMatrixStageRec(const SkStageRec& rec, const SkMatrix& lm)
-        : INHERITED(rec) {
-        if (!lm.isIdentity()) {
-            if (fLocalM) {
-                fStorage = SkShaderBase::ConcatLocalMatrices(*rec.fLocalM, lm);
-                fLocalM = fStorage.isIdentity() ? nullptr : &fStorage;
-            } else {
-                fLocalM = &lm;
-            }
-        }
-    }
-
-private:
-    SkMatrix fStorage;
-
-    using INHERITED = SkStageRec;
-};
-
-} // namespace
-
-///////////////////////////////////////////////////////////////////////////////
-
 class SkShader_Blend final : public SkShaderBase {
 public:
     SkShader_Blend(SkBlendMode mode, sk_sp<SkShader> dst, sk_sp<SkShader> src)
@@ -71,10 +46,15 @@ public:
 protected:
     SkShader_Blend(SkReadBuffer&);
     void flatten(SkWriteBuffer&) const override;
-    bool onAppendStages(const SkStageRec&) const override;
-    skvm::Color onProgram(skvm::Builder*, skvm::Coord device, skvm::Coord local, skvm::Color paint,
-                          const SkMatrixProvider&, const SkMatrix* localM, const SkColorInfo& dst,
-                          skvm::Uniforms*, SkArenaAlloc*) const override;
+    bool appendStages(const SkStageRec&, const MatrixRec&) const override;
+    skvm::Color program(skvm::Builder*,
+                        skvm::Coord device,
+                        skvm::Coord local,
+                        skvm::Color paint,
+                        const MatrixRec& mRec,
+                        const SkColorInfo& dst,
+                        skvm::Uniforms*,
+                        SkArenaAlloc*) const override;
 
 private:
     friend void ::SkRegisterComposeShaderFlattenable();
@@ -116,25 +96,39 @@ void SkShader_Blend::flatten(SkWriteBuffer& buffer) const {
 }
 
 // Returns the output of e0, and leaves the output of e1 in r,g,b,a
-static float* append_two_shaders(const SkStageRec& rec, SkShader* s0, SkShader* s1) {
+static float* append_two_shaders(const SkStageRec& rec,
+                                 const SkShaderBase::MatrixRec& mRec,
+                                 SkShader* s0,
+                                 SkShader* s1) {
     struct Storage {
-        float   fRes0[4 * SkRasterPipeline_kMaxStride];
+        float   fCoords[2 * SkRasterPipeline_kMaxStride];
+        float   fRes0  [4 * SkRasterPipeline_kMaxStride];
     };
     auto storage = rec.fAlloc->make<Storage>();
 
-    if (!as_SB(s0)->appendStages(rec)) {
+    // Note we cannot simply apply mRec here and then unconditionally store the coordinates. When
+    // building for Android Framework it would interrupt the backwards local matrix concatenation if
+    // mRec had a pending local matrix and either of the children also had a local matrix.
+    // b/256873449
+    if (mRec.rasterPipelineCoordsAreSeeded()) {
+        rec.fPipeline->append(SkRasterPipelineOp::store_src_rg, storage->fCoords);
+    }
+    if (!as_SB(s0)->appendStages(rec, mRec)) {
         return nullptr;
     }
     rec.fPipeline->append(SkRasterPipelineOp::store_src, storage->fRes0);
 
-    if (!as_SB(s1)->appendStages(rec)) {
+    if (mRec.rasterPipelineCoordsAreSeeded()) {
+        rec.fPipeline->append(SkRasterPipelineOp::load_src_rg, storage->fCoords);
+    }
+    if (!as_SB(s1)->appendStages(rec, mRec)) {
         return nullptr;
     }
     return storage->fRes0;
 }
 
-bool SkShader_Blend::onAppendStages(const SkStageRec& rec) const {
-    float* res0 = append_two_shaders(rec, fDst.get(), fSrc.get());
+bool SkShader_Blend::appendStages(const SkStageRec& rec, const MatrixRec& mRec) const {
+    float* res0 = append_two_shaders(rec, mRec, fDst.get(), fSrc.get());
     if (!res0) {
         return false;
     }
@@ -144,14 +138,17 @@ bool SkShader_Blend::onAppendStages(const SkStageRec& rec) const {
     return true;
 }
 
-skvm::Color SkShader_Blend::onProgram(skvm::Builder* p,
-                                      skvm::Coord device, skvm::Coord local, skvm::Color paint,
-                                      const SkMatrixProvider& mats, const SkMatrix* localM,
-                                      const SkColorInfo& cinfo,
-                                      skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const {
+skvm::Color SkShader_Blend::program(skvm::Builder* p,
+                                    skvm::Coord device,
+                                    skvm::Coord local,
+                                    skvm::Color paint,
+                                    const MatrixRec& mRec,
+                                    const SkColorInfo& cinfo,
+                                    skvm::Uniforms* uniforms,
+                                    SkArenaAlloc* alloc) const {
     skvm::Color d,s;
-    if ((d = as_SB(fDst)->program(p, device,local, paint, mats,localM, cinfo, uniforms,alloc)) &&
-        (s = as_SB(fSrc)->program(p, device,local, paint, mats,localM, cinfo, uniforms,alloc))) {
+    if ((d = as_SB(fDst)->program(p, device, local, paint, mRec, cinfo, uniforms, alloc)) &&
+        (s = as_SB(fSrc)->program(p, device, local, paint, mRec, cinfo, uniforms, alloc))) {
         return p->blend(fMode, s,d);
     }
     return {};

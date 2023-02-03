@@ -8,7 +8,7 @@
 #ifndef SkUtils_DEFINED
 #define SkUtils_DEFINED
 
-#include "include/core/SkTypes.h"
+#include "include/private/base/SkAttributes.h"
 
 #include <type_traits> // is_trivially_copyable
 
@@ -44,6 +44,7 @@ static SK_ALWAYS_INLINE void sk_unaligned_store(P* ptr, T val) {
     memcpy(ptr, &val, sizeof(val));
 }
 
+// Copy the bytes from src into an instance of type Dst and return it.
 template <typename Dst, typename Src>
 static SK_ALWAYS_INLINE Dst sk_bit_cast(const Src& src) {
     static_assert(sizeof(Dst) == sizeof(Src));

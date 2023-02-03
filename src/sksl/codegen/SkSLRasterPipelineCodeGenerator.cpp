@@ -27,6 +27,7 @@
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLBreakStatement.h"
+#include "src/sksl/ir/SkSLChildCall.h"
 #include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLConstructorCompound.h"
 #include "src/sksl/ir/SkSLConstructorDiagonalMatrix.h"
@@ -86,14 +87,19 @@ public:
                           Position pos,
                           bool isFunctionReturnValue);
 
-    /** Implements low-level slot creation; slots will not be known to the debugger. */
-    SlotRange createSlots(int slots);
-
     /** Creates slots associated with an SkSL variable or return value. */
     SlotRange createSlots(std::string name,
                           const Type& type,
                           Position pos,
                           bool isFunctionReturnValue);
+
+    /**
+     * Creates a single temporary slot for scratch storage. Temporary slots can be recycled, which
+     * frees them up for reuse. Temporary slots are not assigned a name and have an arbitrary type.
+     */
+    SlotRange createTemporarySlot(const Type& type);
+    void recycleTemporarySlot(SlotRange temporarySlot);
+
 
     /** Looks up the slots associated with an SkSL variable; creates the slot if necessary. */
     SlotRange getVariableSlots(const Variable& v);
@@ -109,9 +115,49 @@ public:
     int slotCount() const { return fSlotCount; }
 
 private:
+    std::string makeTempName() { return SkSL::String::printf("[temporary %d]", fTemporaryCount++); }
+
     SkTHashMap<const IRNode*, SlotRange> fSlotMap;
+    SkTArray<Slot> fRecycledSlots;
     int fSlotCount = 0;
+    int fTemporaryCount = 0;
     std::vector<SlotDebugInfo>* fSlotDebugInfo;
+};
+
+class AutoContinueMask {
+public:
+    AutoContinueMask() = default;
+
+    ~AutoContinueMask() {
+        if (fSlotRange) {
+            fSlotManager->recycleTemporarySlot(*fSlotRange);
+            *fSlotRange = fPreviousSlotRange;
+        }
+    }
+
+    void enable(SlotManager* mgr, const Type& type, SlotRange* range) {
+        fSlotManager = mgr;
+        fSlotRange = range;
+        fPreviousSlotRange = *fSlotRange;
+        *fSlotRange = fSlotManager->createTemporarySlot(type);
+    }
+
+    void enterLoopBody(Builder& builder) {
+        if (fSlotRange) {
+            builder.zero_slots_unmasked(*fSlotRange);
+        }
+    }
+
+    void exitLoopBody(Builder& builder) {
+        if (fSlotRange) {
+            builder.reenable_loop_mask(*fSlotRange);
+        }
+    }
+
+private:
+    SlotManager* fSlotManager = nullptr;
+    SlotRange* fSlotRange = nullptr;
+    SlotRange fPreviousSlotRange;
 };
 
 class Generator {
@@ -172,9 +218,11 @@ public:
     [[nodiscard]] bool writeContinueStatement(const ContinueStatement& b);
     [[nodiscard]] bool writeDoStatement(const DoStatement& d);
     [[nodiscard]] bool writeExpressionStatement(const ExpressionStatement& e);
+    [[nodiscard]] bool writeMasklessForStatement(const ForStatement& f);
     [[nodiscard]] bool writeForStatement(const ForStatement& f);
     [[nodiscard]] bool writeGlobals();
     [[nodiscard]] bool writeIfStatement(const IfStatement& i);
+    [[nodiscard]] bool writeDynamicallyUniformIfStatement(const IfStatement& i);
     [[nodiscard]] bool writeReturnStatement(const ReturnStatement& r);
     [[nodiscard]] bool writeVarDeclaration(const VarDeclaration& v);
 
@@ -183,6 +231,7 @@ public:
     [[nodiscard]] bool pushBinaryExpression(const Expression& left,
                                             Operator op,
                                             const Expression& right);
+    [[nodiscard]] bool pushChildCall(const ChildCall& c);
     [[nodiscard]] bool pushConstructorCast(const AnyConstructor& c);
     [[nodiscard]] bool pushConstructorCompound(const ConstructorCompound& c);
     [[nodiscard]] bool pushConstructorDiagonalMatrix(const ConstructorDiagonalMatrix& c);
@@ -209,6 +258,9 @@ public:
     [[nodiscard]] bool pushTernaryExpression(const Expression& test,
                                              const Expression& ifTrue,
                                              const Expression& ifFalse);
+    [[nodiscard]] bool pushDynamicallyUniformTernaryExpression(const Expression& test,
+                                                               const Expression& ifTrue,
+                                                               const Expression& ifFalse);
     [[nodiscard]] bool pushVariableReference(const VariableReference& v);
 
     /** Pops an expression from the value stack and copies it into slots. */
@@ -258,10 +310,6 @@ public:
     }
     BuilderOp getTypedOp(const SkSL::Type& type, const TypedOps& ops) const;
 
-    std::string makeMaskName(const char* name) {
-        return SkSL::String::printf("[%s %d]", name, fTempNameIndex++);
-    }
-
     bool needsReturnMask() {
         Analysis::ReturnComplexity* complexity = fReturnComplexityMap.find(fCurrentFunction);
         if (!complexity) {
@@ -289,15 +337,15 @@ private:
     const SkSL::Program& fProgram;
     Builder fBuilder;
     SkRPDebugTrace* fDebugTrace = nullptr;
+    SkTHashMap<const Variable*, int> fChildEffectMap;
 
     SlotManager fProgramSlots;
     SlotManager fUniformSlots;
 
-    SkTArray<SlotRange> fFunctionStack;
     const FunctionDefinition* fCurrentFunction = nullptr;
+    SlotRange fCurrentFunctionResult;
     SlotRange fCurrentContinueMask;
     int fCurrentTempStack = 0;
-    int fTempNameIndex = 0;
 
     SkTHashMap<const FunctionDefinition*, Analysis::ReturnComplexity> fReturnComplexityMap;
 
@@ -584,10 +632,38 @@ void SlotManager::addSlotDebugInfo(const std::string& varName,
     SkASSERT((size_t)groupIndex == type.slotCount());
 }
 
-SlotRange SlotManager::createSlots(int slots) {
-    SlotRange range = {fSlotCount, slots};
-    fSlotCount += slots;
-    return range;
+SlotRange SlotManager::createTemporarySlot(const Type& type) {
+    SkASSERT(type.slotCount() == 1);
+
+    // If we have an available slot to reclaim, take it now.
+    if (!fRecycledSlots.empty()) {
+        SlotRange result = {fRecycledSlots.back(), 1};
+        fRecycledSlots.pop_back();
+        return result;
+    }
+
+    // Synthesize a new temporary slot.
+    if (fSlotDebugInfo) {
+        // Our debug slot-info table should have the same length as the actual slot table.
+        SkASSERT(fSlotDebugInfo->size() == (size_t)fSlotCount);
+
+        // Add this temporary slot to the debug slot-info table. It's just scratch space which can
+        // be reused over the course of execution, so it doesn't get a name or type (uint will do).
+        this->addSlotDebugInfo(this->makeTempName(), type, Position{},
+                               /*isFunctionReturnValue=*/false);
+
+        // Confirm that we added the expected number of slots.
+        SkASSERT(fSlotDebugInfo->size() == (size_t)(fSlotCount + 1));
+    }
+
+    SlotRange result = {fSlotCount, 1};
+    ++fSlotCount;
+    return result;
+}
+
+void SlotManager::recycleTemporarySlot(SlotRange temporarySlot) {
+    SkASSERT(temporarySlot.count == 1);
+    fRecycledSlots.push_back(temporarySlot.index);
 }
 
 SlotRange SlotManager::createSlots(std::string name,
@@ -610,7 +686,9 @@ SlotRange SlotManager::createSlots(std::string name,
         SkASSERT(fSlotDebugInfo->size() == (size_t)(fSlotCount + nslots));
     }
 
-    return this->createSlots(nslots);
+    SlotRange result = {fSlotCount, (int)nslots};
+    fSlotCount += nslots;
+    return result;
 }
 
 SlotRange SlotManager::getVariableSlots(const Variable& v) {
@@ -673,14 +751,15 @@ std::optional<SlotRange> Generator::writeFunction(const IRNode& callSite,
         // TODO(debugger): add trace for function-enter
     }
 
-    fFunctionStack.push_back(this->getFunctionSlots(callSite, function.declaration()));
+    SlotRange lastFunctionResult = fCurrentFunctionResult;
+    fCurrentFunctionResult = this->getFunctionSlots(callSite, function.declaration());
 
     if (!this->writeStatement(*function.body())) {
         return std::nullopt;
     }
 
-    SlotRange functionResult = fFunctionStack.back();
-    fFunctionStack.pop_back();
+    SlotRange functionResult = fCurrentFunctionResult;
+    fCurrentFunctionResult = lastFunctionResult;
 
     if (fDebugTrace) {
         // TODO(debugger): add trace for function-exit
@@ -697,8 +776,11 @@ bool Generator::writeGlobals() {
             const Variable* var = decl.var();
 
             if (var->type().isEffectChild()) {
-                // TODO(skia:13676): handle child effects
-                return unsupported();
+                // Associate each child effect variable with its numeric index.
+                SkASSERT(!fChildEffectMap.find(var));
+                int childEffectIndex = fChildEffectMap.count();
+                fChildEffectMap[var] = childEffectIndex;
+                continue;
             }
 
             // Opaque types include child processors and GL objects (samplers, textures, etc).
@@ -799,21 +881,26 @@ bool Generator::writeDoStatement(const DoStatement& d) {
     fBuilder.enableExecutionMaskWrites();
     fBuilder.push_loop_mask();
 
-    // Create a dedicated slot for continue-mask storage.
-    SlotRange previousContinueMask = fCurrentContinueMask;
-    fCurrentContinueMask = fProgramSlots.createSlots(this->makeMaskName("do-loop continue mask"),
-                                                     *fProgram.fContext->fTypes.fBool,
-                                                     Position{},
-                                                     /*isFunctionReturnValue=*/false);
+    // If `continue` is used in the loop...
+    Analysis::LoopControlFlowInfo loopInfo = Analysis::GetLoopControlFlowInfo(*d.statement());
+    AutoContinueMask autoContinueMask;
+    if (loopInfo.fHasContinue) {
+        // ... create a temporary slot for continue-mask storage.
+        autoContinueMask.enable(&fProgramSlots, *fProgram.fContext->fTypes.fUInt,
+                                &fCurrentContinueMask);
+    }
+
     // Write the do-loop body.
     int labelID = fBuilder.nextLabelID();
     fBuilder.label(labelID);
 
-    fBuilder.zero_slots_unmasked(fCurrentContinueMask);
+    autoContinueMask.enterLoopBody(fBuilder);
+
     if (!this->writeStatement(*d.statement())) {
         return false;
     }
-    fBuilder.reenable_loop_mask(fCurrentContinueMask);
+
+    autoContinueMask.exitLoopBody(fBuilder);
 
     // Emit the test-expression, in order to combine it with the loop mask.
     if (!this->pushExpression(*d.test())) {
@@ -828,11 +915,60 @@ bool Generator::writeDoStatement(const DoStatement& d) {
     // If any lanes are still running, go back to the top and run the loop body again.
     fBuilder.branch_if_any_active_lanes(labelID);
 
-    // Restore the loop and continue masks.
+    // Restore the loop mask.
     fBuilder.pop_loop_mask();
     fBuilder.disableExecutionMaskWrites();
-    fCurrentContinueMask = previousContinueMask;
 
+    return true;
+}
+
+bool Generator::writeMasklessForStatement(const ForStatement& f) {
+    SkASSERT(f.unrollInfo());
+    SkASSERT(f.unrollInfo()->fCount > 0);
+    SkASSERT(f.initializer());
+    SkASSERT(f.test());
+    SkASSERT(f.next());
+
+    // If no lanes are active, skip over the loop entirely. This guards against looping forever;
+    // with no lanes active, we wouldn't be able to write the loop variable back to its slot, so
+    // we'd never make forward progress.
+    int loopExitID = fBuilder.nextLabelID();
+    int loopBodyID = fBuilder.nextLabelID();
+    fBuilder.branch_if_no_active_lanes(loopExitID);
+
+    // Run the loop initializer.
+    if (!this->writeStatement(*f.initializer())) {
+        return unsupported();
+    }
+
+    // Write the for-loop body. We know the for-loop has a standard ES2 unrollable structure, and
+    // that it runs for at least one iteration, so we can plow straight ahead into the loop body
+    // instead of running the loop-test first.
+    fBuilder.label(loopBodyID);
+
+    if (!this->writeStatement(*f.statement())) {
+        return unsupported();
+    }
+
+    // If the loop only runs for a single iteration, we are already done. If not...
+    if (f.unrollInfo()->fCount > 1) {
+        // ... run the next-expression, and immediately discard its result.
+        if (!this->pushExpression(*f.next(), /*usesResult=*/false)) {
+            return unsupported();
+        }
+        this->discardExpression(f.next()->type().slotCount());
+
+        // Run the test-expression, and repeat the loop until the test-expression evaluates false.
+        if (!this->pushExpression(*f.test())) {
+            return unsupported();
+        }
+        fBuilder.branch_if_no_active_lanes_on_stack_top_equal(0, loopBodyID);
+
+        // Jettison the test-expression.
+        this->discardExpression(/*slots=*/1);
+    }
+
+    fBuilder.label(loopExitID);
     return true;
 }
 
@@ -842,21 +978,30 @@ bool Generator::writeForStatement(const ForStatement& f) {
         return true;
     }
 
+    // If the loop doesn't escape early due to a `continue`, `break` or `return`, and the loop
+    // conforms to ES2 structure, we know that we will run the full number of iterations across all
+    // lanes and don't need to use a loop mask.
+    Analysis::LoopControlFlowInfo loopInfo = Analysis::GetLoopControlFlowInfo(*f.statement());
+    if (!loopInfo.fHasContinue && !loopInfo.fHasBreak && !loopInfo.fHasReturn && f.unrollInfo()) {
+        return this->writeMasklessForStatement(f);
+    }
+
     // Run the loop initializer.
     if (f.initializer() && !this->writeStatement(*f.initializer())) {
         return unsupported();
+    }
+
+    AutoContinueMask autoContinueMask;
+    if (loopInfo.fHasContinue) {
+        // Acquire a temporary slot for continue-mask storage.
+        autoContinueMask.enable(&fProgramSlots, *fProgram.fContext->fTypes.fUInt,
+                                &fCurrentContinueMask);
     }
 
     // Save off the original loop mask.
     fBuilder.enableExecutionMaskWrites();
     fBuilder.push_loop_mask();
 
-    // Create a dedicated slot for continue-mask storage.
-    SlotRange previousContinueMask = fCurrentContinueMask;
-    fCurrentContinueMask = fProgramSlots.createSlots(this->makeMaskName("for-loop continue mask"),
-                                                     *fProgram.fContext->fTypes.fBool,
-                                                     Position{},
-                                                     /*isFunctionReturnValue=*/false);
     int loopTestID = fBuilder.nextLabelID();
     int loopBodyID = fBuilder.nextLabelID();
 
@@ -865,11 +1010,14 @@ bool Generator::writeForStatement(const ForStatement& f) {
 
     // Write the for-loop body.
     fBuilder.label(loopBodyID);
-    fBuilder.zero_slots_unmasked(fCurrentContinueMask);
+
+    autoContinueMask.enterLoopBody(fBuilder);
+
     if (!this->writeStatement(*f.statement())) {
         return unsupported();
     }
-    fBuilder.reenable_loop_mask(fCurrentContinueMask);
+
+    autoContinueMask.exitLoopBody(fBuilder);
 
     // Run the next-expression. Immediately discard its result.
     if (f.next()) {
@@ -894,14 +1042,12 @@ bool Generator::writeForStatement(const ForStatement& f) {
     // If any lanes are still running, go back to the top and run the loop body again.
     fBuilder.branch_if_any_active_lanes(loopBodyID);
 
-    // Restore the loop and continue masks.
+    // Restore the loop mask.
     fBuilder.pop_loop_mask();
     fBuilder.disableExecutionMaskWrites();
-    fCurrentContinueMask = previousContinueMask;
 
     return true;
 }
-
 
 bool Generator::writeExpressionStatement(const ExpressionStatement& e) {
     if (!this->pushExpression(*e.expression(), /*usesResult=*/false)) {
@@ -911,7 +1057,51 @@ bool Generator::writeExpressionStatement(const ExpressionStatement& e) {
     return true;
 }
 
+bool Generator::writeDynamicallyUniformIfStatement(const IfStatement& i) {
+    SkASSERT(Analysis::IsDynamicallyUniformExpression(*i.test()));
+
+    int falseLabelID = fBuilder.nextLabelID();
+    int exitLabelID = fBuilder.nextLabelID();
+
+    if (!this->pushExpression(*i.test())) {
+        return unsupported();
+    }
+
+    fBuilder.branch_if_no_active_lanes_on_stack_top_equal(~0, falseLabelID);
+
+    if (!this->writeStatement(*i.ifTrue())) {
+        return unsupported();
+    }
+
+    if (!i.ifFalse()) {
+        // We don't have an if-false condition at all.
+        fBuilder.label(falseLabelID);
+    } else {
+        // We do have an if-false condition. We've just completed the if-true block, so we need to
+        // jump past the if-false block to avoid executing it.
+        fBuilder.jump(exitLabelID);
+
+        // The if-false block starts here.
+        fBuilder.label(falseLabelID);
+
+        if (!this->writeStatement(*i.ifFalse())) {
+            return unsupported();
+        }
+
+        fBuilder.label(exitLabelID);
+    }
+
+    // Jettison the test-expression.
+    this->discardExpression(/*slots=*/1);
+    return true;
+}
+
 bool Generator::writeIfStatement(const IfStatement& i) {
+    // If the test condition is known to be uniform, we can skip over the untrue portion entirely.
+    if (Analysis::IsDynamicallyUniformExpression(*i.test())) {
+        return this->writeDynamicallyUniformIfStatement(i);
+    }
+
     // Save the current condition-mask.
     fBuilder.enableExecutionMaskWrites();
     fBuilder.push_condition_mask();
@@ -950,7 +1140,7 @@ bool Generator::writeReturnStatement(const ReturnStatement& r) {
         if (!this->pushExpression(*r.expression())) {
             return unsupported();
         }
-        this->popToSlotRange(fFunctionStack.back());
+        this->popToSlotRange(fCurrentFunctionResult);
     }
     if (fBuilder.executionMaskWritesAreEnabled() && this->needsReturnMask()) {
         fBuilder.mask_off_return_mask();
@@ -974,6 +1164,9 @@ bool Generator::pushExpression(const Expression& e, bool usesResult) {
     switch (e.kind()) {
         case Expression::Kind::kBinary:
             return this->pushBinaryExpression(e.as<BinaryExpression>());
+
+        case Expression::Kind::kChildCall:
+            return this->pushChildCall(e.as<ChildCall>());
 
         case Expression::Kind::kConstructorCompound:
             return this->pushConstructorCompound(e.as<ConstructorCompound>());
@@ -1207,21 +1400,21 @@ bool Generator::pushBinaryExpression(const Expression& left, Operator op, const 
     // Handle matrix multiplication (MxM/MxV/VxM).
     if (op.kind() == OperatorKind::STAR) {
         // Matrix * matrix:
-        if (type.isMatrix() && right.type().isMatrix()) {
+        if (left.type().isMatrix() && right.type().isMatrix()) {
             return this->pushMatrixMultiply(lvalue.get(), left, right,
                                             left.type().columns(), left.type().rows(),
                                             right.type().columns(), right.type().rows());
         }
 
         // Vector * matrix:
-        if (type.isVector() && right.type().isMatrix()) {
+        if (left.type().isVector() && right.type().isMatrix()) {
             return this->pushMatrixMultiply(lvalue.get(), left, right,
                                             left.type().columns(), 1,
                                             right.type().columns(), right.type().rows());
         }
 
         // Matrix * vector:
-        if (type.isMatrix() && right.type().isVector()) {
+        if (left.type().isMatrix() && right.type().isVector()) {
             return this->pushMatrixMultiply(lvalue.get(), left, right,
                                             left.type().columns(), left.type().rows(),
                                             1, right.type().columns());
@@ -1343,7 +1536,7 @@ bool Generator::pushBinaryExpression(const Expression& left, Operator op, const 
         case OperatorKind::LOGICALOR:
         case OperatorKind::BITWISEOR:
             // For logical-or, we verified above that the RHS does not have side effects.
-            fBuilder.binary_op(BuilderOp::bitwise_and_n_ints, type.slotCount());
+            fBuilder.binary_op(BuilderOp::bitwise_or_n_ints, type.slotCount());
             break;
 
         case OperatorKind::LOGICALXOR:
@@ -1370,6 +1563,73 @@ bool Generator::pushConstructorCompound(const ConstructorCompound& c) {
             return unsupported();
         }
     }
+    return true;
+}
+
+bool Generator::pushChildCall(const ChildCall& c) {
+    int* childIdx = fChildEffectMap.find(&c.child());
+    SkASSERT(childIdx != nullptr);
+    SkASSERT(c.arguments().size() >= 1);
+
+    // Save the dst.rgba fields; these hold our execution masks, and could potentially be
+    // clobbered by the child effect.
+    fBuilder.push_dst_rgba();
+
+    // All child calls have at least one argument.
+    const Expression* arg = c.arguments()[0].get();
+    if (!this->pushExpression(*arg)) {
+        return unsupported();
+    }
+
+    // Copy arguments from the stack into src/dst as required by this particular child-call.
+    switch (c.child().type().typeKind()) {
+        case Type::TypeKind::kShader: {
+            // The argument must be a float2.
+            SkASSERT(c.arguments().size() == 1);
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fFloat2));
+            fBuilder.pop_src_rg();
+            fBuilder.invoke_shader(*childIdx);
+            break;
+        }
+        case Type::TypeKind::kColorFilter: {
+            // The argument must be a half4/float4.
+            SkASSERT(c.arguments().size() == 1);
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                     arg->type().matches(*fProgram.fContext->fTypes.fFloat4));
+            fBuilder.pop_src_rgba();
+            fBuilder.invoke_color_filter(*childIdx);
+            break;
+        }
+        case Type::TypeKind::kBlender: {
+            // The first argument must be a half4/float4.
+            SkASSERT(c.arguments().size() == 2);
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                     arg->type().matches(*fProgram.fContext->fTypes.fFloat4));
+
+            // The second argument must also be a half4/float4.
+            arg = c.arguments()[1].get();
+            SkASSERT(arg->type().matches(*fProgram.fContext->fTypes.fHalf4) ||
+                     arg->type().matches(*fProgram.fContext->fTypes.fFloat4));
+
+            if (!this->pushExpression(*arg)) {
+                return unsupported();
+            }
+
+            fBuilder.pop_dst_rgba();
+            fBuilder.pop_src_rgba();
+            fBuilder.invoke_blender(*childIdx);
+            break;
+        }
+        default: {
+            SkDEBUGFAILF("cannot sample from type '%s'", c.child().type().description().c_str());
+        }
+    }
+
+    // Restore dst.rgba so our execution masks are back to normal.
+    fBuilder.pop_dst_rgba();
+
+    // The child call has returned the result color via src.rgba; push it onto the stack.
+    fBuilder.push_src_rgba();
     return true;
 }
 
@@ -1616,6 +1876,13 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
             this->foldWithMultiOp(BuilderOp::bitwise_and_n_ints, arg0.type().slotCount());
             return true;
 
+        case IntrinsicKind::k_atan_IntrinsicKind:
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            fBuilder.unary_op(BuilderOp::atan_float, arg0.type().slotCount());
+            return true;
+
         case IntrinsicKind::k_ceil_IntrinsicKind:
             if (!this->pushExpression(arg0)) {
                 return unsupported();
@@ -1658,6 +1925,22 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
             fBuilder.push_clone(arg0.type().slotCount());
             fBuilder.unary_op(BuilderOp::floor_float, arg0.type().slotCount());
             return this->binaryOp(arg0.type(), kSubtractOps);
+
+        case IntrinsicKind::k_length_IntrinsicKind:
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            // Implement length as `sqrt(dot(x, x))`.
+            if (arg0.type().slotCount() > 1) {
+                fBuilder.push_clone(arg0.type().slotCount());
+                fBuilder.binary_op(BuilderOp::mul_n_floats, arg0.type().slotCount());
+                this->foldWithMultiOp(BuilderOp::add_n_floats, arg0.type().slotCount());
+                fBuilder.unary_op(BuilderOp::sqrt_float, 1);
+            } else {
+                // The length of a scalar is `sqrt(x^2)`, which is equivalent to `abs(x)`.
+                fBuilder.unary_op(BuilderOp::abs_float, 1);
+            }
+            return true;
 
         case IntrinsicKind::k_not_IntrinsicKind:
             return this->pushPrefixExpression(OperatorKind::LOGICALNOT, arg0);
@@ -1742,6 +2025,16 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
                               const Expression& arg0,
                               const Expression& arg1) {
     switch (intrinsic) {
+        case IntrinsicKind::k_atan_IntrinsicKind:
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            if (!this->pushExpression(arg1)) {
+                return unsupported();
+            }
+            fBuilder.binary_op(BuilderOp::atan2_n_floats, arg0.type().slotCount());
+            return true;
+
         case IntrinsicKind::k_cross_IntrinsicKind:
             // Implement cross as `arg0.yzx * arg1.zxy - arg0.zxy * arg1.yzx`. We use two stacks so
             // that each subexpression can be multiplied separately.
@@ -2084,9 +2377,61 @@ bool Generator::pushTernaryExpression(const TernaryExpression& t) {
     return this->pushTernaryExpression(*t.test(), *t.ifTrue(), *t.ifFalse());
 }
 
+bool Generator::pushDynamicallyUniformTernaryExpression(const Expression& test,
+                                                        const Expression& ifTrue,
+                                                        const Expression& ifFalse) {
+    SkASSERT(Analysis::IsDynamicallyUniformExpression(test));
+
+    int falseLabelID = fBuilder.nextLabelID();
+    int exitLabelID = fBuilder.nextLabelID();
+
+    // First, push the test-expression into a separate stack.
+    this->nextTempStack();
+    if (!this->pushExpression(test)) {
+        return unsupported();
+    }
+
+    // Branch to the true- or false-expression based on the test-expression. We can skip the
+    // non-true path entirely since the test is known to be uniform.
+    fBuilder.branch_if_no_active_lanes_on_stack_top_equal(~0, falseLabelID);
+    this->previousTempStack();
+
+    if (!this->pushExpression(ifTrue)) {
+        return unsupported();
+    }
+
+    fBuilder.jump(exitLabelID);
+
+    // The builder doesn't understand control flow, and assumes that every push moves the stack-top
+    // forwards. We need to manually balance out the `pushExpression` from the if-true path by
+    // moving the stack position backwards, so that the if-false path pushes its expression into the
+    // same as the if-true result.
+    this->discardExpression(/*slots=*/ifTrue.type().slotCount());
+
+    fBuilder.label(falseLabelID);
+
+    if (!this->pushExpression(ifFalse)) {
+        return unsupported();
+    }
+
+    fBuilder.label(exitLabelID);
+
+    // Jettison the text-expression from the separate stack.
+    this->nextTempStack();
+    this->discardExpression(/*slots=*/1);
+    this->previousTempStack();
+    return true;
+}
+
 bool Generator::pushTernaryExpression(const Expression& test,
                                       const Expression& ifTrue,
                                       const Expression& ifFalse) {
+    // If the test-expression is dynamically-uniform, we can skip over the non-true expressions
+    // entirely, and not need to involve the condition mask.
+    if (Analysis::IsDynamicallyUniformExpression(test)) {
+        return this->pushDynamicallyUniformTernaryExpression(test, ifTrue, ifFalse);
+    }
+
     fBuilder.enableExecutionMaskWrites();
 
     // First, push the current condition-mask and the test-expression into a separate stack.
@@ -2261,7 +2606,6 @@ std::unique_ptr<RP::Program> Generator::finish() {
 std::unique_ptr<RP::Program> MakeRasterPipelineProgram(const SkSL::Program& program,
                                                        const FunctionDefinition& function,
                                                        SkRPDebugTrace* debugTrace) {
-    // TODO(skia:13676): add mechanism for uniform passing
     RP::Generator generator(program, debugTrace);
     if (!generator.writeProgram(function)) {
         return nullptr;

@@ -34,6 +34,59 @@ SkShaderBase::SkShaderBase() = default;
 
 SkShaderBase::~SkShaderBase() = default;
 
+SkShaderBase::MatrixRec::MatrixRec(const SkMatrix& ctm) : fCTM(ctm) {}
+
+std::optional<SkShaderBase::MatrixRec>
+SkShaderBase::MatrixRec::apply(const SkStageRec& rec, const SkMatrix& postInv) const {
+    SkMatrix total = fPendingLocalMatrix;
+    if (!fCTMApplied) {
+        total = SkMatrix::Concat(fCTM, total);
+    }
+    if (!total.invert(&total)) {
+        return {};
+    }
+    total = SkMatrix::Concat(postInv, total);
+    if (!fCTMApplied) {
+        rec.fPipeline->append(SkRasterPipelineOp::seed_shader);
+    }
+    // append_matrix is a no-op if total worked out to identity.
+    rec.fPipeline->append_matrix(rec.fAlloc, total);
+    return MatrixRec{fCTM,
+                     fTotalLocalMatrix,
+                     /*pendingLocalMatrix=*/SkMatrix::I(),
+                     fTotalMatrixIsValid,
+                     /*ctmApplied=*/true};
+}
+
+std::optional<SkShaderBase::MatrixRec>
+SkShaderBase::MatrixRec::apply(skvm::Builder* p,
+                               skvm::Coord* local,
+                               skvm::Uniforms* uniforms,
+                               const SkMatrix& postInv) const {
+    SkMatrix total = fPendingLocalMatrix;
+    if (!fCTMApplied) {
+        total = SkMatrix::Concat(fCTM, total);
+    }
+    if (!total.invert(&total)) {
+        return {};
+    }
+    total = SkMatrix::Concat(postInv, total);
+    // ApplyMatrix is a no-op if total worked out to identity.
+    *local = SkShaderBase::ApplyMatrix(p, total, *local, uniforms);
+    return MatrixRec{fCTM,
+                     fTotalLocalMatrix,
+                     /*pendingLocalMatrix=*/SkMatrix::I(),
+                     fTotalMatrixIsValid,
+                     /*ctmApplied=*/true};}
+
+SkShaderBase::MatrixRec SkShaderBase::MatrixRec::concat(const SkMatrix& m) const {
+    return {fCTM,
+            SkShaderBase::ConcatLocalMatrices(fTotalLocalMatrix, m),
+            SkShaderBase::ConcatLocalMatrices(fPendingLocalMatrix, m),
+            fTotalMatrixIsValid,
+            fCTMApplied};
+}
+
 void SkShaderBase::flatten(SkWriteBuffer& buffer) const { this->INHERITED::flatten(buffer); }
 
 bool SkShaderBase::computeTotalInverse(const SkMatrix& ctm,
@@ -107,18 +160,6 @@ sk_sp<SkShader> SkShaderBase::makeAsALocalMatrixShader(SkMatrix*) const {
     return nullptr;
 }
 
-SkUpdatableShader* SkShaderBase::updatableShader(SkArenaAlloc* alloc) const {
-    if (auto updatable = this->onUpdatableShader(alloc)) {
-        return updatable;
-    }
-
-    return alloc->make<SkTransformShader>(*as_SB(this));
-}
-
-SkUpdatableShader* SkShaderBase::onUpdatableShader(SkArenaAlloc* alloc) const {
-    return nullptr;
-}
-
 #ifdef SK_GRAPHITE_ENABLED
 // TODO: add implementations for derived classes
 void SkShaderBase::addToKey(const skgpu::graphite::KeyContext& keyContext,
@@ -141,11 +182,11 @@ sk_sp<SkShader> SkBitmap::makeShader(SkTileMode tmx, SkTileMode tmy,
                                tmx, tmy, sampling, lm);
 }
 
-bool SkShaderBase::appendStages(const SkStageRec& rec) const {
-    return this->onAppendStages(rec);
+bool SkShaderBase::appendRootStages(const SkStageRec& rec, const SkMatrix& ctm) const {
+    return this->appendStages(rec, MatrixRec(ctm));
 }
 
-bool SkShaderBase::onAppendStages(const SkStageRec& rec) const {
+bool SkShaderBase::appendStages(const SkStageRec& rec, const MatrixRec& mRec) const {
     // SkShader::Context::shadeSpan() handles the paint opacity internally,
     // but SkRasterPipelineBlitter applies it as a separate stage.
     // We skip the internal shadeSpan() step by forcing the paint opaque.
@@ -154,8 +195,15 @@ bool SkShaderBase::onAppendStages(const SkStageRec& rec) const {
         opaquePaint.writable()->setAlpha(SK_AlphaOPAQUE);
     }
 
-    ContextRec cr(*opaquePaint, rec.fMatrixProvider.localToDevice(), rec.fLocalM, rec.fDstColorType,
-                  sk_srgb_singleton(), rec.fSurfaceProps);
+    // We don't have a separate ctm and local matrix at this point. Just pass the combined matrix
+    // as the CTM. TODO: thread the MatrixRec through the legacy context system.
+    auto tm = mRec.totalMatrix();
+    ContextRec cr(*opaquePaint,
+                  tm,
+                  nullptr,
+                  rec.fDstColorType,
+                  sk_srgb_singleton(),
+                  rec.fSurfaceProps);
 
     struct CallbackCtx : SkRasterPipeline_CallbackCtx {
         sk_sp<const SkShader> shader;
@@ -188,11 +236,13 @@ bool SkShaderBase::onAppendStages(const SkStageRec& rec) const {
     return false;
 }
 
-skvm::Color SkShaderBase::program(skvm::Builder* p,
-                                  skvm::Coord device, skvm::Coord local, skvm::Color paint,
-                                  const SkMatrixProvider& matrices, const SkMatrix* localM,
-                                  const SkColorInfo& dst,
-                                  skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const {
+skvm::Color SkShaderBase::rootProgram(skvm::Builder* p,
+                                      skvm::Coord device,
+                                      skvm::Color paint,
+                                      const SkMatrix& ctm,
+                                      const SkColorInfo& dst,
+                                      skvm::Uniforms* uniforms,
+                                      SkArenaAlloc* alloc) const {
     // Shader subclasses should always act as if the destination were premul or opaque.
     // SkVMBlitter handles all the coordination of unpremul itself, via premul.
     SkColorInfo tweaked = dst.alphaType() == kUnpremul_SkAlphaType
@@ -211,8 +261,14 @@ skvm::Color SkShaderBase::program(skvm::Builder* p,
     // shader program hash and blitter Key.  This makes it safe for us to use
     // that bit to make decisions when constructing an SkVMBlitter, like doing
     // SrcOver -> Src strength reduction.
-    if (auto color = this->onProgram(p, device,local, paint, matrices,localM, tweaked,
-                                     uniforms,alloc)) {
+    if (auto color = this->program(p,
+                                   device,
+                                   /*local=*/device,
+                                   paint,
+                                   MatrixRec(ctm),
+                                   tweaked,
+                                   uniforms,
+                                   alloc)) {
         if (this->isOpaque()) {
             color.a = p->splat(1.0f);
         }

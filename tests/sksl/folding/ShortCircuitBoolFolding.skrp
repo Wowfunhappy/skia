@@ -285,7 +285,7 @@
   285. zero_slot_unmasked             $1 = 0
   286. cmpne_float                    $0 = notEqual($0, $1)
   287. copy_constant                  $1 = 0xFFFFFFFF
-  288. bitwise_and_int                $0 &= $1
+  288. bitwise_or_int                 $0 |= $1
   289. store_condition_mask           $0 = CondMask
   290. copy_2_slots_unmasked          $1..2 = _3_a(0..1)
   291. cmpeq_float                    $1 = equal($1, $2)
@@ -313,6 +313,7 @@
   313. merge_condition_mask           CondMask = $8 & $9
   314. copy_4_constants               $4..7 = colorGreen
   315. copy_4_slots_masked            $0..3 = Mask($4..7)
-  316. load_condition_mask            CondMask = $8
-  317. copy_4_slots_unmasked          [main].result = $0..3
-  318. load_src                       src.rgba = [main].result
+  316. label                          label 0x00000000
+  317. load_condition_mask            CondMask = $8
+  318. copy_4_slots_unmasked          [main].result = $0..3
+  319. load_src                       src.rgba = [main].result

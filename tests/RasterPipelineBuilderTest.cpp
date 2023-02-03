@@ -159,6 +159,48 @@ R"(    1. store_condition_mask           $0 = CondMask
 )");
 }
 
+DEF_TEST(RasterPipelineBuilderPushPopSrcDst, r) {
+    // Create a very simple nonsense program.
+    SkSL::RP::Builder builder;
+
+    builder.push_src_rgba();
+    builder.push_dst_rgba();
+    builder.push_src_rgba();
+    builder.pop_src_rgba();
+    builder.pop_dst_rgba();
+    builder.pop_src_rg();
+    builder.pop_src_rg();
+
+    std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/0,
+                                                                /*numUniformSlots=*/0);
+    check(r, *program,
+R"(    1. store_src                      $0..3 = src.rgba
+    2. store_dst                      $4..7 = dst.rgba
+    3. store_src                      $8..11 = src.rgba
+    4. load_src                       src.rgba = $8..11
+    5. load_dst                       dst.rgba = $4..7
+    6. load_src_rg                    src.rg = $2..3
+    7. load_src_rg                    src.rg = $0..1
+)");
+}
+
+DEF_TEST(RasterPipelineBuilderInvokeChild, r) {
+    // Create a very simple nonsense program.
+    SkSL::RP::Builder builder;
+
+    builder.invoke_shader(1);
+    builder.invoke_color_filter(2);
+    builder.invoke_blender(3);
+
+    std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/0,
+                                                                /*numUniformSlots=*/0);
+    check(r, *program,
+R"(    1. invoke_shader                  invoke_shader 0x00000001
+    2. invoke_color_filter            invoke_color_filter 0x00000002
+    3. invoke_blender                 invoke_blender 0x00000003
+)");
+}
+
 DEF_TEST(RasterPipelineBuilderPushPopTempImmediates, r) {
     // Create a very simple nonsense program.
     SkSL::RP::Builder builder;
@@ -362,41 +404,73 @@ R"(    1. copy_constant                  $0 = 0x3F800000 (1.0)
 DEF_TEST(RasterPipelineBuilderBranches, r) {
 #if SK_HAS_MUSTTAIL
     // We have guaranteed tail-calling, and don't need to rewind the stack.
-    static constexpr char kExpectationWithExecutionMaskWrites[] =
-R"(    1. jump                           jump +4 (#5)
-    2. immediate_f                    src.r = 0x3F800000 (1.0)
-    3. immediate_f                    src.r = 0x40000000 (2.0)
-    4. branch_if_no_active_lanes      branch_if_no_active_lanes -1 (#3)
-    5. immediate_f                    src.r = 0x40400000 (3.0)
-    6. branch_if_any_active_lanes     branch_if_any_active_lanes -4 (#2)
-)";
     static constexpr char kExpectationWithKnownExecutionMask[] =
-R"(    1. jump                           jump +3 (#4)
-    2. immediate_f                    src.r = 0x3F800000 (1.0)
-    3. immediate_f                    src.r = 0x40000000 (2.0)
-    4. immediate_f                    src.r = 0x40400000 (3.0)
-    5. jump                           jump -3 (#2)
+R"(    1. copy_constant                  $0 = 0x00000001 (1.401298e-45)
+    2. jump                           jump +8 (label 3 at #10)
+    3. label                          label 0x00000000
+    4. immediate_f                    src.r = 0x3F800000 (1.0)
+    5. label                          label 0x00000001
+    6. immediate_f                    src.r = 0x40000000 (2.0)
+    7. label                          label 0x00000002
+    8. immediate_f                    src.r = 0x40400000 (3.0)
+    9. jump                           jump -6 (label 0 at #3)
+   10. label                          label 0x00000003
+   11. branch_if_no_active_lanes_eq   branch -4 (label 2 at #7) if no lanes of $0 == 0x00000000 (0.0)
+   12. branch_if_no_active_lanes_eq   branch -9 (label 0 at #3) if no lanes of $0 == 0x00000001 (1.401298e-45)
+)";
+    static constexpr char kExpectationWithExecutionMaskWrites[] =
+R"(    1. copy_constant                  $0 = 0x00000001 (1.401298e-45)
+    2. jump                           jump +9 (label 3 at #11)
+    3. label                          label 0x00000000
+    4. immediate_f                    src.r = 0x3F800000 (1.0)
+    5. label                          label 0x00000001
+    6. immediate_f                    src.r = 0x40000000 (2.0)
+    7. branch_if_no_active_lanes      branch_if_no_active_lanes -2 (label 1 at #5)
+    8. label                          label 0x00000002
+    9. immediate_f                    src.r = 0x40400000 (3.0)
+   10. branch_if_any_active_lanes     branch_if_any_active_lanes -7 (label 0 at #3)
+   11. label                          label 0x00000003
+   12. branch_if_no_active_lanes_eq   branch -4 (label 2 at #8) if no lanes of $0 == 0x00000000 (0.0)
+   13. branch_if_no_active_lanes_eq   branch -10 (label 0 at #3) if no lanes of $0 == 0x00000001 (1.401298e-45)
 )";
 #else
     // We don't have guaranteed tail-calling, so we rewind the stack immediately before any backward
     // branches.
-    static constexpr char kExpectationWithExecutionMaskWrites[] =
-R"(    1. jump                           jump +5 (#6)
-    2. immediate_f                    src.r = 0x3F800000 (1.0)
-    3. immediate_f                    src.r = 0x40000000 (2.0)
-    4. stack_rewind
-    5. branch_if_no_active_lanes      branch_if_no_active_lanes -2 (#3)
-    6. immediate_f                    src.r = 0x40400000 (3.0)
-    7. stack_rewind
-    8. branch_if_any_active_lanes     branch_if_any_active_lanes -6 (#2)
-)";
     static constexpr char kExpectationWithKnownExecutionMask[] =
-R"(    1. jump                           jump +3 (#4)
-    2. immediate_f                    src.r = 0x3F800000 (1.0)
-    3. immediate_f                    src.r = 0x40000000 (2.0)
-    4. immediate_f                    src.r = 0x40400000 (3.0)
-    5. stack_rewind
-    6. jump                           jump -4 (#2)
+R"(    1. copy_constant                  $0 = 0x00000001 (1.401298e-45)
+    2. jump                           jump +9 (label 3 at #11)
+    3. label                          label 0x00000000
+    4. immediate_f                    src.r = 0x3F800000 (1.0)
+    5. label                          label 0x00000001
+    6. immediate_f                    src.r = 0x40000000 (2.0)
+    7. label                          label 0x00000002
+    8. immediate_f                    src.r = 0x40400000 (3.0)
+    9. stack_rewind
+   10. jump                           jump -7 (label 0 at #3)
+   11. label                          label 0x00000003
+   12. stack_rewind
+   13. branch_if_no_active_lanes_eq   branch -6 (label 2 at #7) if no lanes of $0 == 0x00000000 (0.0)
+   14. stack_rewind
+   15. branch_if_no_active_lanes_eq   branch -12 (label 0 at #3) if no lanes of $0 == 0x00000001 (1.401298e-45)
+)";
+    static constexpr char kExpectationWithExecutionMaskWrites[] =
+R"(    1. copy_constant                  $0 = 0x00000001 (1.401298e-45)
+    2. jump                           jump +11 (label 3 at #13)
+    3. label                          label 0x00000000
+    4. immediate_f                    src.r = 0x3F800000 (1.0)
+    5. label                          label 0x00000001
+    6. immediate_f                    src.r = 0x40000000 (2.0)
+    7. stack_rewind
+    8. branch_if_no_active_lanes      branch_if_no_active_lanes -3 (label 1 at #5)
+    9. label                          label 0x00000002
+   10. immediate_f                    src.r = 0x40400000 (3.0)
+   11. stack_rewind
+   12. branch_if_any_active_lanes     branch_if_any_active_lanes -9 (label 0 at #3)
+   13. label                          label 0x00000003
+   14. stack_rewind
+   15. branch_if_no_active_lanes_eq   branch -6 (label 2 at #9) if no lanes of $0 == 0x00000000 (0.0)
+   16. stack_rewind
+   17. branch_if_no_active_lanes_eq   branch -14 (label 0 at #3) if no lanes of $0 == 0x00000001 (1.401298e-45)
 )";
 #endif
 
@@ -406,12 +480,14 @@ R"(    1. jump                           jump +3 (#4)
         int label1 = builder.nextLabelID();
         int label2 = builder.nextLabelID();
         int label3 = builder.nextLabelID();
+        int label4 = builder.nextLabelID();
 
         if (enableExecutionMaskWrites) {
             builder.enableExecutionMaskWrites();
         }
 
-        builder.jump(label3);
+        builder.push_literal_i(1);
+        builder.jump(label4);
         builder.label(label1);
         builder.immediate_f(1.0f);
         builder.label(label2);
@@ -422,6 +498,12 @@ R"(    1. jump                           jump +3 (#4)
         builder.immediate_f(3.0f);
         builder.branch_if_any_active_lanes(label1);
         builder.branch_if_any_active_lanes(label1);
+        builder.label(label4);
+        builder.branch_if_no_active_lanes_on_stack_top_equal(0, label3);
+        builder.branch_if_no_active_lanes_on_stack_top_equal(0, label2);
+        builder.branch_if_no_active_lanes_on_stack_top_equal(1, label1);
+        builder.branch_if_no_active_lanes_on_stack_top_equal(1, label4);
+        builder.discard_stack(1);
 
         if (enableExecutionMaskWrites) {
             builder.disableExecutionMaskWrites();

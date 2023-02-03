@@ -87,6 +87,12 @@ bool HasSideEffects(const Expression& expr);
 bool IsCompileTimeConstant(const Expression& expr);
 
 /**
+ * Determines if `expr` is a dynamically-uniform expression; this returns true if the expression
+ * could be evaluated at compile time if uniform values were known.
+ */
+bool IsDynamicallyUniformExpression(const Expression& expr);
+
+/**
  * Detect an orphaned variable declaration outside of a scope, e.g. if (true) int a;. Returns
  * true if an error was reported.
  */
@@ -109,7 +115,20 @@ bool SwitchCaseContainsConditionalExit(Statement& stmt);
 std::unique_ptr<ProgramUsage> GetUsage(const Program& program);
 std::unique_ptr<ProgramUsage> GetUsage(const Module& module);
 
+/** Returns true if the passed-in statement might alter `var`. */
 bool StatementWritesToVariable(const Statement& stmt, const Variable& var);
+
+/**
+ * Detects if the passed-in block contains a `continue`, `break` or `return` that could directly
+ * affect its control flow. (A `continue` or `break` nested inside an inner loop/switch will not
+ * affect the loop, but a `return` will.)
+ */
+struct LoopControlFlowInfo {
+    bool fHasContinue = false;
+    bool fHasBreak = false;
+    bool fHasReturn = false;
+};
+LoopControlFlowInfo GetLoopControlFlowInfo(const Statement& stmt);
 
 /**
  * Returns true if the expression can be assigned-into. Pass `info` if you want to know the

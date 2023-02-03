@@ -7,9 +7,9 @@
 
 #include "include/core/SkStream.h"
 #include "include/core/SkString.h"
-#include "include/private/SkHalf.h"
 #include "include/private/base/SkTFitsIn.h"
 #include "include/private/base/SkThreadID.h"
+#include "src/base/SkHalf.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkColorSpaceXformSteps.h"
 #include "src/core/SkCpu.h"
@@ -968,7 +968,7 @@ namespace skvm {
         // handle quadrant distinctions
         r = select((y0 >= 0) & (x0  < 0), r + SK_ScalarPI, r);
         r = select((y0  < 0) & (x0 <= 0), r - SK_ScalarPI, r);
-        // Note: we don't try to handle 0,0 or infinities (yet)
+        // Note: we don't try to handle 0,0 or infinities
         return r;
     }
 

@@ -73,26 +73,17 @@ private:
 class StrikeForGPU {
 public:
     virtual ~StrikeForGPU() = default;
+
+    virtual void lock() = 0;
+    virtual void unlock() = 0;
+
+    virtual SkGlyphDigest digest(SkPackedGlyphID) = 0;
+    virtual skglyph::GlyphAction pathAction(SkGlyphID) = 0;
+    virtual skglyph::GlyphAction drawableAction(SkGlyphID) = 0;
+    virtual SkGlyphDigest directMaskDigest(SkPackedGlyphID) = 0;
+    virtual SkGlyphDigest sdftDigest(SkGlyphID) = 0;
+
     virtual const SkDescriptor& getDescriptor() const = 0;
-
-    // Returns the bounding rectangle of the accepted glyphs. Remember for device masks this
-    // rectangle will be in device space, and for transformed masks this rectangle will be in
-    // source space.
-    virtual SkRect prepareForMaskDrawing(
-                SkDrawableGlyphBuffer* accepted,
-                SkSourceGlyphBuffer* rejected) = 0;
-
-#if !defined(SK_DISABLE_SDF_TEXT)
-    virtual SkRect prepareForSDFTDrawing(
-                SkDrawableGlyphBuffer* accepted,
-                SkSourceGlyphBuffer* rejected) = 0;
-#endif
-
-    virtual void prepareForPathDrawing(
-            SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected) = 0;
-
-    virtual void prepareForDrawableDrawing(
-            SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected) = 0;
 
     virtual const SkGlyphPositionRoundingSpec& roundingSpec() const = 0;
 
@@ -101,9 +92,6 @@ public:
 
     // Return a strike promise.
     virtual SkStrikePromise strikePromise() = 0;
-
-    // Return the maximum dimension of a span of glyphs.
-    virtual SkScalar findMaximumGlyphDimension(SkSpan<const SkGlyphID> glyphs) = 0;
 
     struct Deleter {
         void operator()(StrikeForGPU* ptr) const {
@@ -129,6 +117,16 @@ union IDOrPath {
 union IDOrDrawable {
     SkGlyphID fGlyphID;
     SkDrawable* fDrawable;
+};
+
+// -- StrikeMutationMonitor ------------------------------------------------------------------------
+class StrikeMutationMonitor {
+public:
+    StrikeMutationMonitor(StrikeForGPU* strike);
+    ~StrikeMutationMonitor();
+
+private:
+    StrikeForGPU* fStrike;
 };
 
 // -- StrikeForGPUCacheInterface -------------------------------------------------------------------

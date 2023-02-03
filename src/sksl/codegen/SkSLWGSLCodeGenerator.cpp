@@ -22,6 +22,7 @@
 #include "include/private/SkSLStatement.h"
 #include "include/private/SkSLString.h"
 #include "include/private/SkSLSymbol.h"
+#include "include/private/base/SkTArray.h"
 #include "include/sksl/SkSLErrorReporter.h"
 #include "include/sksl/SkSLOperator.h"
 #include "include/sksl/SkSLPosition.h"
@@ -51,6 +52,7 @@
 #include "src/sksl/ir/SkSLStructDefinition.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
+#include "src/sksl/ir/SkSLTernaryExpression.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
@@ -779,16 +781,23 @@ void WGSLCodeGenerator::writeExpression(const Expression& e, Precedence parentPr
             break;
         case Expression::Kind::kConstructorCompoundCast:
         case Expression::Kind::kConstructorScalarCast:
+        case Expression::Kind::kConstructorSplat:
             this->writeAnyConstructor(e.asAnyConstructor(), parentPrecedence);
             break;
         case Expression::Kind::kFieldAccess:
             this->writeFieldAccess(e.as<FieldAccess>());
+            break;
+        case Expression::Kind::kFunctionCall:
+            this->writeFunctionCall(e.as<FunctionCall>());
             break;
         case Expression::Kind::kLiteral:
             this->writeLiteral(e.as<Literal>());
             break;
         case Expression::Kind::kSwizzle:
             this->writeSwizzle(e.as<Swizzle>());
+            break;
+        case Expression::Kind::kTernary:
+            this->writeTernaryExpression(e.as<TernaryExpression>(), parentPrecedence);
             break;
         case Expression::Kind::kVariableReference:
             this->writeVariableReference(e.as<VariableReference>());
@@ -849,6 +858,24 @@ void WGSLCodeGenerator::writeFieldAccess(const FieldAccess& f) {
     this->writeName(field->fName);
 }
 
+void WGSLCodeGenerator::writeFunctionCall(const FunctionCall& c) {
+    const FunctionDeclaration& func = c.function();
+
+    // TODO(skia:13092): Handle intrinsic call as many of them need to be rewritten.
+    // TODO(skia:13092): Handle out-param semantics.
+
+    this->write(func.mangledName());
+    this->write("(");
+    bool wroteArgs = this->writeFunctionDependencyArgs(func);
+    const char* separator = wroteArgs ? ", " : "";
+    for (int i = 0; i < c.arguments().size(); ++i) {
+        this->write(separator);
+        separator = ", ";
+        this->writeExpression(*c.arguments()[i], Precedence::kSequence);
+    }
+    this->write(")");
+}
+
 void WGSLCodeGenerator::writeLiteral(const Literal& l) {
     const Type& type = l.type();
     if (type.isFloat() || type.isBoolean()) {
@@ -874,6 +901,51 @@ void WGSLCodeGenerator::writeSwizzle(const Swizzle& swizzle) {
         SkASSERT(c >= 0 && c <= 3);
         this->write(&("x\0y\0z\0w\0"[c * 2]));
     }
+}
+
+void WGSLCodeGenerator::writeTernaryExpression(const TernaryExpression& t,
+                                               Precedence parentPrecedence) {
+    bool needParens = Precedence::kTernary >= parentPrecedence;
+    if (needParens) {
+        this->write("(");
+    }
+
+    // The trivial case is when neither branch has side effects and evaluate to a scalar or vector
+    // type. This can be represented with a call to the WGSL `select` intrinsic although it doesn't
+    // support short-circuiting.
+    if ((t.type().isScalar() || t.type().isVector()) && !Analysis::HasSideEffects(*t.ifTrue()) &&
+        !Analysis::HasSideEffects(*t.ifFalse())) {
+        this->write("select(");
+        this->writeExpression(*t.ifFalse(), Precedence::kTernary);
+        this->write(", ");
+        this->writeExpression(*t.ifTrue(), Precedence::kTernary);
+        this->write(", ");
+
+        bool isVector = t.type().isVector();
+        if (isVector) {
+            // Splat the condition expression into a vector.
+            this->write(String::printf("vec%d<bool>", t.type().columns()));
+            this->write("(");
+        }
+        this->writeExpression(*t.test(), Precedence::kTernary);
+        if (isVector) {
+            this->write(")");
+        }
+        this->write(")");
+
+        if (needParens) {
+            this->write(")");
+        }
+        return;
+    }
+
+    // TODO(skia:13092): WGSL does not support ternary expressions. To replicate the required
+    // short-circuting behavior we need to hoist the expression out into the surrounding block,
+    // convert it into an if statement that writes the result to a synthesized variable, and replace
+    // the original expression with a reference to that variable.
+    //
+    // Once hoisting is supported, we may want to use that for vector type expressions as well,
+    // since select above does a component-wise select
 }
 
 void WGSLCodeGenerator::writeVariableReference(const VariableReference& r) {
@@ -1150,6 +1222,24 @@ void WGSLCodeGenerator::writeNonBlockUniformsForTests() {
         this->write("@group(" + std::to_string(set) + ") ");
         this->writeLine("var<uniform> _globalUniforms: _GlobalUniforms;");
     }
+}
+
+bool WGSLCodeGenerator::writeFunctionDependencyArgs(const FunctionDeclaration& f) {
+    FunctionDependencies* deps = fRequirements.dependencies.find(&f);
+    if (!deps || *deps == FunctionDependencies::kNone) {
+        return false;
+    }
+
+    const char* separator = "";
+    if ((*deps & FunctionDependencies::kPipelineInputs) != FunctionDependencies::kNone) {
+        this->write("_stageIn");
+        separator = ", ";
+    }
+    if ((*deps & FunctionDependencies::kPipelineOutputs) != FunctionDependencies::kNone) {
+        this->write(separator);
+        this->write("_stageOut");
+    }
+    return true;
 }
 
 }  // namespace SkSL

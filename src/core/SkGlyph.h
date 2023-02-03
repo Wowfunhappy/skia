@@ -18,7 +18,9 @@
 #include "include/core/SkTypes.h"
 #include "include/private/SkChecksum.h"
 #include "include/private/SkFixed.h"
-#include "include/private/base/SkVx.h"
+#include "include/private/base/SkDebug.h"
+#include "include/private/base/SkTo.h"
+#include "src/base/SkVx.h"
 #include "src/core/SkMask.h"
 
 #include <algorithm>
@@ -28,6 +30,7 @@
 #include <limits>
 
 class SkArenaAlloc;
+class SkGlyph;
 class SkScalerContext;
 
 // -- SkPackedGlyphID ------------------------------------------------------------------------------
@@ -289,10 +292,15 @@ inline SkGlyphRect rect_union(SkGlyphRect a, SkGlyphRect b) {
 inline SkGlyphRect rect_intersection(SkGlyphRect a, SkGlyphRect b) {
     return skvx::min(a.fRect, b.fRect);
 }
+
+enum class GlyphAction {
+    kUnset,
+    kAccept,
+    kReject,
+    kDrop,
+    kSize,
+};
 }  // namespace skglyph
-
-
-class SkGlyph;
 
 // SkGlyphDigest contains a digest of information for making GPU drawing decisions. It can be
 // referenced instead of the glyph itself in many situations. In the remote glyphs cache the
@@ -309,32 +317,66 @@ public:
     int index()          const { return fIndex; }
     bool isEmpty()       const { return fIsEmpty; }
     bool isColor()       const { return fFormat == SkMask::kARGB32_Format; }
-    bool canDrawAsMask() const { return fCanDrawAsMask; }
-    bool canDrawAsSDFT() const { return fCanDrawAsSDFT; }
     SkMask::Format maskFormat() const { return static_cast<SkMask::Format>(fFormat); }
-    uint16_t maxDimension()  const {
+    skglyph::GlyphAction pathAction() const {
+        return static_cast<skglyph::GlyphAction>(fPathAction);
+    }
+    void setPathAction(skglyph::GlyphAction action) {
+        using namespace skglyph;
+        SkASSERT(static_cast<GlyphAction>(fPathAction) == GlyphAction::kUnset);
+        fPathAction = static_cast<uint32_t>(action);
+    }
+    skglyph::GlyphAction drawableAction() const {
+        return static_cast<skglyph::GlyphAction>(fDrawableAction);
+    }
+    void setDrawableAction(skglyph::GlyphAction action) {
+        using namespace skglyph;
+        SkASSERT(static_cast<GlyphAction>(fDrawableAction) == GlyphAction::kUnset);
+        fDrawableAction = SkTo<uint32_t>(action);
+    }
+    skglyph::GlyphAction directMaskAction() const {
+        return static_cast<skglyph::GlyphAction>(fDirectMaskAction);
+    }
+    void setDirectMaskAction(skglyph::GlyphAction action) {
+        using namespace skglyph;
+        SkASSERT(static_cast<GlyphAction>(fDirectMaskAction) == GlyphAction::kUnset);
+        fDirectMaskAction = SkTo<uint32_t>(action);
+    }
+    skglyph::GlyphAction SDFTAction() const {
+        return static_cast<skglyph::GlyphAction>(fSDFTAction);
+    }
+    void setSDFTAction(skglyph::GlyphAction action) {
+        using namespace skglyph;
+        SkASSERT(static_cast<GlyphAction>(fSDFTAction) == GlyphAction::kUnset);
+        fSDFTAction = SkTo<uint32_t>(action);
+    }
+
+    uint16_t maxDimension() const {
         return std::max(fWidth, fHeight);
+    }
+
+    bool fitsInAtlas() const {
+        return this->maxDimension() <= kSkSideTooBigForAtlas;
     }
 
     SkGlyphRect bounds() const {
         return SkGlyphRect(fLeft, fTop, (SkScalar)fLeft + fWidth, (SkScalar)fTop + fHeight);
     }
 
-    // Common categories for glyph types used by GPU.
-    static bool CanDrawAsMask(const SkGlyph& glyph);
-    static bool CanDrawAsSDFT(const SkGlyph& glyph);
-    static bool CanDrawAsPath(const SkGlyph& glyph);
     static bool FitsInAtlas(const SkGlyph& glyph);
 
 private:
     static_assert(SkPackedGlyphID::kEndData == 20);
     static_assert(SkMask::kCountMaskFormats <= 8);
+    static_assert(SkTo<int>(skglyph::GlyphAction::kSize) <= 4);
     struct {
-        uint32_t fIndex         : SkPackedGlyphID::kEndData;
-        uint32_t fIsEmpty       : 1;
-        uint32_t fCanDrawAsMask : 1;
-        uint32_t fCanDrawAsSDFT : 1;
-        uint32_t fFormat        : 3;
+        uint32_t fIndex            : SkPackedGlyphID::kEndData;
+        uint16_t fIsEmpty          : 1;
+        uint32_t fFormat           : 3;
+        uint32_t fPathAction       : 2;  // GlyphAction
+        uint32_t fDrawableAction   : 2;  // GlyphAction
+        uint32_t fDirectMaskAction : 2;  // GlyphAction
+        uint32_t fSDFTAction       : 2;  // GlyphAction
     };
     int16_t fLeft, fTop;
     uint16_t fWidth, fHeight;
@@ -363,7 +405,7 @@ public:
     size_t rowBytes() const;
     size_t rowBytesUsingFormat(SkMask::Format format) const;
 
-    // Call this to set all of the metrics fields to 0 (e.g. if the scaler
+    // Call this to set all the metrics fields to 0 (e.g. if the scaler
     // encounters an error measuring a glyph). Note: this does not alter the
     // fImage, fPath, fID, fMaskFormat fields.
     void zeroMetrics();
@@ -379,7 +421,7 @@ public:
     bool setImage(SkArenaAlloc* alloc, SkScalerContext* scalerContext);
     bool setImage(SkArenaAlloc* alloc, const void* image);
 
-    // Merge the from glyph into this glyph using alloc to allocate image data. Return the number
+    // Merge the 'from' glyph into this glyph using alloc to allocate image data. Return the number
     // of bytes allocated. Copy the width, height, top, left, format, and image into this glyph
     // making a copy of the image using the alloc.
     size_t setMetricsAndImage(SkArenaAlloc* alloc, const SkGlyph& from);

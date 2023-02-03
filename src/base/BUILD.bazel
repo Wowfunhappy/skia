@@ -15,9 +15,13 @@ IWYU_HDRS = [
     "SkArenaAllocList.h",
     "SkLeanWindows.h",
     "SkScopeExit.h",
-    "SkTBlockList.h",
     "SkStringView.h",
+    "SkTBlockList.h",
+    "SkTDPQueue.h",
+    "SkTInternalLList.h",
     "SkTLazy.h",
+    "SkTSort.h",
+    "SkZip.h",
 ]
 
 skia_filegroup(
@@ -25,12 +29,18 @@ skia_filegroup(
     srcs = IWYU_HDRS + [
         "SkArenaAlloc.h",
         "SkAutoMalloc.h",
+        "SkBezierCurves.h",
         "SkBlockAllocator.h",
+        "SkBuffer.h",
         "SkCubics.h",
+        "SkHalf.h",
         "SkMathPriv.h",
         "SkQuads.h",
         "SkSafeMath.h",
+        "SkTSearch.h",
         "SkUTF.h",
+        "SkUtils.h",
+        "SkVx.h",  # Causes IWYU to crash when compiling.
     ],
     visibility = ["//src:__pkg__"],
 )
@@ -48,23 +58,28 @@ skia_filegroup(
         "SkArenaAlloc.cpp",
         "SkBlockAllocator.cpp",
         "SkContainers.cpp",
+        "SkHalf.cpp",
         "SkMalloc.cpp",
         "SkMathPriv.cpp",
         "SkSafeMath.cpp",
         "SkSemaphore.cpp",
         "SkThreadID.cpp",
         "SkUTF.cpp",
+        "SkUtils.cpp",
     ],
 )
 
 skia_filegroup(
     name = "srcs",
     srcs = [
+        "SkBezierCurves.cpp",
+        "SkBuffer.cpp",
         "SkCubics.cpp",
         "SkDeque.cpp",
         "SkFloatingPoint.cpp",
         "SkQuads.cpp",
         "SkTDArray.cpp",
+        "SkTSearch.cpp",
         ":skslc_srcs",
     ],
     visibility = ["//src:__pkg__"],

@@ -46,6 +46,14 @@ public:
              const SkFontMetrics* metrics,
              std::unique_ptr<SkStrikePinner> pinner);
 
+    void lock() override SK_ACQUIRE(fStrikeLock);
+    void unlock() override SK_RELEASE_CAPABILITY(fStrikeLock);
+    SkGlyphDigest digest(SkPackedGlyphID) override SK_REQUIRES(fStrikeLock);
+    skglyph::GlyphAction pathAction(SkGlyphID) override SK_REQUIRES(fStrikeLock);
+    skglyph::GlyphAction drawableAction(SkGlyphID) override SK_REQUIRES(fStrikeLock);
+    SkGlyphDigest directMaskDigest(SkPackedGlyphID) override SK_REQUIRES(fStrikeLock);
+    SkGlyphDigest sdftDigest(SkGlyphID) override SK_REQUIRES(fStrikeLock);
+
     // Lookup (or create if needed) the returned glyph using toID. If that glyph is not initialized
     // with an image, then use the information in fromGlyph to initialize the width, height top,
     // left, format and image of the glyph. This is mainly used preserving the glyph if it was
@@ -90,20 +98,6 @@ public:
         return fStrikeSpec.descriptor();
     }
 
-    SkRect prepareForMaskDrawing(SkDrawableGlyphBuffer* accepted,
-                                 SkSourceGlyphBuffer* rejected) override SK_EXCLUDES(fStrikeLock);
-
-#if !defined(SK_DISABLE_SDF_TEXT)
-    SkRect prepareForSDFTDrawing(SkDrawableGlyphBuffer* accepted,
-                                 SkSourceGlyphBuffer* rejected) override SK_EXCLUDES(fStrikeLock);
-#endif
-
-    void prepareForPathDrawing(SkDrawableGlyphBuffer* accepted,
-                               SkSourceGlyphBuffer* rejected) override SK_EXCLUDES(fStrikeLock);
-
-    void prepareForDrawableDrawing(SkDrawableGlyphBuffer* accepted,
-                                   SkSourceGlyphBuffer* rejected) override SK_EXCLUDES(fStrikeLock);
-
     const SkGlyphPositionRoundingSpec& roundingSpec() const override {
         return fRoundingSpec;
     }
@@ -115,9 +109,6 @@ public:
     sktext::SkStrikePromise strikePromise() override {
         return sktext::SkStrikePromise(sk_ref_sp<SkStrike>(this));
     }
-
-    SkScalar findMaximumGlyphDimension(
-            SkSpan<const SkGlyphID> glyphs) override SK_EXCLUDES(fStrikeLock);
 
     // Convert all the IDs into SkPaths in the span.
     void glyphIDsToPaths(SkSpan<sktext::IDOrPath> idsOrPaths) SK_EXCLUDES(fStrikeLock);
@@ -138,35 +129,29 @@ public:
     void dump() const SK_EXCLUDES(fStrikeLock);
     void dumpMemoryStatistics(SkTraceMemoryDump* dump) const SK_EXCLUDES(fStrikeLock);
 
-#if SK_SUPPORT_GPU
-    sk_sp<sktext::gpu::TextStrike> findOrCreateTextStrike(
-            sktext::gpu::StrikeCache* gpuStrikeCache) const;
-#endif
-
 private:
     friend class SkStrikeCache;
-    template <typename Fn>
-    size_t commonFilterLoop(SkDrawableGlyphBuffer* accepted, Fn&& fn) SK_REQUIRES(fStrikeLock);
+    class Monitor;
 
     // Return a glyph. Create it if it doesn't exist, and initialize the glyph with metrics and
     // advances using a scaler.
-    std::tuple<SkGlyph*, size_t> glyph(SkPackedGlyphID) SK_REQUIRES(fStrikeLock);
+    SkGlyph* glyph(SkPackedGlyphID) SK_REQUIRES(fStrikeLock);
 
-    std::tuple<SkGlyphDigest, size_t> digest(SkPackedGlyphID) SK_REQUIRES(fStrikeLock);
+    SkGlyphDigest* digestPtr(SkPackedGlyphID) SK_REQUIRES(fStrikeLock);
 
     // Generate the glyph digest information and update structures to add the glyph.
-    SkGlyphDigest addGlyph(SkGlyph* glyph) SK_REQUIRES(fStrikeLock);
+    SkGlyphDigest* addGlyph(SkGlyph* glyph) SK_REQUIRES(fStrikeLock);
 
-    std::tuple<const void*, size_t> prepareImage(SkGlyph* glyph) SK_REQUIRES(fStrikeLock);
+    const void* prepareImage(SkGlyph* glyph) SK_REQUIRES(fStrikeLock);
 
     // If the path has never been set, then use the scaler context to add the glyph.
-    size_t preparePath(SkGlyph*) SK_REQUIRES(fStrikeLock);
+    void preparePath(SkGlyph*) SK_REQUIRES(fStrikeLock);
 
     // If the drawable has never been set, then use the scaler context to add the glyph.
-    size_t prepareDrawable(SkGlyph*) SK_REQUIRES(fStrikeLock);
+    void prepareDrawable(SkGlyph*) SK_REQUIRES(fStrikeLock);
 
     // Maintain memory use statistics.
-    void updateDelta(size_t increase) SK_EXCLUDES(fStrikeLock);
+    void updateMemoryUsage(size_t increase) SK_EXCLUDES(fStrikeLock);
 
     enum PathDetail {
         kMetricsOnly,
@@ -174,7 +159,7 @@ private:
     };
 
     // internalPrepare will only be called with a mutex already held.
-    std::tuple<SkSpan<const SkGlyph*>, size_t> internalPrepare(
+    SkSpan<const SkGlyph*> internalPrepare(
             SkSpan<const SkGlyphID> glyphIDs,
             PathDetail pathDetail,
             const SkGlyph** results) SK_REQUIRES(fStrikeLock);
@@ -201,6 +186,9 @@ private:
 
     // Context that corresponds to the glyph information in this strike.
     const std::unique_ptr<SkScalerContext> fScalerContext SK_GUARDED_BY(fStrikeLock);
+
+    // Used while changing the strike to track memory increase.
+    size_t fMemoryIncrease SK_GUARDED_BY(fStrikeLock) {0};
 
     // So, we don't grow our arrays a lot.
     inline static constexpr size_t kMinGlyphCount = 8;

@@ -1191,16 +1191,6 @@ optional("heif") {
   sources = [ "src/codec/SkHeifCodec.cpp" ]
 }
 
-optional("jpegr") {
-  enabled = skia_use_jpegr
-  public_defines = [ "SK_CODEC_DECODES_JPEGR" ]
-
-  # The dependency for Android is set in gn_to_bp.py.
-  deps = []
-
-  sources = [ "src/codec/SkJpegRCodec.cpp" ]
-}
-
 optional("avif") {
   enabled = skia_use_libavif
   public_defines = [ "SK_CODEC_DECODES_AVIF" ]
@@ -1218,6 +1208,7 @@ optional("jpeg_decode") {
   sources = [
     "src/codec/SkJpegCodec.cpp",
     "src/codec/SkJpegDecoderMgr.cpp",
+    "src/codec/SkJpegSourceMgr.cpp",
     "src/codec/SkJpegUtility.cpp",
   ]
   if (skia_use_jpeg_gainmaps) {
@@ -1243,6 +1234,10 @@ optional("jpeg_encode") {
     "src/images/SkJPEGWriteUtility.cpp",
     "src/images/SkJpegEncoder.cpp",
   ]
+
+  if (skia_use_jpeg_gainmaps) {
+    sources += [ "src/images/SkJpegGainmapEncoder.cpp" ]
+  }
 }
 
 optional("jpegxl_decode") {
@@ -1481,7 +1476,6 @@ skia_component("skia") {
     ":hsw",
     ":jpeg_decode",
     ":jpeg_encode",
-    ":jpegr",
     ":jpegxl_decode",
     ":ndk_images",
     ":piet",
@@ -1676,14 +1670,19 @@ skia_static_library("pathkit") {
   sources += skia_pathops_public
   sources += [
     "src/base/SkArenaAlloc.cpp",
+    "src/base/SkBezierCurves.cpp",
     "src/base/SkContainers.cpp",
+    "src/base/SkCubics.cpp",
+    "src/base/SkFloatingPoint.cpp",
     "src/base/SkMalloc.cpp",
     "src/base/SkMathPriv.cpp",
+    "src/base/SkQuads.cpp",
     "src/base/SkSafeMath.cpp",
     "src/base/SkSemaphore.cpp",
     "src/base/SkTDArray.cpp",
     "src/base/SkThreadID.cpp",
     "src/base/SkUTF.cpp",
+    "src/base/SkUtils.cpp",
     "src/core/SkAnalyticEdge.cpp",
     "src/core/SkContourMeasure.cpp",
     "src/core/SkCubicMap.cpp",
@@ -1714,7 +1713,6 @@ skia_static_library("pathkit") {
     "src/core/SkStroke.cpp",
     "src/core/SkStrokeRec.cpp",
     "src/core/SkStrokerPriv.cpp",
-    "src/core/SkUtils.cpp",
     "src/effects/SkDashPathEffect.cpp",
     "src/effects/SkTrimPathEffect.cpp",
     "src/ports/SkDebug_stdio.cpp",
@@ -2415,16 +2413,8 @@ if (skia_enable_tools) {
         "modules/svg",
       ]
     }
-    test_app("sorttoy") {
-      sources = [
-        "experimental/sorttoy/Cmds.cpp",
-        "experimental/sorttoy/Cmds.h",
-        "experimental/sorttoy/Fake.cpp",
-        "experimental/sorttoy/Fake.h",
-        "experimental/sorttoy/SortKey.h",
-        "experimental/sorttoy/sorttoy.cpp",
-        "experimental/sorttoy/sorttypes.h",
-      ]
+    test_app("filterfuzz") {
+      sources = [ "experimental/filterfuzz/filterfuzz.cpp" ]
       deps = [
         ":flags",
         ":skia",
@@ -2596,6 +2586,7 @@ if (skia_enable_tools) {
       "fuzz/FuzzCommon.cpp",
       "fuzz/FuzzCommon.h",
       "fuzz/FuzzCreateDDL.cpp",
+      "fuzz/FuzzCubicQuadRoots.cpp",
       "fuzz/FuzzDDLThreading.cpp",
       "fuzz/FuzzDrawFunctions.cpp",
       "fuzz/FuzzEncoders.cpp",
@@ -3583,6 +3574,14 @@ if (skia_enable_tools) {
 
     libfuzzer_app("colrv1") {
       sources = [ "fuzz/oss_fuzz/FuzzCOLRv1.cpp" ]
+      deps = []
+    }
+
+    libfuzzer_app("cubic_quad_roots") {
+      sources = [
+        "fuzz/FuzzCubicQuadRoots.cpp",
+        "fuzz/oss_fuzz/FuzzCubicQuadRoots.cpp",
+      ]
       deps = []
     }
   }
