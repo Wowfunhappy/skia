@@ -259,15 +259,15 @@ void GrVkGpu::destroyResources() {
         fMainCmdPool = nullptr;
     }
 
-    for (int i = 0; i < fSemaphoresToWaitOn.count(); ++i) {
+    for (int i = 0; i < fSemaphoresToWaitOn.size(); ++i) {
         fSemaphoresToWaitOn[i]->unref();
     }
-    fSemaphoresToWaitOn.reset();
+    fSemaphoresToWaitOn.clear();
 
-    for (int i = 0; i < fSemaphoresToSignal.count(); ++i) {
+    for (int i = 0; i < fSemaphoresToSignal.size(); ++i) {
         fSemaphoresToSignal[i]->unref();
     }
-    fSemaphoresToSignal.reset();
+    fSemaphoresToSignal.clear();
 
     fStagingBufferManager.reset();
 
@@ -292,8 +292,8 @@ void GrVkGpu::disconnect(DisconnectType type) {
     if (!fDisconnected) {
         this->destroyResources();
 
-        fSemaphoresToWaitOn.reset();
-        fSemaphoresToSignal.reset();
+        fSemaphoresToWaitOn.clear();
+        fSemaphoresToSignal.clear();
         fMainCmdBuffer = nullptr;
         fDisconnected = true;
     }
@@ -391,7 +391,7 @@ bool GrVkGpu::submitCommandBuffer(SyncQueue sync) {
     SkASSERT(!fCachedOpsRenderPass || !fCachedOpsRenderPass->isActive());
 
     if (!this->currentCommandBuffer()->hasWork() && kForce_SyncQueue != sync &&
-        !fSemaphoresToSignal.count() && !fSemaphoresToWaitOn.count()) {
+        !fSemaphoresToSignal.size() && !fSemaphoresToWaitOn.size()) {
         // We may have added finished procs during the flush call. Since there is no actual work
         // we are not submitting the command buffer and may never come back around to submit it.
         // Thus we call all current finished procs manually, since the work has technically
@@ -413,26 +413,26 @@ bool GrVkGpu::submitCommandBuffer(SyncQueue sync) {
     }
 
     // We must delete any drawables that had to wait until submit to destroy.
-    fDrawables.reset();
+    fDrawables.clear();
 
     // If we didn't submit the command buffer then we did not wait on any semaphores. We will
     // continue to hold onto these semaphores and wait on them during the next command buffer
     // submission.
     if (didSubmit) {
-        for (int i = 0; i < fSemaphoresToWaitOn.count(); ++i) {
+        for (int i = 0; i < fSemaphoresToWaitOn.size(); ++i) {
             fSemaphoresToWaitOn[i]->unref();
         }
-        fSemaphoresToWaitOn.reset();
+        fSemaphoresToWaitOn.clear();
     }
 
     // Even if we did not submit the command buffer, we drop all the signal semaphores since we will
     // not try to recover the work that wasn't submitted and instead just drop it all. The client
     // will be notified that the semaphores were not submit so that they will not try to wait on
     // them.
-    for (int i = 0; i < fSemaphoresToSignal.count(); ++i) {
+    for (int i = 0; i < fSemaphoresToSignal.size(); ++i) {
         fSemaphoresToSignal[i]->unref();
     }
-    fSemaphoresToSignal.reset();
+    fSemaphoresToSignal.clear();
 
     // Release old command pool and create a new one
     fMainCmdPool->unref();
@@ -905,7 +905,7 @@ static size_t fill_in_compressed_regions(GrStagingBufferManager* stagingBufferMa
                                              dimensions,
                                              individualMipOffsets,
                                              mipmapped == GrMipmapped::kYes);
-    SkASSERT(individualMipOffsets->count() == numMipLevels);
+    SkASSERT(individualMipOffsets->size() == numMipLevels);
 
     // Get a staging buffer slice to hold our mip data.
     // Vulkan requires offsets in the buffer to be aligned to multiple of the texel size and 4
@@ -1046,7 +1046,7 @@ bool GrVkGpu::uploadTexDataOptimal(GrVkImage* texImage,
                                                     vkBuffer->vkBuffer(),
                                                     texImage,
                                                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                                    regions.count(),
+                                                    regions.size(),
                                                     regions.begin());
     return true;
 }
@@ -1113,7 +1113,7 @@ bool GrVkGpu::uploadTexDataCompressed(GrVkImage* uploadTexture,
                                                     vkBuffer->vkBuffer(),
                                                     uploadTexture,
                                                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                                    regions.count(),
+                                                    regions.size(),
                                                     regions.begin());
 
     return true;
@@ -1181,7 +1181,7 @@ sk_sp<GrTexture> GrVkGpu::onCreateTexture(SkISize dimensions,
         texImage->setImageLayout(this, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                             VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, false);
         this->currentCommandBuffer()->clearColorImage(this, texImage, &kZeroClearColor,
-                                                      ranges.count(), ranges.begin());
+                                                      ranges.size(), ranges.begin());
     }
     return std::move(tex);
 }
@@ -1630,7 +1630,7 @@ bool copy_src_data(char* mapPtr,
                    int numMipLevels) {
     SkASSERT(srcData && numMipLevels);
     SkASSERT(!skgpu::VkFormatIsCompressed(vkFormat));
-    SkASSERT(individualMipOffsets.count() == numMipLevels);
+    SkASSERT(individualMipOffsets.size() == numMipLevels);
     SkASSERT(mapPtr);
 
     size_t bytesPerPixel = skgpu::VkFormatBytesPerBlock(vkFormat);
@@ -1879,7 +1879,7 @@ bool GrVkGpu::onUpdateCompressedBackendTexture(const GrBackendTexture& backendTe
                                  static_cast<GrVkBuffer*>(slice.fBuffer)->vkBuffer(),
                                  image,
                                  image->currentLayout(),
-                                 regions.count(),
+                                 regions.size(),
                                  regions.begin());
 
     // Change image layout to shader read since if we use this texture as a borrowed
@@ -2243,8 +2243,15 @@ void GrVkGpu::finishOutstandingGpuWork() {
 
 void GrVkGpu::onReportSubmitHistograms() {
 #if SK_HISTOGRAMS_ENABLED
-    uint64_t allocatedMemory = fMemoryAllocator->totalAllocatedMemory();
-    uint64_t usedMemory = fMemoryAllocator->totalUsedMemory();
+    uint64_t allocatedMemory = 0, usedMemory = 0;
+
+#if defined(SK_USE_LEGACY_VMA_MEMORY_QUERY)
+    allocatedMemory = fMemoryAllocator->totalAllocatedMemory();
+    usedMemory = fMemoryAllocator->totalUsedMemory();
+#else
+    std::tie(allocatedMemory, usedMemory) = fMemoryAllocator->totalAllocatedAndUsedMemory();
+#endif  // SK_USE_LEGACY_VMA_MEMORY_QUERY
+
     SkASSERT(usedMemory <= allocatedMemory);
     if (allocatedMemory > 0) {
         SK_HISTOGRAM_PERCENTAGE("VulkanMemoryAllocator.PercentUsed",
@@ -2253,7 +2260,7 @@ void GrVkGpu::onReportSubmitHistograms() {
     // allocatedMemory is in bytes and need to be reported it in kilobytes. SK_HISTOGRAM_MEMORY_KB
     // supports samples up to around 500MB which should support the amounts of memory we allocate.
     SK_HISTOGRAM_MEMORY_KB("VulkanMemoryAllocator.AmountAllocated", allocatedMemory >> 10);
-#endif
+#endif  // SK_HISTOGRAMS_ENABLED
 }
 
 void GrVkGpu::copySurfaceAsCopyImage(GrSurface* dst,

@@ -197,6 +197,7 @@ tests_sources = [
   "$_tests/RTreeTest.cpp",
   "$_tests/RandomTest.cpp",
   "$_tests/RasterPipelineBuilderTest.cpp",
+  "$_tests/RasterPipelineCodeGeneratorTest.cpp",
   "$_tests/ReadPixelsTest.cpp",
   "$_tests/ReadWritePixelsGpuTest.cpp",
   "$_tests/RecordDrawTest.cpp",
@@ -351,6 +352,7 @@ graphite_tests_sources = [
   "$_tests/graphite/ReadWritePixelsGraphiteTest.cpp",
   "$_tests/graphite/RecorderTest.cpp",
   "$_tests/graphite/RecordingOrderTest.cpp",
+  "$_tests/graphite/RecordingSurfacesTest.cpp",
   "$_tests/graphite/RectTest.cpp",
   "$_tests/graphite/ShapeTest.cpp",
   "$_tests/graphite/TextureProxyTest.cpp",
@@ -363,7 +365,6 @@ graphite_tests_sources = [
 
 precompile_tests_sources = [
   "$_tests/graphite/CombinationBuilderTest.cpp",
-  "$_tests/graphite/CombinationBuilderTestAccess.h",
   "$_tests/graphite/PaintParamsKeyTest.cpp",
 ]
 

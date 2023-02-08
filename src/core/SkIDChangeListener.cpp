@@ -41,7 +41,7 @@ void List::add(sk_sp<SkIDChangeListener> listener) {
 
     SkAutoMutexExclusive lock(fMutex);
     // Clean out any stale listeners before we append the new one.
-    for (int i = 0; i < fListeners.count(); ++i) {
+    for (int i = 0; i < fListeners.size(); ++i) {
         if (fListeners[i]->shouldDeregister()) {
             fListeners.removeShuffle(i--);  // No need to preserve the order after i.
         }
@@ -51,7 +51,7 @@ void List::add(sk_sp<SkIDChangeListener> listener) {
 
 int List::count() const {
     SkAutoMutexExclusive lock(fMutex);
-    return fListeners.count();
+    return fListeners.size();
 }
 
 void List::changed() {
@@ -61,10 +61,10 @@ void List::changed() {
             listener->changed();
         }
     }
-    fListeners.reset();
+    fListeners.clear();
 }
 
 void List::reset() {
     SkAutoMutexExclusive lock(fMutex);
-    fListeners.reset();
+    fListeners.clear();
 }

@@ -7,14 +7,13 @@
 
 #include "include/gpu/graphite/Recorder.h"
 
+#include "include/core/SkCanvas.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/graphite/BackendTexture.h"
 #include "include/gpu/graphite/GraphiteTypes.h"
 #include "include/gpu/graphite/ImageProvider.h"
 #include "include/gpu/graphite/Recording.h"
 #include "src/core/SkConvertPixels.h"
-#include "src/core/SkPipelineData.h"
-#include "src/core/SkRuntimeEffectDictionary.h"
 #include "src/gpu/AtlasTypes.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/CommandBuffer.h"
@@ -23,11 +22,13 @@
 #include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/DrawBufferManager.h"
 #include "src/gpu/graphite/GlobalCache.h"
+#include "src/gpu/graphite/Log.h"
+#include "src/gpu/graphite/PipelineData.h"
 #include "src/gpu/graphite/PipelineDataCache.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/ResourceProvider.h"
+#include "src/gpu/graphite/RuntimeEffectDictionary.h"
 #include "src/gpu/graphite/SharedContext.h"
-#include "src/gpu/graphite/SynchronizeToCpuTask.h"
 #include "src/gpu/graphite/TaskGraph.h"
 #include "src/gpu/graphite/Texture.h"
 #include "src/gpu/graphite/UploadBufferManager.h"
@@ -82,7 +83,7 @@ static int32_t next_id() {
 Recorder::Recorder(sk_sp<SharedContext> sharedContext,
                    const RecorderOptions& options)
         : fSharedContext(std::move(sharedContext))
-        , fRuntimeEffectDict(std::make_unique<SkRuntimeEffectDictionary>())
+        , fRuntimeEffectDict(std::make_unique<RuntimeEffectDictionary>())
         , fGraph(new TaskGraph)
         , fUniformDataCache(new UniformDataCache)
         , fTextureDataCache(new TextureDataCache)
@@ -131,9 +132,9 @@ std::unique_ptr<Recording> Recorder::snap() {
 
     std::unordered_set<sk_sp<TextureProxy>, Recording::ProxyHash> nonVolatileLazyProxies;
     std::unordered_set<sk_sp<TextureProxy>, Recording::ProxyHash> volatileLazyProxies;
-    fTextureDataCache->foreach([&](const SkTextureDataBlock* block) {
+    fTextureDataCache->foreach([&](const TextureDataBlock* block) {
         for (int j = 0; j < block->numTextures(); ++j) {
-            const SkTextureDataBlock::SampledTexture& tex = block->texture(j);
+            const TextureDataBlock::SampledTexture& tex = block->texture(j);
 
             if (tex.first->isLazy()) {
                 if (tex.first->isVolatile()) {
@@ -162,9 +163,17 @@ std::unique_ptr<Recording> Recorder::snap() {
         return nullptr;
     }
 
+    std::unique_ptr<Recording::LazyProxyData> targetProxyData;
+    if (fTargetProxyData) {
+        targetProxyData = std::move(fTargetProxyData);
+        fTargetProxyDevice.reset();
+        fTargetProxyCanvas.reset();
+    }
     std::unique_ptr<Recording> recording(new Recording(std::move(fGraph),
                                                        std::move(nonVolatileLazyProxies),
-                                                       std::move(volatileLazyProxies)));
+                                                       std::move(volatileLazyProxies),
+                                                       std::move(targetProxyData)));
+
     fDrawBufferManager->transferToRecording(recording.get());
     fUploadBufferManager->transferToRecording(recording.get());
 
@@ -173,6 +182,25 @@ std::unique_ptr<Recording> Recorder::snap() {
     fTextureDataCache = std::make_unique<TextureDataCache>();
     fAtlasManager->evictAtlases();
     return recording;
+}
+
+SkCanvas* Recorder::makeDeferredCanvas(const SkImageInfo& imageInfo,
+                                       const TextureInfo& textureInfo) {
+    if (fTargetProxyCanvas) {
+        // Require snapping before requesting another canvas.
+        SKGPU_LOG_W("Requested a new deferred canvas before snapping the previous one");
+        return nullptr;
+    }
+
+    fTargetProxyData = std::make_unique<Recording::LazyProxyData>(textureInfo);
+    fTargetProxyDevice = Device::Make(this,
+                                      fTargetProxyData->refLazyProxy(),
+                                      imageInfo.dimensions(),
+                                      imageInfo.colorInfo(),
+                                      {},
+                                      false);
+    fTargetProxyCanvas = std::make_unique<SkCanvas>(fTargetProxyDevice);
+    return fTargetProxyCanvas.get();
 }
 
 void Recorder::registerDevice(Device* device) {
@@ -262,9 +290,10 @@ bool Recorder::updateBackendTexture(const BackendTexture& backendTex,
                                                  std::move(proxy),
                                                  ct,
                                                  mipLevels,
-                                                 SkIRect::MakeSize(backendTex.dimensions()));
+                                                 SkIRect::MakeSize(backendTex.dimensions()),
+                                                 nullptr);
 
-    sk_sp<Task> uploadTask = UploadTask::Make(upload);
+    sk_sp<Task> uploadTask = UploadTask::Make(std::move(upload));
 
     this->priv().add(std::move(uploadTask));
 
@@ -290,73 +319,6 @@ void RecorderPriv::flushTrackedDevices() {
     for (Device* device : fRecorder->fTrackedDevices) {
         device->flushPendingWorkToRecorder();
     }
-}
-
-RecorderPriv::PixelTransferResult RecorderPriv::transferPixels(const TextureProxy* proxy,
-                                                               const SkImageInfo& srcImageInfo,
-                                                               const SkColorInfo& dstColorInfo,
-                                                               const SkIRect& srcRect) {
-    SkASSERT(srcImageInfo.bounds().contains(srcRect));
-
-    const Caps* caps = this->caps();
-    SkColorType supportedColorType =
-            caps->supportedReadPixelsColorType(srcImageInfo.colorType(),
-                                               proxy->textureInfo(),
-                                               dstColorInfo.colorType());
-    if (supportedColorType == kUnknown_SkColorType) {
-        return {};
-    }
-
-    // Fail if read color type does not have all of dstCT's color channels and those missing color
-    // channels are in the src.
-    uint32_t dstChannels = SkColorTypeChannelFlags(dstColorInfo.colorType());
-    uint32_t legalReadChannels = SkColorTypeChannelFlags(supportedColorType);
-    uint32_t srcChannels = SkColorTypeChannelFlags(srcImageInfo.colorType());
-    if ((~legalReadChannels & dstChannels) & srcChannels) {
-        return {};
-    }
-
-    size_t rowBytes = caps->getAlignedTextureDataRowBytes(
-                              SkColorTypeBytesPerPixel(supportedColorType) * srcRect.width());
-    size_t size = rowBytes * srcRect.height();
-    sk_sp<Buffer> buffer = this->resourceProvider()->findOrCreateBuffer(
-            size,
-            BufferType::kXferCpuToGpu,
-            PrioritizeGpuReads::kNo);
-    if (!buffer) {
-        return {};
-    }
-
-    // Set up copy task
-    sk_sp<CopyTextureToBufferTask> copyTask = CopyTextureToBufferTask::Make(sk_ref_sp(proxy),
-                                                                            srcRect,
-                                                                            buffer,
-                                                                            /*bufferOffset=*/0,
-                                                                            rowBytes);
-    if (!copyTask) {
-        return {};
-    }
-    sk_sp<SynchronizeToCpuTask> syncTask = SynchronizeToCpuTask::Make(buffer);
-    if (!syncTask) {
-        return {};
-    }
-
-    this->add(std::move(copyTask));
-    this->add(std::move(syncTask));
-
-    PixelTransferResult result;
-    result.fTransferBuffer = std::move(buffer);
-    if (srcImageInfo.colorInfo() != dstColorInfo) {
-        result.fPixelConverter = [dims = srcRect.size(), dstColorInfo, srcImageInfo](
-                void* dst, const void* src) {
-            SkImageInfo srcInfo = SkImageInfo::Make(dims, srcImageInfo.colorInfo());
-            SkImageInfo dstInfo = SkImageInfo::Make(dims, dstColorInfo);
-            SkAssertResult(SkConvertPixels(dstInfo, dst, dstInfo.minRowBytes(),
-                                           srcInfo, src, srcInfo.minRowBytes()));
-        };
-    }
-
-    return result;
 }
 
 #if GRAPHITE_TEST_UTILS

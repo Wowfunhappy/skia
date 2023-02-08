@@ -25,6 +25,7 @@
 #include "include/core/SkPathBuilder.h"
 #include "include/core/SkPathEffect.h"
 #include "include/core/SkPathTypes.h"
+#include "include/core/SkPathUtils.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRRect.h"
 #include "include/core/SkRect.h"
@@ -666,9 +667,7 @@ void SkSVGDevice::AutoElement::addRectAttributes(const SkRect& rect) {
 
 void SkSVGDevice::AutoElement::addPathAttributes(const SkPath& path,
                                                  SkParsePath::PathEncoding encoding) {
-    SkString pathData;
-    SkParsePath::ToSVGString(path, &pathData, encoding);
-    this->addAttribute("d", pathData);
+    this->addAttribute("d", SkParsePath::ToSVGString(path, encoding));
 }
 
 void SkSVGDevice::AutoElement::addTextAttributes(const SkFont& font) {
@@ -937,7 +936,7 @@ void SkSVGDevice::drawPath(const SkPath& path, const SkPaint& paint, bool pathIs
       if (!pathIsMutable) {
         pathPtr = &pathStorage;
       }
-      bool fill = path_paint->getFillPath(path, pathPtr);
+      bool fill = skpathutils::FillPathWithPaint(path, *path_paint, pathPtr);
       if (fill) {
         // Path should be filled.
         path_paint.writable()->setStyle(SkPaint::kFill_Style);

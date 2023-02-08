@@ -1,5 +1,5 @@
 EXPORTER_TOOL=bazel-bin/bazel/exporter_tool/exporter_tool_/exporter_tool
-EXPORTER_RULES=-rule='//src/...' -rule='//modules/...' -rule='//include/...'
+EXPORTER_RULES=-rule='//src/...' -rule='//modules/...' -rule='//include/...' -rule='//resources/...'
 
 generate:
 	echo "You do not need to run this any more for C++ code, only if you modify go code"
@@ -15,14 +15,21 @@ generate_cmake:
 
 .PHONY: generate_gni
 generate_gni:
-	cd .. && bazelisk build //bazel/exporter_tool && ${EXPORTER_TOOL} \
-		-output_format=gni -proj_name=Skia ${EXPORTER_RULES} \
-		&& bin/gn format gn/*.gni modules/*/*.gni
+	# It is tempting to try to put this into a blaze run command. However, that
+	# is currently infeasible due to the fact that the exporter tool *calls*
+	# Bazel, resulting in a deadlock because only one Bazel command can run
+	# at a time.
+	cd .. && bazelisk build //bazel/exporter_tool && \
+        ${EXPORTER_TOOL} -output_format=gni -proj_name=Skia ${EXPORTER_RULES} \
+		&& bazelisk run //bazel/external/gn -- format gn/*.gni modules/*/*.gni
 
-.PHONY: check_gni
-check_gni:
-	cd .. && bazelisk build //bazel/exporter_tool && ${EXPORTER_TOOL} \
-		-output_format=gni -proj_name=Skia ${EXPORTER_RULES} -check_current
+.PHONY: generate_gni_rbe
+generate_gni_rbe:
+	cd .. && bazelisk build //bazel/exporter_tool --config=linux_rbe --jobs=100 \
+ 		--platforms=@io_bazel_rules_go//go/toolchain:$(shell bazelisk run //bazel/utils:go_platform) \
+ 		--remote_download_toplevel && \
+        ${EXPORTER_TOOL} -output_format=gni -proj_name=Skia ${EXPORTER_RULES} \
+		&& bazelisk run //bazel/external/gn -- format gn/*.gni modules/*/*.gni
 
 .PHONY: mocks
 mocks:

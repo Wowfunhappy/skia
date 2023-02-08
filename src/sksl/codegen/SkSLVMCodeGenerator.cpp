@@ -20,7 +20,6 @@
 #include "include/private/SkSLModifiers.h"
 #include "include/private/SkSLProgramElement.h"
 #include "include/private/SkSLStatement.h"
-#include "include/private/SkSLString.h"
 #include "include/private/SkStringView.h"
 #include "include/private/SkTArray.h"
 #include "include/private/SkTHash.h"
@@ -59,17 +58,22 @@
 #include "src/sksl/ir/SkSLSwitchStatement.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLTernaryExpression.h"
+#include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
+#include "src/sksl/tracing/SkSLDebugInfo.h"
 #include "src/sksl/tracing/SkVMDebugTrace.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <memory>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
     // sksl allows the optimizations of fast_mul(), so we want to use that most of the time.
@@ -201,12 +205,12 @@ private:
     Value getSlotValue(size_t slot, size_t nslots);
 
     /**
-     * Returns the slot index of this function inside the SkVMFunctionInfo array in SkVMDebugTrace.
-     * The SkVMFunctionInfo slot will be created if it doesn't already exist.
+     * Returns the slot index of this function inside the FunctionDebugInfo array in SkVMDebugTrace.
+     * The FunctionDebugInfo slot will be created if it doesn't already exist.
      */
     int getDebugFunctionInfo(const FunctionDeclaration& decl);
 
-    /** Used by `createSlot` to add this variable to the SkVMSlotInfo array inside SkVMDebugTrace.*/
+    /** Used by `createSlot` to add this variable to SlotDebugInfo inside SkVMDebugTrace. */
     void addDebugSlotInfo(const std::string& varName, const Type& type, int line,
                           int fnReturnValue);
 
@@ -557,7 +561,7 @@ int SkVMGenerator::getDebugFunctionInfo(const FunctionDeclaration& decl) {
         name = name.substr(kNoInline.size());
     }
 
-    // Look for a matching SkVMFunctionInfo slot.
+    // Look for a matching FunctionDebugInfo slot.
     for (size_t index = 0; index < fDebugTrace->fFuncInfo.size(); ++index) {
         if (fDebugTrace->fFuncInfo[index].name == name) {
             return index;
@@ -566,7 +570,7 @@ int SkVMGenerator::getDebugFunctionInfo(const FunctionDeclaration& decl) {
 
     // We've never called this function before; create a new slot to hold its information.
     int slot = (int)fDebugTrace->fFuncInfo.size();
-    fDebugTrace->fFuncInfo.push_back(SkVMFunctionInfo{std::move(name)});
+    fDebugTrace->fFuncInfo.push_back(FunctionDebugInfo{std::move(name)});
     return slot;
 }
 
@@ -666,7 +670,7 @@ void SkVMGenerator::addDebugSlotInfoForGroup(const std::string& varName, const T
             int nslots = type.slotCount();
 
             for (int slot = 0; slot < nslots; ++slot) {
-                SkVMSlotInfo slotInfo;
+                SlotDebugInfo slotInfo;
                 slotInfo.name = varName;
                 slotInfo.columns = type.columns();
                 slotInfo.rows = type.rows();
@@ -2270,56 +2274,6 @@ bool ProgramToSkVM(const Program& program,
     return true;
 }
 
-const FunctionDefinition* Program_GetFunction(const Program& program, const char* function) {
-    for (const ProgramElement* e : program.elements()) {
-        if (e->is<FunctionDefinition>() &&
-            e->as<FunctionDefinition>().declaration().name() == function) {
-            return &e->as<FunctionDefinition>();
-        }
-    }
-    return nullptr;
-}
-
-static void gather_uniforms(UniformInfo* info, const Type& type, const std::string& name) {
-    switch (type.typeKind()) {
-        case Type::TypeKind::kStruct:
-            for (const auto& f : type.fields()) {
-                gather_uniforms(info, *f.fType, name + "." + std::string(f.fName));
-            }
-            break;
-        case Type::TypeKind::kArray:
-            for (int i = 0; i < type.columns(); ++i) {
-                gather_uniforms(info, type.componentType(),
-                                String::printf("%s[%d]", name.c_str(), i));
-            }
-            break;
-        case Type::TypeKind::kScalar:
-        case Type::TypeKind::kVector:
-        case Type::TypeKind::kMatrix:
-            info->fUniforms.push_back({name, base_number_kind(type), type.rows(), type.columns(),
-                                       info->fUniformSlotCount});
-            info->fUniformSlotCount += type.columns() * type.rows();
-            break;
-        default:
-            break;
-    }
-}
-
-std::unique_ptr<UniformInfo> Program_GetUniformInfo(const Program& program) {
-    auto info = std::make_unique<UniformInfo>();
-    for (const ProgramElement* e : program.elements()) {
-        if (!e->is<GlobalVarDeclaration>()) {
-            continue;
-        }
-        const GlobalVarDeclaration& decl = e->as<GlobalVarDeclaration>();
-        const Variable& var = *decl.varDeclaration().var();
-        if (var.modifiers().fFlags & Modifiers::kUniform_Flag) {
-            gather_uniforms(info.get(), var.type(), std::string(var.name()));
-        }
-    }
-    return info;
-}
-
 /*
  * Testing utility function that emits program's "main" with a minimal harness. Used to create
  * representative skvm op sequences for SkSL tests.
@@ -2327,7 +2281,7 @@ std::unique_ptr<UniformInfo> Program_GetUniformInfo(const Program& program) {
 bool testingOnly_ProgramToSkVMShader(const Program& program,
                                      skvm::Builder* builder,
                                      SkVMDebugTrace* debugTrace) {
-    const SkSL::FunctionDefinition* main = Program_GetFunction(program, "main");
+    const SkSL::FunctionDeclaration* main = program.getFunction("main");
     if (!main) {
         return false;
     }
@@ -2403,7 +2357,7 @@ bool testingOnly_ProgramToSkVMShader(const Program& program,
     skvm::Color inColor = builder->uniformColor(SkColors::kWhite, &uniforms);
     skvm::Color destColor = builder->uniformColor(SkColors::kBlack, &uniforms);
 
-    skvm::Color result = SkSL::ProgramToSkVM(program, *main, builder, debugTrace,
+    skvm::Color result = SkSL::ProgramToSkVM(program, *main->definition(), builder, debugTrace,
                                              SkSpan(uniformVals), device, local, inColor,
                                              destColor, &callbacks);
 

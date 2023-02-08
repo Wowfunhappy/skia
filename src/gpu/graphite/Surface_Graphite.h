@@ -17,6 +17,7 @@ namespace skgpu::graphite {
 class Context;
 class Device;
 class Recorder;
+class TextureProxy;
 
 class Surface final : public SkSurface_Base {
 public:
@@ -53,7 +54,6 @@ public:
                                            ReadPixelsCallback callback,
                                            ReadPixelsContext context) override;
     bool onCopyOnWrite(ContentChangeMode) override;
-    bool onReadPixels(Context*, Recorder*, const SkPixmap& dst, int srcX, int srcY);
     sk_sp<const SkCapabilities> onCapabilities() override;
     bool isGraphiteBacked() const override { return true; }
 
@@ -72,6 +72,8 @@ public:
                                   const GrFlushInfo&,
                                   const skgpu::MutableTextureState*) override;
 #endif
+
+    TextureProxy* backingTextureProxy();
 
 private:
     sk_sp<Device> fDevice;

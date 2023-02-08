@@ -6,7 +6,7 @@
 
 export LD_LIBRARY_PATH="external/clang_linux_amd64/usr/lib/x86_64-linux-gnu"
 
-set -e
+set -euo pipefail
 
 # We only want to run include-what-you-use if DSKIA_ENFORCE_IWYU is in the arguments
 # passed in (i.e. the "skia_enforce_iwyu" feature is enabled) and we are not linking
@@ -17,7 +17,6 @@ if [[ "$@" != *DSKIA_ENFORCE_IWYU* || "$@" == *use-ld* ]]; then
 fi
 
 supported_files_or_dirs=(
-  "experimental/bazel_test/"
   "modules/skunicode/"
   "src/codec/"
   "src/effects/"
@@ -28,6 +27,30 @@ supported_files_or_dirs=(
   "src/utils/"
   "tools/debugger/"
   "tests/"
+  "src/core/SkColor.cpp"
+  "src/core/SkColorSpace.cpp"
+  "src/core/SkFlattenable.cpp"
+  "src/core/SkMaskFilter.cpp"
+  "src/core/SkPaint.cpp"
+  "src/core/SkPath.cpp"
+  "src/core/SkPathRef.cpp"
+  "src/core/SkPathBuilder.cpp"
+  "src/core/SkPathUtils.cpp"
+  "src/core/SkPoint.cpp"
+  "src/core/SkRect.cpp"
+  "src/core/SkScalar.cpp"
+  "src/core/SkTDArray.cpp"
+  "src/gpu/ganesh/GrCaps.cpp"
+  "src/gpu/ganesh/GrProcessor.cpp"
+  "src/gpu/ganesh/GrRenderTargetProxy.cpp"
+  "src/gpu/ganesh/GrSurfaceProxy.cpp"
+  "src/gpu/ganesh/GrSurfaceProxyView.cpp"
+  "src/gpu/ganesh/GrTextureProxy.cpp"
+  "src/gpu/ganesh/SkGr.cpp"
+
+  # See //bazel/generate_cpp_files_for_headers.bzl and //include/BUILD.bazel for more.
+  "include/gen/"
+  "src/gen/"
 )
 
 excluded_files=(
@@ -39,7 +62,9 @@ excluded_files=(
 function opted_in_to_IWYU_checks() {
   # Need [@] for entire list: https://stackoverflow.com/a/46137325
   for path in ${supported_files_or_dirs[@]}; do
-    if [[ $1 == *"-c $path"* ]]; then
+    # If this was a generated file, it will be in a different subdirectory, starting with
+    # bazel-out, (e.g. bazel-out/k8-iwyu-dbg/bin/src/gen/SkRefCnt.cpp) so check that location also.
+    if [[ $1 == *"-c $path"* ]] || [[ $1 == *"-c bazel-out"*"$path"* ]]; then
         for e_path in ${excluded_files[@]}; do
           if [[ $1 == *"-c $e_path"* ]]; then
             echo ""

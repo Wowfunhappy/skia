@@ -171,7 +171,7 @@ bool ParagraphCacheKey::operator==(const ParagraphCacheKey& other) const {
     if (fText.size() != other.fText.size()) {
         return false;
     }
-    if (fPlaceholders.count() != other.fPlaceholders.count()) {
+    if (fPlaceholders.size() != other.fPlaceholders.size()) {
         return false;
     }
     if (fText != other.fText) {
@@ -255,7 +255,7 @@ ParagraphCache::~ParagraphCache() { }
 
 void ParagraphCache::updateTo(ParagraphImpl* paragraph, const Entry* entry) {
 
-    paragraph->fRuns.reset();
+    paragraph->fRuns.clear();
     paragraph->fRuns = entry->fValue->fRuns;
     paragraph->fClusters = entry->fValue->fClusters;
     paragraph->fClustersIndexFromCodeUnit = entry->fValue->fClustersIndexFromCodeUnit;

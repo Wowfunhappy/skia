@@ -414,6 +414,7 @@ func GenTasks(cfg *Config) {
 		Paths: []string{
 			// source code
 			"skia/example",
+			"skia/experimental/bazel_test",
 			"skia/include",
 			"skia/modules",
 			"skia/src",
@@ -425,6 +426,7 @@ func GenTasks(cfg *Config) {
 			"skia/resources",
 			"skia/package.json",
 			"skia/package-lock.json",
+			"skia/DEPS", // needed to check generation
 			// Needed to run bazel
 			"skia/.bazelrc",
 			"skia/.bazelversion",
@@ -857,6 +859,7 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 				"Pixel4XL":        {"coral", "QD1A.190821.011.C4"},
 				"Pixel5":          {"redfin", "RD1A.200810.022.A4"},
 				"Pixel6":          {"oriole", "SD1A.210817.037"},
+				"Pixel7":          {"cheetah", "TD1A.221105.002"},
 				"TecnoSpark3Pro":  {"TECNO-KB8", "PPR1.180610.011"},
 				"Wembley":         {"wembley", "SP2A.220505.008"},
 			}[b.parts["model"]]
@@ -946,17 +949,17 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 				gpu, ok := map[string]string{
 					// At some point this might use the device ID, but for now it's like Chromebooks.
 					"GTX660":        "10de:11c0-26.21.14.4120",
-					"GTX960":        "10de:1401-30.0.15.1215",
+					"GTX960":        "10de:1401-31.0.15.1694",
 					"IntelHD4400":   "8086:0a16-20.19.15.4963",
-					"IntelIris540":  "8086:1926-26.20.100.7463",
+					"IntelIris540":  "8086:1926-26.20.100.7529",
 					"IntelIris6100": "8086:162b-20.19.15.4963",
 					"IntelIris655":  "8086:3ea5-26.20.100.7463",
 					"IntelIrisXe":   "8086:9a49-31.0.101.3222",
 					"RadeonHD7770":  "1002:683d-26.20.13031.18002",
 					"RadeonR9M470X": "1002:6646-26.20.13031.18002",
 					"QuadroP400":    "10de:1cb3-30.0.15.1179",
-					"RadeonVega6":   "1002:1636-30.0.15021.1001",
-					"RTX3060":       "10de:2489-30.0.15.1215",
+					"RadeonVega6":   "1002:1636-31.0.12027.7000",
+					"RTX3060":       "10de:2489-31.0.15.1694",
 				}[b.parts["cpu_or_gpu_value"]]
 				if !ok {
 					log.Fatalf("Entry %q not found in Win GPU mapping.", b.parts["cpu_or_gpu_value"])
@@ -1021,7 +1024,7 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 				}
 			} else if b.os("ChromeOS") {
 				version, ok := map[string]string{
-					"IntelUHDGraphics605": "14233.0.0",
+					"IntelUHDGraphics605": "15236.2.0",
 					"RadeonVega3":         "14233.0.0",
 					"Adreno618":           "14150.39.0",
 					"MaliT860":            "14092.77.0",
@@ -2228,6 +2231,8 @@ func (b *jobBuilder) bazelTest() {
 				panic("Gold keys not specified for config " + config)
 			}
 		case "cpu_tests":
+			break
+		case "toolchain_layering_check":
 			break
 		default:
 			panic("Unsupported Bazel taskdriver " + taskdriverName)

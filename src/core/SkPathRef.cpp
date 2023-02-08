@@ -7,14 +7,15 @@
 
 #include "include/private/SkPathRef.h"
 
+#include "include/core/SkMatrix.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkRRect.h"
 #include "include/private/SkOnce.h"
-#include "include/private/SkTo.h"
 #include "include/private/SkVx.h"
 #include "src/core/SkBuffer.h"
 #include "src/core/SkPathPriv.h"
-#include "src/core/SkSafeMath.h"
+
+#include <cstring>
 
 //////////////////////////////////////////////////////////////////////////////
 SkPathRef::Editor::Editor(sk_sp<SkPathRef>* pathRef,
@@ -671,13 +672,13 @@ bool SkPathRef::isValid() const {
         bool isFinite = true;
         auto leftTop = skvx::float2(fBounds.fLeft, fBounds.fTop);
         auto rightBot = skvx::float2(fBounds.fRight, fBounds.fBottom);
-        for (int i = 0; i < fPoints.count(); ++i) {
+        for (int i = 0; i < fPoints.size(); ++i) {
             auto point = skvx::float2(fPoints[i].fX, fPoints[i].fY);
 #ifdef SK_DEBUG
             if (fPoints[i].isFinite() && (any(point < leftTop)|| any(point > rightBot))) {
                 SkDebugf("bad SkPathRef bounds: %g %g %g %g\n",
                          fBounds.fLeft, fBounds.fTop, fBounds.fRight, fBounds.fBottom);
-                for (int j = 0; j < fPoints.count(); ++j) {
+                for (int j = 0; j < fPoints.size(); ++j) {
                     if (i == j) {
                         SkDebugf("*** bounds do not contain: ");
                     }
@@ -702,9 +703,9 @@ bool SkPathRef::isValid() const {
 
 void SkPathRef::reset() {
     commonReset();
-    fPoints.resize(0);
-    fVerbs.resize(0);
-    fConicWeights.resize(0);
+    fPoints.clear();
+    fVerbs.clear();
+    fConicWeights.clear();
     SkDEBUGCODE(validate();)
 }
 
@@ -712,8 +713,8 @@ bool SkPathRef::dataMatchesVerbs() const {
     const auto info = sk_path_analyze_verbs(fVerbs.begin(), fVerbs.size());
     return info.valid                          &&
            info.segmentMask == fSegmentMask    &&
-           info.points      == fPoints.count()  &&
-           info.weights     == fConicWeights.count();
+           info.points      == fPoints.size()  &&
+           info.weights     == fConicWeights.size();
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////
 

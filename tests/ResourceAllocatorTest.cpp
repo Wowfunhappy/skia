@@ -81,7 +81,7 @@ constexpr ProxyParams::Kind kBackend = ProxyParams::Kind::kBackend;
 constexpr ProxyParams::Kind kInstantiated = ProxyParams::Kind::kInstantiated;
 constexpr ProxyParams::Kind kLazy = ProxyParams::Kind::kLazy;
 constexpr ProxyParams::Kind kFullyLazy = ProxyParams::Kind::kFullyLazy;
-};
+}
 
 static sk_sp<GrSurfaceProxy> make_deferred(GrProxyProvider* proxyProvider, const GrCaps* caps,
                                            const ProxyParams& p) {
@@ -416,7 +416,7 @@ static void memory_budget_test(skiatest::Reporter* reporter,
         expectedPurgeableBytes += proxy->gpuMemorySize();
         purgeableSurfaces.push_back(sk_ref_sp(proxy->peekSurface()));
     }
-    purgeableSurfaces.reset();
+    purgeableSurfaces.clear();
     REPORTER_ASSERT(reporter, expectedPurgeableBytes == cache->getPurgeableBytes(),
                     "%zu", cache->getPurgeableBytes());
 

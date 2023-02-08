@@ -77,14 +77,6 @@ void Surface::onWritePixels(const SkPixmap& pixmap, int x, int y) {
 
 bool Surface::onCopyOnWrite(ContentChangeMode) { return true; }
 
-bool Surface::onReadPixels(Context* context,
-                           Recorder* recorder,
-                           const SkPixmap& dst,
-                           int srcX,
-                           int srcY) {
-    return fDevice->readPixels(context, recorder, dst, srcX, srcY);
-}
-
 void Surface::onAsyncRescaleAndReadPixels(const SkImageInfo& info,
                                           SkIRect srcRect,
                                           RescaleGamma rescaleGamma,
@@ -130,6 +122,8 @@ GrSemaphoresSubmitted Surface::onFlush(BackendSurfaceAccess,
 }
 #endif
 
+TextureProxy* Surface::backingTextureProxy() { return fDevice->target(); }
+
 sk_sp<SkSurface> Surface::MakeGraphite(Recorder* recorder,
                                        const SkImageInfo& info,
                                        SkBudgeted budgeted,
@@ -143,6 +137,9 @@ sk_sp<SkSurface> Surface::MakeGraphite(Recorder* recorder,
         return nullptr;
     }
 
+    if (!device->target()->instantiate(recorder->priv().resourceProvider())) {
+        return nullptr;
+    }
     return sk_make_sp<Surface>(std::move(device));
 }
 

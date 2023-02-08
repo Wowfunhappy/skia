@@ -71,6 +71,7 @@ class AndroidFlavor(default.DefaultFlavor):
       'Pixel': range(0, 2),
       'Pixel2XL': range(0, 4),
       'Pixel6': range(4,8), # Only use the 4 small cores.
+      'Pixel7': range(4,8),
     }
 
     self.gpu_scaling = {
@@ -89,9 +90,9 @@ class AndroidFlavor(default.DefaultFlavor):
 
     def wait_for_device(attempt):
       self.m.run(self.m.step,
-                 'adb reconnect offline after failure of \'%s\' (attempt %d)' % (
+                 'adb kill-server after failure of \'%s\' (attempt %d)' % (
                      title, attempt),
-                 cmd=[self.ADB_BINARY, 'reconnect', 'offline'],
+                 cmd=[self.ADB_BINARY, 'kill-server'],
                  infra_step=True, timeout=30, abort_on_failure=False,
                  fail_build_on_failure=False)
       self.m.run(self.m.step,
@@ -105,6 +106,18 @@ class AndroidFlavor(default.DefaultFlavor):
                      title, attempt),
                  cmd=[self.ADB_BINARY, 'devices', '-l'],
                  infra_step=True, timeout=30, abort_on_failure=False,
+                 fail_build_on_failure=False)
+      self.m.run(self.m.step,
+                 'adb reboot device after failure of \'%s\' (attempt %d)' % (
+                     title, attempt),
+                 cmd=[self.ADB_BINARY, 'reboot'],
+                 infra_step=True, timeout=30, abort_on_failure=False,
+                 fail_build_on_failure=False)
+      self.m.run(self.m.step,
+                 'wait for device after failure of \'%s\' (attempt %d)' % (
+                     title, attempt),
+                 cmd=[self.ADB_BINARY, 'wait-for-device'], infra_step=True,
+                 timeout=180, abort_on_failure=False,
                  fail_build_on_failure=False)
     with self.m.context(cwd=self.m.path['start_dir'].join('skia')):
       with self.m.env({'ADB_VENDOR_KEYS': self.ADB_PUB_KEY}):
@@ -134,7 +147,7 @@ class AndroidFlavor(default.DefaultFlavor):
       # AndroidOne doesn't support ondemand governor. hotplug is similar.
       if device == 'AndroidOne':
         self._set_governor(i, 'hotplug')
-      elif device in ['Pixel3a', 'Pixel4', 'Pixel4a', 'Wembley', 'Pixel6']:
+      elif device in ['Pixel3a', 'Pixel4', 'Pixel4a', 'Wembley', 'Pixel6', 'Pixel7']:
         # Pixel3a/4/4a have userspace powersave performance schedutil.
         # performance seems like a reasonable choice.
         self._set_governor(i, 'performance')
@@ -147,9 +160,9 @@ class AndroidFlavor(default.DefaultFlavor):
       self.m.vars.internal_hardware_label):
       return
 
-    # Set to 'powersave' for Pixel6.
+    # Set to 'powersave' for Pixel6 and Pixel7.
     for i in self.cpus_to_scale.get(device, [0]):
-      if device in ['Pixel6']:
+      if device in ['Pixel6', 'Pixel7']:
         self._set_governor(i, 'powersave')
       else:
         self._set_governor(i, 'userspace')

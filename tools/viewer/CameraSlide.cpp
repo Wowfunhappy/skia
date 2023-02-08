@@ -10,8 +10,8 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkString.h"
 #include "include/utils/SkCamera.h"
-#include "samplecode/DecodeFile.h"
 #include "src/effects/SkEmbossMaskFilter.h"
+#include "tools/DecodeFile.h"
 #include "tools/Resources.h"
 #include "tools/timer/TimeUtils.h"
 #include "tools/viewer/Slide.h"
@@ -47,7 +47,7 @@ public:
 
     void draw(SkCanvas* canvas) override {
         canvas->clear(0xFFDDDDDD);
-        if (fShaders.count() > 0) {
+        if (fShaders.size() > 0) {
             canvas->translate(fSize.width()/2, fSize.height()/2);
 
             Sk3DView    view;
@@ -58,7 +58,7 @@ public:
             bool frontFace = view.dotWithNormal(0, 0, SK_Scalar1) < 0;
             if (frontFace != fFrontFace) {
                 fFrontFace = frontFace;
-                fShaderIndex = (fShaderIndex + 1) % fShaders.count();
+                fShaderIndex = (fShaderIndex + 1) % fShaders.size();
             }
 
             SkPaint paint;

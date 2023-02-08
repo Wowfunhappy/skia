@@ -15,6 +15,30 @@
 
 namespace skgpu::graphite {
 
+sk_sp<CopyBufferToBufferTask> CopyBufferToBufferTask::Make(sk_sp<Buffer> srcBuffer,
+                                                           sk_sp<Buffer> dstBuffer) {
+    SkASSERT(srcBuffer);
+    SkASSERT(dstBuffer);
+    SkASSERT(srcBuffer->size() == dstBuffer->size());
+    return sk_sp<CopyBufferToBufferTask>(new CopyBufferToBufferTask(std::move(srcBuffer),
+                                                                    std::move(dstBuffer)));
+}
+
+CopyBufferToBufferTask::CopyBufferToBufferTask(sk_sp<Buffer> srcBuffer,
+                                               sk_sp<Buffer> dstBuffer)
+        : fSrcBuffer(std::move(srcBuffer))
+        , fDstBuffer(std::move(dstBuffer)) {}
+
+CopyBufferToBufferTask::~CopyBufferToBufferTask() = default;
+
+bool CopyBufferToBufferTask::prepareResources(ResourceProvider*, const RuntimeEffectDictionary*) {
+    return true;
+}
+
+bool CopyBufferToBufferTask::addCommands(ResourceProvider*, CommandBuffer* commandBuffer) {
+    return commandBuffer->copyBufferToBuffer(fSrcBuffer, 0, fDstBuffer, 0, fDstBuffer->size());
+}
+
 sk_sp<CopyTextureToBufferTask> CopyTextureToBufferTask::Make(sk_sp<TextureProxy> textureProxy,
                                                              SkIRect srcRect,
                                                              sk_sp<Buffer> buffer,
@@ -42,7 +66,7 @@ CopyTextureToBufferTask::CopyTextureToBufferTask(sk_sp<TextureProxy> textureProx
 CopyTextureToBufferTask::~CopyTextureToBufferTask() {}
 
 bool CopyTextureToBufferTask::prepareResources(ResourceProvider* resourceProvider,
-                                               const SkRuntimeEffectDictionary*) {
+                                               const RuntimeEffectDictionary*) {
     if (!fTextureProxy) {
         SKGPU_LOG_E("No texture proxy specified for CopyTextureToBufferTask");
         return false;
@@ -87,7 +111,7 @@ CopyTextureToTextureTask::CopyTextureToTextureTask(sk_sp<TextureProxy> srcProxy,
 CopyTextureToTextureTask::~CopyTextureToTextureTask() {}
 
 bool CopyTextureToTextureTask::prepareResources(ResourceProvider* resourceProvider,
-                                                const SkRuntimeEffectDictionary*) {
+                                                const RuntimeEffectDictionary*) {
     if (!fSrcProxy) {
         SKGPU_LOG_E("No src texture proxy specified for CopyTextureToTextureTask");
         return false;
