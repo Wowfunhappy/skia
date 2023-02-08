@@ -406,19 +406,72 @@ void SkGlyph::ensureIntercepts(const SkScalar* bounds, SkScalar scale, SkScalar 
     offsetResults(intercept, array, count);
 }
 
+namespace {
+uint32_t init_actions(const SkGlyph& glyph) {
+    constexpr uint32_t kAllUnset = 0;
+    constexpr uint32_t kDrop = SkTo<uint32_t>(GlyphAction::kDrop);
+    constexpr uint32_t kAllDrop =
+            kDrop | kDrop << kPath | kDrop << kDrawable | kDrop << kSDFT | kDrop << kMask;
+    return glyph.isEmpty() ? kAllDrop : kAllUnset;
+}
+}  // namespace
+
 // -- SkGlyphDigest --------------------------------------------------------------------------------
 SkGlyphDigest::SkGlyphDigest(size_t index, const SkGlyph& glyph)
         : fIndex{SkTo<uint32_t>(index)}
         , fIsEmpty(glyph.isEmpty())
         , fFormat(glyph.maskFormat())
-        , fPathAction{SkTo<uint32_t>(GlyphAction::kUnset)}
-        , fDrawableAction{SkTo<uint32_t>(GlyphAction::kUnset)}
-        , fDirectMaskAction{SkTo<uint32_t>(GlyphAction::kUnset)}
-        , fSDFTAction{SkTo<uint32_t>(GlyphAction::kUnset)}
+        , fActions{init_actions(glyph)}
         , fLeft{SkTo<int16_t>(glyph.left())}
         , fTop{SkTo<int16_t>(glyph.top())}
         , fWidth{SkTo<uint16_t>(glyph.width())}
         , fHeight{SkTo<uint16_t>(glyph.height())} {}
+
+void SkGlyphDigest::setActionFor(skglyph::ActionType actionType,
+                                 SkGlyph* glyph,
+                                 SkScalerContext* context,
+                                 SkArenaAlloc* alloc) {
+    // We don't have to do any more if the glyph is marked as kDrop because it was isEmpty().
+    if (this->action(actionType) == GlyphAction::kUnset) {
+        GlyphAction action = GlyphAction::kReject;
+        switch (actionType) {
+            case kPath: {
+                glyph->setPath(alloc, context);
+                if (glyph->path() != nullptr) {
+                    action = GlyphAction::kAccept;
+                }
+                break;
+            }
+            case kDrawable: {
+                glyph->setDrawable(alloc, context);
+                if (glyph->drawable() != nullptr) {
+                    action = GlyphAction::kAccept;
+                }
+                break;
+            }
+            case kMask: {
+                if (this->fitsInAtlasInterpolated()) {
+                    action = GlyphAction::kAccept;
+                }
+                break;
+            }
+            case kSDFT: {
+                if (this->fitsInAtlasDirect() &&
+                    this->maskFormat() == SkMask::Format::kSDF_Format) {
+                    action = GlyphAction::kAccept;
+                }
+                break;
+            }
+            case kDirectMask: {
+                if (this->fitsInAtlasDirect()) {
+                    action = GlyphAction::kAccept;
+                }
+                break;
+            }
+        }
+        this->setAction(actionType, action);
+    }
+}
 
 bool SkGlyphDigest::FitsInAtlas(const SkGlyph& glyph) {
     return glyph.maxDimension() <= kSkSideTooBigForAtlas;

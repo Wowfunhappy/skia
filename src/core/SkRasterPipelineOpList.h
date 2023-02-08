@@ -44,6 +44,7 @@
     M(decal_x)    M(decal_y)   M(decal_x_and_y)                    \
     M(check_decal_mask)                                            \
     M(clamp_x_1) M(mirror_x_1) M(repeat_x_1)                       \
+    M(clamp_x_and_y)                                               \
     M(evenly_spaced_gradient)                                      \
     M(gradient)                                                    \
     M(evenly_spaced_2_stop_gradient)                               \
@@ -82,11 +83,13 @@
     M(mirror_y)   M(repeat_y)                                      \
     M(negate_x)                                                    \
     M(bicubic_clamp_8888)                                          \
+    M(bilinear_setup)                                              \
     M(bilinear_nx) M(bilinear_px) M(bilinear_ny) M(bilinear_py)    \
     M(bicubic_setup)                                               \
     M(bicubic_n3x) M(bicubic_n1x) M(bicubic_p1x) M(bicubic_p3x)    \
     M(bicubic_n3y) M(bicubic_n1y) M(bicubic_p1y) M(bicubic_p3y)    \
-    M(save_xy) M(accumulate)                                       \
+    M(accumulate)                                                  \
+    M(mipmap_linear_init) M(mipmap_linear_update) M(mipmap_linear_finish) \
     M(xy_to_2pt_conical_strip)                                     \
     M(xy_to_2pt_conical_focal_on_circle)                           \
     M(xy_to_2pt_conical_well_behaved)                              \
@@ -97,7 +100,7 @@
     M(mask_2pt_conical_nan)                                        \
     M(mask_2pt_conical_degenerates) M(apply_vector_mask)           \
     /* Dedicated SkSL stages begin here: */                                                   \
-    M(init_lane_masks) M(immediate_f)                                                         \
+    M(init_lane_masks) M(store_device_xy01) M(immediate_f)                                    \
     M(load_unmasked) M(store_unmasked) M(store_masked)                                        \
     M(load_condition_mask) M(store_condition_mask) M(merge_condition_mask)                    \
     M(load_loop_mask)      M(store_loop_mask)      M(mask_off_loop_mask)                      \
@@ -125,7 +128,7 @@
     M(floor_float)      M(floor_2_floats)      M(floor_3_floats)      M(floor_4_floats)       \
     M(ceil_float)       M(ceil_2_floats)       M(ceil_3_floats)       M(ceil_4_floats)        \
     M(sin_float)        M(cos_float)           M(tan_float)           M(atan_float)           \
-    M(atan2_n_floats)   M(sqrt_float)                                                         \
+    M(atan2_n_floats)   M(sqrt_float)          M(pow_n_floats)        M(exp_float)            \
     M(copy_constant)    M(copy_2_constants)    M(copy_3_constants)    M(copy_4_constants)     \
     M(copy_slot_masked) M(copy_2_slots_masked) M(copy_3_slots_masked) M(copy_4_slots_masked)  \
     M(copy_slot_unmasked)    M(copy_2_slots_unmasked)                                         \
@@ -149,6 +152,7 @@
     M(min_n_ints)   M(min_int)   M(min_2_ints)   M(min_3_ints)   M(min_4_ints)                \
     M(min_n_uints)  M(min_uint)  M(min_2_uints)  M(min_3_uints)  M(min_4_uints)               \
     M(mix_n_floats) M(mix_float) M(mix_2_floats) M(mix_3_floats) M(mix_4_floats)              \
+                                 M(dot_2_floats) M(dot_3_floats) M(dot_4_floats)              \
     M(cmplt_n_floats) M(cmplt_float) M(cmplt_2_floats) M(cmplt_3_floats) M(cmplt_4_floats)    \
     M(cmplt_n_ints)   M(cmplt_int)   M(cmplt_2_ints)   M(cmplt_3_ints)   M(cmplt_4_ints)      \
     M(cmplt_n_uints)  M(cmplt_uint)  M(cmplt_2_uints)  M(cmplt_3_uints)  M(cmplt_4_uints)     \

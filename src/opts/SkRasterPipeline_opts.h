@@ -1593,7 +1593,7 @@ SI I32 cond_to_mask(I32 cond) {
 // Now finally, normal Stages!
 
 STAGE(seed_shader, NoCtx) {
-    static const float iota[] = {
+    static constexpr float iota[] = {
         0.5f, 1.5f, 2.5f, 3.5f, 4.5f, 5.5f, 6.5f, 7.5f,
         8.5f, 9.5f,10.5f,11.5f,12.5f,13.5f,14.5f,15.5f,
     };
@@ -1602,9 +1602,21 @@ STAGE(seed_shader, NoCtx) {
     // On Intel this breaks a data dependency on previous loop iterations' registers.
     r = cast(dx) + sk_unaligned_load<F>(iota);
     g = cast(dy) + 0.5f;
-    b = 1.0f;
+    b = 1.0f;  // This is w=1 for matrix multiplies by the device coords.
     a = 0;
-    dr = dg = db = da = 0;
+}
+
+STAGE(store_device_xy01, F* dst) {
+    // This is very similar to `seed_shader + store_src`, but b/a are backwards.
+    // (sk_FragCoord actually puts w=1 in the w slot.)
+    static constexpr float iota[] = {
+        0.5f, 1.5f, 2.5f, 3.5f, 4.5f, 5.5f, 6.5f, 7.5f,
+        8.5f, 9.5f,10.5f,11.5f,12.5f,13.5f,14.5f,15.5f,
+    };
+    dst[0] = cast(dx) + sk_unaligned_load<F>(iota);
+    dst[1] = cast(dy) + 0.5f;
+    dst[2] = 0.0f;
+    dst[3] = 1.0f;
 }
 
 STAGE(dither, const float* rate) {
@@ -2753,6 +2765,11 @@ STAGE( clamp_x_1, NoCtx) { r = clamp_01_(r); }
 STAGE(repeat_x_1, NoCtx) { r = clamp_01_(r - floor_(r)); }
 STAGE(mirror_x_1, NoCtx) { r = clamp_01_(abs_( (r-1.0f) - two(floor_((r-1.0f)*0.5f)) - 1.0f )); }
 
+STAGE(clamp_x_and_y, const SkRasterPipeline_CoordClampCtx* ctx) {
+    r = min(ctx->max_x, max(ctx->min_x, r));
+    g = min(ctx->max_y, max(ctx->min_y, g));
+}
+
 // Decal stores a 32bit mask after checking the coordinate (x and/or y) against its domain:
 //      mask == 0x00000000 if the coordinate(s) are out of bounds
 //      mask == 0xFFFFFFFF if the coordinate(s) are in bounds
@@ -3022,16 +3039,16 @@ STAGE(apply_vector_mask, const uint32_t* ctx) {
     a = sk_bit_cast<F>(sk_bit_cast<U32>(a) & mask);
 }
 
-STAGE(save_xy, SkRasterPipeline_SamplerCtx* c) {
+SI void save_xy(F* r, F* g, SkRasterPipeline_SamplerCtx* c) {
     // Whether bilinear or bicubic, all sample points are at the same fractional offset (fx,fy).
     // They're either the 4 corners of a logical 1x1 pixel or the 16 corners of a 3x3 grid
     // surrounding (x,y) at (0.5,0.5) off-center.
-    F fx = fract(r + 0.5f),
-      fy = fract(g + 0.5f);
+    F fx = fract(*r + 0.5f),
+      fy = fract(*g + 0.5f);
 
     // Samplers will need to load x and fx, or y and fy.
-    sk_unaligned_store(c->x,  r);
-    sk_unaligned_store(c->y,  g);
+    sk_unaligned_store(c->x,  *r);
+    sk_unaligned_store(c->y,  *g);
     sk_unaligned_store(c->fx, fx);
     sk_unaligned_store(c->fy, fy);
 }
@@ -3071,6 +3088,12 @@ SI void bilinear_y(SkRasterPipeline_SamplerCtx* ctx, F* y) {
     if (kScale == -1) { scaley = 1.0f - fy; }
     if (kScale == +1) { scaley =        fy; }
     sk_unaligned_store(ctx->scaley, scaley);
+}
+
+STAGE(bilinear_setup, SkRasterPipeline_SamplerCtx* ctx) {
+    save_xy(&r, &g, ctx);
+    // Init for accumulate
+    dr = dg = db = da = 0;
 }
 
 STAGE(bilinear_nx, SkRasterPipeline_SamplerCtx* ctx) { bilinear_x<-1>(ctx, &r); }
@@ -3113,6 +3136,8 @@ SI void bicubic_y(SkRasterPipeline_SamplerCtx* ctx, F* y) {
 }
 
 STAGE(bicubic_setup, SkRasterPipeline_SamplerCtx* ctx) {
+    save_xy(&r, &g, ctx);
+
     const float* w = ctx->weights;
 
     F fx = sk_unaligned_load<F>(ctx->fx);
@@ -3126,6 +3151,9 @@ STAGE(bicubic_setup, SkRasterPipeline_SamplerCtx* ctx) {
     sk_unaligned_store(ctx->wy[1], bicubic_wts(fy, w[1], w[5], w[ 9], w[13]));
     sk_unaligned_store(ctx->wy[2], bicubic_wts(fy, w[2], w[6], w[10], w[14]));
     sk_unaligned_store(ctx->wy[3], bicubic_wts(fy, w[3], w[7], w[11], w[15]));
+
+    // Init for accumulate
+    dr = dg = db = da = 0;
 }
 
 STAGE(bicubic_n3x, SkRasterPipeline_SamplerCtx* ctx) { bicubic_x<-3>(ctx, &r); }
@@ -3137,6 +3165,28 @@ STAGE(bicubic_n3y, SkRasterPipeline_SamplerCtx* ctx) { bicubic_y<-3>(ctx, &g); }
 STAGE(bicubic_n1y, SkRasterPipeline_SamplerCtx* ctx) { bicubic_y<-1>(ctx, &g); }
 STAGE(bicubic_p1y, SkRasterPipeline_SamplerCtx* ctx) { bicubic_y<+1>(ctx, &g); }
 STAGE(bicubic_p3y, SkRasterPipeline_SamplerCtx* ctx) { bicubic_y<+3>(ctx, &g); }
+
+STAGE(mipmap_linear_init, SkRasterPipeline_MipmapCtx* ctx) {
+    sk_unaligned_store(ctx->x, r);
+    sk_unaligned_store(ctx->y, g);
+}
+
+STAGE(mipmap_linear_update, SkRasterPipeline_MipmapCtx* ctx) {
+    sk_unaligned_store(ctx->r, r);
+    sk_unaligned_store(ctx->g, g);
+    sk_unaligned_store(ctx->b, b);
+    sk_unaligned_store(ctx->a, a);
+
+    r = sk_unaligned_load<F>(ctx->x) * ctx->scaleX;
+    g = sk_unaligned_load<F>(ctx->y) * ctx->scaleY;
+}
+
+STAGE(mipmap_linear_finish, SkRasterPipeline_MipmapCtx* ctx) {
+    r = lerp(sk_unaligned_load<F>(ctx->r), r, ctx->lowerWeight);
+    g = lerp(sk_unaligned_load<F>(ctx->g), g, ctx->lowerWeight);
+    b = lerp(sk_unaligned_load<F>(ctx->b), b, ctx->lowerWeight);
+    a = lerp(sk_unaligned_load<F>(ctx->a), a, ctx->lowerWeight);
+}
 
 STAGE(callback, SkRasterPipeline_CallbackCtx* c) {
     store4(c->rgba,0, r,g,b,a);
@@ -3480,6 +3530,7 @@ STAGE_TAIL(cos_float, F* dst)  { *dst = cos_(*dst); }
 STAGE_TAIL(tan_float, F* dst)  { *dst = tan_(*dst); }
 STAGE_TAIL(atan_float, F* dst) { *dst = atan_(*dst); }
 STAGE_TAIL(sqrt_float, F* dst) { *dst = sqrt_(*dst); }
+STAGE_TAIL(exp_float, F* dst)  { *dst = approx_exp(*dst); }
 
 // Binary operations take two adjacent inputs, and write their output in the first position.
 template <typename T, void (*ApplyFn)(T*, T*)>
@@ -3566,6 +3617,10 @@ SI void atan2_fn(F* dst, F* src) {
     *dst = atan2_(*dst, *src);
 }
 
+SI void pow_fn(F* dst, F* src) {
+    *dst = approx_powf(*dst, *src);
+}
+
 #define DECLARE_N_WAY_BINARY_FLOAT(name)                                  \
     STAGE_TAIL(name##_n_floats, SkRasterPipeline_BinaryOpCtx* ctx) {      \
         apply_adjacent_binary<F, &name##_fn>((F*)ctx->dst, (F*)ctx->src); \
@@ -3621,6 +3676,7 @@ DECLARE_BINARY_FLOAT(cmpne)  DECLARE_BINARY_INT(cmpne)
 // Sufficiently complex ops only provide an N-way version, to avoid code bloat from the dedicated
 // 1-4 slot versions.
 DECLARE_N_WAY_BINARY_FLOAT(atan2)
+DECLARE_N_WAY_BINARY_FLOAT(pow)
 
 #undef DECLARE_BINARY_FLOAT
 #undef DECLARE_BINARY_INT
@@ -3628,6 +3684,26 @@ DECLARE_N_WAY_BINARY_FLOAT(atan2)
 #undef DECLARE_N_WAY_BINARY_FLOAT
 #undef DECLARE_N_WAY_BINARY_INT
 #undef DECLARE_N_WAY_BINARY_UINT
+
+// Dots can be represented with multiply and add ops, but they are so foundational that it's worth
+// having dedicated ops.
+STAGE_TAIL(dot_2_floats, F* dst) {
+    dst[0] = mad(dst[0],  dst[2],
+                 dst[1] * dst[3]);
+}
+
+STAGE_TAIL(dot_3_floats, F* dst) {
+    dst[0] = mad(dst[0],  dst[3],
+             mad(dst[1],  dst[4],
+                 dst[2] * dst[5]));
+}
+
+STAGE_TAIL(dot_4_floats, F* dst) {
+    dst[0] = mad(dst[0],  dst[4],
+             mad(dst[1],  dst[5],
+             mad(dst[2],  dst[6],
+                 dst[3] * dst[7])));
+}
 
 // Ternary operations work like binary ops (see immediately above) but take two source inputs.
 template <typename T, void (*ApplyFn)(T*, T*, T*)>
@@ -4183,7 +4259,7 @@ SI F abs_(F x) { return sk_bit_cast<F>( sk_bit_cast<I32>(x) & 0x7fffffff ); }
 // ~~~~~~ Basic / misc. stages ~~~~~~ //
 
 STAGE_GG(seed_shader, NoCtx) {
-    static const float iota[] = {
+    static constexpr float iota[] = {
         0.5f, 1.5f, 2.5f, 3.5f, 4.5f, 5.5f, 6.5f, 7.5f,
         8.5f, 9.5f,10.5f,11.5f,12.5f,13.5f,14.5f,15.5f,
     };
@@ -4933,6 +5009,10 @@ STAGE_GG(decal_x_and_y, SkRasterPipeline_DecalTileCtx* ctx) {
     auto w = ctx->limit_x;
     auto h = ctx->limit_y;
     sk_unaligned_store(ctx->mask, cond_to_mask_16((0 <= x) & (x < w) & (0 <= y) & (y < h)));
+}
+STAGE_GG(clamp_x_and_y, SkRasterPipeline_CoordClampCtx* ctx) {
+    x = min(ctx->max_x, max(ctx->min_x, x));
+    y = min(ctx->max_y, max(ctx->min_y, y));
 }
 STAGE_PP(check_decal_mask, SkRasterPipeline_DecalTileCtx* ctx) {
     auto mask = sk_unaligned_load<U16>(ctx->mask);

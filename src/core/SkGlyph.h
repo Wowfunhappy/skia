@@ -300,6 +300,18 @@ enum class GlyphAction {
     kDrop,
     kSize,
 };
+
+enum ActionType {
+    kDirectMask = 0,
+    kPath = 2,
+    kDrawable = 4,
+    kSDFT = 6,
+    kMask = 8,
+};
+
+enum ActionTypeSize {
+    kTotalBits = 10
+};
 }  // namespace skglyph
 
 // SkGlyphDigest contains a digest of information for making GPU drawing decisions. It can be
@@ -319,44 +331,52 @@ public:
     bool isColor()       const { return fFormat == SkMask::kARGB32_Format; }
     SkMask::Format maskFormat() const { return static_cast<SkMask::Format>(fFormat); }
     skglyph::GlyphAction pathAction() const {
-        return static_cast<skglyph::GlyphAction>(fPathAction);
+        return this->action(skglyph::ActionType::kPath);
     }
     void setPathAction(skglyph::GlyphAction action) {
-        using namespace skglyph;
-        SkASSERT(static_cast<GlyphAction>(fPathAction) == GlyphAction::kUnset);
-        fPathAction = static_cast<uint32_t>(action);
+        this->setAction(skglyph::ActionType::kPath, action);
     }
     skglyph::GlyphAction drawableAction() const {
-        return static_cast<skglyph::GlyphAction>(fDrawableAction);
+        return this->action(skglyph::ActionType::kDrawable);
     }
     void setDrawableAction(skglyph::GlyphAction action) {
-        using namespace skglyph;
-        SkASSERT(static_cast<GlyphAction>(fDrawableAction) == GlyphAction::kUnset);
-        fDrawableAction = SkTo<uint32_t>(action);
+        this->setAction(skglyph::ActionType::kDrawable, action);
     }
     skglyph::GlyphAction directMaskAction() const {
-        return static_cast<skglyph::GlyphAction>(fDirectMaskAction);
+        return this->action(skglyph::ActionType::kDirectMask);
     }
     void setDirectMaskAction(skglyph::GlyphAction action) {
-        using namespace skglyph;
-        SkASSERT(static_cast<GlyphAction>(fDirectMaskAction) == GlyphAction::kUnset);
-        fDirectMaskAction = SkTo<uint32_t>(action);
+        this->setAction(skglyph::ActionType::kDirectMask, action);
     }
     skglyph::GlyphAction SDFTAction() const {
-        return static_cast<skglyph::GlyphAction>(fSDFTAction);
+        return this->action(skglyph::ActionType::kSDFT);
     }
     void setSDFTAction(skglyph::GlyphAction action) {
-        using namespace skglyph;
-        SkASSERT(static_cast<GlyphAction>(fSDFTAction) == GlyphAction::kUnset);
-        fSDFTAction = SkTo<uint32_t>(action);
+        this->setAction(skglyph::ActionType::kSDFT, action);
     }
+    skglyph::GlyphAction maskAction() const {
+        return this->action(skglyph::ActionType::kMask);
+    }
+    void setMaskAction(skglyph::GlyphAction action) {
+        this->setAction(skglyph::ActionType::kMask, action);
+    }
+    skglyph::GlyphAction action(skglyph::ActionType actionType) const {
+        return static_cast<skglyph::GlyphAction>((fActions >> actionType) & 0b11);
+    }
+
+    void setActionFor(skglyph::ActionType, SkGlyph*, SkScalerContext*, SkArenaAlloc*);
 
     uint16_t maxDimension() const {
         return std::max(fWidth, fHeight);
     }
 
-    bool fitsInAtlas() const {
+    bool fitsInAtlasDirect() const {
         return this->maxDimension() <= kSkSideTooBigForAtlas;
+    }
+
+    bool fitsInAtlasInterpolated() const {
+        // Include the padding needed for interpolating the glyph when drawing.
+        return this->maxDimension() <= kSkSideTooBigForAtlas - 2;
     }
 
     SkGlyphRect bounds() const {
@@ -366,6 +386,15 @@ public:
     static bool FitsInAtlas(const SkGlyph& glyph);
 
 private:
+    void setAction(skglyph::ActionType actionType, skglyph::GlyphAction action) {
+        using namespace skglyph;
+        SkASSERT(action != GlyphAction::kUnset);
+        SkASSERT(this->action(actionType) == GlyphAction::kUnset);
+        const uint32_t mask = 0b11 << actionType;
+        fActions &= ~mask;
+        fActions |= SkTo<uint32_t>(action) << actionType;
+    }
+
     static_assert(SkPackedGlyphID::kEndData == 20);
     static_assert(SkMask::kCountMaskFormats <= 8);
     static_assert(SkTo<int>(skglyph::GlyphAction::kSize) <= 4);
@@ -373,10 +402,7 @@ private:
         uint32_t fIndex            : SkPackedGlyphID::kEndData;
         uint16_t fIsEmpty          : 1;
         uint32_t fFormat           : 3;
-        uint32_t fPathAction       : 2;  // GlyphAction
-        uint32_t fDrawableAction   : 2;  // GlyphAction
-        uint32_t fDirectMaskAction : 2;  // GlyphAction
-        uint32_t fSDFTAction       : 2;  // GlyphAction
+        uint32_t fActions          : skglyph::ActionTypeSize::kTotalBits;
     };
     int16_t fLeft, fTop;
     uint16_t fWidth, fHeight;

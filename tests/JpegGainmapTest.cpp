@@ -175,19 +175,23 @@ DEF_TEST(Codec_jpegMultiPicture, r) {
 
     // Search and parse the MPF header.
     std::unique_ptr<SkJpegMultiPictureParameters> mpParams;
+    SkJpegSegment mpParamsSegment;
     {
         auto sourceMgr = SkJpegSourceMgr::Make(stream.get());
         for (const auto& segment : sourceMgr->getAllSegments()) {
             static constexpr uint32_t kMpfMarker = 0xE2;
-            static constexpr uint8_t kMpfSig[] = {'M', 'P', 'F', '\0'};
             if (segment.marker != kMpfMarker) {
                 continue;
             }
-            auto parameterData = sourceMgr->copyParameters(segment, kMpfSig, sizeof(kMpfSig));
+            auto parameterData = sourceMgr->getSegmentParameters(segment);
             if (!parameterData) {
                 continue;
             }
             mpParams = SkJpegParseMultiPicture(parameterData);
+            if (mpParams) {
+                mpParamsSegment = segment;
+                break;
+            }
         }
     }
     REPORTER_ASSERT(r, mpParams);
@@ -206,6 +210,8 @@ DEF_TEST(Codec_jpegMultiPicture, r) {
             {TestStream::Type::kSeekable, true, 1024 * 1024 * 16},
             {TestStream::Type::kUnseekable, false, 1024},
             {TestStream::Type::kUnseekable, true, 1024},
+            {TestStream::Type::kUnseekable, false, 1},
+            {TestStream::Type::kUnseekable, true, 1},
             {TestStream::Type::kUnseekable, false, 7},
             {TestStream::Type::kUnseekable, true, 13},
             {TestStream::Type::kUnseekable, false, 1024 * 1024 * 16},
@@ -223,7 +229,8 @@ DEF_TEST(Codec_jpegMultiPicture, r) {
         auto sourceMgr = SkJpegSourceMgr::Make(&testStream, rec.bufferSize);
 
         // Extract the streams for the MultiPicture images.
-        auto mpStreams = SkJpegExtractMultiPictureStreams(&testMpParams, sourceMgr.get());
+        auto mpStreams =
+                SkJpegExtractMultiPictureStreams(&testMpParams, mpParamsSegment, sourceMgr.get());
         REPORTER_ASSERT(r, mpStreams);
         size_t numberOfImages = mpStreams->images.size();
 
@@ -546,10 +553,14 @@ DEF_TEST(AndroidCodec_jpegGainmapTranscode, r) {
                     r,
                     approx_eq_rgb(
                             gainmapInfo[0].fGainmapGamma, gainmapInfo[1].fGainmapGamma, kEpsilon));
-            REPORTER_ASSERT(
-                    r, approx_eq(gainmapInfo[0].fEpsilonSdr, gainmapInfo[1].fEpsilonSdr, kEpsilon));
-            REPORTER_ASSERT(
-                    r, approx_eq(gainmapInfo[0].fEpsilonHdr, gainmapInfo[1].fEpsilonHdr, kEpsilon));
+            REPORTER_ASSERT(r,
+                            approx_eq(gainmapInfo[0].fEpsilonSdr.fR,
+                                      gainmapInfo[1].fEpsilonSdr.fR,
+                                      kEpsilon));
+            REPORTER_ASSERT(r,
+                            approx_eq(gainmapInfo[0].fEpsilonHdr.fR,
+                                      gainmapInfo[1].fEpsilonHdr.fR,
+                                      kEpsilon));
             REPORTER_ASSERT(
                     r,
                     approx_eq(gainmapInfo[0].fHdrRatioMin, gainmapInfo[1].fHdrRatioMin, kEpsilon));

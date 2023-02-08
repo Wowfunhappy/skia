@@ -516,7 +516,7 @@ AtlasTextOp::MaskType op_mask_type(MaskFormat maskFormat) {
 
 SkPMColor4f calculate_colors(skgpu::v1::SurfaceDrawContext* sdc,
                              const SkPaint& paint,
-                             const SkMatrixProvider& matrix,
+                             const SkMatrix& matrix,
                              MaskFormat maskFormat,
                              GrPaint* grPaint) {
     GrRecordingContext* rContext = sdc->recordingContext();
@@ -1449,8 +1449,11 @@ std::tuple<const GrClip*, GrOp::Owner> DirectMaskSubRun::makeAtlasTextOp(
     }
 
     GrPaint grPaint;
-    const SkPMColor4f drawingColor =
-            calculate_colors(sdc, paint, viewMatrix, fMaskFormat, &grPaint);
+    const SkPMColor4f drawingColor = calculate_colors(sdc,
+                                                      paint,
+                                                      drawMatrix,
+                                                      fMaskFormat,
+                                                      &grPaint);
 
     auto geometry = AtlasTextOp::Geometry::Make(*this,
                                                 drawMatrix,
@@ -1787,8 +1790,11 @@ public:
         const SkMatrix& drawMatrix = viewMatrix.localToDevice();
 
         GrPaint grPaint;
-        SkPMColor4f drawingColor = calculate_colors(
-                sdc, paint, viewMatrix, fVertexFiller.grMaskType(), &grPaint);
+        SkPMColor4f drawingColor = calculate_colors(sdc,
+                                                    paint,
+                                                    drawMatrix,
+                                                    fVertexFiller.grMaskType(),
+                                                    &grPaint);
 
         auto geometry = AtlasTextOp::Geometry::Make(*this,
                                                     drawMatrix,
@@ -2043,8 +2049,11 @@ public:
         const SkMatrix& drawMatrix = viewMatrix.localToDevice();
 
         GrPaint grPaint;
-        SkPMColor4f drawingColor =
-                calculate_colors(sdc, paint, viewMatrix, MaskFormat::kA8, &grPaint);
+        SkPMColor4f drawingColor = calculate_colors(sdc,
+                                                    paint,
+                                                    drawMatrix,
+                                                    MaskFormat::kA8,
+                                                    &grPaint);
 
         auto [maskType, DFGPFlags, useGammaCorrectDistanceTable] =
                 calculate_sdf_parameters(*sdc, drawMatrix, fUseLCDText, fAntiAliased);
@@ -2309,7 +2318,7 @@ SkScalar find_maximum_glyph_dimension(StrikeForGPU* strike, SkSpan<const SkGlyph
     StrikeMutationMonitor m{strike};
     SkScalar maxDimension = 0;
     for (SkGlyphID glyphID : glyphs) {
-        SkGlyphDigest digest = strike->digest(SkPackedGlyphID{glyphID});
+        SkGlyphDigest digest = strike->maskDigest(glyphID);
         maxDimension = std::max(static_cast<SkScalar>(digest.maxDimension()), maxDimension);
     }
 
@@ -2410,19 +2419,22 @@ SkRect prepare_for_mask_drawing(StrikeForGPU* strike,
             continue;
         }
 
-        SkGlyphDigest digest = strike->digest(packedID);
-
-        if (digest.isEmpty()) {
-            continue;
-        }
-
-        if (digest.fitsInAtlas()) {
-            SkPoint mappedPos = creationMatrix.mapPoint(pos);
-            const SkGlyphRect glyphBounds = digest.bounds().offset(mappedPos);
-            boundingRect = skglyph::rect_union(boundingRect, glyphBounds);
-            accepted->accept(packedID, glyphBounds.leftTop(), digest.maskFormat());
-        } else {
-            rejected->reject(i);
+        const SkGlyphID glyphID = packedID.packedID().glyphID();
+        const SkGlyphDigest digest = strike->maskDigest(glyphID);
+        switch (digest.maskAction()) {
+            case GlyphAction::kAccept: {
+                const SkPoint mappedPos = creationMatrix.mapPoint(pos);
+                const SkGlyphRect glyphBounds = digest.bounds().offset(mappedPos);
+                boundingRect = skglyph::rect_union(boundingRect, glyphBounds);
+                accepted->accept(
+                        SkPackedGlyphID{glyphID}, glyphBounds.leftTop(), digest.maskFormat());
+                break;
+            }
+            case GlyphAction::kReject:
+                rejected->reject(i);
+                break;
+            default:
+                break;
         }
     }
 
@@ -2435,7 +2447,7 @@ void prepare_for_path_drawing(StrikeForGPU* strike,
     StrikeMutationMonitor m{strike};
     for (auto [i, packedID, pos] : SkMakeEnumerate(accepted->input())) {
         if (SkScalarsAreFinite(pos.x(), pos.y())) {
-            switch (strike->pathAction(packedID.packedID().glyphID())) {
+            switch (strike->pathDigest(packedID.packedID().glyphID()).pathAction()) {
                 case GlyphAction::kAccept:
                     accepted->accept(packedID, pos);
                     break;
@@ -2455,7 +2467,7 @@ void prepare_for_drawable_drawing(StrikeForGPU* strike,
     StrikeMutationMonitor m{strike};
     for (auto [i, packedID, pos] : SkMakeEnumerate(accepted->input())) {
         if (SkScalarsAreFinite(pos.x(), pos.y())) {
-            switch (strike->drawableAction(packedID.packedID().glyphID())) {
+            switch (strike->drawableDigest(packedID.packedID().glyphID()).drawableAction()) {
                 case GlyphAction::kAccept:
                     accepted->accept(packedID, pos);
                     break;
@@ -2557,7 +2569,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
                 }
 
                 if (!SkScalarNearlyZero(strikeToSourceScale)) {
-                    ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                    sk_sp<StrikeForGPU> strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                     // The creationMatrix needs to scale the strike data when inverted and
                     // multiplied by the positionMatrix. The final CTM should be:
@@ -2608,7 +2620,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
                     msg.appendf("  Mask case:\n%s", strikeSpec.dump().c_str());
                 }
 
-                ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                sk_sp<StrikeForGPU> strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                 accepted->startSource(rejected->source());
                 if constexpr (kTrace) {
@@ -2648,7 +2660,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
             }
 
             if (!SkScalarNearlyZero(strikeToSourceScale)) {
-                ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                sk_sp<StrikeForGPU> strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                 accepted->startSource(rejected->source());
                 if constexpr (kTrace) {
@@ -2678,7 +2690,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
             }
 
             if (!SkScalarNearlyZero(strikeToSourceScale)) {
-                ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+                sk_sp<StrikeForGPU> strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
                 accepted->startSource(rejected->source());
                 if constexpr (kTrace) {
@@ -2737,7 +2749,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
             auto maxGlyphDimension = [&](const SkMatrix& m) {
                 const SkStrikeSpec strikeSpec = SkStrikeSpec::MakeTransformMask(
                         runFont, runPaint, deviceProps, scalerContextFlags, m);
-                const ScopedStrikeForGPU gaugingStrike =
+                const sk_sp<StrikeForGPU> gaugingStrike =
                         strikeSpec.findOrCreateScopedStrike(strikeCache);
                 const SkScalar maxDimension =
                         find_maximum_glyph_dimension(gaugingStrike.get(), glyphs);
@@ -2775,7 +2787,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
             if constexpr (kTrace) {
                 msg.appendf("Transformed case:\n%s", strikeSpec.dump().c_str());
             }
-            ScopedStrikeForGPU strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
+            sk_sp<StrikeForGPU> strike = strikeSpec.findOrCreateScopedStrike(strikeCache);
 
             accepted->startSource(rejected->source());
             if constexpr (kTrace) {
