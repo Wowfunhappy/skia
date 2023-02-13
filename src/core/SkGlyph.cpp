@@ -16,12 +16,14 @@
 #include "src/pathops/SkPathOpsCubic.h"
 #include "src/pathops/SkPathOpsPoint.h"
 #include "src/pathops/SkPathOpsQuad.h"
+#include "src/text/StrikeForGPU.h"
 
 #include <cstring>
 #include <tuple>
 #include <utility>
 
 using namespace skglyph;
+using namespace sktext;
 
 //-- SkGlyph ---------------------------------------------------------------------------------------
 SkGlyph::SkGlyph(const SkGlyph&) = default;
@@ -411,7 +413,12 @@ uint32_t init_actions(const SkGlyph& glyph) {
     constexpr uint32_t kAllUnset = 0;
     constexpr uint32_t kDrop = SkTo<uint32_t>(GlyphAction::kDrop);
     constexpr uint32_t kAllDrop =
-            kDrop | kDrop << kPath | kDrop << kDrawable | kDrop << kSDFT | kDrop << kMask;
+            kDrop << kDirectMask |
+            kDrop << kDirectMaskCPU |
+            kDrop << kMask |
+            kDrop << kSDFT |
+            kDrop << kPath |
+            kDrop << kDrawable;
     return glyph.isEmpty() ? kAllDrop : kAllUnset;
 }
 }  // namespace
@@ -429,22 +436,19 @@ SkGlyphDigest::SkGlyphDigest(size_t index, const SkGlyph& glyph)
 
 void SkGlyphDigest::setActionFor(skglyph::ActionType actionType,
                                  SkGlyph* glyph,
-                                 SkScalerContext* context,
-                                 SkArenaAlloc* alloc) {
+                                 StrikeForGPU* strike) {
     // We don't have to do any more if the glyph is marked as kDrop because it was isEmpty().
-    if (this->action(actionType) == GlyphAction::kUnset) {
+    if (this->actionFor(actionType) == GlyphAction::kUnset) {
         GlyphAction action = GlyphAction::kReject;
         switch (actionType) {
-            case kPath: {
-                glyph->setPath(alloc, context);
-                if (glyph->path() != nullptr) {
+            case kDirectMask: {
+                if (this->fitsInAtlasDirect()) {
                     action = GlyphAction::kAccept;
                 }
                 break;
             }
-            case kDrawable: {
-                glyph->setDrawable(alloc, context);
-                if (glyph->drawable() != nullptr) {
+            case kDirectMaskCPU: {
+                if (strike->prepareForImage(glyph)) {
                     action = GlyphAction::kAccept;
                 }
                 break;
@@ -462,8 +466,14 @@ void SkGlyphDigest::setActionFor(skglyph::ActionType actionType,
                 }
                 break;
             }
-            case kDirectMask: {
-                if (this->fitsInAtlasDirect()) {
+            case kPath: {
+                if (strike->prepareForPath(glyph)) {
+                    action = GlyphAction::kAccept;
+                }
+                break;
+            }
+            case kDrawable: {
+                if (strike->prepareForDrawable(glyph)) {
                     action = GlyphAction::kAccept;
                 }
                 break;
