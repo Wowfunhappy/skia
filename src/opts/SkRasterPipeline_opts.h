@@ -1404,6 +1404,15 @@ SI void from_1010102(U32 rgba, F* r, F* g, F* b, F* a) {
     *b = cast((rgba >> 20) & 0x3ff) * (1/1023.0f);
     *a = cast((rgba >> 30)        ) * (1/   3.0f);
 }
+SI void from_1010102_xr(U32 rgba, F* r, F* g, F* b, F* a) {
+    static constexpr float min = -0.752941f;
+    static constexpr float max = 1.25098f;
+    static constexpr float range = max - min;
+    *r = cast((rgba      ) & 0x3ff) * (1/1023.0f) * range + min;
+    *g = cast((rgba >> 10) & 0x3ff) * (1/1023.0f) * range + min;
+    *b = cast((rgba >> 20) & 0x3ff) * (1/1023.0f) * range + min;
+    *a = cast((rgba >> 30)        ) * (1/   3.0f);
+}
 SI void from_1616(U32 _1616, F* r, F* g) {
     *r = cast((_1616      ) & 0xffff) * (1/65535.0f);
     *g = cast((_1616 >> 16) & 0xffff) * (1/65535.0f);
@@ -2570,6 +2579,14 @@ STAGE(load_1010102_dst, const SkRasterPipeline_MemoryCtx* ctx) {
     auto ptr = ptr_at_xy<const uint32_t>(ctx, dx,dy);
     from_1010102(load<U32>(ptr, tail), &dr,&dg,&db,&da);
 }
+STAGE(load_1010102_xr, const SkRasterPipeline_MemoryCtx* ctx) {
+    auto ptr = ptr_at_xy<const uint32_t>(ctx, dx,dy);
+    from_1010102_xr(load<U32>(ptr, tail), &r,&g,&b,&a);
+}
+STAGE(load_1010102_xr_dst, const SkRasterPipeline_MemoryCtx* ctx) {
+    auto ptr = ptr_at_xy<const uint32_t>(ctx, dx,dy);
+    from_1010102_xr(load<U32>(ptr, tail), &dr,&dg,&db,&da);
+}
 STAGE(gather_1010102, const SkRasterPipeline_GatherCtx* ctx) {
     const uint32_t* ptr;
     U32 ix = ix_and_ptr(&ptr, ctx, r,g);
@@ -2581,6 +2598,17 @@ STAGE(store_1010102, const SkRasterPipeline_MemoryCtx* ctx) {
     U32 px = to_unorm(r, 1023)
            | to_unorm(g, 1023) << 10
            | to_unorm(b, 1023) << 20
+           | to_unorm(a,    3) << 30;
+    store(ptr, px, tail);
+}
+STAGE(store_1010102_xr, const SkRasterPipeline_MemoryCtx* ctx) {
+    auto ptr = ptr_at_xy<uint32_t>(ctx, dx,dy);
+    static constexpr float min = -0.752941f;
+    static constexpr float max = 1.25098f;
+    static constexpr float range = max - min;
+    U32 px = to_unorm((r - min) / range, 1023)
+           | to_unorm((g - min) / range, 1023) << 10
+           | to_unorm((b - min) / range, 1023) << 20
            | to_unorm(a,    3) << 30;
     store(ptr, px, tail);
 }
@@ -3211,18 +3239,6 @@ STAGE_TAIL(init_lane_masks, NoCtx) {
     dr = dg = db = da = sk_bit_cast<F>(mask);
 }
 
-STAGE_TAIL(load_unmasked, float* ctx) {
-    r = sk_unaligned_load<F>(ctx);
-}
-
-STAGE_TAIL(store_unmasked, float* ctx) {
-    sk_unaligned_store(ctx, r);
-}
-
-STAGE_TAIL(store_masked, float* ctx) {
-    sk_unaligned_store(ctx, if_then_else(execution_mask(), r, sk_unaligned_load<F>(ctx)));
-}
-
 STAGE_TAIL(load_condition_mask, F* ctx) {
     dr = sk_unaligned_load<F>(ctx);
     update_execution_mask();
@@ -3267,6 +3283,20 @@ STAGE_TAIL(merge_loop_mask, I32* ptr) {
     update_execution_mask();
 }
 
+STAGE_TAIL(case_op, SkRasterPipeline_CaseOpCtx* ctx) {
+    // Check each lane to see if the case value matches the expectation.
+    I32* actualValue = (I32*)ctx->ptr;
+    I32 caseMatches = cond_to_mask(*actualValue == ctx->expectedValue);
+
+    // In lanes where we found a match, enable the loop mask...
+    dg = sk_bit_cast<F>(sk_bit_cast<I32>(dg) | caseMatches);
+    update_execution_mask();
+
+    // ... and clear the default-case mask.
+    I32* defaultMask = actualValue + 1;
+    *defaultMask &= ~caseMatches;
+}
+
 STAGE_TAIL(load_return_mask, F* ctx) {
     db = sk_unaligned_load<F>(ctx);
     update_execution_mask();
@@ -3302,12 +3332,6 @@ STAGE_BRANCH(branch_if_no_active_lanes_eq, SkRasterPipeline_BranchIfEqualCtx* ct
     match &= execution_mask();
     // If any lanes matched, don't take the branch.
     return any(match) ? 1 : ctx->offset;
-}
-
-STAGE_TAIL(immediate_f, void* ctx) {
-    float val;
-    memcpy(&val, &ctx, sizeof(val));
-    r = F(val);
 }
 
 STAGE_TAIL(zero_slot_unmasked, F* dst) {
@@ -3717,12 +3741,14 @@ SI void apply_adjacent_ternary(T* dst, T* src0, T* src1) {
     } while (dst != end);
 }
 
-SI void mix_fn(F* a, F* b, F* c) {
-    *a = lerp(*a, *b, *c);
+SI void mix_fn(F* a, F* x, F* y) {
+    // We reorder the arguments here to match lerp's GLSL-style order (interpolation point last).
+    *a = lerp(*x, *y, *a);
 }
 
-SI void mix_fn(I32* a, I32* b, I32* c) {
-    *a = if_then_else(*c, *b, *a);
+SI void mix_fn(I32* a, I32* x, I32* y) {
+    // We reorder the arguments here to match if_then_else's expected order (y before x).
+    *a = if_then_else(*a, *y, *x);
 }
 
 #define DECLARE_TERNARY_FLOAT(name)                                                           \

@@ -409,9 +409,8 @@ void SkImageShader::addToKey(const skgpu::graphite::KeyContext& keyContext,
 
     if (imageToDraw) {
         imgData.fSampling = newSampling;
-        skgpu::graphite::Mipmapped mipmapped = (newSampling.mipmap != SkMipmapMode::kNone)
-                                                   ? skgpu::graphite::Mipmapped::kYes
-                                                   : skgpu::graphite::Mipmapped::kNo;
+        skgpu::Mipmapped mipmapped = (newSampling.mipmap != SkMipmapMode::kNone)
+                                         ? skgpu::Mipmapped::kYes : skgpu::Mipmapped::kNo;
 
         auto [view, _] = as_IB(imageToDraw)->asView(keyContext.recorder(), mipmapped);
         imgData.fTextureProxy = view.refProxy();
@@ -660,6 +659,10 @@ bool SkImageShader::appendStages(const SkStageRec& rec, const MatrixRec& mRec) c
             case kRGB_101010x_SkColorType:
                 p->append(SkRasterPipelineOp::gather_1010102, ctx);
                 p->append(SkRasterPipelineOp::force_opaque);
+                break;
+
+            case kBGR_101010x_XR_SkColorType:
+                SkASSERT(false);
                 break;
 
             case kBGR_101010x_SkColorType:
