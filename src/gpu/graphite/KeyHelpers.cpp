@@ -16,6 +16,7 @@
 #include "src/gpu/graphite/KeyContext.h"
 #include "src/gpu/graphite/PaintParamsKey.h"
 #include "src/gpu/graphite/PipelineData.h"
+#include "src/gpu/graphite/ReadWriteSwizzle.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/ResourceProvider.h"
 #include "src/gpu/graphite/RuntimeEffectDictionary.h"
@@ -316,16 +317,34 @@ namespace {
 
 void add_color_space_uniforms(const SkColorSpaceXformSteps& steps, PipelineDataGatherer* gatherer) {
     static constexpr int kNumXferFnCoeffs = 7;
+    static constexpr float kEmptyXferFn[kNumXferFnCoeffs] = {};
 
     gatherer->write(SkTo<int>(steps.flags.mask()));
-    gatherer->write(SkTo<int>(skcms_TransferFunction_getType(&steps.srcTF)));
-    gatherer->write(SkTo<int>(skcms_TransferFunction_getType(&steps.dstTFInv)));
-    gatherer->writeHalfArray({&steps.srcTF.g, kNumXferFnCoeffs});
-    gatherer->writeHalfArray({&steps.dstTFInv.g, kNumXferFnCoeffs});
+
+    if (steps.flags.linearize) {
+        gatherer->write(SkTo<int>(skcms_TransferFunction_getType(&steps.srcTF)));
+        gatherer->writeHalfArray({&steps.srcTF.g, kNumXferFnCoeffs});
+    } else {
+        gatherer->write(SkTo<int>(skcms_TFType::skcms_TFType_Invalid));
+        gatherer->writeHalfArray({kEmptyXferFn, kNumXferFnCoeffs});
+    }
 
     SkMatrix gamutTransform;
-    gamutTransform.set9(steps.src_to_dst_matrix);
+    if (steps.flags.gamut_transform) {
+        // TODO: it seems odd to copy this into an SkMatrix just to write it to the gatherer
+        gamutTransform.set9(steps.src_to_dst_matrix);
+    }
     gatherer->writeHalf(gamutTransform);
+
+    if (steps.flags.encode) {
+        gatherer->write(SkTo<int>(skcms_TransferFunction_getType(&steps.dstTFInv)));
+        gatherer->writeHalfArray({&steps.dstTFInv.g, kNumXferFnCoeffs});
+    } else {
+        gatherer->write(SkTo<int>(skcms_TFType::skcms_TFType_Invalid));
+        gatherer->writeHalfArray({kEmptyXferFn, kNumXferFnCoeffs});
+    }
+
+
 }
 
 void add_image_uniform_data(const ShaderCodeDictionary* dict,
@@ -346,6 +365,7 @@ void add_image_uniform_data(const ShaderCodeDictionary* dict,
     } else {
         gatherer->write(SkM44());
     }
+    gatherer->write(SkTo<int>(imgData.fReadSwizzle));
 
     add_color_space_uniforms(imgData.fSteps, gatherer);
 
@@ -357,10 +377,12 @@ void add_image_uniform_data(const ShaderCodeDictionary* dict,
 ImageShaderBlock::ImageData::ImageData(const SkSamplingOptions& sampling,
                                        SkTileMode tileModeX,
                                        SkTileMode tileModeY,
-                                       SkRect subset)
+                                       SkRect subset,
+                                       ReadSwizzle readSwizzle)
         : fSampling(sampling)
         , fTileModes{tileModeX, tileModeY}
-        , fSubset(subset) {
+        , fSubset(subset)
+        , fReadSwizzle(readSwizzle) {
     SkASSERT(fSteps.flags.mask() == 0);   // By default, the colorspace should have no effect
 }
 

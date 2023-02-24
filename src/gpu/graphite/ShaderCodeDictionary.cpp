@@ -19,6 +19,7 @@
 #include "src/core/SkSLTypeShared.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/ContextUtils.h"
+#include "src/gpu/graphite/ReadWriteSwizzle.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/RuntimeEffectDictionary.h"
 #include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
@@ -589,13 +590,14 @@ static constexpr Uniform kImageShaderUniforms[] = {
         { "filterMode",            SkSLType::kInt },
         { "useCubic",              SkSLType::kInt },
         { "cubicCoeffs",           SkSLType::kFloat4x4 },
+        { "readSwizzle",           SkSLType::kInt },
         // The next 6 uniforms are for the color space transformation
         { "csXformFlags",          SkSLType::kInt },
         { "csXformSrcKind",        SkSLType::kInt },
-        { "csXformDstKind",        SkSLType::kInt },
         { "csXformSrcCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
-        { "csXformDstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
         { "csXformGamutTransform", SkSLType::kHalf3x3 },
+        { "csXformDstKind",        SkSLType::kInt },
+        { "csXformDstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
 };
 
 static constexpr TextureAndSampler kISTexturesAndSamplers[] = {
@@ -611,6 +613,17 @@ static_assert(0 == static_cast<int>(SkFilterMode::kNearest),
               "ImageShader code depends on SkFilterMode");
 static_assert(1 == static_cast<int>(SkFilterMode::kLinear),
               "ImageShader code depends on SkFilterMode");
+
+static_assert(0 == static_cast<int>(ReadSwizzle::kRGBA),
+              "ImageShader code depends on ReadSwizzle");
+static_assert(1 == static_cast<int>(ReadSwizzle::kRGB1),
+              "ImageShader code depends on ReadSwizzle");
+static_assert(2 == static_cast<int>(ReadSwizzle::kRRRR),
+              "ImageShader code depends on ReadSwizzle");
+static_assert(3 == static_cast<int>(ReadSwizzle::kRRR1),
+              "ImageShader code depends on ReadSwizzle");
+static_assert(4 == static_cast<int>(ReadSwizzle::kBGRA),
+              "ImageShader code depends on ReadSwizzle");
 
 static constexpr char kImageShaderName[] = "sk_image_shader";
 
@@ -841,10 +854,10 @@ static constexpr char kGaussianColorFilterName[] = "sk_gaussian_colorfilter";
 static constexpr Uniform kColorSpaceTransformUniforms[] = {
         { "flags",          SkSLType::kInt },
         { "srcKind",        SkSLType::kInt },
-        { "dstKind",        SkSLType::kInt },
         { "srcCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
-        { "dstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
         { "gamutTransform", SkSLType::kHalf3x3 },
+        { "dstKind",        SkSLType::kInt },
+        { "dstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
 };
 
 static_assert(0 == static_cast<int>(skcms_TFType_Invalid),

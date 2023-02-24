@@ -7451,14 +7451,14 @@ UNIX_ONLY_TEST(SkParagraph_MultiStyle_FFI, reporter) {
     auto width = paragraph->getLongestLine();
     auto height = paragraph->getHeight();
 
-    auto f1Pos = paragraph->getGlyphPositionAtCoordinate(width/6, height/2);
-    auto f2Pos = paragraph->getGlyphPositionAtCoordinate(width/2, height/2);
-    auto iPos = paragraph->getGlyphPositionAtCoordinate(width*5/6, height/2);
+    auto f1Pos = paragraph->getGlyphPositionAtCoordinate(width/6 - 5, height/2);
+    auto f2Pos = paragraph->getGlyphPositionAtCoordinate(width/2 - 5, height/2);
+    auto iPos = paragraph->getGlyphPositionAtCoordinate(width*5/6 - 5, height/2);
 
     // Positions are aligned with graphemes (no pointing inside ffi grapheme)
     REPORTER_ASSERT(reporter, f1Pos.position == 0 && f1Pos.affinity == Affinity::kDownstream);
-    REPORTER_ASSERT(reporter, f2Pos.position == 3 && f2Pos.affinity == Affinity::kUpstream);
-    REPORTER_ASSERT(reporter, iPos.position == 3 && iPos.affinity == Affinity::kUpstream);
+    REPORTER_ASSERT(reporter, f2Pos.position == 1 && f2Pos.affinity == Affinity::kDownstream);
+    REPORTER_ASSERT(reporter, iPos.position == 2 && iPos.affinity == Affinity::kDownstream);
 
     // Bounding boxes show the extact position (inside ffi grapheme)
     auto f1 = paragraph->getRectsForRange(0, 1, RectHeightStyle::kTight,

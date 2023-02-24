@@ -448,14 +448,6 @@ export interface CanvasKit {
     MakeManagedAnimation(json: string, assets?: Record<string, ArrayBuffer>,
                          filterPrefix?: string, soundMap?: SoundMap): ManagedSkottieAnimation;
 
-    /**
-     * Returns a Particles effect built from the provided json string and assets.
-     * Requires that Particles be compiled into CanvasKit
-     * @param json
-     * @param assets
-     */
-    MakeParticles(json: string, assets?: Record<string, ArrayBuffer>): Particles;
-
     // Constructors, i.e. things made with `new CanvasKit.Foo()`;
     readonly ImageData: ImageDataConstructor;
     readonly ParagraphStyle: ParagraphStyleConstructor;
@@ -547,7 +539,6 @@ export interface CanvasKit {
 
     readonly gpu?: boolean; // true if GPU code was compiled in
     readonly managed_skottie?: boolean; // true if advanced (managed) Skottie code was compiled in
-    readonly particles?: boolean; // true if Particles code was compiled in
     readonly rt_effect?: boolean; // true if RuntimeEffect was compiled in
     readonly skottie?: boolean; // true if base Skottie code was compiled in
 
@@ -900,14 +891,61 @@ export interface TextProperty {
     value: TextValue;
 }
 
+/**
+ * Transform property value. Maps to AE styled transform.
+ */
+export interface TransformValue {
+    /**
+     * Anchor point for transform. x and y value.
+     */
+    anchor: Point;
+    /**
+     * Position of transform. x and y value.
+     */
+    position: Point;
+    /**
+     * Scale of transform. x and y value.
+     */
+    scale: Vector2;
+    /**
+     * Rotation of transform in degrees.
+     */
+    rotation: number;
+    /**
+     * Skew to apply during transform.
+     */
+    skew: number;
+    /**
+     * Direction of skew in degrees.
+     */
+    skew_axis: number;
+}
+
+/**
+ * Named transform property for Skottie property observer.
+ */
+export interface TransformProperty {
+    /**
+     * Property identifier, usually the node name.
+     */
+    key: string;
+    /**
+     * Property value.
+     */
+    value: TransformValue;
+}
+
 export interface ManagedSkottieAnimation extends SkottieAnimation {
     setColor(key: string, color: InputColor): boolean;
     setOpacity(key: string, opacity: number): boolean;
     setText(key: string, text: string, size: number): boolean;
+    setTransform(key: string, anchor: InputPoint, position: InputPoint, scale: InputVector2,
+                 rotation: number, skew: number, skew_axis: number): boolean;
     getMarkers(): AnimationMarker[];
     getColorProps(): ColorProperty[];
     getOpacityProps(): OpacityProperty[];
     getTextProps(): TextProperty[];
+    getTransformProps(): TransformProperty[];
 }
 
 /**
@@ -985,23 +1023,6 @@ export interface ParagraphBuilder extends EmbindObject<ParagraphBuilder> {
      * Canvas.
      */
     build(): Paragraph;
-
-    /**
-     * @param bidiRegions is an array of unsigned integers that should be
-     * treated as triples (starting index, ending index, bidi level).
-     *
-     * The indices are expected to be relative to the UTF-8 representation of
-     * the text.
-     */
-    setBidiRegionsUtf8(bidiRegions: InputBidiRegions): void;
-    /**
-     * @param bidiRegions is an array of unsigned integers that should be
-     * treated as triples (starting index, ending index, bidi level).
-     *
-     * The indices are expected to be relative to the UTF-16 representation of
-     * the text.
-     */
-    setBidiRegionsUtf16(bidiRegions: InputBidiRegions): void;
 
     /**
      * @param words is an array of word edges (starting or ending). You can
@@ -1116,72 +1137,6 @@ export interface ParagraphStyle {
 export interface PositionWithAffinity {
     pos: number;
     affinity: Affinity;
-}
-
-/**
- * See SkParticleEffect.h for more details.
- */
-export interface Particles extends EmbindObject<Particles> {
-    /**
-     * Draws the current state of the particles on the given canvas.
-     * @param canvas
-     */
-    draw(canvas: Canvas): void;
-
-    /**
-     * Returns a Float32Array bound to the WASM memory of these uniforms. Changing these
-     * floats will change the corresponding uniforms instantly.
-     */
-    uniforms(): Float32Array;
-
-    /**
-     * Returns the nth uniform from the effect.
-     * @param index
-     */
-    getUniform(index: number): SkSLUniform;
-
-    /**
-     * Returns the number of uniforms on the effect.
-     */
-    getUniformCount(): number;
-
-    /**
-     * Returns the total number of floats across all uniforms on the effect. This is the length
-     * of the array returned by `uniforms()`. For example, an effect with a single float3 uniform,
-     * would return 1 from `getUniformCount()`, but 3 from `getUniformFloatCount()`.
-     */
-    getUniformFloatCount(): number;
-
-    /**
-     * Returns the name of the nth effect uniform.
-     * @param index
-     */
-    getUniformName(index: number): string;
-
-    /**
-     * Sets the base position of the effect.
-     * @param point
-     */
-    setPosition(point: InputPoint): void;
-
-    /**
-     * Sets the base rate of the effect.
-     * @param rate
-     */
-    setRate(rate: number): void;
-
-    /**
-     * Starts playing the effect.
-     * @param now
-     * @param looping
-     */
-    start(now: number, looping: boolean): void;
-
-    /**
-     * Updates the effect using the new time.
-     * @param now
-     */
-    update(now: number): void;
 }
 
 export interface SkSLUniform {
@@ -4156,6 +4111,12 @@ export type WeightList = MallocObj | Float32Array | number[];
 export type Matrix4x4 = Float32Array;
 export type Matrix3x3 = Float32Array;
 export type Matrix3x2 = Float32Array;
+
+/**
+ * Vector2 represents an x, y coordinate or vector. It has length 2.
+ */
+export type Vector2 = Point;
+
 /**
  * Vector3 represents an x, y, z coordinate or vector. It has length 3.
  */
@@ -4226,6 +4187,12 @@ export type InputRRect = MallocObj | RRect | number[];
  * be scos, ssin, tx, ty for each RSXForm. See RSXForm.h for more details.
  */
 export type InputFlattenedRSXFormArray = MallocObj | Float32Array | number[];
+
+/**
+ * InputVector2 maps to InputPoint, the alias is to not use the word "Point" when not accurate, but
+ * they are in practice the same, a representation of x and y.
+ */
+export type InputVector2 =  InputPoint;
 /**
  * CanvasKit APIs accept normal arrays, typed arrays, or Malloc'd memory as a vector of 3 floats.
  * For example, this is the x, y, z coordinates.
