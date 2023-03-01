@@ -11,6 +11,7 @@
 #include "include/core/SkImage.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkSurface.h"
+#include "include/private/base/SkTArray.h"
 #include "tools/viewer/Slide.h"
 
 namespace skiagm {
@@ -62,8 +63,6 @@ public:
 
 private:
     RectRenderer() {}
-
-    using INHERITED = ShapeRenderer;
 };
 
 class PathRenderer : public ShapeRenderer {
@@ -147,8 +146,6 @@ private:
     PathRenderer(SkScalar depth, bool hairline)
             : fDepth(depth)
             , fHairline(hairline) {}
-
-    using INHERITED = ShapeRenderer;
 };
 
 class OffscreenShapeRenderer : public ShapeRenderer {
@@ -241,8 +238,6 @@ private:
             , fLastRendered(nullptr)
             , fRenderer(std::move(renderer))
             , fSupersampleFactor(supersample) { }
-
-    using INHERITED = ShapeRenderer;
 };
 
 class ThinAASlide : public Slide {

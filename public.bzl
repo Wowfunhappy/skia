@@ -476,8 +476,6 @@ BASE_SRCS_ALL = [
     "src/core/SkGlobalInitialization_core.cpp",
     "src/core/SkGlyph.cpp",
     "src/core/SkGlyph.h",
-    "src/core/SkGlyphBuffer.cpp",
-    "src/core/SkGlyphBuffer.h",
     "src/core/SkGlyphRunPainter.cpp",
     "src/core/SkGlyphRunPainter.h",
     "src/core/SkGpuBlurUtils.cpp",
@@ -531,6 +529,7 @@ BASE_SRCS_ALL = [
     "src/core/SkMipmap.h",
     "src/core/SkMipmapAccessor.cpp",
     "src/core/SkMipmapAccessor.h",
+    "src/core/SkMipmapBuilder.cpp",
     "src/core/SkMipmapBuilder.h",
     "src/core/SkModeColorFilter.cpp",
     "src/core/SkNextID.h",
@@ -2054,6 +2053,8 @@ VULKAN_SRCS = [
 ################################################################################
 
 BASE_DEFINES = [
+    # Our legacy G3 rule *always* has the ganesh backend enabled.
+    "SK_GANESH",
     # Chrome DEFINES.
     "SK_USE_FREETYPE_EMBOLDEN",
     # Turn on a few Google3-specific build fixes.
@@ -2078,7 +2079,6 @@ UNIX_DEFINES = [
     "SK_GL",
     "SK_CODEC_DECODES_JPEG",
     "SK_ENCODE_JPEG",
-    "SK_HAS_ANDROID_CODEC",
 ]
 ANDROID_DEFINES = [
     "SK_BUILD_FOR_ANDROID",
@@ -2089,27 +2089,23 @@ ANDROID_DEFINES = [
     "SK_GL",
     "SK_CODEC_DECODES_JPEG",
     "SK_ENCODE_JPEG",
-    "SK_HAS_ANDROID_CODEC",
 ]
 IOS_DEFINES = [
     "SK_BUILD_FOR_IOS",
     "SK_GL",
     "SK_CODEC_DECODES_JPEG",
     "SK_ENCODE_JPEG",
-    "SK_HAS_ANDROID_CODEC",
 ]
 WASM_DEFINES = [
     "SK_DISABLE_LEGACY_SHADERCONTEXT",
     "SK_DISABLE_TRACING",
     "SK_GL",
-    "SK_SUPPORT_GPU=1",
     "SK_DISABLE_AAA",
     "SK_DISABLE_EFFECT_DESERIALIZATION",
     "SK_FORCE_8_BYTE_ALIGNMENT",
     "SKNX_NO_SIMD",
     "SK_CODEC_DECODES_JPEG",
     "SK_ENCODE_JPEG",
-    "SK_HAS_ANDROID_CODEC",
 ]
 FUCHSIA_DEFINES = [
     "SK_BUILD_FOR_UNIX",
@@ -2121,14 +2117,12 @@ FUCHSIA_DEFINES = [
     "SK_VULKAN",
     "SK_CODEC_DECODES_JPEG",
     "SK_ENCODE_JPEG",
-    "SK_HAS_ANDROID_CODEC",
 ]
 MACOS_DEFINES = [
     "SK_BUILD_FOR_MAC",
     "SK_GL",
     "SK_CODEC_DECODES_JPEG",
     "SK_ENCODE_JPEG",
-    "SK_HAS_ANDROID_CODEC",
 ]
 ANDROID_NO_CODECS_DEFINES = [
     "SK_BUILD_FOR_ANDROID",

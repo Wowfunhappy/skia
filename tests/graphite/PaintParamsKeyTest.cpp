@@ -7,7 +7,7 @@
 
 #include "tests/Test.h"
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
@@ -640,7 +640,7 @@ DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(PaintParamsKeyTest, reporter, context) {
     SkColorInfo ci = SkColorInfo(kRGBA_8888_SkColorType, kPremul_SkAlphaType,
                                  SkColorSpace::MakeSRGB());
 
-    KeyContext extractPaintKeyContext(recorder.get(), {}, ci);
+    KeyContext extractPaintKeyContext(recorder.get(), {}, ci, SkColors::kBlack);
 
     std::unique_ptr<RuntimeEffectDictionary> rtDict = std::make_unique<RuntimeEffectDictionary>();
     KeyContext precompileKeyContext(dict, rtDict.get(), ci);
@@ -755,4 +755,4 @@ DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(PaintParamsKeyTest, reporter, context) {
     }
 }
 
-#endif // SK_GRAPHITE_ENABLED
+#endif // SK_GRAPHITE

@@ -3312,11 +3312,21 @@ STAGE_TAIL(mask_off_return_mask, NoCtx) {
     update_execution_mask();
 }
 
-STAGE_BRANCH(branch_if_any_active_lanes, SkRasterPipeline_BranchCtx* ctx) {
+STAGE_BRANCH(branch_if_all_lanes_active, SkRasterPipeline_BranchCtx* ctx) {
+    if (tail) {
+        uint32_t iota[] = {0,1,2,3,4,5,6,7};
+        I32 tailLanes = cond_to_mask(tail <= sk_unaligned_load<U32>(iota));
+        return all(execution_mask() | tailLanes) ? ctx->offset : 1;
+    } else {
+        return all(execution_mask()) ? ctx->offset : 1;
+    }
+}
+
+STAGE_BRANCH(branch_if_any_lanes_active, SkRasterPipeline_BranchCtx* ctx) {
     return any(execution_mask()) ? ctx->offset : 1;
 }
 
-STAGE_BRANCH(branch_if_no_active_lanes, SkRasterPipeline_BranchCtx* ctx) {
+STAGE_BRANCH(branch_if_no_lanes_active, SkRasterPipeline_BranchCtx* ctx) {
     return any(execution_mask()) ? 1 : ctx->offset;
 }
 
@@ -3512,6 +3522,22 @@ STAGE_TAIL(copy_from_indirect_unmasked, SkRasterPipeline_CopyIndirectCtx* ctx) {
     } while (dst != end);
 }
 
+STAGE_TAIL(copy_from_indirect_uniform_unmasked, SkRasterPipeline_CopyIndirectCtx* ctx) {
+    // Clamp the indirect offsets to stay within the limit.
+    U32 offsets = *(U32*)ctx->indirectOffset;
+    offsets = min(offsets, ctx->indirectLimit);
+
+    // Use gather to perform indirect lookups; write the results into `dst`.
+    const float* src = ctx->src;
+    F*           dst = (F*)ctx->dst;
+    F*           end = dst + ctx->slots;
+    do {
+        *dst = gather(src, offsets);
+        dst += 1;
+        src += 1;
+    } while (dst != end);
+}
+
 // Unary operations take a single input, and overwrite it with their output.
 // Unlike binary or ternary operations, we provide variations of 1-4 slots, but don't provide
 // an arbitrary-width "n-slot" variation; the Builder can chain together longer sequences manually.
@@ -3630,7 +3656,12 @@ SI void mul_fn(T* dst, T* src) {
 
 template <typename T>
 SI void div_fn(T* dst, T* src) {
-    *dst /= *src;
+    T divisor = *src;
+    if constexpr (!std::is_same_v<T, F>) {
+        // We will crash if we integer-divide against zero. Convert 0 to ~0 to avoid this.
+        divisor |= cond_to_mask(divisor == 0);
+    }
+    *dst /= divisor;
 }
 
 SI void bitwise_and_fn(I32* dst, I32* src) {

@@ -15,12 +15,11 @@
 #include "src/core/SkDistanceFieldGen.h"
 #include "src/core/SkEnumerate.h"
 #include "src/core/SkGlyph.h"
-#include "src/core/SkGlyphBuffer.h"
 #include "src/core/SkScalerContext.h"
 #include "src/core/SkStrikeCache.h"
 #include "src/text/StrikeForGPU.h"
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
     #include "src/text/gpu/StrikeCache.h"
 #endif
 
@@ -268,7 +267,7 @@ SkGlyphDigest SkStrike::digestFor(ActionType actionType, SkPackedGlyphID packedG
 SkGlyphDigest* SkStrike::addGlyphAndDigest(SkGlyph* glyph) {
     size_t index = fGlyphForIndex.size();
     SkGlyphDigest digest = SkGlyphDigest{index, *glyph};
-    SkGlyphDigest* newDigest = fDigestForPackedGlyphID.set(glyph->getPackedID(), digest);
+    SkGlyphDigest* newDigest = fDigestForPackedGlyphID.set(digest);
     fGlyphForIndex.push_back(glyph);
     return newDigest;
 }
