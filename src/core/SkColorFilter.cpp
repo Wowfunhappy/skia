@@ -109,11 +109,9 @@ SkPMColor4f SkColorFilterBase::onFilterColor4f(const SkPMColor4f& color,
     SkSTArenaAlloc<kEnoughForCommonFilters> alloc;
     SkRasterPipeline    pipeline(&alloc);
     pipeline.append_constant_color(&alloc, color.vec());
-    SkPaint solidPaint;
-    solidPaint.setColor4f(color.unpremul());
     SkMatrixProvider matrixProvider(SkMatrix::I());
     SkSurfaceProps props{}; // default OK; colorFilters don't render text
-    SkStageRec rec = {&pipeline, &alloc, kRGBA_F32_SkColorType, dstCS, solidPaint, props};
+    SkStageRec rec = {&pipeline, &alloc, kRGBA_F32_SkColorType, dstCS, color.unpremul(), props};
 
     if (as_CFB(this)->appendStages(rec, color.fA == 1)) {
         SkPMColor4f dst;
@@ -467,18 +465,26 @@ public:
         SkColorInfo dst = {rec.fDstColorType, kPremul_SkAlphaType, dstCS},
                 working = {rec.fDstColorType, workingAT, workingCS};
 
+        const auto* dstToWorking = rec.fAlloc->make<SkColorSpaceXformSteps>(dst, working);
+        const auto* workingToDst = rec.fAlloc->make<SkColorSpaceXformSteps>(working, dst);
+
+        // Any SkSL effects might reference the paint color, which is already in the destination
+        // color space. We need to transform it to the working space for consistency.
+        SkColor4f paintColorInWorkingSpace = rec.fPaintColor;
+        dstToWorking->apply(paintColorInWorkingSpace.vec());
+
         SkStageRec workingRec = {rec.fPipeline,
                                  rec.fAlloc,
                                  rec.fDstColorType,
                                  workingCS.get(),
-                                 rec.fPaint,
+                                 paintColorInWorkingSpace,
                                  rec.fSurfaceProps};
 
-        rec.fAlloc->make<SkColorSpaceXformSteps>(dst, working)->apply(rec.fPipeline);
+        dstToWorking->apply(rec.fPipeline);
         if (!as_CFB(fChild)->appendStages(workingRec, shaderIsOpaque)) {
             return false;
         }
-        rec.fAlloc->make<SkColorSpaceXformSteps>(working, dst)->apply(rec.fPipeline);
+        workingToDst->apply(rec.fPipeline);
         return true;
     }
 

@@ -111,7 +111,7 @@ def git_repos_from_deps():
     new_git_repository(
         name = "libwebp",
         build_file = "@//bazel/external/libwebp:BUILD.bazel",
-        commit = "603e8d7adb0ccc35237419c2938194623b60e9be",
+        commit = "fd7b5d48464475408d32d2611bdb6947d4246b97",
         remote = "https://chromium.googlesource.com/webm/libwebp.git",
     )
 
@@ -152,13 +152,13 @@ def git_repos_from_deps():
 
     git_repository(
         name = "spirv_headers",
-        commit = "aa331ab0ffcb3a67021caa1a0c1c9017712f2f31",
+        commit = "295cf5fb3bfe2454360e82b26bae7fc0de699abe",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers.git",
     )
 
     git_repository(
         name = "spirv_tools",
-        commit = "9d71fb676491bc12be3398665236f407341b83c8",
+        commit = "016bb3ae7f2bea7c86c25fa1d6d4df47b78700fd",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git",
     )
 
