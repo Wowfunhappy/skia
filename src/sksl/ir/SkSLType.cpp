@@ -9,9 +9,9 @@
 
 #include "include/private/SkSLLayout.h"
 #include "include/private/SkSLString.h"
-#include "include/private/SkTFitsIn.h"
+#include "include/private/base/SkTFitsIn.h"
 #include "include/sksl/SkSLErrorReporter.h"
-#include "src/core/SkMathPriv.h"
+#include "src/base/SkMathPriv.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLConstantFolder.h"
 #include "src/sksl/SkSLContext.h"

@@ -9,7 +9,7 @@
 #define SkSLAnalysis_DEFINED
 
 #include "include/private/SkSLSampleUsage.h"
-#include "include/private/SkTArray.h"
+#include "include/private/base/SkTArray.h"
 
 #include <cstdint>
 #include <memory>
@@ -85,6 +85,12 @@ bool HasSideEffects(const Expression& expr);
 
 /** Determines if `expr` is a compile-time constant (composed of just constructors and literals). */
 bool IsCompileTimeConstant(const Expression& expr);
+
+/**
+ * Determines if `expr` is a dynamically-uniform expression; this returns true if the expression
+ * could be evaluated at compile time if uniform values were known.
+ */
+bool IsDynamicallyUniformExpression(const Expression& expr);
 
 /**
  * Detect an orphaned variable declaration outside of a scope, e.g. if (true) int a;. Returns
@@ -196,6 +202,14 @@ void ValidateIndexingForES2(const ProgramElement& pe, ErrorReporter& errors);
 
 /** Detects functions that fail to return a value on at least one path. */
 bool CanExitWithoutReturningValue(const FunctionDeclaration& funcDecl, const Statement& body);
+
+/** Determines if a given function has multiple and/or early returns. */
+enum class ReturnComplexity {
+    kSingleSafeReturn,
+    kScopedReturns,
+    kEarlyReturns,
+};
+ReturnComplexity GetReturnComplexity(const FunctionDefinition& funcDef);
 
 /**
  * Runs at finalization time to perform any last-minute correctness checks:

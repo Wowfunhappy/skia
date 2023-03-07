@@ -8,9 +8,9 @@
 #ifndef SkGlyphBuffer_DEFINED
 #define SkGlyphBuffer_DEFINED
 
+#include "src/base/SkZip.h"
 #include "src/core/SkEnumerate.h"
 #include "src/core/SkGlyph.h"
-#include "src/core/SkZip.h"
 
 #include <climits>
 
@@ -223,9 +223,9 @@ private:
     int fMaxSize{0};
     int fInputSize{0};
     int fAcceptedSize{0};
-    SkAutoTArray<SkGlyphVariant> fMultiBuffer;
-    SkAutoTMalloc<SkPoint> fPositions;
-    SkAutoTMalloc<SkMask::Format> fFormats;
+    skia_private::AutoTArray<SkGlyphVariant> fMultiBuffer;
+    skia_private::AutoTMalloc<SkPoint> fPositions;
+    skia_private::AutoTMalloc<SkMask::Format> fFormats;
 
 #ifdef SK_DEBUG
     enum {

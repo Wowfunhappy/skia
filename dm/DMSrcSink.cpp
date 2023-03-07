@@ -27,24 +27,24 @@
 #include "include/ports/SkImageGeneratorCG.h"
 #include "include/ports/SkImageGeneratorNDK.h"
 #include "include/ports/SkImageGeneratorWIC.h"
-#include "include/private/SkImageInfoPriv.h"
-#include "include/private/SkTLogic.h"
+#include "include/private/base/SkTLogic.h"
 #include "include/utils/SkNullCanvas.h"
 #include "include/utils/SkPaintFilterCanvas.h"
 #include "include/utils/SkRandom.h"
 #include "modules/skcms/skcms.h"
 #include "modules/skottie/utils/SkottieUtils.h"
+#include "src/base/SkAutoMalloc.h"
+#include "src/base/SkTLazy.h"
 #include "src/codec/SkCodecImageGenerator.h"
 #include "src/codec/SkSwizzler.h"
-#include "src/core/SkAutoMalloc.h"
 #include "src/core/SkAutoPixmapStorage.h"
+#include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkOpts.h"
 #include "src/core/SkPictureData.h"
 #include "src/core/SkPicturePriv.h"
 #include "src/core/SkRecordDraw.h"
 #include "src/core/SkRecorder.h"
-#include "src/core/SkTLazy.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrGpu.h"
@@ -1495,8 +1495,8 @@ sk_sp<SkSurface> GPUSink::createDstSurface(GrDirectContext* context, SkISize siz
 
     switch (fSurfType) {
         case SkCommandLineConfigGpu::SurfType::kDefault:
-            surface = SkSurface::MakeRenderTarget(context, SkBudgeted::kNo, info, fSampleCount,
-                                                  &props);
+            surface = SkSurface::MakeRenderTarget(
+                    context, skgpu::Budgeted::kNo, info, fSampleCount, &props);
             break;
         case SkCommandLineConfigGpu::SurfType::kBackendTexture:
             surface = sk_gpu_test::MakeBackendTextureSurface(context,
@@ -1640,7 +1640,7 @@ Result GPURemoteSlugSink::draw(
     // Force padded atlas entries for slug drawing.
     grOptions.fSupportBilerpFromGlyphAtlas |= true;
 
-    SkTLazy<SkTestCanvas<SkSerializeSlugTestKey>> testCanvas;
+    SkTLazy<SkTestCanvas<SkRemoteSlugTestKey>> testCanvas;
 
     return onDraw(src, dst, write, log, grOptions, nullptr,
                   [&](SkCanvas* canvas) {
@@ -2182,7 +2182,7 @@ Result GraphiteSink::draw(const Src& src,
                           SkBitmap* dst,
                           SkWStream* dstStream,
                           SkString* log) const {
-    SkImageInfo ii = SkImageInfo::Make(src.size(), fColorType, fAlphaType);
+    SkImageInfo ii = SkImageInfo::Make(src.size(), fColorType, fAlphaType, fColorSpace);
 
     skiatest::graphite::ContextFactory factory;
     auto [_, context] = factory.getContextInfo(fContextType);

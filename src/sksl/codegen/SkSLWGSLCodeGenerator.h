@@ -9,13 +9,17 @@
 #define SKSL_WGSLCODEGENERATOR
 
 #include "include/private/SkSLDefines.h"
-#include "include/private/SkTHash.h"
+#include "src/core/SkTHash.h"
 #include "src/sksl/codegen/SkSLCodeGenerator.h"
+#include "src/sksl/ir/SkSLType.h"
 
 #include <cstdint>
+#include <initializer_list>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+
+template <typename T> class SkSpan;
 
 namespace sknonstd {
 template <typename T> struct is_bitmask_enum;
@@ -33,12 +37,16 @@ class ExpressionStatement;
 class FieldAccess;
 class FunctionDeclaration;
 class FunctionDefinition;
+class GlobalVarDeclaration;
 class Literal;
+class MemoryLayout;
 class OutputStream;
+class Position;
 class ProgramElement;
 class ReturnStatement;
 class Statement;
-class Type;
+class StructDefinition;
+class TernaryExpression;
 class VarDeclaration;
 class VariableReference;
 enum class OperatorPrecedence : uint8_t;
@@ -111,7 +119,16 @@ public:
     };
 
     WGSLCodeGenerator(const Context* context, const Program* program, OutputStream* out)
-            : INHERITED(context, program, out) {}
+            : INHERITED(context, program, out)
+            , fReservedWords({"array",
+                              "FSIn",
+                              "FSOut",
+                              "_globalUniforms",
+                              "_GlobalUniforms",
+                              "_stageIn",
+                              "_stageOut",
+                              "VSIn",
+                              "VSOut"}) {}
 
     bool generateCode() override;
 
@@ -127,6 +144,7 @@ private:
     void writeLine(std::string_view s = std::string_view());
     void finishLine();
     void writeName(std::string_view name);
+    void writeVariableDecl(const Type& type, std::string_view name, Delimiter delimiter);
 
     // Helpers to declare a pipeline stage IO parameter declaration.
     void writePipelineIODeclaration(Modifiers modifiers,
@@ -163,6 +181,7 @@ private:
     void writeFieldAccess(const FieldAccess& f);
     void writeLiteral(const Literal& l);
     void writeSwizzle(const Swizzle& swizzle);
+    void writeTernaryExpression(const TernaryExpression& t, Precedence parentPrecedence);
     void writeVariableReference(const VariableReference& r);
 
     // Constructor expressions
@@ -172,16 +191,40 @@ private:
 
     // Generic recursive ProgramElement visitor.
     void writeProgramElement(const ProgramElement& e);
+    void writeGlobalVarDeclaration(const GlobalVarDeclaration& d);
+    void writeStructDefinition(const StructDefinition& s);
+
+    // Writes the WGSL struct fields for SkSL structs and interface blocks. Enforces WGSL address
+    // space layout constraints
+    // (https://www.w3.org/TR/WGSL/#address-space-layout-constraints) if a `layout` is
+    // provided. A struct that does not need to be host-shareable does not require a `layout`.
+    void writeFields(SkSpan<const Type::Field> fields,
+                     Position parentPos,
+                     const MemoryLayout* layout = nullptr);
 
     // We bundle all varying pipeline stage inputs and outputs in a struct.
     void writeStageInputStruct();
     void writeStageOutputStruct();
+
+    // Writes all top-level non-opaque global uniform declarations (i.e. not part of an interface
+    // block) into a single uniform block binding.
+    //
+    // In complete fragment/vertex/compute programs, uniforms will be declared only as interface
+    // blocks and global opaque types (like textures and samplers) which we expect to be declared
+    // with a unique binding and descriptor set index. However, test files that are declared as RTE
+    // programs may contain OpenGL-style global uniform declarations with no clear binding index to
+    // use for the containing synthesized block.
+    //
+    // Since we are handling these variables only to generate gold files from RTEs and never run
+    // them, we always declare them at the default bind group and binding index.
+    void writeNonBlockUniformsForTests();
 
     // Stores the disallowed identifier names.
     // TODO(skia:13092): populate this
     SkTHashSet<std::string_view> fReservedWords;
     ProgramRequirements fRequirements;
     int fPipelineInputCount = 0;
+    bool fDeclaredUniformsStruct = false;
 
     // Output processing state.
     int fIndentation = 0;

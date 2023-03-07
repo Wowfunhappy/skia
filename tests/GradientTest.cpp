@@ -27,10 +27,11 @@
 #include "include/effects/SkGradientShader.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/mock/GrMockTypes.h"
-#include "include/private/SkTemplates.h"
+#include "include/private/base/SkTemplates.h"
+#include "include/private/base/SkTo.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
+#include "src/base/SkTLazy.h"
 #include "src/core/SkMatrixProvider.h"
-#include "src/core/SkTLazy.h"
 #include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrFPArgs.h"
 #include "src/shaders/SkShaderBase.h"
@@ -39,6 +40,8 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+
+using namespace skia_private;
 
 // https://code.google.com/p/chromium/issues/detail?id=448299
 // Giant (inverse) matrix causes overflow when converting/computing using 32.32
@@ -76,8 +79,8 @@ struct GradRec {
                    SkShaderBase::GradientInfo* info,
                    SkShaderBase::GradientType gt,
                    const SkMatrix& localMatrix = SkMatrix::I()) const {
-        SkAutoTMalloc<SkColor> colorStorage(fColorCount);
-        SkAutoTMalloc<SkScalar> posStorage(fColorCount);
+        AutoTMalloc<SkColor> colorStorage(fColorCount);
+        AutoTMalloc<SkScalar> posStorage(fColorCount);
 
         info->fColorCount = fColorCount;
         info->fColors = colorStorage;

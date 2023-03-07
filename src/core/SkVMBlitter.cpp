@@ -5,15 +5,15 @@
  * found in the LICENSE file.
  */
 
-#include "include/private/SkImageInfoPriv.h"
-#include "include/private/SkMacros.h"
-#include "src/core/SkArenaAlloc.h"
+#include "include/private/base/SkMacros.h"
+#include "src/base/SkArenaAlloc.h"
 #include "src/core/SkBlendModePriv.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkColorFilterBase.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkColorSpaceXformSteps.h"
 #include "src/core/SkCoreBlitters.h"
+#include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkLRUCache.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkOpts.h"

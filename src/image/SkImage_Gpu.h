@@ -50,7 +50,9 @@ public:
 
     size_t onTextureSize() const override;
 
-    sk_sp<SkImage> onMakeColorTypeAndColorSpace(SkColorType, sk_sp<SkColorSpace>,
+    using SkImage_GpuBase::onMakeColorTypeAndColorSpace;
+    sk_sp<SkImage> onMakeColorTypeAndColorSpace(SkColorType,
+                                                sk_sp<SkColorSpace>,
                                                 GrDirectContext*) const final;
 
     sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const final;
@@ -84,11 +86,6 @@ private:
     std::tuple<GrSurfaceProxyView, GrColorType> onAsView(GrRecordingContext*,
                                                          GrMipmapped,
                                                          GrImageTexGenPolicy) const override;
-
-#ifdef SK_GRAPHITE_ENABLED
-    sk_sp<SkImage> onMakeTextureImage(skgpu::graphite::Recorder*,
-                                      RequiredImageProperties) const override;
-#endif
 
     std::unique_ptr<GrFragmentProcessor> onAsFragmentProcessor(GrRecordingContext*,
                                                                SkSamplingOptions,

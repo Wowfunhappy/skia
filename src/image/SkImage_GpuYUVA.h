@@ -36,6 +36,7 @@ public:
 
     size_t onTextureSize() const override;
 
+    using SkImage_GpuBase::onMakeColorTypeAndColorSpace;
     sk_sp<SkImage> onMakeColorTypeAndColorSpace(SkColorType, sk_sp<SkColorSpace>,
                                                 GrDirectContext*) const final;
 
@@ -59,11 +60,6 @@ private:
                                                                const SkMatrix&,
                                                                const SkRect*,
                                                                const SkRect*) const override;
-
-#ifdef SK_GRAPHITE_ENABLED
-    sk_sp<SkImage> onMakeTextureImage(skgpu::graphite::Recorder*,
-                                      RequiredImageProperties) const override;
-#endif
 
     mutable GrYUVATextureProxies     fYUVAProxies;
 

@@ -14,9 +14,10 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrDirectContext.h"
-#include "include/private/SkTPin.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTPin.h"
+#include "include/private/base/SkTo.h"
 #include "include/utils/SkPaintFilterCanvas.h"
+#include "src/base/SkTSort.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkImagePriv.h"
@@ -26,7 +27,6 @@
 #include "src/core/SkScan.h"
 #include "src/core/SkStringUtils.h"
 #include "src/core/SkSurfacePriv.h"
-#include "src/core/SkTSort.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/core/SkTextBlobPriv.h"
 #include "src/core/SkVMBlitter.h"
@@ -1813,15 +1813,12 @@ bool Viewer::onPinch(skui::InputState state, float scale, float x, float y) {
         case skui::InputState::kDown:
             fGesture.startZoom();
             return true;
-            break;
         case skui::InputState::kMove:
             fGesture.updateZoom(scale, x, y, x, y);
             return true;
-            break;
         case skui::InputState::kUp:
             fGesture.endZoom();
             return true;
-            break;
         default:
             SkASSERT(false);
             break;

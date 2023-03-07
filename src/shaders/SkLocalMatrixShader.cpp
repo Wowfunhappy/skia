@@ -5,8 +5,8 @@
  * found in the LICENSE file.
  */
 
+#include "src/base/SkTLazy.h"
 #include "src/core/SkMatrixProvider.h"
-#include "src/core/SkTLazy.h"
 #include "src/core/SkVM.h"
 #include "src/shaders/SkLocalMatrixShader.h"
 
@@ -190,7 +190,7 @@ protected:
                           const SkMatrixProvider& matrices, const SkMatrix* localM,
                           const SkColorInfo& dst,
                           skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const override {
-        SkOverrideDeviceMatrixProvider matrixProvider(fCTM);
+        SkMatrixProvider matrixProvider(fCTM);
         return as_SB(fProxyShader)->program(p, device,local, paint,
                                             matrixProvider,localM, dst,
                                             uniforms,alloc);
@@ -214,7 +214,7 @@ std::unique_ptr<GrFragmentProcessor> SkCTMShader::asFragmentProcessor(
         return nullptr;
     }
 
-    auto ctmProvider = SkOverrideDeviceMatrixProvider(fCTM);
+    auto ctmProvider = SkMatrixProvider(fCTM);
     auto base = as_SB(fProxyShader)->asFragmentProcessor(args.withNewMatrixProvider(ctmProvider));
     if (!base) {
         return nullptr;

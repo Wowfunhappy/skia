@@ -50,6 +50,18 @@ skia_filegroup(
     visibility = ["//tools/skslc:__pkg__"],
 )
 
+## Tests in sksl_skrp_tests_sources will be compiled with --settings on, and are expected to
+## generate a .skrp output file.
+skia_filegroup(
+    name = "sksl_skrp_tests_sources",
+    srcs = [
+        ":sksl_folding_tests",
+        ":sksl_rte_tests",
+        ":sksl_shared_tests",
+    ],
+    visibility = ["//tools/skslc:__pkg__"],
+)
+
 ## Tests in sksl_skvm_tests_sources will be compiled with --settings on, and are expected to
 ## generate a .skvm output file.
 skia_filegroup(
@@ -243,8 +255,13 @@ skia_filegroup(
         "errors/InterfaceBlockWithNoMembers.sksl",
         "errors/IntrinsicInGlobalVariable.sksl",
         "errors/InvalidAssignment.rts",
+        "errors/InvalidAssignmentPipelineInputs.sksl",
         "errors/InvalidAtomicDeclarations.compute",
         "errors/InvalidAtomicOperations.compute",
+        "errors/InvalidBackendBindingFlagsGL.sksl",
+        "errors/InvalidBackendBindingFlagsMetal.sksl",
+        "errors/InvalidBackendBindingFlagsSPIRV.sksl",
+        "errors/InvalidBackendBindingFlagsWGSL.sksl",
         "errors/InvalidExtensionDirective.sksl",
         "errors/InvalidOutParams.rts",
         "errors/InvalidToken.rts",
@@ -268,6 +285,7 @@ skia_filegroup(
         "errors/MismatchedNumbersES3.sksl",
         "errors/ModifiersInStruct.rts",
         "errors/ModifiersRepeated.sksl",
+        "errors/MultipleBackendFlags.sksl",
         "errors/MultipleFields.rts",
         "errors/MultipleFieldsInInterfaceBlocks.sksl",
         "errors/NoES3ModifierInUserCode.sksl",
@@ -757,8 +775,10 @@ skia_filegroup(
         "intrinsics/MatrixCompMultES3.sksl",
         "intrinsics/MaxFloat.sksl",
         "intrinsics/MaxInt.sksl",
+        "intrinsics/MaxUint.sksl",
         "intrinsics/MinFloat.sksl",
         "intrinsics/MinInt.sksl",
+        "intrinsics/MinUint.sksl",
         "intrinsics/MixBool.sksl",
         "intrinsics/MixFloat.sksl",
         "intrinsics/Mod.sksl",
@@ -837,6 +857,7 @@ skia_filegroup(
         "shared/FragCoordsNoRTFlip.sksl",
         "shared/FunctionAnonymousParameters.sksl",
         "shared/FunctionArgTypeMatch.sksl",
+        "shared/FunctionParametersOfTextureAndSamplerType.sksl",
         "shared/FunctionPrototype.sksl",
         "shared/FunctionReturnTypeMatch.sksl",
         "shared/Functions.sksl",
@@ -858,6 +879,7 @@ skia_filegroup(
         "shared/MatrixConstructorsES2.sksl",
         "shared/MatrixConstructorsES3.sksl",
         "shared/MatrixEquality.sksl",
+        "shared/MatrixOpEqualsES2.sksl",
         "shared/MatrixOpEqualsES3.sksl",
         "shared/MatrixScalarMath.sksl",
         "shared/MatrixToVectorCast.sksl",
@@ -916,6 +938,7 @@ skia_filegroup(
         "shared/Structs.sksl",
         "shared/StructsInFunctions.sksl",
         "shared/SwitchWithEarlyReturn.sksl",
+        "shared/SwizzleAsLValue.sksl",
         "shared/SwizzleBoolConstants.sksl",
         "shared/SwizzleByConstantIndex.sksl",
         "shared/SwizzleByIndex.sksl",
@@ -956,13 +979,13 @@ skia_filegroup(
         "shared/SwitchWithFallthrough.sksl",
         "shared/SwitchWithLoops.sksl",
         "spirv/ArrayStrideInDifferentLayouts.sksl",
+        "spirv/CombinedSamplerTypeDawnCompatMode.sksl",
         "spirv/ConstantVectorFromVector.sksl",
         "spirv/ConstantVectorize.sksl",
-        "spirv/FunctionParametersOfTextureAndSamplerType.sksl",
+        "spirv/FunctionParametersOfTextureAndSamplerTypeDawnCompatMode.sksl",
         "spirv/InterfaceBlockPushConstant.sksl",
         "spirv/LayoutMultipleOf4.sksl",
         "spirv/LayoutOutOfOrder.sksl",
-        "spirv/LayoutVkSampler.sksl",
         "spirv/OpaqueTypeInArray.sksl",
         "spirv/Ossfuzz35916.sksl",
         "spirv/Ossfuzz37627.sksl",
@@ -970,6 +993,8 @@ skia_filegroup(
         "spirv/Ossfuzz53202.sksl",
         "spirv/StructArrayMemberInDifferentLayouts.sksl",
         "spirv/UnusedInterfaceBlock.sksl",
+        "spirv/WGSLLayoutInVulkanSPIRV.sksl",
+        "spirv/WrongCombinedSamplerLayoutSPIRVDawnCompatMode.sksl",
         "workarounds/RewriteMatrixVectorMultiply.sksl",
     ],
 )
@@ -979,6 +1004,7 @@ skia_filegroup(
     srcs = [
         "wgsl/BuiltinFragmentStageIO.sksl",
         "wgsl/BuiltinVertexStageIO.vert",
+        "wgsl/GlobalUniforms.sksl",
         "wgsl/MainDoesNotHaveFragCoordParameter.sksl",
         "wgsl/MainHasFragCoordParameter.sksl",
         "wgsl/MainHasVoidReturn.sksl",
@@ -988,6 +1014,8 @@ skia_filegroup(
         # Shared tests that are supported so far:
         "shared/HelloWorld.sksl",
         "shared/InstanceID.vert",
+        "shared/Structs.sksl",
+        "shared/TernaryExpression.sksl",
         "shared/VertexID.vert",
     ],
 )

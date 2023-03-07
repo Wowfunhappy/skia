@@ -16,7 +16,7 @@
 #include "include/effects/SkGradientShader.h"
 #include "include/pathops/SkPathOps.h"
 #include "include/private/SkColorData.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "src/core/SkFDot6.h"
 #include "src/ports/SkFontHost_FreeType_common.h"
 
@@ -56,7 +56,7 @@ namespace {
     !defined(FT_STATIC_CAST)
 #    undef TT_SUPPORT_COLRV1
 #else
-#    include "src/core/SkScopeExit.h"
+#    include "src/base/SkScopeExit.h"
 #endif
 #endif
 

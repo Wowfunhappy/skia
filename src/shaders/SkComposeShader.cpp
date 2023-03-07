@@ -10,7 +10,7 @@
 #include "include/core/SkString.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/private/SkColorData.h"
-#include "src/core/SkArenaAlloc.h"
+#include "src/base/SkArenaAlloc.h"
 #include "src/core/SkBlendModePriv.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkRasterPipeline.h"
@@ -125,7 +125,7 @@ static float* append_two_shaders(const SkStageRec& rec, SkShader* s0, SkShader* 
     if (!as_SB(s0)->appendStages(rec)) {
         return nullptr;
     }
-    rec.fPipeline->append(SkRasterPipeline::store_src, storage->fRes0);
+    rec.fPipeline->append(SkRasterPipelineOp::store_src, storage->fRes0);
 
     if (!as_SB(s1)->appendStages(rec)) {
         return nullptr;
@@ -139,7 +139,7 @@ bool SkShader_Blend::onAppendStages(const SkStageRec& rec) const {
         return false;
     }
 
-    rec.fPipeline->append(SkRasterPipeline::load_dst, res0);
+    rec.fPipeline->append(SkRasterPipelineOp::load_dst, res0);
     SkBlendMode_AppendStages(fMode, rec.fPipeline);
     return true;
 }

@@ -8,12 +8,12 @@
 #include "include/core/SkICC.h"
 #include "include/core/SkStream.h"
 #include "include/private/SkFixed.h"
-#include "src/core/SkAutoMalloc.h"
+#include "src/base/SkAutoMalloc.h"
+#include "src/base/SkUtils.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkEndian.h"
 #include "src/core/SkICCPriv.h"
 #include "src/core/SkMD5.h"
-#include "src/core/SkUtils.h"
 
 #include <cmath>
 #include <string>
@@ -186,11 +186,9 @@ static uint32_t get_cicp_trfn(const skcms_TransferFunction& fn) {
             // All PQ transfer functions are mapped to the single PQ value,
             // ignoring their SDR white level.
             return kCICPTrfnPQ;
-            break;
         case skcms_TFType_HLGish:
             // All HLG transfer functions are mapped to the single HLG value.
             return kCICPTrfnHLG;
-            break;
         case skcms_TFType_HLGinvish:
             return 0;
     }

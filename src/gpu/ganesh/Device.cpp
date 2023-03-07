@@ -17,8 +17,10 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/private/SkShadowFlags.h"
-#include "include/private/SkTo.h"
+#include "include/private/base/SkTo.h"
 #include "include/private/chromium/Slug.h"
+#include "src/base/SkTLazy.h"
+#include "src/base/SkUTF.h"
 #include "src/core/SkBlendModePriv.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkClipStack.h"
@@ -32,7 +34,6 @@
 #include "src/core/SkRasterClip.h"
 #include "src/core/SkRecord.h"
 #include "src/core/SkStroke.h"
-#include "src/core/SkTLazy.h"
 #include "src/core/SkVerticesPriv.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/gpu/ganesh/GrBlurUtils.h"
@@ -53,7 +54,6 @@
 #include "src/image/SkReadPixelsRec.h"
 #include "src/image/SkSurface_Gpu.h"
 #include "src/text/GlyphRun.h"
-#include "src/utils/SkUTF.h"
 
 #if defined(SK_EXPERIMENTAL_SIMULATE_DRAWGLYPHRUNLIST_WITH_SLUG_STRIKE_SERIALIZE)
     #include "include/private/chromium/SkChromeRemoteGlyphCache.h"
@@ -190,7 +190,7 @@ sk_sp<Device> Device::Make(std::unique_ptr<SurfaceDrawContext> sdc,
 }
 
 sk_sp<Device> Device::Make(GrRecordingContext* rContext,
-                           SkBudgeted budgeted,
+                           skgpu::Budgeted budgeted,
                            const SkImageInfo& ii,
                            SkBackingFit fit,
                            int sampleCount,
@@ -805,7 +805,7 @@ sk_sp<SkSpecialImage> Device::snapSpecial(const SkIRect& subset, bool forceCopy)
                                         GrMipmapped::kNo,  // Don't auto generate mips
                                         subset,
                                         SkBackingFit::kApprox,
-                                        SkBudgeted::kYes,
+                                        skgpu::Budgeted::kYes,
                                         /*label=*/"Device_SnapSpecial");  // Always budgeted
         if (!view) {
             return nullptr;
@@ -1398,12 +1398,17 @@ SkBaseDevice* Device::onCreateDevice(const CreateInfo& cinfo, const SkPaint*) {
     SkASSERT(cinfo.fInfo.colorType() != kRGBA_1010102_SkColorType);
 
     auto sdc = SurfaceDrawContext::MakeWithFallback(
-            fContext.get(), SkColorTypeToGrColorType(cinfo.fInfo.colorType()),
-            fSurfaceDrawContext->colorInfo().refColorSpace(), fit, cinfo.fInfo.dimensions(), props,
-            fSurfaceDrawContext->numSamples(), GrMipmapped::kNo,
+            fContext.get(),
+            SkColorTypeToGrColorType(cinfo.fInfo.colorType()),
+            fSurfaceDrawContext->colorInfo().refColorSpace(),
+            fit,
+            cinfo.fInfo.dimensions(),
+            props,
+            fSurfaceDrawContext->numSamples(),
+            GrMipmapped::kNo,
             fSurfaceDrawContext->asSurfaceProxy()->isProtected(),
             fSurfaceDrawContext->origin(),
-            SkBudgeted::kYes);
+            skgpu::Budgeted::kYes);
     if (!sdc) {
         return nullptr;
     }
@@ -1417,7 +1422,7 @@ SkBaseDevice* Device::onCreateDevice(const CreateInfo& cinfo, const SkPaint*) {
 sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& info, const SkSurfaceProps& props) {
     ASSERT_SINGLE_OWNER
     // TODO: Change the signature of newSurface to take a budgeted parameter.
-    static const SkBudgeted kBudgeted = SkBudgeted::kNo;
+    static const skgpu::Budgeted kBudgeted = skgpu::Budgeted::kNo;
     return SkSurface::MakeRenderTarget(fContext.get(), kBudgeted, info,
                                        fSurfaceDrawContext->numSamples(),
                                        fSurfaceDrawContext->origin(), &props);

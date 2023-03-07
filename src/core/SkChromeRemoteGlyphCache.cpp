@@ -7,6 +7,25 @@
 
 #include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 
+#include "include/core/SkDrawable.h"
+#include "include/core/SkSpan.h"
+#include "include/core/SkTypeface.h"
+#include "include/private/SkChecksum.h"
+#include "src/base/SkTLazy.h"
+#include "src/core/SkDevice.h"
+#include "src/core/SkDistanceFieldGen.h"
+#include "src/core/SkDraw.h"
+#include "src/core/SkEnumerate.h"
+#include "src/core/SkGlyph.h"
+#include "src/core/SkReadBuffer.h"
+#include "src/core/SkStrike.h"
+#include "src/core/SkStrikeCache.h"
+#include "src/core/SkTHash.h"
+#include "src/core/SkTraceEvent.h"
+#include "src/core/SkTypeface_remote.h"
+#include "src/text/GlyphRun.h"
+#include "src/text/StrikeForGPU.h"
+
 #include <algorithm>
 #include <bitset>
 #include <iterator>
@@ -14,25 +33,7 @@
 #include <new>
 #include <string>
 #include <tuple>
-
-#include "include/core/SkDrawable.h"
-#include "include/core/SkSpan.h"
-#include "include/core/SkTypeface.h"
-#include "include/private/SkChecksum.h"
-#include "include/private/SkTHash.h"
-#include "src/core/SkDevice.h"
-#include "src/core/SkDistanceFieldGen.h"
-#include "src/core/SkDraw.h"
-#include "src/core/SkEnumerate.h"
-#include "src/core/SkGlyph.h"
-#include "src/core/SkReadBuffer.h"
-#include "src/core/SkScalerCache.h"
-#include "src/core/SkStrikeCache.h"
-#include "src/core/SkTLazy.h"
-#include "src/core/SkTraceEvent.h"
-#include "src/core/SkTypeface_remote.h"
-#include "src/text/GlyphRun.h"
-#include "src/text/StrikeForGPU.h"
+#include <unordered_map>
 
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrContextOptions.h"
@@ -166,6 +167,10 @@ public:
                  SkDiscardableHandleId discardableHandleId);
     ~RemoteStrike() override = default;
 
+    void lock() override {}
+    void unlock() override {}
+    SkGlyphDigest digest(SkPackedGlyphID) override;
+
     void writePendingGlyphs(Serializer* serializer);
     SkDiscardableHandleId discardableHandleId() const { return fDiscardableHandleId; }
 
@@ -183,12 +188,6 @@ public:
             SkDrawableGlyphBuffer* accepted,
             SkSourceGlyphBuffer* rejected) override;
 
-#if !defined(SK_DISABLE_SDF_TEXT)
-    SkRect prepareForSDFTDrawing(
-            SkDrawableGlyphBuffer* accepted,
-            SkSourceGlyphBuffer* rejected) override;
-#endif
-
     void prepareForPathDrawing(
             SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected) override;
 
@@ -197,11 +196,7 @@ public:
 
     sktext::SkStrikePromise strikePromise() override;
 
-    SkScalar findMaximumGlyphDimension(SkSpan<const SkGlyphID> glyphs) override;
-
     void onAboutToExitScope() override {}
-
-    sk_sp<SkStrike> getUnderlyingStrike() const override { return nullptr; }
 
     bool hasPendingGlyphs() const {
         return !fMasksToSend.empty() || !fPathsToSend.empty() || !fDrawablesToSend.empty();
@@ -210,7 +205,6 @@ public:
     void resetScalerContext();
 
 private:
-    SkGlyphDigest digest(SkPackedGlyphID);
 
     void writeGlyphPath(const SkGlyph& glyph, Serializer* serializer) const;
     void writeGlyphDrawable(const SkGlyph& glyph, Serializer* serializer) const;
@@ -233,8 +227,9 @@ private:
 
     // The masks and paths that currently reside in the GPU process.
     SkTHashMap<SkPackedGlyphID, SkGlyphDigest, SkPackedGlyphID::Hash> fSentGlyphs;
-    SkTHashMap<SkGlyphID, bool> fSentPaths;
-    SkTHashMap<SkGlyphID, bool> fSentDrawables;
+    enum class Action {drop, accept, reject};
+    SkTHashMap<SkGlyphID, Action> fSentPaths;
+    SkTHashMap<SkGlyphID, Action> fSentDrawables;
 
     // The Masks, SDFT Mask, and Paths that need to be sent to the GPU task for the processed
     // TextBlobs. Cleared after diffs are serialized.
@@ -391,16 +386,6 @@ SkGlyphDigest RemoteStrike::digest(SkPackedGlyphID packedID) {
     return *digest;
 }
 
-SkScalar RemoteStrike::findMaximumGlyphDimension(SkSpan<const SkGlyphID> glyphs) {
-    SkScalar maxDimension = 0;
-    for (SkGlyphID glyphID : glyphs) {
-        SkGlyphDigest digest = this->digest(SkPackedGlyphID{glyphID});
-        maxDimension = std::max(static_cast<SkScalar>(digest.maxDimension()), maxDimension);
-    }
-
-    return maxDimension;
-}
-
 SkRect RemoteStrike::prepareForMaskDrawing(
         SkDrawableGlyphBuffer* accepted,
         SkSourceGlyphBuffer* rejected) {
@@ -408,70 +393,54 @@ SkRect RemoteStrike::prepareForMaskDrawing(
     for (auto [i, variant, pos] : SkMakeEnumerate(accepted->input())) {
         SkPackedGlyphID packedID = variant.packedID();
         SkGlyphDigest digest = this->digest(packedID);
-        if (digest.canDrawAsMask()) {
-            if (!digest.isEmpty()) {
+        // N.B. this must have the same behavior as SkScalerCache::prepareForMaskDrawing.
+        if (!digest.isEmpty()) {
+            if (digest.canDrawAsMask()) {
                 const SkGlyphRect glyphBounds = digest.bounds().offset(pos);
                 boundingRect = skglyph::rect_union(boundingRect, glyphBounds);
                 accepted->accept(packedID, glyphBounds.leftTop(), digest.maskFormat());
+            } else {
+                // Reject things that are too big.
+                rejected->reject(i);
             }
-        } else {
-            // Reject things that are too big.
-            // N.B. this must have the same behavior as SkScalerCache::prepareForMaskDrawing.
-            rejected->reject(i);
         }
     }
     return boundingRect.rect();
 }
-
-#if !defined(SK_DISABLE_SDF_TEXT)
-SkRect RemoteStrike::prepareForSDFTDrawing(SkDrawableGlyphBuffer* accepted,
-                                           SkSourceGlyphBuffer* rejected) {
-    SkGlyphRect boundingRect = skglyph::empty_rect();
-    for (auto [i, variant, pos] : SkMakeEnumerate(accepted->input())) {
-        SkPackedGlyphID packedID = variant.packedID();
-        SkGlyphDigest digest = this->digest(packedID);
-        if (digest.canDrawAsSDFT()) {
-            if (!digest.isEmpty()) {
-                const SkGlyphRect glyphBounds =
-                        digest.bounds()
-                                // The SDFT glyphs have 2-pixel wide padding that should
-                                // not be used in calculating the source rectangle.
-                              .inset(SK_DistanceFieldInset, SK_DistanceFieldInset)
-                              .offset(pos);
-                boundingRect = skglyph::rect_union(boundingRect, glyphBounds);
-                accepted->accept(packedID, glyphBounds.leftTop(), digest.maskFormat());
-            }
-        } else {
-            // Reject things that are too big.
-            // N.B. this must have the same behavior as SkScalerCache::prepareForMaskDrawing.
-            rejected->reject(i);
-        }
-    }
-    return boundingRect.rect();
-}
-#endif // !defined(SK_DISABLE_SDF_TEXT)
 
 void RemoteStrike::prepareForPathDrawing(
         SkDrawableGlyphBuffer* accepted, SkSourceGlyphBuffer* rejected) {
     accepted->forEachInput(
             [&](size_t i, SkPackedGlyphID packedID, SkPoint position) {
-                bool* hasPath = fSentPaths.find(packedID.glyphID());
-                if (hasPath == nullptr) {
+                Action* decision = fSentPaths.find(packedID.glyphID());
+                if (decision == nullptr) {
                     // Put the new SkGlyph in the glyphs to send.
                     this->ensureScalerContext();
                     fPathsToSend.emplace_back(fContext->makeGlyph(packedID, &fAlloc));
                     SkGlyph* glyph = &fPathsToSend.back();
 
                     glyph->setPath(&fAlloc, fContext.get());
-                    // If the glyph is empty, count it as having a path so that it is not rejected.
-                    bool markAsPath = glyph->isEmpty() || glyph->path() != nullptr;
-                    hasPath = fSentPaths.set(packedID.glyphID(), markAsPath);
+
+                    Action glyphDecision;
+                    if (glyph->isEmpty()) {
+                        glyphDecision = Action::drop;
+                    } else if (glyph->path() != nullptr) {
+                        glyphDecision = Action::accept;
+                    } else {
+                        glyphDecision = Action::reject;
+                    }
+                    decision = fSentPaths.set(packedID.glyphID(), glyphDecision);
                 }
 
-                if (*hasPath) {
-                    accepted->accept(packedID, position);
-                } else {
-                    rejected->reject(i);
+                switch (*decision) {
+                    case Action::accept:
+                        accepted->accept(packedID, position);
+                        break;
+                    case Action::reject:
+                        rejected->reject(i);
+                        break;
+                    case Action::drop:
+                        break;
                 }
             });
 }
@@ -481,8 +450,8 @@ void RemoteStrike::prepareForDrawableDrawing(
     accepted->forEachInput(
             [&](size_t i, SkPackedGlyphID packedID, SkPoint position) {
                 SkGlyphID glyphID = packedID.glyphID();
-                bool* hasDrawable = fSentDrawables.find(glyphID);
-                if (hasDrawable == nullptr) {
+                Action* decision = fSentDrawables.find(glyphID);
+                if (decision == nullptr) {
 
                     // Put the new SkGlyph in the glyphs to send.
                     this->ensureScalerContext();
@@ -490,16 +459,28 @@ void RemoteStrike::prepareForDrawableDrawing(
                     SkGlyph* glyph = &fDrawablesToSend.back();
 
                     glyph->setDrawable(&fAlloc, fContext.get());
-                    // If the glyph is empty, count it as having a drawable so that it is not
-                    // rejected.
-                    bool makeAsDrawable = glyph->isEmpty() || glyph->drawable() != nullptr;
-                    hasDrawable = fSentDrawables.set(glyphID, makeAsDrawable);
+
+                    Action glyphDecision;
+                    if (glyph->isEmpty()) {
+                        glyphDecision = Action::drop;
+                    } else if (glyph->drawable() != nullptr) {
+                        glyphDecision = Action::accept;
+                    } else {
+                        glyphDecision = Action::reject;
+                    }
+
+                    decision = fSentDrawables.set(packedID.glyphID(), glyphDecision);
                 }
 
-                if (*hasDrawable) {
-                    accepted->accept(packedID, position);
-                } else {
-                    rejected->reject(i);
+                switch (*decision) {
+                    case Action::accept:
+                        accepted->accept(packedID, position);
+                        break;
+                    case Action::reject:
+                        rejected->reject(i);
+                        break;
+                    case Action::drop:
+                        break;
                 }
             });
 }

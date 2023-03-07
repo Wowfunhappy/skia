@@ -10,7 +10,7 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkOnce.h"
+#include "include/private/base/SkOnce.h"
 #include "include/private/chromium/SkChromeRemoteGlyphCache.h"
 #include "src/core/SkDescriptor.h"
 #include "src/core/SkDistanceFieldGen.h"
@@ -19,6 +19,7 @@
 #include "src/core/SkGlyphBuffer.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkRectPriv.h"
+#include "src/core/SkStrike.h"
 #include "src/core/SkStrikeCache.h"
 #include "src/gpu/AtlasTypes.h"
 #include "src/text/GlyphRun.h"
@@ -2173,8 +2174,7 @@ private:
 template<typename AddSingleMaskFormat>
 void add_multi_mask_format(
         AddSingleMaskFormat addSingleMaskFormat,
-        const SkZip<SkGlyphVariant, SkPoint, SkMask::Format>& accepted,
-        sk_sp<SkStrike>&& strike) {
+        const SkZip<SkGlyphVariant, SkPoint, SkMask::Format>& accepted) {
     if (accepted.empty()) { return; }
 
     auto maskSpan = accepted.get<2>();
@@ -2187,14 +2187,14 @@ void add_multi_mask_format(
             // Only pass the packed glyph ids and positions.
             auto glyphsWithSameFormat = SkMakeZip(interval.get<0>(), interval.get<1>());
             // Take a ref on the strike. This should rarely happen.
-            addSingleMaskFormat(glyphsWithSameFormat, format, sk_sp<SkStrike>(strike));
+            addSingleMaskFormat(glyphsWithSameFormat, format);
             format = nextFormat;
             startIndex = i;
         }
     }
     auto interval = accepted.last(accepted.size() - startIndex);
     auto glyphsWithSameFormat = SkMakeZip(interval.get<0>(), interval.get<1>());
-    addSingleMaskFormat(glyphsWithSameFormat, format, std::move(strike));
+    addSingleMaskFormat(glyphsWithSameFormat, format);
 }
 }  // namespace
 
@@ -2303,6 +2303,48 @@ size_t SubRunContainer::EstimateAllocSize(const GlyphRunList& glyphRunList) {
            + sizeof(SubRunContainer);
 }
 
+SkScalar find_maximum_glyph_dimension(StrikeForGPU* strike, SkSpan<const SkGlyphID> glyphs) {
+    StrikeMutationMonitor m{strike};
+    SkScalar maxDimension = 0;
+    for (SkGlyphID glyphID : glyphs) {
+        SkGlyphDigest digest = strike->digest(SkPackedGlyphID{glyphID});
+        maxDimension = std::max(static_cast<SkScalar>(digest.maxDimension()), maxDimension);
+    }
+
+    return maxDimension;
+}
+
+#if !defined(SK_DISABLE_SDF_TEXT)
+SkRect prepare_for_SDFT_drawing(StrikeForGPU* strike,
+                                SkDrawableGlyphBuffer* accepted,
+                                SkSourceGlyphBuffer* rejected) {
+    SkGlyphRect boundingRect = skglyph::empty_rect();
+    StrikeMutationMonitor m{strike};
+    for (auto [i, packedID, pos] : SkMakeEnumerate(accepted->input())) {
+        if (SkScalarsAreFinite(pos.x(), pos.y())) {
+            SkGlyphDigest digest = strike->digest(packedID);
+            if (!digest.isEmpty()) {
+                if (digest.canDrawAsSDFT()) {
+                    const SkGlyphRect glyphBounds =
+                            digest.bounds()
+                                // The SDFT glyphs have 2-pixel wide padding that should
+                                // not be used in calculating the source rectangle.
+                                .inset(SK_DistanceFieldInset, SK_DistanceFieldInset)
+                                .offset(pos);
+                    boundingRect = skglyph::rect_union(boundingRect, glyphBounds);
+                    accepted->accept(packedID, glyphBounds.leftTop(), digest.maskFormat());
+                } else {
+                    // Assume whatever follows SDF doesn't care about the maximum rejected size.
+                    rejected->reject(i);
+                }
+            }
+        }
+    }
+
+    return boundingRect.rect();
+}
+#endif
+
 SubRunContainerOwner SubRunContainer::MakeInAlloc(
         const GlyphRunList& glyphRunList,
         const SkMatrix& positionMatrix,
@@ -2407,7 +2449,8 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
                         msg.appendf("    glyphs:(x,y):\n      %s\n", accepted->dumpInput().c_str());
                     }
 
-                    SkRect creationBounds = strike->prepareForSDFTDrawing(accepted, rejected);
+                    SkRect creationBounds =
+                            prepare_for_SDFT_drawing(strike.get(), accepted, rejected);
                     rejected->flipRejectsToSource();
 
                     if (creationBehavior == kAddSubRuns && !accepted->empty()) {
@@ -2449,8 +2492,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
                 if (creationBehavior == kAddSubRuns && !accepted->empty()) {
                     auto addGlyphsWithSameFormat =
                             [&](const SkZip<SkGlyphVariant, SkPoint>& acceptedGlyphsAndLocations,
-                                MaskFormat format,
-                                sk_sp<SkStrike>&& runStrike) {
+                                MaskFormat format) {
                                 container->fSubRuns.append(
                                         DirectMaskSubRun::Make(bounds,
                                                                acceptedGlyphsAndLocations,
@@ -2460,8 +2502,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
                                                                alloc));
                             };
                     add_multi_mask_format(addGlyphsWithSameFormat,
-                                          accepted->acceptedWithMaskFormat(),
-                                          strike->getUnderlyingStrike());
+                                          accepted->acceptedWithMaskFormat());
                 }
             }
         }
@@ -2564,7 +2605,8 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
                         runFont, runPaint, deviceProps, scalerContextFlags, m);
                 const ScopedStrikeForGPU gaugingStrike =
                         strikeSpec.findOrCreateScopedStrike(strikeCache);
-                const SkScalar maxDimension = gaugingStrike->findMaximumGlyphDimension(glyphs);
+                const SkScalar maxDimension =
+                        find_maximum_glyph_dimension(gaugingStrike.get(), glyphs);
                 if (maxDimension == 0) {
                     // Text Scalers don't create glyphs with a dimension larger than 65535. For very
                     // large sizes, this will cause all the dimensions to go to zero. Use 65535 as
@@ -2612,8 +2654,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
             if (creationBehavior == kAddSubRuns && !accepted->empty()) {
                 auto addGlyphsWithSameFormat =
                         [&](const SkZip<SkGlyphVariant, SkPoint>& acceptedGlyphsAndLocations,
-                            MaskFormat format,
-                            sk_sp<SkStrike>&& runStrike) {
+                            MaskFormat format) {
                             container->fSubRuns.append(
                                     TransformedMaskSubRun::Make(acceptedGlyphsAndLocations,
                                                                 container->initialPosition(),
@@ -2624,8 +2665,7 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
                                                                 alloc));
                         };
                 add_multi_mask_format(addGlyphsWithSameFormat,
-                                      accepted->acceptedWithMaskFormat(),
-                                      strike->getUnderlyingStrike());
+                                      accepted->acceptedWithMaskFormat());
             }
         }
     }

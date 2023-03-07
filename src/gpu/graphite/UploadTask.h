@@ -21,9 +21,7 @@ namespace skgpu::graphite {
 
 class Buffer;
 struct BufferTextureCopyData;
-class CommandBuffer;
 class Recorder;
-class ResourceProvider;
 class TextureProxy;
 
 struct MipLevel {
@@ -40,7 +38,7 @@ class ConditionalUploadContext {
 public:
     virtual ~ConditionalUploadContext() {}
 
-    virtual bool needsUpload() = 0;
+    virtual bool needsUpload(Context*) const = 0;
 };
 
 /**
@@ -51,7 +49,8 @@ class UploadInstance {
 public:
     static UploadInstance Make(Recorder*,
                                sk_sp<TextureProxy> targetProxy,
-                               SkColorType colorType,
+                               const SkColorInfo& srcColorInfo,
+                               const SkColorInfo& dstColorInfo,
                                const std::vector<MipLevel>& levels,
                                const SkIRect& dstRect,
                                std::unique_ptr<ConditionalUploadContext>);
@@ -61,7 +60,7 @@ public:
     bool prepareResources(ResourceProvider*);
 
     // Adds upload command to the given CommandBuffer
-    void addCommand(CommandBuffer*) const;
+    void addCommand(Context*, CommandBuffer*) const;
 
 private:
     UploadInstance() {}
@@ -87,7 +86,8 @@ class UploadList {
 public:
     bool recordUpload(Recorder*,
                       sk_sp<TextureProxy> targetProxy,
-                      SkColorType colorType,
+                      const SkColorInfo& srcColorInfo,
+                      const SkColorInfo& dstColorInfo,
                       const std::vector<MipLevel>& levels,
                       const SkIRect& dstRect,
                       std::unique_ptr<ConditionalUploadContext>);
@@ -115,7 +115,7 @@ public:
 
     bool prepareResources(ResourceProvider*, const RuntimeEffectDictionary*) override;
 
-    bool addCommands(ResourceProvider*, CommandBuffer*) override;
+    bool addCommands(Context*, CommandBuffer*) override;
 
 private:
     UploadTask(std::vector<UploadInstance>);

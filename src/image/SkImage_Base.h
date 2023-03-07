@@ -205,6 +205,13 @@ public:
 #ifdef SK_GRAPHITE_ENABLED
     virtual sk_sp<SkImage> onMakeTextureImage(skgpu::graphite::Recorder*,
                                               RequiredImageProperties) const = 0;
+    virtual sk_sp<SkImage> onMakeSubset(const SkIRect&,
+                                        skgpu::graphite::Recorder*,
+                                        RequiredImageProperties) const = 0;
+    virtual sk_sp<SkImage> onMakeColorTypeAndColorSpace(SkColorType,
+                                                        sk_sp<SkColorSpace>,
+                                                        skgpu::graphite::Recorder*,
+                                                        RequiredImageProperties) const = 0;
 #endif
 
 protected:

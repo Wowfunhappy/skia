@@ -8,13 +8,13 @@
 #include "include/core/SkMallocPixelRef.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkScalar.h"
-#include "src/core/SkArenaAlloc.h"
+#include "src/base/SkArenaAlloc.h"
+#include "src/base/SkTLazy.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkColorSpaceXformSteps.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
-#include "src/core/SkTLazy.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/shaders/SkBitmapProcShader.h"
 #include "src/shaders/SkImageShader.h"
@@ -178,8 +178,8 @@ bool SkShaderBase::onAppendStages(const SkStageRec& rec) const {
     };
 
     if (cb->ctx) {
-        rec.fPipeline->append(SkRasterPipeline::seed_shader);
-        rec.fPipeline->append(SkRasterPipeline::callback, cb);
+        rec.fPipeline->append(SkRasterPipelineOp::seed_shader);
+        rec.fPipeline->append(SkRasterPipelineOp::callback, cb);
         rec.fAlloc->make<SkColorSpaceXformSteps>(sk_srgb_singleton(), kPremul_SkAlphaType,
                                                  rec.fDstCS,          kPremul_SkAlphaType)
             ->apply(rec.fPipeline);

@@ -1,4 +1,12 @@
 [
+  {
+    "name": "BazelBuild-base-release-linux_x64",
+    "cq_config": {}
+  },
+  {
+    "name": "BazelBuild-base-enforce_iwyu-linux_x64",
+    "cq_config": {}
+  },
   {"name": "BazelBuild-modules_canvaskit-ck_full_webgl2_debug-linux_x64"},
   {
     "name": "BazelBuild-example_hello_world_dawn-release-linux_x64",
@@ -14,14 +22,13 @@
     "name": "BazelBuild-skottie_tool_gpu-enforce_iwyu-linux_x64",
     "cq_config": {}
   },
-  {"name": "BazelBuild-skia_public-release-linux_x64"},
+  {
+    "name": "BazelBuild-skia_public-release-linux_x64",
+    "cq_config": {}
+  },
   {
     "name": "BazelBuild-tests-enforce_iwyu-linux_x64",
-    "cq_config": {
-      "location_regexes": [
-        "tests/.*"
-      ]
-    }
+    "cq_config": {}
   },
   {"name": "BazelBuild-tests-cpu_only-linux_x64"},
   {"name": "BazelBuild-tests-dawn_ganesh-linux_x64"},
@@ -434,17 +441,7 @@
   {"name": "Housekeeper-PerCommit-BundleRecipes"},
   {
     "name": "Housekeeper-PerCommit-CheckGeneratedFiles",
-    "cq_config": {
-      "location_regexes": [
-        ".*BUILD.bazel",
-        "DEPS",
-        "gn/.*.gni",
-        "modules/.*.gni",
-        "src/gpu/effects/generated/.*",
-        "src/sksl/.*",
-        "src/gpu/gpu_workaround_list.txt"
-      ]
-    }
+    "cq_config": {}
   },
   {"name": "Housekeeper-PerCommit-CreateDockerImage_Skia_Release"},
   {"name": "Housekeeper-PerCommit-CreateDockerImage_Skia_WASM_Release"},
@@ -636,10 +633,7 @@
   {"name": "Test-Android-Clang-GalaxyS20-GPU-MaliG77-arm64-Debug-All-Android"},
   {"name": "Test-Android-Clang-GalaxyS20-GPU-MaliG77-arm64-Debug-All-Android_Vulkan"},
   {"name": "Test-Android-Clang-GalaxyS20-GPU-MaliG77-arm64-Release-All-Android"},
-  {
-    "name": "Test-Android-Clang-GalaxyS20-GPU-MaliG77-arm64-Release-All-Android_Vulkan",
-    "cq_config": {}
-  },
+  {"name": "Test-Android-Clang-GalaxyS20-GPU-MaliG77-arm64-Release-All-Android_Vulkan"},
   {"name": "Test-Android-Clang-GalaxyS20-GPU-MaliG77-arm64-Release-All-Android_NativeFonts"},
   {"name": "Test-Android-Clang-JioNext-GPU-Adreno308-arm-Debug-All-Android"},
   {"name": "Test-Android-Clang-JioNext-GPU-Adreno308-arm-Release-All-Android"},
@@ -690,7 +684,10 @@
   {"name": "Test-Android-Clang-Pixel7-GPU-MaliG710-arm64-Release-All-Android"},
   {"name": "Test-Android-Clang-Pixel7-GPU-MaliG710-arm64-Debug-All-Android"},
   {"name": "Test-Android-Clang-Pixel7-GPU-MaliG710-arm64-Release-All-Android_Vulkan"},
-  {"name": "Test-Android-Clang-Pixel7-GPU-MaliG710-arm64-Debug-All-Android_Vulkan"},
+  {
+    "name": "Test-Android-Clang-Pixel7-GPU-MaliG710-arm64-Debug-All-Android_Vulkan",
+    "cq_config": {}
+  },
   {"name": "Test-Android-Clang-Wembley-GPU-PowerVRGE8320-arm-Debug-All-Android"},
   {"name": "Test-Android-Clang-Wembley-GPU-PowerVRGE8320-arm-Release-All-Android"},
   {"name": "Test-ChromeOS-Clang-Kevin-GPU-MaliT860-arm-Debug-All"},

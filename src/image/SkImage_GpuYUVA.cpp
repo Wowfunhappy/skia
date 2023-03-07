@@ -12,10 +12,10 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrYUVABackendTextures.h"
+#include "src/base/SkScopeExit.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkMipmap.h"
 #include "src/core/SkSamplingPriv.h"
-#include "src/core/SkScopeExit.h"
 #include "src/gpu/ganesh/GrClip.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrGpu.h"
@@ -27,10 +27,6 @@
 #include "src/gpu/ganesh/effects/GrBicubicEffect.h"
 #include "src/gpu/ganesh/effects/GrYUVtoRGBEffect.h"
 #include "src/image/SkImage_Gpu.h"
-
-#ifdef SK_GRAPHITE_ENABLED
-#include "src/gpu/graphite/Log.h"
-#endif
 
 static constexpr auto kAssumedColorType = kRGBA_8888_SkColorType;
 
@@ -167,7 +163,7 @@ std::tuple<GrSurfaceProxyView, GrColorType> SkImage_GpuYUVA::onAsView(
                                         mipmapped,
                                         GrProtected::kNo,
                                         kTopLeft_GrSurfaceOrigin,
-                                        SkBudgeted::kYes);
+                                        skgpu::Budgeted::kYes);
     if (!sfc) {
         return {};
     }
@@ -230,15 +226,6 @@ std::unique_ptr<GrFragmentProcessor> SkImage_GpuYUVA::onAsFragmentProcessor(
     }
     return fp;
 }
-
-
-#ifdef SK_GRAPHITE_ENABLED
-sk_sp<SkImage> SkImage_GpuYUVA::onMakeTextureImage(skgpu::graphite::Recorder*,
-                                                   RequiredImageProperties) const {
-    SKGPU_LOG_W("Cannot convert Ganesh-backed YUVA image to Graphite");
-    return nullptr;
-}
-#endif
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
