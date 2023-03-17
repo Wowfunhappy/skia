@@ -9,15 +9,16 @@
 
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/TextureProxy.h"
+#include "src/gpu/graphite/compute/DispatchGroup.h"
 #include "src/gpu/graphite/dawn/DawnBuffer.h"
 #include "src/gpu/graphite/dawn/DawnCaps.h"
 #include "src/gpu/graphite/dawn/DawnGraphicsPipeline.h"
+#include "src/gpu/graphite/dawn/DawnGraphiteUtilsPriv.h"
 #include "src/gpu/graphite/dawn/DawnQueueManager.h"
 #include "src/gpu/graphite/dawn/DawnResourceProvider.h"
 #include "src/gpu/graphite/dawn/DawnSampler.h"
 #include "src/gpu/graphite/dawn/DawnSharedContext.h"
 #include "src/gpu/graphite/dawn/DawnTexture.h"
-#include "src/gpu/graphite/dawn/DawnUtilsPriv.h"
 
 namespace skgpu::graphite {
 
@@ -88,7 +89,7 @@ bool DawnCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
                                         const Texture* resolveTexture,
                                         const Texture* depthStencilTexture,
                                         SkRect viewport,
-                                        const std::vector<std::unique_ptr<DrawPass>>& drawPasses) {
+                                        const DrawPassList& drawPasses) {
     // Update viewport's constant buffer before starting a render pass.
     this->preprocessViewport(viewport);
 
@@ -98,24 +99,27 @@ bool DawnCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
 
     this->setViewport(viewport);
 
-    for (size_t i = 0; i < drawPasses.size(); ++i) {
-        this->addDrawPass(drawPasses[i].get());
+    for (const auto& drawPass : drawPasses) {
+        this->addDrawPass(drawPass.get());
     }
 
     this->endRenderPass();
     return true;
 }
 
-bool DawnCommandBuffer::onAddComputePass(const ComputePassDesc& computePassDesc,
-                                         const ComputePipeline* pipeline,
-                                         const std::vector<ResourceBinding>& bindings) {
+bool DawnCommandBuffer::onAddComputePass(const DispatchGroupList& groups) {
     this->beginComputePass();
-    this->bindComputePipeline(pipeline);
-    for (const ResourceBinding& binding : bindings) {
-        this->bindBuffer(binding.fBuffer.fBuffer, binding.fBuffer.fOffset, binding.fIndex);
+    for (const auto& group : groups) {
+        group->addResourceRefs(this);
+        for (const auto& dispatch : group->dispatches()) {
+            this->bindComputePipeline(group->getPipeline(dispatch.fPipelineIndex));
+            for (const ResourceBinding& binding : dispatch.fBindings) {
+                this->bindBuffer(binding.fBuffer.fBuffer, binding.fBuffer.fOffset, binding.fIndex);
+            }
+            this->dispatchThreadgroups(dispatch.fParams.fGlobalDispatchSize,
+                                       dispatch.fParams.fLocalDispatchSize);
+        }
     }
-    this->dispatchThreadgroups(computePassDesc.fGlobalDispatchSize,
-                               computePassDesc.fLocalDispatchSize);
     this->endComputePass();
     return true;
 }

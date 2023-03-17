@@ -34,6 +34,9 @@
 #include <android/hardware_buffer.h>
 #endif
 
+// TODO(kjlubick) remove when Chrome has been migrated
+#include "include/core/SkTextureCompressionType.h"
+
 class GrBackendFormat;
 class GrBackendTexture;
 class GrContextThreadSafeProxy;
@@ -67,6 +70,7 @@ class BackendTexture;
 class Recorder;
 class TextureInfo;
 enum class Volatile : bool;
+class YUVABackendTextures;
 }
 #endif
 
@@ -212,29 +216,9 @@ public:
     static sk_sp<SkImage> MakeFromEncoded(sk_sp<SkData> encoded,
                                           std::optional<SkAlphaType> alphaType = std::nullopt);
 
-    /*
-     * Experimental:
-     *   Skia                | GL_COMPRESSED_*     | MTLPixelFormat*      | VK_FORMAT_*_BLOCK
-     *  --------------------------------------------------------------------------------------
-     *   kETC2_RGB8_UNORM    | ETC1_RGB8           | ETC2_RGB8 (iOS-only) | ETC2_R8G8B8_UNORM
-     *                       | RGB8_ETC2           |                      |
-     *  --------------------------------------------------------------------------------------
-     *   kBC1_RGB8_UNORM     | RGB_S3TC_DXT1_EXT   | N/A                  | BC1_RGB_UNORM
-     *  --------------------------------------------------------------------------------------
-     *   kBC1_RGBA8_UNORM    | RGBA_S3TC_DXT1_EXT  | BC1_RGBA (macOS-only)| BC1_RGBA_UNORM
-     */
-    enum class CompressionType {
-        kNone,
-        kETC2_RGB8_UNORM, // the same as ETC1
-
-        kBC1_RGB8_UNORM,
-        kBC1_RGBA8_UNORM,
-        kLast = kBC1_RGBA8_UNORM,
-    };
-
-    static constexpr int kCompressionTypeCount = static_cast<int>(CompressionType::kLast) + 1;
-
-    static const CompressionType kETC1_CompressionType = CompressionType::kETC2_RGB8_UNORM;
+    // TODO(kjlubick) remove this once Chrome has been migrated to new type
+    static const SkTextureCompressionType kETC1_CompressionType =
+            SkTextureCompressionType::kETC1_RGB8;
 
     /** Creates a CPU-backed SkImage from compressed data.
 
@@ -249,7 +233,7 @@ public:
     */
     static sk_sp<SkImage> MakeRasterFromCompressed(sk_sp<SkData> data,
                                                    int width, int height,
-                                                   CompressionType type);
+                                                   SkTextureCompressionType type);
 
     enum class BitDepth {
         kU8,  //!< uses 8-bit unsigned int per color component
@@ -279,6 +263,12 @@ public:
                                           const SkMatrix* matrix, const SkPaint* paint,
                                           BitDepth bitDepth, sk_sp<SkColorSpace> colorSpace);
 
+#if defined(SK_GANESH) || defined(SK_GRAPHITE)
+    /** User function called when supplied texture may be deleted.
+     */
+    typedef void (*TextureReleaseProc)(ReleaseContext releaseContext);
+#endif
+
 #if defined(SK_GANESH)
         /** Creates a GPU-backed SkImage from compressed data.
 
@@ -301,13 +291,9 @@ public:
     static sk_sp<SkImage> MakeTextureFromCompressed(GrDirectContext* direct,
                                                     sk_sp<SkData> data,
                                                     int width, int height,
-                                                    CompressionType type,
+                                                    SkTextureCompressionType type,
                                                     GrMipmapped mipmapped = GrMipmapped::kNo,
                                                     GrProtected isProtected = GrProtected::kNo);
-
-    /** User function called when supplied texture may be deleted.
-    */
-    typedef void (*TextureReleaseProc)(ReleaseContext releaseContext);
 
     /** Creates SkImage from GPU texture associated with context. GPU texture must stay
         valid and unchanged until textureReleaseProc is called. textureReleaseProc is
@@ -320,7 +306,10 @@ public:
         GPU thread after the DDL is played back on the direct context.
 
         @param context             GPU context
-        @param backendTexture      texture residing on GPU
+        @param backendTexture      Gexture residing on GPU
+        @param origin              Origin of backendTexture
+        @param colorType           Color type of the resulting image
+        @param alphaType           Alpha type of the resulting image
         @param colorSpace          This describes the color space of this image's contents, as
                                    seen after sampling. In general, if the format of the backend
                                    texture is SRGB, some linear colorSpace should be supplied
@@ -328,9 +317,9 @@ public:
                                    backend texture is linear, then the colorSpace should include
                                    a description of the transfer function as
                                    well (e.g., SkColorSpace::MakeSRGB()).
-        @param textureReleaseProc  function called when texture can be released
-        @param releaseContext      state passed to textureReleaseProc
-        @return                    created SkImage, or nullptr
+        @param textureReleaseProc  Function called when texture can be released
+        @param releaseContext      State passed to textureReleaseProc
+        @return                    Created SkImage, or nullptr
     */
     static sk_sp<SkImage> MakeFromTexture(GrRecordingContext* context,
                                           const GrBackendTexture& backendTexture,
@@ -352,8 +341,9 @@ public:
         @note When using a DDL recording context, textureReleaseProc will be called on the
         GPU thread after the DDL is played back on the direct context.
 
-        @param context             the GPU context
-        @param backendTexture      a texture already allocated by the GPU
+        @param context             The GPU context
+        @param backendTexture      A texture already allocated by the GPU
+        @param origin              Origin of backendTexture
         @param alphaType           This characterizes the nature of the alpha values in the
                                    backend texture. For opaque compressed formats (e.g., ETC1)
                                    this should usually be set to kOpaque_SkAlphaType.
@@ -364,9 +354,9 @@ public:
                                    backend texture is linear, then the colorSpace should include
                                    a description of the transfer function as
                                    well (e.g., SkColorSpace::MakeSRGB()).
-        @param textureReleaseProc  function called when the backend texture can be released
-        @param releaseContext      state passed to textureReleaseProc
-        @return                    created SkImage, or nullptr
+        @param textureReleaseProc  Function called when the backend texture can be released
+        @param releaseContext      State passed to textureReleaseProc
+        @return                    Created SkImage, or nullptr
     */
     static sk_sp<SkImage> MakeFromCompressedTexture(GrRecordingContext* context,
                                                     const GrBackendTexture& backendTexture,
@@ -567,44 +557,6 @@ public:
                                                  PromiseImageTextureContext textureContexts[]);
 
 #endif // defined(SK_GANESH)
-
-#if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
-    /** (See Skia bug 7447)
-        Creates SkImage from Android hardware buffer.
-        Returned SkImage takes a reference on the buffer.
-
-        Only available on Android, when __ANDROID_API__ is defined to be 26 or greater.
-
-        @param hardwareBuffer  AHardwareBuffer Android hardware buffer
-        @param colorSpace      range of colors; may be nullptr
-        @return                created SkImage, or nullptr
-    */
-    static sk_sp<SkImage> MakeFromAHardwareBuffer(
-            AHardwareBuffer* hardwareBuffer,
-            SkAlphaType alphaType = kPremul_SkAlphaType);
-    static sk_sp<SkImage> MakeFromAHardwareBuffer(
-            AHardwareBuffer* hardwareBuffer,
-            SkAlphaType alphaType,
-            sk_sp<SkColorSpace> colorSpace,
-            GrSurfaceOrigin surfaceOrigin = kTopLeft_GrSurfaceOrigin);
-
-    /** Creates SkImage from Android hardware buffer and uploads the data from the SkPixmap to it.
-        Returned SkImage takes a reference on the buffer.
-
-        Only available on Android, when __ANDROID_API__ is defined to be 26 or greater.
-
-        @param context         GPU context
-        @param pixmap          SkPixmap that contains data to be uploaded to the AHardwareBuffer
-        @param hardwareBuffer  AHardwareBuffer Android hardware buffer
-        @param surfaceOrigin   surface origin for resulting image
-        @return                created SkImage, or nullptr
-    */
-    static sk_sp<SkImage> MakeFromAHardwareBufferWithData(
-            GrDirectContext* context,
-            const SkPixmap& pixmap,
-            AHardwareBuffer* hardwareBuffer,
-            GrSurfaceOrigin surfaceOrigin = kTopLeft_GrSurfaceOrigin);
-#endif
 
     /** Returns a SkImageInfo describing the width, height, color type, alpha type, and color space
         of the SkImage.
@@ -1170,6 +1122,33 @@ public:
 #endif // defined(SK_GANESH)
 
 #if defined(SK_GRAPHITE)
+    /** Creates an SkImage from a GPU texture associated with the recorder.
+
+        SkImage is returned if the format of backendTexture is recognized and supported.
+        Recognized formats vary by GPU back-end.
+
+        @param recorder            The recorder
+        @param backendTexture      Texture residing on GPU
+        @param colorType           Color type of the resulting image
+        @param alphaType           Alpha type of the resulting image
+        @param colorSpace          This describes the color space of this image's contents, as
+                                   seen after sampling. In general, if the format of the backend
+                                   texture is SRGB, some linear colorSpace should be supplied
+                                   (e.g., SkColorSpace::MakeSRGBLinear()). If the format of the
+                                   backend texture is linear, then the colorSpace should include
+                                   a description of the transfer function as
+                                   well (e.g., SkColorSpace::MakeSRGB()).
+        @param TextureReleaseProc  Function called when the backend texture can be released
+        @param ReleaseContext      State passed to textureReleaseProc
+        @return                    Created SkImage, or nullptr
+    */
+    static sk_sp<SkImage> MakeGraphiteFromBackendTexture(skgpu::graphite::Recorder*,
+                                                         const skgpu::graphite::BackendTexture&,
+                                                         SkColorType colorType,
+                                                         SkAlphaType alphaType,
+                                                         sk_sp<SkColorSpace> colorSpace,
+                                                         TextureReleaseProc = nullptr,
+                                                         ReleaseContext = nullptr);
 
     // Passed to both fulfill and imageRelease
     using GraphitePromiseImageContext = void*;
@@ -1238,27 +1217,23 @@ public:
                                                      GraphitePromiseTextureReleaseProc,
                                                      GraphitePromiseImageContext);
 
-    /** Creates an SkImage from a GPU texture associated with the recorder.
+    /** Creates an SkImage from YUV[A] planar textures associated with the recorder.
 
-        SkImage is returned if the format of backendTexture is recognized and supported.
-        Recognized formats vary by GPU back-end.
-
-        @param recorder            The recorder
-        @param backendTexture      texture residing on GPU
-        @param colorSpace          This describes the color space of this image's contents, as
-                                   seen after sampling. In general, if the format of the backend
-                                   texture is SRGB, some linear colorSpace should be supplied
-                                   (e.g., SkColorSpace::MakeSRGBLinear()). If the format of the
-                                   backend texture is linear, then the colorSpace should include
-                                   a description of the transfer function as
-                                   well (e.g., SkColorSpace::MakeSRGB()).
-        @return                    created SkImage, or nullptr
-    */
-    static sk_sp<SkImage> MakeGraphiteFromBackendTexture(skgpu::graphite::Recorder*,
-                                                         const skgpu::graphite::BackendTexture&,
-                                                         SkColorType colorType,
-                                                         SkAlphaType alphaType,
-                                                         sk_sp<SkColorSpace> colorSpace);
+         @param recorder            The recorder.
+         @param yuvaBackendTextures A set of textures containing YUVA data and a description of the
+                                    data and transformation to RGBA.
+         @param imageColorSpace     range of colors of the resulting image after conversion to RGB;
+                                    may be nullptr
+         @param TextureReleaseProc  called when the backend textures can be released
+         @param ReleaseContext      state passed to TextureReleaseProc
+         @return                    created SkImage, or nullptr
+     */
+    static sk_sp<SkImage> MakeGraphiteFromYUVABackendTextures(
+            skgpu::graphite::Recorder* recorder,
+            const skgpu::graphite::YUVABackendTextures& yuvaBackendTextures,
+            sk_sp<SkColorSpace> imageColorSpace,
+            TextureReleaseProc = nullptr,
+            ReleaseContext = nullptr);
 
     struct RequiredImageProperties {
         skgpu::Mipmapped fMipmapped;
@@ -1553,6 +1528,48 @@ private:
     sk_sp<SkImage> withMipmaps(sk_sp<SkMipmap>) const;
 
     using INHERITED = SkRefCnt;
+
+public:
+#if !defined(SK_DISABLE_LEGACY_IMAGE_FACTORIES)
+#if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
+    /** (See Skia bug 7447)
+        Creates SkImage from Android hardware buffer.
+        Returned SkImage takes a reference on the buffer.
+
+        Only available on Android, when __ANDROID_API__ is defined to be 26 or greater.
+
+        @param hardwareBuffer  AHardwareBuffer Android hardware buffer
+        @param colorSpace      range of colors; may be nullptr
+        @return                created SkImage, or nullptr
+    */
+    static sk_sp<SkImage> MakeFromAHardwareBuffer(
+            AHardwareBuffer* hardwareBuffer,
+            SkAlphaType alphaType = kPremul_SkAlphaType);
+    static sk_sp<SkImage> MakeFromAHardwareBuffer(
+            AHardwareBuffer* hardwareBuffer,
+            SkAlphaType alphaType,
+            sk_sp<SkColorSpace> colorSpace,
+            GrSurfaceOrigin surfaceOrigin = kTopLeft_GrSurfaceOrigin);
+
+    /** Creates SkImage from Android hardware buffer and uploads the data from the SkPixmap to it.
+        Returned SkImage takes a reference on the buffer.
+
+        Only available on Android, when __ANDROID_API__ is defined to be 26 or greater.
+
+        @param context         GPU context
+        @param pixmap          SkPixmap that contains data to be uploaded to the AHardwareBuffer
+        @param hardwareBuffer  AHardwareBuffer Android hardware buffer
+        @param surfaceOrigin   surface origin for resulting image
+        @return                created SkImage, or nullptr
+    */
+    static sk_sp<SkImage> MakeFromAHardwareBufferWithData(
+            GrDirectContext* context,
+            const SkPixmap& pixmap,
+            AHardwareBuffer* hardwareBuffer,
+            GrSurfaceOrigin surfaceOrigin = kTopLeft_GrSurfaceOrigin);
+#endif // SK_BUILD_FOR_ANDROID && __ANDROID_API__ >= 26
+
+#endif // !SK_DISABLE_LEGACY_IMAGE_FACTORIES
 };
 
 #endif

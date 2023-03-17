@@ -25,6 +25,7 @@ SKIA_PUBLIC_HDRS = [
     "include/core/SkColorPriv.h",
     "include/core/SkColorSpace.h",
     "include/core/SkColorType.h",
+    "include/core/SkTextureCompressionType.h",
     "include/core/SkContourMeasure.h",
     "include/core/SkCoverageMode.h",
     "include/core/SkCubicMap.h",
@@ -385,6 +386,7 @@ BASE_SRCS_ALL = [
     "src/core/SkBlitter.cpp",
     "src/core/SkBlitter.h",
     "src/core/SkBlitter_A8.cpp",
+    "src/core/SkBlitter_A8.h",
     "src/core/SkBlitter_ARGB32.cpp",
     "src/core/SkBlitter_Sprite.cpp",
     "src/core/SkBlurMF.cpp",
@@ -438,6 +440,8 @@ BASE_SRCS_ALL = [
     "src/core/SkDocument.cpp",
     "src/core/SkDraw.cpp",
     "src/core/SkDraw.h",
+    "src/core/SkDrawBase.cpp",
+    "src/core/SkDrawBase.h",
     "src/core/SkDrawLooper.cpp",
     "src/core/SkDrawProcs.h",
     "src/core/SkDrawShadowInfo.cpp",
@@ -462,6 +466,8 @@ BASE_SRCS_ALL = [
     "src/core/SkFont.cpp",
     "src/core/SkFontDescriptor.cpp",
     "src/core/SkFontDescriptor.h",
+    "src/core/SkFontMetricsPriv.cpp",
+    "src/core/SkFontMetricsPriv.h",
     "src/core/SkFontMgr.cpp",
     "src/core/SkFontMgrPriv.h",
     "src/core/SkFontPriv.h",
@@ -1624,6 +1630,7 @@ BASE_SRCS_ALL = [
     "src/sksl/transform/SkSLProgramWriter.h",
     "src/sksl/transform/SkSLRenamePrivateSymbols.cpp",
     "src/sksl/transform/SkSLReplaceConstVarsWithLiterals.cpp",
+    "src/sksl/transform/SkSLRewriteIndexedSwizzle.cpp",
     "src/sksl/transform/SkSLTransform.h",
     "src/text/GlyphRun.cpp",
     "src/text/GlyphRun.h",
@@ -1981,6 +1988,8 @@ MTL_SRCS = [
     "src/gpu/ganesh/mtl/GrMtlUtil.mm",
     "src/gpu/ganesh/mtl/GrMtlVaryingHandler.mm",
     "src/gpu/mtl/MtlMemoryAllocatorImpl.mm",
+    "src/gpu/mtl/MtlUtils.mm",
+    "src/gpu/mtl/MtlUtilsPriv.h",
     "src/image/SkSurface_GpuMtl.mm",
 ]
 
@@ -2416,6 +2425,12 @@ SKSHAPER_HDRS = [
 SKSHAPER_HARFBUZZ_SRCS = [
     "modules/skshaper/src/SkShaper.cpp",
     "modules/skshaper/src/SkShaper_harfbuzz.cpp",
+    "modules/skshaper/src/SkShaper_primitive.cpp",
+]
+
+SKSHAPER_CORETEXT_SRCS = [
+    "modules/skshaper/src/SkShaper.cpp",
+    "modules/skshaper/src/SkShaper_coretext.cpp",
     "modules/skshaper/src/SkShaper_primitive.cpp",
 ]
 

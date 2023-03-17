@@ -1,4 +1,4 @@
-load("//bazel:macros.bzl", "exports_files_legacy", "skia_filegroup", "split_srcs_and_hdrs")
+load("//bazel:skia_rules.bzl", "exports_files_legacy", "skia_filegroup", "split_srcs_and_hdrs")
 
 licenses(["notice"])
 
@@ -41,6 +41,11 @@ GPU_FILES = [
 split_srcs_and_hdrs(
     name = "gpu",
     files = GPU_FILES,
+)
+
+skia_filegroup(
+    name = "android_srcs",
+    srcs = ["SkImage_AndroidFactories.cpp"],
 )
 
 # Not referenced by Bazel target.

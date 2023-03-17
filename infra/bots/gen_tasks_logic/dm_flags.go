@@ -1091,6 +1091,8 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLCommaSideEffects_GPU")
 		skip(ALL, "tests", ALL, "SkSLIntrinsicMixFloatES2_GPU")
 		skip(ALL, "tests", ALL, "SkSLIntrinsicClampFloat_GPU")
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexLookup_GPU") // skia:14177
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")  // skia:14177
 	}
 
 	if b.matchGpu("Adreno[345]") && !b.extraConfig("Vulkan") { // disable broken tests on Adreno 3/4/5xx GLSL
@@ -1157,6 +1159,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLMatrixFoldingES2_GPU")               // skia:11919
 		skip(ALL, "tests", ALL, "SkSLMatrixEquality_GPU")                 // skia:11919
 		skip(ALL, "tests", ALL, "SkSLTemporaryIndexLookup_GPU")           // skia:14151
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexLookup_GPU")             // skia:14177
 	}
 
 	if b.matchGpu("Intel") && b.matchOs("Win") && !b.extraConfig("Vulkan") {
@@ -1215,6 +1218,15 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 	if b.matchOs("Mac") && b.extraConfig("ANGLE") {
 		skip(ALL, "tests", ALL, "SkSLMatrixScalarNoOpFolding_GPU")  // https://anglebug.com/7525
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")        // Apple bug FB12055941
+	}
+
+	if b.matchOs("Mac") && b.matchGpu("Intel") && !b.extraConfig("Metal") {
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")        // skia:14177
+	}
+
+	if b.matchOs("Win10") && b.gpu("IntelIris655") {
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")        // skia:14177
 	}
 
 	if b.gpu("RTX3060") && b.extraConfig("Vulkan") && b.matchOs("Win") {
@@ -1250,6 +1262,9 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLIntrinsicAll_GPU")
 		// Some AMD GPUs do not like storing into deeply-nested structs. (skia:14159)
 		skip(ALL, "tests", ALL, "SkSLStructIndexStore_GPU")
+		// Accessing an indexed swizzle can be trouble. (skia:14177)
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexLookup_GPU")
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")
 	}
 
 	if b.extraConfig("Vulkan") && b.gpu("RadeonVega6") {

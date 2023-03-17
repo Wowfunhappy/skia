@@ -34,6 +34,7 @@ class Block;
 class Context;
 class ConstructorCompound;
 class ConstructorDiagonalMatrix;
+class ConstructorMatrixResize;
 class Expression;
 class ExpressionStatement;
 class FieldAccess;
@@ -42,6 +43,7 @@ class FunctionDeclaration;
 class FunctionDefinition;
 class GlobalVarDeclaration;
 class IfStatement;
+class IndexExpression;
 class Literal;
 class MemoryLayout;
 class OutputStream;
@@ -50,15 +52,14 @@ class ProgramElement;
 class ReturnStatement;
 class Statement;
 class StructDefinition;
+class Swizzle;
 class TernaryExpression;
 class VarDeclaration;
 class Variable;
 class VariableReference;
 enum class OperatorPrecedence : uint8_t;
-struct IndexExpression;
 struct Modifiers;
 struct Program;
-struct Swizzle;
 
 /**
  * Convert a Program into WGSL code.
@@ -198,8 +199,17 @@ private:
     void writeAnyConstructor(const AnyConstructor& c, Precedence parentPrecedence);
     void writeConstructorCompound(const ConstructorCompound& c, Precedence parentPrecedence);
     void writeConstructorCompoundVector(const ConstructorCompound& c, Precedence parentPrecedence);
+    void writeConstructorCompoundMatrix(const ConstructorCompound& c, Precedence parentPrecedence);
     void writeConstructorDiagonalMatrix(const ConstructorDiagonalMatrix& c,
                                         Precedence parentPrecedence);
+    void writeConstructorMatrixResize(const ConstructorMatrixResize& c,
+                                      Precedence parentPrecedence);
+
+    // Matrix constructor helpers.
+    bool isMatrixConstructorHelperNeeded(const ConstructorCompound& c);
+    std::string getMatrixConstructorHelper(const AnyConstructor& c);
+    void writeMatrixFromMatrixArgs(const Type& sourceMatrix, int columns, int rows);
+    void writeMatrixFromScalarAndVectorArgs(const AnyConstructor& ctor, int columns, int rows);
 
     // Synthesized helper functions for comparison operators that are not supported by WGSL.
     void writeMatrixEquality(const Expression& left, const Expression& right);

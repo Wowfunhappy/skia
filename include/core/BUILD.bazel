@@ -1,4 +1,4 @@
-load("//bazel:macros.bzl", "exports_files_legacy", "skia_filegroup")
+load("//bazel:skia_rules.bzl", "exports_files_legacy", "skia_filegroup")
 
 licenses(["notice"])
 
@@ -42,7 +42,6 @@ skia_filegroup(
         "SkDeferredDisplayList.h",
         "SkDeferredDisplayListRecorder.h",
         "SkDocument.h",
-        "SkDrawLooper.h",
         "SkDrawable.h",
         "SkEncodedImageFormat.h",
         "SkExecutor.h",
@@ -102,6 +101,7 @@ skia_filegroup(
         "SkSurfaceProps.h",
         "SkSwizzle.h",
         "SkTextBlob.h",
+        "SkTextureCompressionType.h",
         "SkTileMode.h",
         "SkTime.h",
         "SkTraceMemoryDump.h",
@@ -114,6 +114,13 @@ skia_filegroup(
         ":skpicture_public_hdrs",
     ],
     visibility = ["//include:__pkg__"],
+)
+
+skia_filegroup(
+    name = "legacy_draw_looper",
+    srcs = [
+        "SkDrawLooper.h",
+    ],
 )
 
 # This filegroup is for the (experimental) buffet build

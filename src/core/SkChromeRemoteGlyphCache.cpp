@@ -23,6 +23,7 @@
 #include "src/core/SkTHash.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/core/SkTypeface_remote.h"
+#include "src/core/SkWriteBuffer.h"
 #include "src/text/GlyphRun.h"
 #include "src/text/StrikeForGPU.h"
 
@@ -60,7 +61,7 @@ size_t pad(size_t size, size_t alignment) { return (size + (alignment - 1)) & ~(
 // Be consistent even when writing and reading across different architectures.
 template<typename T>
 size_t serialization_alignment() {
-  return sizeof(T) == 8 ? 8 : alignof(T);
+    return sizeof(T) == 8 ? 8 : alignof(T);
 }
 
 class Serializer {
@@ -126,7 +127,7 @@ public:
     }
 
     const volatile void* read(size_t size, size_t alignment) {
-      return this->ensureAtLeast(size, alignment);
+        return this->ensureAtLeast(size, alignment);
     }
 
     size_t bytesRead() const { return fBytesRead; }
@@ -414,24 +415,6 @@ SkGlyphDigest RemoteStrike::digestFor(ActionType actionType, SkPackedGlyphID pac
 sktext::SkStrikePromise RemoteStrike::strikePromise() {
     return sktext::SkStrikePromise{*this->fStrikeSpec};
 }
-
-// -- WireTypeface ---------------------------------------------------------------------------------
-struct WireTypeface {
-    WireTypeface() = default;
-    WireTypeface(SkTypefaceID typefaceId, int glyphCount, SkFontStyle style,
-                 bool isFixed, bool needsCurrentColor)
-      : fTypefaceID(typefaceId), fGlyphCount(glyphCount), fStyle(style),
-        fIsFixed(isFixed), fGlyphMaskNeedsCurrentColor(needsCurrentColor) {}
-
-    SkTypefaceID    fTypefaceID{0};
-    int             fGlyphCount{0};
-    SkFontStyle     fStyle;
-    bool            fIsFixed{false};
-    // Used for COLRv0 or COLRv1 fonts that may need the 0xFFFF special palette
-    // index to represent foreground color. This information needs to be on here
-    // to determine how this typeface can be cached.
-    bool            fGlyphMaskNeedsCurrentColor{false};
-};
 }  // namespace
 
 // -- SkStrikeServerImpl ---------------------------------------------------------------------------
@@ -441,7 +424,6 @@ public:
             SkStrikeServer::DiscardableHandleManager* discardableHandleManager);
 
     // SkStrikeServer API methods
-    sk_sp<SkData> serializeTypeface(SkTypeface*);
     void writeStrikeData(std::vector<uint8_t>* memory);
 
     sk_sp<sktext::StrikeForGPU> findOrCreateScopedStrike(const SkStrikeSpec& strikeSpec) override;
@@ -467,19 +449,16 @@ private:
     };
 
     using DescToRemoteStrike =
-    std::unordered_map<const SkDescriptor*, sk_sp<RemoteStrike>, MapOps, MapOps>;
+        std::unordered_map<const SkDescriptor*, sk_sp<RemoteStrike>, MapOps, MapOps>;
     DescToRemoteStrike fDescToRemoteStrike;
 
     SkStrikeServer::DiscardableHandleManager* const fDiscardableHandleManager;
     SkTHashSet<SkTypefaceID> fCachedTypefaces;
     size_t fMaxEntriesInDescriptorMap = kMaxEntriesInDescriptorMap;
 
-    // Cached serialized typefaces.
-    SkTHashMap<SkTypefaceID, sk_sp<SkData>> fSerializedTypefaces;
-
     // State cached until the next serialization.
     SkTHashSet<RemoteStrike*> fRemoteStrikesToSend;
-    std::vector<WireTypeface> fTypefacesToSend;
+    std::vector<SkTypefaceProxyPrototype> fTypefacesToSend;
 };
 
 SkStrikeServerImpl::SkStrikeServerImpl(SkStrikeServer::DiscardableHandleManager* dhm)
@@ -494,25 +473,13 @@ size_t SkStrikeServerImpl::remoteStrikeMapSizeForTesting() const {
     return fDescToRemoteStrike.size();
 }
 
-sk_sp<SkData> SkStrikeServerImpl::serializeTypeface(SkTypeface* tf) {
-    auto* data = fSerializedTypefaces.find(SkTypeface::UniqueID(tf));
-    if (data) {
-        return *data;
-    }
-
-    WireTypeface wire(SkTypeface::UniqueID(tf), tf->countGlyphs(), tf->fontStyle(),
-                      tf->isFixedPitch(), tf->glyphMaskNeedsCurrentColor());
-    data = fSerializedTypefaces.set(SkTypeface::UniqueID(tf),
-                                    SkData::MakeWithCopy(&wire, sizeof(wire)));
-    return *data;
-}
-
 #if defined(SK_SUPPORT_LEGACY_STRIKE_SERIALIZATION)
 void SkStrikeServerImpl::writeStrikeData(std::vector<uint8_t>* memory) {
     #if defined(SK_TRACE_GLYPH_RUN_PROCESS)
         SkString msg;
         msg.appendf("\nBegin send strike differences\n");
     #endif
+
     size_t strikesToSend = 0;
     fRemoteStrikesToSend.foreach ([&](RemoteStrike* strike) {
         if (strike->hasPendingGlyphs()) {
@@ -529,8 +496,15 @@ void SkStrikeServerImpl::writeStrikeData(std::vector<uint8_t>* memory) {
 
     Serializer serializer(memory);
     serializer.emplace<uint64_t>(fTypefacesToSend.size());
-    for (const auto& tf : fTypefacesToSend) {
-        serializer.write<WireTypeface>(tf);
+    for (const auto& typefaceProto: fTypefacesToSend) {
+        // Temporary: use inside knowledge of SkBinaryWriteBuffer to set the size and alignment.
+        // This should agree with the alignment used in readStrikeData.
+        alignas(uint32_t) std::uint8_t bufferBytes[24];
+        SkBinaryWriteBuffer buffer{bufferBytes, std::size(bufferBytes)};
+        typefaceProto.flatten(buffer);
+        serializer.write<uint32_t>(buffer.bytesWritten());
+        void* dest = serializer.allocate(buffer.bytesWritten(), alignof(uint32_t));
+        buffer.writeToMemory(dest);
     }
     fTypefacesToSend.clear();
 
@@ -626,10 +600,7 @@ sk_sp<RemoteStrike> SkStrikeServerImpl::getOrCreateCache(const SkStrikeSpec& str
     const SkTypefaceID typefaceId = typeface.uniqueID();
     if (!fCachedTypefaces.contains(typefaceId)) {
         fCachedTypefaces.add(typefaceId);
-        fTypefacesToSend.emplace_back(typefaceId, typeface.countGlyphs(),
-                                      typeface.fontStyle(),
-                                      typeface.isFixedPitch(),
-                                      typeface.glyphMaskNeedsCurrentColor());
+        fTypefacesToSend.emplace_back(typeface);
     }
 
     auto context = strikeSpec.createScalerContext();
@@ -748,10 +719,6 @@ std::unique_ptr<SkCanvas> SkStrikeServer::makeAnalysisCanvas(int width, int heig
     return std::make_unique<SkCanvas>(std::move(trackingDevice));
 }
 
-sk_sp<SkData> SkStrikeServer::serializeTypeface(SkTypeface* tf) {
-    return fImpl->serializeTypeface(tf);
-}
-
 void SkStrikeServer::writeStrikeData(std::vector<uint8_t>* memory) {
     fImpl->writeStrikeData(memory);
 }
@@ -788,10 +755,9 @@ public:
                                 bool isLogging = true,
                                 SkStrikeCache* strikeCache = nullptr);
 
-    sk_sp<SkTypeface> deserializeTypeface(const void* data, size_t length);
-
     bool readStrikeData(const volatile void* memory, size_t memorySize);
     bool translateTypefaceID(SkAutoDescriptor* descriptor) const;
+    sk_sp<SkTypeface> retrieveTypefaceUsingServerID(SkTypefaceID) const;
 
 private:
     class PictureBackedGlyphDrawable final : public SkDrawable {
@@ -807,9 +773,9 @@ private:
     };
 
     static bool ReadGlyph(SkTLazy<SkGlyph>& glyph, Deserializer* deserializer);
-    sk_sp<SkTypeface> addTypeface(const WireTypeface& wire);
+    sk_sp<SkTypeface> addTypeface(const SkTypefaceProxyPrototype& typefaceProto);
 
-    SkTHashMap<SkTypefaceID, sk_sp<SkTypeface>> fRemoteTypefaceIdToTypeface;
+    SkTHashMap<SkTypefaceID, sk_sp<SkTypeface>> fServerTypefaceIdToTypeface;
     sk_sp<SkStrikeClient::DiscardableHandleManager> fDiscardableHandleManager;
     SkStrikeCache* const fStrikeCache;
     const bool fIsLogging;
@@ -868,10 +834,18 @@ bool SkStrikeClientImpl::readStrikeData(const volatile void* memory, size_t memo
 
     if (!deserializer.read<uint64_t>(&typefaceSize)) READ_FAILURE
     for (size_t i = 0; i < typefaceSize; ++i) {
-        WireTypeface wire;
-        if (!deserializer.read<WireTypeface>(&wire)) READ_FAILURE
+        uint32_t typefaceSizeBytes;
+        // Read the size of the buffer generated at flatten time.
+        if (!deserializer.read<uint32_t>(&typefaceSizeBytes)) READ_FAILURE
+        // Temporary: use inside knowledge of SkReadBuffer to set the alignment.
+        // This should agree with the alignment used in writeStrikeData.
+        auto* bytes = deserializer.read(typefaceSizeBytes, alignof(uint32_t));
+        if (bytes == nullptr) READ_FAILURE
+        SkReadBuffer buffer(const_cast<const void*>(bytes), typefaceSizeBytes);
+        auto typefaceProto = SkTypefaceProxyPrototype::MakeFromBuffer(buffer);
+        if (!typefaceProto) READ_FAILURE
 
-        this->addTypeface(wire);
+        this->addTypeface(typefaceProto.value());
     }
 
     #if defined(SK_TRACE_GLYPH_RUN_PROCESS)
@@ -900,7 +874,7 @@ bool SkStrikeClientImpl::readStrikeData(const volatile void* memory, size_t memo
         }
 
         // Preflight the TypefaceID before doing the Descriptor translation.
-        auto* tfPtr = fRemoteTypefaceIdToTypeface.find(spec.fTypefaceID);
+        auto* tfPtr = fServerTypefaceIdToTypeface.find(spec.fTypefaceID);
         // Received a TypefaceID for a typeface we don't know about.
         if (!tfPtr) READ_FAILURE
 
@@ -1021,7 +995,7 @@ bool SkStrikeClientImpl::translateTypefaceID(SkAutoDescriptor* toChange) const {
         SkScalerContextRec rec;
         std::memcpy((void*)&rec, ptr, size);
         // Get the local typeface from remote typefaceID.
-        auto* tfPtr = fRemoteTypefaceIdToTypeface.find(rec.fTypefaceID);
+        auto* tfPtr = fServerTypefaceIdToTypeface.find(rec.fTypefaceID);
         // Received a strike for a typeface which doesn't exist.
         if (!tfPtr) { return false; }
         // Update the typeface id to work with the client side.
@@ -1034,21 +1008,23 @@ bool SkStrikeClientImpl::translateTypefaceID(SkAutoDescriptor* toChange) const {
     return true;
 }
 
-sk_sp<SkTypeface> SkStrikeClientImpl::deserializeTypeface(const void* buf, size_t len) {
-    WireTypeface wire;
-    if (len != sizeof(wire)) return nullptr;
-    memcpy(&wire, buf, sizeof(wire));
-    return this->addTypeface(wire);
+sk_sp<SkTypeface> SkStrikeClientImpl::retrieveTypefaceUsingServerID(SkTypefaceID typefaceID) const {
+    auto* tfPtr = fServerTypefaceIdToTypeface.find(typefaceID);
+    return tfPtr != nullptr ? *tfPtr : nullptr;
 }
 
-sk_sp<SkTypeface> SkStrikeClientImpl::addTypeface(const WireTypeface& wire) {
-    auto* typeface = fRemoteTypefaceIdToTypeface.find(wire.fTypefaceID);
-    if (typeface) return *typeface;
+sk_sp<SkTypeface> SkStrikeClientImpl::addTypeface(const SkTypefaceProxyPrototype& typefaceProto) {
+    sk_sp<SkTypeface>* typeface =
+            fServerTypefaceIdToTypeface.find(typefaceProto.serverTypefaceID());
+
+    // We already have the typeface.
+    if (typeface != nullptr)  {
+        return *typeface;
+    }
 
     auto newTypeface = sk_make_sp<SkTypefaceProxy>(
-            wire.fTypefaceID, wire.fGlyphCount, wire.fStyle, wire.fIsFixed,
-            wire.fGlyphMaskNeedsCurrentColor, fDiscardableHandleManager, fIsLogging);
-    fRemoteTypefaceIdToTypeface.set(wire.fTypefaceID, newTypeface);
+            typefaceProto, fDiscardableHandleManager, fIsLogging);
+    fServerTypefaceIdToTypeface.set(typefaceProto.serverTypefaceID(), newTypeface);
     return std::move(newTypeface);
 }
 
@@ -1064,8 +1040,9 @@ bool SkStrikeClient::readStrikeData(const volatile void* memory, size_t memorySi
     return fImpl->readStrikeData(memory, memorySize);
 }
 
-sk_sp<SkTypeface> SkStrikeClient::deserializeTypeface(const void* buf, size_t len) {
-    return fImpl->deserializeTypeface(buf, len);
+sk_sp<SkTypeface> SkStrikeClient::retrieveTypefaceUsingServerIDForTest(
+        SkTypefaceID typefaceID) const {
+    return fImpl->retrieveTypefaceUsingServerID(typefaceID);
 }
 
 bool SkStrikeClient::translateTypefaceID(SkAutoDescriptor* descriptor) const {
@@ -1073,7 +1050,7 @@ bool SkStrikeClient::translateTypefaceID(SkAutoDescriptor* descriptor) const {
 }
 
 #if defined(SK_GANESH)
-sk_sp<sktext::gpu::Slug> SkStrikeClient::deserializeSlug(const void* data, size_t size) const {
+sk_sp<sktext::gpu::Slug> SkStrikeClient::deserializeSlugForTest(const void* data, size_t size) const {
     return sktext::gpu::Slug::Deserialize(data, size, this);
 }
 #endif  // defined(SK_GANESH)

@@ -34,7 +34,10 @@ var gniExportDescs = []exporter.GNIExportDesc{
 	}},
 	{GNI: "gn/core.gni", Vars: []exporter.GNIFileListExportDesc{
 		{Var: "skia_core_public",
-			Rules: []string{"//include/core:public_hdrs"}},
+			Rules: []string{
+			"//include/core:public_hdrs",
+			"//include/core:legacy_draw_looper",
+			}},
 		{Var: "skia_core_sources",
 			Rules: []string{
 				"//include/private:private_hdrs",
@@ -49,6 +52,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/core:core_skslc_hdrs",
 				"//src/core:core_skslc_srcs",
 				"//src/core:core_srcs",
+				"//src/core:legacy_draw_looper",
 				"//src/core:sksl_hdrs",
 				"//src/core:sksl_srcs",
 				"//src/image:core_hdrs",
@@ -99,6 +103,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 			Rules: []string{
 				"//src/effects:effects_hdrs",
 				"//src/effects:effects_srcs",
+				"//src/effects:legacy_draw_looper",
 				"//src/shaders/gradients:gradient_hdrs",
 				"//src/shaders/gradients:gradient_srcs",
 			}}},
@@ -244,6 +249,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/gpu/ganesh/tessellate:tessellate_srcs",
 				"//src/gpu/ganesh/text:private_hdrs",
 				"//src/gpu/ganesh/text:srcs",
+				"//src/image:android_srcs",
 				"//src/image:gpu_hdrs",
 				"//src/image:gpu_srcs",
 				"//src/gpu/ganesh/ops:ops_hdrs",
@@ -348,6 +354,11 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/gpu/tessellate:tessellate_srcs",
 				"//src/text/gpu:gpu_hdrs",
 				"//src/text/gpu:gpu_srcs",
+			}},
+		{Var: "skia_shared_dawn_sources",
+			Rules: []string{
+				"//src/gpu/dawn:dawn_hdrs",
+				"//src/gpu/dawn:dawn_srcs",
 			}},
 		{Var: "skia_shared_vk_sources",
 			Rules: []string{

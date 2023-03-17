@@ -45,6 +45,8 @@ public:
     bool isMac() const { return fGPUFamily == GPUFamily::kMac; }
     bool isApple()const  { return fGPUFamily == GPUFamily::kApple; }
 
+    uint32_t channelMask(const TextureInfo&) const override;
+
     bool isRenderable(const TextureInfo&) const override;
 
     void buildKeyForTexture(SkISize dimensions,
@@ -52,6 +54,8 @@ public:
                             ResourceType,
                             Shareable,
                             GraphiteResourceKey*) const override;
+
+    size_t bytesPerPixel(const TextureInfo&) const override;
 
 private:
     void initGPUFamily(const id<MTLDevice>);

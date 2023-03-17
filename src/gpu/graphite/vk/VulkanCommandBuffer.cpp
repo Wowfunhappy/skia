@@ -238,21 +238,16 @@ void VulkanCommandBuffer::waitUntilFinished() {
                                                                     /*timeout=*/UINT64_MAX));
 }
 
-bool VulkanCommandBuffer::onAddRenderPass(
-        const RenderPassDesc&,
-        const Texture* colorTexture,
-        const Texture* resolveTexture,
-        const Texture* depthStencilTexture,
-        SkRect viewport,
-        const std::vector<std::unique_ptr<DrawPass>>& drawPasses) {
+bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc&,
+                                          const Texture* colorTexture,
+                                          const Texture* resolveTexture,
+                                          const Texture* depthStencilTexture,
+                                          SkRect viewport,
+                                          const DrawPassList& drawPasses) {
     return false;
 }
 
-bool VulkanCommandBuffer::onAddComputePass(const ComputePassDesc&,
-                                           const ComputePipeline*,
-                                           const std::vector<ResourceBinding>& bindings) {
-    return false;
-}
+bool VulkanCommandBuffer::onAddComputePass(const DispatchGroupList&) { return false; }
 
 bool VulkanCommandBuffer::onCopyBufferToBuffer(const Buffer* srcBuffer,
                                                size_t srcOffset,

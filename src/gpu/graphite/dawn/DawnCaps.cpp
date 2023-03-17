@@ -10,12 +10,13 @@
 #include <algorithm>
 
 #include "include/gpu/graphite/TextureInfo.h"
+#include "src/gpu/dawn/DawnUtilsPriv.h"
 #include "src/gpu/graphite/AttachmentTypes.h"
 #include "src/gpu/graphite/ComputePipelineDesc.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
 #include "src/gpu/graphite/GraphiteResourceKey.h"
 #include "src/gpu/graphite/UniformManager.h"
-#include "src/gpu/graphite/dawn/DawnUtilsPriv.h"
+#include "src/gpu/graphite/dawn/DawnGraphiteUtilsPriv.h"
 #include "src/sksl/SkSLUtil.h"
 
 namespace {
@@ -49,6 +50,10 @@ DawnCaps::DawnCaps(const wgpu::Device& device, const ContextOptions& options)
 }
 
 DawnCaps::~DawnCaps() = default;
+
+uint32_t DawnCaps::channelMask(const TextureInfo& info) const {
+    return skgpu::DawnFormatChannels(info.dawnTextureSpec().fFormat);
+}
 
 bool DawnCaps::onIsTexturable(const TextureInfo& info) const {
     if (!(info.dawnTextureSpec().fUsage & wgpu::TextureUsage::TextureBinding)) {
@@ -475,6 +480,10 @@ void DawnCaps::buildKeyForTexture(SkISize dimensions,
     builder[3] = (samplesKey                                   << 0) |
                  (static_cast<uint32_t>(isMipped)              << 3) |
                  (static_cast<uint32_t>(dawnSpec.fUsage)       << 4);
+}
+
+size_t DawnCaps::bytesPerPixel(const TextureInfo& info) const {
+    return DawnFormatBytesPerBlock(info.dawnTextureSpec().fFormat);
 }
 
 } // namespace skgpu::graphite

@@ -34,12 +34,14 @@ public:
     UniqueKey makeGraphicsPipelineKey(const GraphicsPipelineDesc&,
                                       const RenderPassDesc&) const override;
     UniqueKey makeComputePipelineKey(const ComputePipelineDesc&) const override;
+    uint32_t channelMask(const TextureInfo&) const override;
     bool isRenderable(const TextureInfo&) const override;
     void buildKeyForTexture(SkISize dimensions,
                             const TextureInfo&,
                             ResourceType,
                             Shareable,
                             GraphiteResourceKey*) const override;
+    size_t bytesPerPixel(const TextureInfo&) const override;
     uint64_t getRenderPassDescKey(const RenderPassDesc& renderPassDesc) const;
 
 private:
