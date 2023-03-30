@@ -11,10 +11,13 @@
 #include "src/core/SkOpts.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/gpu/Swizzle.h"
+#include "src/sksl/tracing/SkSLTraceHook.h"
 #include "tests/Test.h"
 
 #include <cmath>
 #include <numeric>
+
+using namespace skia_private;
 
 DEF_TEST(SkRasterPipeline, r) {
     // Build and run a simple pipeline to exercise SkRasterPipeline,
@@ -649,6 +652,367 @@ DEF_TEST(SkRasterPipeline_CopyToIndirectMasked, r) {
     }
 }
 
+DEF_TEST(SkRasterPipeline_SwizzleCopyToIndirectMasked, r) {
+    // Allocate space for 5 source slots, and 5 dest slots.
+    alignas(64) float src[5 * SkRasterPipeline_kMaxStride_highp];
+    alignas(64) float dst[5 * SkRasterPipeline_kMaxStride_highp];
+
+    // Test with various mixes of indirect offsets.
+    static_assert(SkRasterPipeline_kMaxStride_highp == 8);
+    alignas(64) const uint32_t kOffsets1[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    alignas(64) const uint32_t kOffsets2[8] = {2, 2, 2, 2, 2, 2, 2, 2};
+    alignas(64) const uint32_t kOffsets3[8] = {0, 2, 0, 2, 0, 2, 0, 2};
+    alignas(64) const uint32_t kOffsets4[8] = {99, ~99u, 0, 0, ~99u, 99, 0, 0};
+
+    // Test with various masks.
+    alignas(64) const int32_t kMask1[8]  = {~0, ~0, ~0, ~0, ~0,  0, ~0, ~0};
+    alignas(64) const int32_t kMask2[8]  = {~0,  0, ~0, ~0,  0,  0,  0, ~0};
+    alignas(64) const int32_t kMask3[8]  = {~0, ~0,  0, ~0,  0,  0, ~0, ~0};
+    alignas(64) const int32_t kMask4[8]  = { 0,  0,  0,  0,  0,  0,  0,  0};
+
+    // Test with various swizzle permutations.
+    struct TestPattern {
+        int swizzleSize;
+        int swizzleUpperBound;
+        uint16_t swizzle[4];
+    };
+
+    static const TestPattern kPatterns[] = {
+        {1, 4, {3}},          // v.w    = (1)
+        {2, 2, {1, 0}},       // v.yx   = (1,2)
+        {3, 3, {2, 1, 0}},    // v.zyx  = (1,2,3)
+        {4, 4, {3, 0, 1, 2}}, // v.wxyz = (1,2,3,4)
+    };
+
+    enum Result {
+        kOutOfBounds = 0,
+        kUnchanged = 1,
+        S0 = 2,
+        S1 = 3,
+        S2 = 4,
+        S3 = 5,
+        S4 = 6,
+    };
+
+#define __ kUnchanged
+#define XX kOutOfBounds
+    static const Result kExpectationsAtZero[4][5] = {
+    //  d[0].w = 1        d[0].yx = (1,2)   d[0].zyx = (1,2,3) d[0].wxyz = (1,2,3,4)
+        {__,__,__,S0,__}, {S1,S0,__,__,__}, {S2,S1,S0,__,__},  {S1,S2,S3,S0,__},
+    };
+    static const Result kExpectationsAtTwo[4][5] = {
+    //  d[2].w = 1        d[2].yx = (1,2)   d[2].zyx = (1,2,3) d[2].wxyz = (1,2,3,4)
+        {XX,XX,XX,XX,XX}, {__,__,S1,S0,__}, {__,__,S2,S1,S0},  {XX,XX,XX,XX,XX},
+    };
+#undef __
+#undef XX
+
+    const int N = SkOpts::raster_pipeline_highp_stride;
+
+    for (const int32_t* mask : {kMask1, kMask2, kMask3, kMask4}) {
+        for (const uint32_t* offsets : {kOffsets1, kOffsets2, kOffsets3, kOffsets4}) {
+            for (size_t patternIndex = 0; patternIndex < std::size(kPatterns); ++patternIndex) {
+                const TestPattern& pattern = kPatterns[patternIndex];
+
+                // Initialize the destination slots to 0,1,2.. and the source slots to
+                // 1000,1001,1002...
+                std::iota(&dst[0], &dst[5 * N], 0.0f);
+                std::iota(&src[0], &src[5 * N], 1000.0f);
+
+                // Run `swizzle_copy_to_indirect_masked` over our data.
+                SkArenaAlloc alloc(/*firstHeapAllocation=*/256);
+                SkRasterPipeline p(&alloc);
+                auto* ctx = alloc.make<SkRasterPipeline_SwizzleCopyIndirectCtx>();
+                ctx->dst = &dst[0];
+                ctx->src = &src[0];
+                ctx->indirectOffset = offsets;
+                ctx->indirectLimit = 5 - pattern.swizzleUpperBound;
+                ctx->slots = pattern.swizzleSize;
+                ctx->offsets[0] = pattern.swizzle[0] * N * sizeof(float);
+                ctx->offsets[1] = pattern.swizzle[1] * N * sizeof(float);
+                ctx->offsets[2] = pattern.swizzle[2] * N * sizeof(float);
+                ctx->offsets[3] = pattern.swizzle[3] * N * sizeof(float);
+
+                p.append(SkRasterPipelineOp::init_lane_masks);
+                p.append(SkRasterPipelineOp::load_condition_mask, mask);
+                p.append(SkRasterPipelineOp::swizzle_copy_to_indirect_masked, ctx);
+                p.run(0,0,N,1);
+
+                // If the offset plus copy-size would overflow the destination, the results don't
+                // matter; indexing off the end of the buffer is UB, and we don't make any promises
+                // about the values you get. If we didn't crash, that's success. (In practice, we
+                // will have clamped the destination pointer so that we don't read past the end.)
+                uint32_t maxOffset = *std::max_element(offsets, offsets + N);
+                if (pattern.swizzleUpperBound + maxOffset > 5) {
+                    continue;
+                }
+
+                // Verify that the destination has been overwritten in the mask-on fields, and has
+                // not been overwritten in the mask-off fields, for each destination slot.
+                float expectedUnchanged = 0.0f;
+                float* destPtr = dst;
+                for (int checkSlot = 0; checkSlot < 5; ++checkSlot) {
+                    for (int checkLane = 0; checkLane < N; ++checkLane) {
+                        Result expectedType = kUnchanged;
+                        if (offsets[checkLane] == 0) {
+                            expectedType = kExpectationsAtZero[patternIndex][checkSlot];
+                        } else if (offsets[checkLane] == 2) {
+                            expectedType = kExpectationsAtTwo[patternIndex][checkSlot];
+                        }
+                        if (!mask[checkLane]) {
+                            expectedType = kUnchanged;
+                        }
+                        switch (expectedType) {
+                            case kOutOfBounds: // out of bounds; ignore result
+                                break;
+                            case kUnchanged:
+                                REPORTER_ASSERT(r, *destPtr == expectedUnchanged);
+                                break;
+                            case S0: // destination should match source 0
+                                REPORTER_ASSERT(r, *destPtr == src[0*N + checkLane]);
+                                break;
+                            case S1: // destination should match source 1
+                                REPORTER_ASSERT(r, *destPtr == src[1*N + checkLane]);
+                                break;
+                            case S2: // destination should match source 2
+                                REPORTER_ASSERT(r, *destPtr == src[2*N + checkLane]);
+                                break;
+                            case S3: // destination should match source 3
+                                REPORTER_ASSERT(r, *destPtr == src[3*N + checkLane]);
+                                break;
+                            case S4: // destination should match source 4
+                                REPORTER_ASSERT(r, *destPtr == src[4*N + checkLane]);
+                                break;
+                        }
+
+                        ++destPtr;
+                        expectedUnchanged += 1.0f;
+                    }
+                }
+            }
+        }
+    }
+}
+
+DEF_TEST(SkRasterPipeline_TraceVar, r) {
+    const int N = SkOpts::raster_pipeline_highp_stride;
+
+    class TestTraceHook : public SkSL::TraceHook {
+    public:
+        void line(int) override                  { fBuffer.push_back(-9999999); }
+        void enter(int) override                 { fBuffer.push_back(-9999999); }
+        void exit(int) override                  { fBuffer.push_back(-9999999); }
+        void scope(int) override                 { fBuffer.push_back(-9999999); }
+        void var(int slot, int32_t val) override {
+            fBuffer.push_back(slot);
+            fBuffer.push_back(val);
+        }
+
+        TArray<int> fBuffer;
+    };
+
+    static_assert(SkRasterPipeline_kMaxStride_highp == 8);
+    alignas(64) static constexpr int32_t  kMaskOn   [8] = {~0, ~0, ~0, ~0, ~0, ~0, ~0, ~0};
+    alignas(64) static constexpr int32_t  kMaskOff  [8] = { 0,  0,  0,  0,  0,  0,  0,  0};
+    alignas(64) static constexpr uint32_t kIndirect0[8] = { 0,  0,  0,  0,  0,  0,  0,  0};
+    alignas(64) static constexpr uint32_t kIndirect1[8] = { 1,  1,  1,  1,  1,  1,  1,  1};
+    alignas(64) int32_t kData333[8];
+    alignas(64) int32_t kData555[8];
+    alignas(64) int32_t kData666[8];
+    alignas(64) int32_t kData777[16];
+    alignas(64) int32_t kData999[16];
+    std::fill(kData333,     kData333 + N,   333);
+    std::fill(kData555,     kData555 + N,   555);
+    std::fill(kData666,     kData666 + N,   666);
+    std::fill(kData777,     kData777 + N,   777);
+    std::fill(kData777 + N, kData777 + 2*N, 707);
+    std::fill(kData999,     kData999 + N,   999);
+    std::fill(kData999 + N, kData999 + 2*N, 909);
+
+    TestTraceHook trace;
+    SkArenaAlloc alloc(/*firstHeapAllocation=*/256);
+    SkRasterPipeline p(&alloc);
+    p.append(SkRasterPipelineOp::init_lane_masks);
+    const SkRasterPipeline_TraceVarCtx kTraceVar1 = {/*traceMask=*/kMaskOff,
+                                                     &trace, 2, 1, kData333,
+                                                     /*indirectOffset=*/nullptr,
+                                                     /*indirectLimit=*/0};
+    const SkRasterPipeline_TraceVarCtx kTraceVar2 = {/*traceMask=*/kMaskOn,
+                                                     &trace, 4, 1, kData555,
+                                                     /*indirectOffset=*/nullptr,
+                                                     /*indirectLimit=*/0};
+    const SkRasterPipeline_TraceVarCtx kTraceVar3 = {/*traceMask=*/kMaskOff,
+                                                     &trace, 5, 1, kData666,
+                                                     /*indirectOffset=*/nullptr,
+                                                     /*indirectLimit=*/0};
+    const SkRasterPipeline_TraceVarCtx kTraceVar4 = {/*traceMask=*/kMaskOn,
+                                                     &trace, 6, 2, kData777,
+                                                     /*indirectOffset=*/nullptr,
+                                                     /*indirectLimit=*/0};
+    const SkRasterPipeline_TraceVarCtx kTraceVar5 = {/*traceMask=*/kMaskOn,
+                                                     &trace, 8, 2, kData999,
+                                                     /*indirectOffset=*/nullptr,
+                                                     /*indirectLimit=*/0};
+    const SkRasterPipeline_TraceVarCtx kTraceVar6 = {/*traceMask=*/kMaskOn,
+                                                     &trace, 9, 1, kData999,
+                                                     /*indirectOffset=*/kIndirect0,
+                                                     /*indirectLimit=*/1};
+    const SkRasterPipeline_TraceVarCtx kTraceVar7 = {/*traceMask=*/kMaskOn,
+                                                     &trace, 9, 1, kData999,
+                                                     /*indirectOffset=*/kIndirect1,
+                                                     /*indirectLimit=*/1};
+
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_var, &kTraceVar1);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_var, &kTraceVar2);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOff);
+    p.append(SkRasterPipelineOp::trace_var, &kTraceVar3);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_var, &kTraceVar4);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOff);
+    p.append(SkRasterPipelineOp::trace_var, &kTraceVar5);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_var, &kTraceVar6);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_var, &kTraceVar7);
+    p.run(0,0,N,1);
+
+    REPORTER_ASSERT(r, (trace.fBuffer == TArray<int>{4, 555, 6, 777, 7, 707, 9, 999, 10, 909}));
+}
+
+DEF_TEST(SkRasterPipeline_TraceLine, r) {
+    const int N = SkOpts::raster_pipeline_highp_stride;
+
+    class TestTraceHook : public SkSL::TraceHook {
+    public:
+        void var(int, int32_t) override { fBuffer.push_back(-9999999); }
+        void enter(int) override        { fBuffer.push_back(-9999999); }
+        void exit(int) override         { fBuffer.push_back(-9999999); }
+        void scope(int) override        { fBuffer.push_back(-9999999); }
+        void line(int lineNum) override { fBuffer.push_back(lineNum); }
+
+        TArray<int> fBuffer;
+    };
+
+    static_assert(SkRasterPipeline_kMaxStride_highp == 8);
+    alignas(64) static constexpr int32_t kMaskOn [8] = {~0, ~0, ~0, ~0, ~0, ~0, ~0, ~0};
+    alignas(64) static constexpr int32_t kMaskOff[8] = { 0,  0,  0,  0,  0,  0,  0,  0};
+
+    TestTraceHook trace;
+    SkArenaAlloc alloc(/*firstHeapAllocation=*/256);
+    SkRasterPipeline p(&alloc);
+    p.append(SkRasterPipelineOp::init_lane_masks);
+    const SkRasterPipeline_TraceLineCtx kTraceLine1 = {/*traceMask=*/kMaskOn,  &trace, 123};
+    const SkRasterPipeline_TraceLineCtx kTraceLine2 = {/*traceMask=*/kMaskOff, &trace, 456};
+    const SkRasterPipeline_TraceLineCtx kTraceLine3 = {/*traceMask=*/kMaskOn,  &trace, 567};
+    const SkRasterPipeline_TraceLineCtx kTraceLine4 = {/*traceMask=*/kMaskOff, &trace, 678};
+    const SkRasterPipeline_TraceLineCtx kTraceLine5 = {/*traceMask=*/kMaskOn,  &trace, 789};
+
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_line, &kTraceLine1);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_line, &kTraceLine2);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOff);
+    p.append(SkRasterPipelineOp::trace_line, &kTraceLine3);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOff);
+    p.append(SkRasterPipelineOp::trace_line, &kTraceLine4);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_line, &kTraceLine5);
+    p.run(0,0,N,1);
+
+    REPORTER_ASSERT(r, (trace.fBuffer == TArray<int>{123, 789}));
+}
+
+DEF_TEST(SkRasterPipeline_TraceEnterExit, r) {
+    const int N = SkOpts::raster_pipeline_highp_stride;
+
+    class TestTraceHook : public SkSL::TraceHook {
+    public:
+        void line(int) override         { fBuffer.push_back(-9999999); }
+        void var(int, int32_t) override { fBuffer.push_back(-9999999); }
+        void scope(int) override        { fBuffer.push_back(-9999999); }
+        void enter(int fnIdx) override  {
+            fBuffer.push_back(fnIdx);
+            fBuffer.push_back(1);
+        }
+        void exit(int fnIdx) override {
+            fBuffer.push_back(fnIdx);
+            fBuffer.push_back(0);
+        }
+
+        TArray<int> fBuffer;
+    };
+
+    static_assert(SkRasterPipeline_kMaxStride_highp == 8);
+    alignas(64) static constexpr int32_t kMaskOn [8] = {~0, ~0, ~0, ~0, ~0, ~0, ~0, ~0};
+    alignas(64) static constexpr int32_t kMaskOff[8] = { 0,  0,  0,  0,  0,  0,  0,  0};
+
+    TestTraceHook trace;
+    SkArenaAlloc alloc(/*firstHeapAllocation=*/256);
+    SkRasterPipeline p(&alloc);
+    p.append(SkRasterPipelineOp::init_lane_masks);
+    const SkRasterPipeline_TraceFuncCtx kTraceFunc1 = {/*traceMask=*/kMaskOff, &trace, 99};
+    const SkRasterPipeline_TraceFuncCtx kTraceFunc2 = {/*traceMask=*/kMaskOn,  &trace, 12};
+    const SkRasterPipeline_TraceFuncCtx kTraceFunc3 = {/*traceMask=*/kMaskOff, &trace, 34};
+    const SkRasterPipeline_TraceFuncCtx kTraceFunc4 = {/*traceMask=*/kMaskOn,  &trace, 56};
+    const SkRasterPipeline_TraceFuncCtx kTraceFunc5 = {/*traceMask=*/kMaskOn,  &trace, 78};
+    const SkRasterPipeline_TraceFuncCtx kTraceFunc6 = {/*traceMask=*/kMaskOff, &trace, 90};
+
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOff);
+    p.append(SkRasterPipelineOp::trace_enter, &kTraceFunc1);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_enter, &kTraceFunc2);
+    p.append(SkRasterPipelineOp::trace_enter, &kTraceFunc3);
+    p.append(SkRasterPipelineOp::trace_exit, &kTraceFunc4);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOff);
+    p.append(SkRasterPipelineOp::trace_exit, &kTraceFunc5);
+    p.append(SkRasterPipelineOp::trace_exit, &kTraceFunc6);
+    p.run(0,0,N,1);
+
+    REPORTER_ASSERT(r, (trace.fBuffer == TArray<int>{12, 1, 56, 0}));
+}
+
+DEF_TEST(SkRasterPipeline_TraceScope, r) {
+    const int N = SkOpts::raster_pipeline_highp_stride;
+
+    class TestTraceHook : public SkSL::TraceHook {
+    public:
+        void line(int) override         { fBuffer.push_back(-9999999); }
+        void var(int, int32_t) override { fBuffer.push_back(-9999999); }
+        void enter(int) override        { fBuffer.push_back(-9999999); }
+        void exit(int) override         { fBuffer.push_back(-9999999); }
+        void scope(int delta) override  { fBuffer.push_back(delta); }
+
+        TArray<int> fBuffer;
+    };
+
+    static_assert(SkRasterPipeline_kMaxStride_highp == 8);
+    alignas(64) static constexpr int32_t kMaskOn [8] = {~0, ~0, ~0, ~0, ~0, ~0, ~0, ~0};
+    alignas(64) static constexpr int32_t kMaskOff[8] = { 0,  0,  0,  0,  0,  0,  0,  0};
+
+    TestTraceHook trace;
+    SkArenaAlloc alloc(/*firstHeapAllocation=*/256);
+    SkRasterPipeline p(&alloc);
+    p.append(SkRasterPipelineOp::init_lane_masks);
+    const SkRasterPipeline_TraceScopeCtx kTraceScope1  = {/*traceMask=*/kMaskOn,  &trace, +1};
+    const SkRasterPipeline_TraceScopeCtx kTraceScope2  = {/*traceMask=*/kMaskOff, &trace, -2};
+    const SkRasterPipeline_TraceScopeCtx kTraceScope3  = {/*traceMask=*/kMaskOff, &trace, +3};
+    const SkRasterPipeline_TraceScopeCtx kTraceScope4  = {/*traceMask=*/kMaskOn,  &trace, +4};
+    const SkRasterPipeline_TraceScopeCtx kTraceScope5  = {/*traceMask=*/kMaskOn,  &trace, -5};
+
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_scope, &kTraceScope1);
+    p.append(SkRasterPipelineOp::trace_scope, &kTraceScope2);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOff);
+    p.append(SkRasterPipelineOp::trace_scope, &kTraceScope3);
+    p.append(SkRasterPipelineOp::trace_scope, &kTraceScope4);
+    p.append(SkRasterPipelineOp::load_condition_mask, kMaskOn);
+    p.append(SkRasterPipelineOp::trace_scope, &kTraceScope5);
+    p.run(0,0,N,1);
+
+    REPORTER_ASSERT(r, (trace.fBuffer == TArray<int>{1, -5}));
+}
 
 DEF_TEST(SkRasterPipeline_CopySlotsMasked, r) {
     // Allocate space for 5 source slots and 5 dest slots.

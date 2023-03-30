@@ -31,7 +31,7 @@
 #include "src/gpu/graphite/KeyHelpers.h"
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/PaintParamsKey.h"
-#include "src/gpu/graphite/ReadWriteSwizzle.h"
+#include "src/gpu/graphite/ReadSwizzle.h"
 #include "src/gpu/graphite/TextureProxyView.h"
 
 
@@ -371,16 +371,14 @@ sk_sp<SkShader> SkImageShader::MakeSubset(sk_sp<SkImage> image,
 #include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrFPArgs.h"
 #include "src/gpu/ganesh/effects/GrBlendFragmentProcessor.h"
+#include "src/gpu/ganesh/image/GrImageUtils.h"
 
 std::unique_ptr<GrFragmentProcessor>
 SkImageShader::asFragmentProcessor(const GrFPArgs& args, const MatrixRec& mRec) const {
     SkTileMode tileModes[2] = {fTileModeX, fTileModeY};
     const SkRect* subset = needs_subset(fImage.get(), fSubset) ? &fSubset : nullptr;
-    auto fp = as_IB(fImage.get())->asFragmentProcessor(args.fContext,
-                                                       fSampling,
-                                                       tileModes,
-                                                       SkMatrix::I(),
-                                                       subset);
+    auto fp = skgpu::ganesh::AsFragmentProcessor(
+            args.fContext, fImage, fSampling, tileModes, SkMatrix::I(), subset);
     if (!fp) {
         return nullptr;
     }

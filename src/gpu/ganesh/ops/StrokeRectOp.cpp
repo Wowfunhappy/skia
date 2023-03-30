@@ -28,12 +28,16 @@ namespace skgpu::ganesh::StrokeRectOp {
 
 namespace {
 
-// We support all hairlines, bevels, and miters, but not round joins. Also, check whether the miter
+// This emits line primitives for hairlines, so only support hairlines if allowed by caps. Otherwise
+// we support all hairlines, bevels, and miters, but not round joins. Also, check whether the miter
 // limit makes a miter join effectively beveled. If the miter is effectively beveled, it is only
 // supported when using an AA stroke.
-inline bool allowed_stroke(const SkStrokeRec& stroke, GrAA aa, bool* isMiter) {
+inline bool allowed_stroke(const GrCaps* caps, const SkStrokeRec& stroke, GrAA aa, bool* isMiter) {
     SkASSERT(stroke.getStyle() == SkStrokeRec::kStroke_Style ||
              stroke.getStyle() == SkStrokeRec::kHairline_Style);
+    if (caps->avoidLineDraws() && stroke.isHairlineStyle()) {
+        return false;
+    }
     // For hairlines, make bevel and round joins appear the same as mitered ones.
     if (!stroke.getWidth()) {
         *isMiter = true;
@@ -109,7 +113,7 @@ public:
                             const SkStrokeRec& stroke,
                             GrAAType aaType) {
         bool isMiter;
-        if (!allowed_stroke(stroke, GrAA::kNo, &isMiter)) {
+        if (!allowed_stroke(context->priv().caps(), stroke, GrAA::kNo, &isMiter)) {
             return nullptr;
         }
         Helper::InputFlags inputFlags = Helper::InputFlags::kNone;
@@ -445,7 +449,7 @@ public:
             return nullptr;
         }
         bool isMiter;
-        if (!allowed_stroke(stroke, GrAA::kYes, &isMiter)) {
+        if (!allowed_stroke(context->priv().caps(), stroke, GrAA::kYes, &isMiter)) {
             return nullptr;
         }
         RectInfo info;
@@ -976,7 +980,7 @@ GrOp::Owner MakeNested(GrRecordingContext* context,
         }
         DrawQuad quad{GrQuad::MakeFromRect(rects[0], viewMatrix), GrQuad(rects[0]),
                       GrQuadAAFlags::kAll};
-        return v1::FillRectOp::Make(context, std::move(paint), GrAAType::kCoverage, &quad);
+        return ganesh::FillRectOp::Make(context, std::move(paint), GrAAType::kCoverage, &quad);
     }
 
     return AAStrokeRectOp::Make(context, std::move(paint), viewMatrix, devOutside,

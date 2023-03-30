@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkAlphaType.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkBlendMode.h"
@@ -12,7 +13,6 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkFontStyle.h"
@@ -57,7 +57,7 @@ using namespace skia_private;
 
 struct GrContextOptions;
 
-static void draw(SkCanvas* canvas, int redraw, const SkTArray<sk_sp<SkTextBlob>>& blobs) {
+static void draw(SkCanvas* canvas, int redraw, const TArray<sk_sp<SkTextBlob>>& blobs) {
     int yOffset = 0;
     for (int r = 0; r < redraw; r++) {
         for (int i = 0; i < blobs.size(); i++) {
@@ -121,7 +121,7 @@ static void text_blob_cache_inner(skiatest::Reporter* reporter, GrDirectContext*
     }
 
     // generate textblobs
-    SkTArray<sk_sp<SkTextBlob>> blobs;
+    TArray<sk_sp<SkTextBlob>> blobs;
     for (int i = 0; i < count; i++) {
         SkFont font;
         font.setSize(48); // draw big glyphs to really stress the atlas

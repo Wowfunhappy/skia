@@ -62,6 +62,8 @@
 #include <thread>
 #include <utility>
 
+using namespace skia_private;
+
 class GrRecordingContext;
 struct GrContextOptions;
 struct SkIPoint;
@@ -1486,7 +1488,7 @@ DEF_TEST(SkRuntimeShaderIsOpaque, r) {
 DEF_GANESH_TEST_FOR_ALL_CONTEXTS(GrSkSLFP_Specialized, r, ctxInfo, CtsEnforcement::kApiLevel_T) {
     struct FpAndKey {
         std::unique_ptr<GrFragmentProcessor> fp;
-        SkTArray<uint32_t, true>             key;
+        TArray<uint32_t, true>             key;
     };
 
     // Constant color, but with an 'specialize' option that decides if the color is inserted in the
@@ -1526,7 +1528,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrSkSLFP_UniformArray,
     // Make a fill-context to draw into.
     GrDirectContext* directContext = ctxInfo.directContext();
     SkImageInfo info = SkImageInfo::Make(1, 1, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
-    std::unique_ptr<skgpu::v1::SurfaceFillContext> testCtx =
+    std::unique_ptr<skgpu::ganesh::SurfaceFillContext> testCtx =
             directContext->priv().makeSFC(info, /*label=*/{}, SkBackingFit::kExact);
 
     // Make an effect that takes a uniform array as input.

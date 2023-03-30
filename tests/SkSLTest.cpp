@@ -41,7 +41,7 @@
 #include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLProgram.h"
-#include "src/sksl/tracing/SkRPDebugTrace.h"
+#include "src/sksl/tracing/SkSLDebugTracePriv.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
 #include "tools/Resources.h"
@@ -51,6 +51,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+using namespace skia_private;
 
 // This debugging toggle enables extra logging in `test_raster_pipeline`.
 //#define DUMP_RP_PROGRAMS 1
@@ -386,7 +388,7 @@ static void test_raster_pipeline(skiatest::Reporter* r, const char* testFile, in
     // buffer of uniform floats. TODO: this approach doesn't work for complex types (arrays and
     // structs), but the RP backend doesn't support those yet regardless.
     std::unique_ptr<SkSL::UniformInfo> uniformInfo = program->getUniformInfo();
-    SkTArray<float> uniformValues;
+    TArray<float> uniformValues;
     for (const SkSL::UniformInfo::Uniform& programUniform : uniformInfo->fUniforms) {
         bool foundMatch = false;
         for (const UniformData& data : kUniformData) {
@@ -406,7 +408,7 @@ static void test_raster_pipeline(skiatest::Reporter* r, const char* testFile, in
     // Compile our program.
     SkArenaAlloc alloc(/*firstHeapAllocation=*/1000);
     SkRasterPipeline pipeline(&alloc);
-    SkSL::SkRPDebugTrace debugTrace;
+    SkSL::DebugTracePriv debugTrace;
     std::unique_ptr<SkSL::RP::Program> rasterProg =
             SkSL::MakeRasterPipelineProgram(*program,
                                             *main->definition(),
@@ -641,7 +643,7 @@ SKSL_TEST(RP + VM + GPU,     kApiLevel_T, FunctionArgTypeMatch,            "shar
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, FunctionReturnTypeMatch,         "shared/FunctionReturnTypeMatch.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, Functions,                       "shared/Functions.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, FunctionPrototype,               "shared/FunctionPrototype.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, GeometricIntrinsics,             "shared/GeometricIntrinsics.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, GeometricIntrinsics,             "shared/GeometricIntrinsics.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, HelloWorld,                      "shared/HelloWorld.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, Hex,                             "shared/Hex.sksl")
 SKSL_TEST(RP + GPU_ES3,      kNever,      HexUnsigned,                     "shared/HexUnsigned.sksl")
@@ -662,6 +664,7 @@ SKSL_TEST(RP + VM + GPU,     kNextRelease,MatrixIndexStore,                "shar
 SKSL_TEST(RP + VM + GPU,     kApiLevel_U, MatrixOpEqualsES2,               "shared/MatrixOpEqualsES2.sksl")
 SKSL_TEST(RP + GPU_ES3,      kApiLevel_U, MatrixOpEqualsES3,               "shared/MatrixOpEqualsES3.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, MatrixScalarMath,                "shared/MatrixScalarMath.sksl")
+SKSL_TEST(RP + VM + GPU,     kNextRelease,MatrixSwizzleStore,              "shared/MatrixSwizzleStore.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, MatrixToVectorCast,              "shared/MatrixToVectorCast.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, MultipleAssignments,             "shared/MultipleAssignments.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, NumberCasts,                     "shared/NumberCasts.sksl")

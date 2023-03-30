@@ -7,11 +7,11 @@
 
 #include "gm/gm.h"
 #include "include/codec/SkCodec.h"
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkPixmap.h"
@@ -131,7 +131,8 @@ protected:
                 canvas->save();
                 for (const sk_sp<SkColorSpace>& colorSpace : colorSpaces) {
                     make(&bitmap, colorType, alphaType, colorSpace);
-                    auto image = SkImage::MakeFromEncoded(encode_data(bitmap, fEncodedFormat));
+                    auto image =
+                            SkImages::DeferredFromEncodedData(encode_data(bitmap, fEncodedFormat));
                     canvas->drawImage(image.get(), 0.0f, 0.0f);
                     canvas->translate((float) imageWidth, 0.0f);
                 }

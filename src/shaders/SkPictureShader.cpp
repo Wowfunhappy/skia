@@ -35,6 +35,7 @@
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
+#include "src/gpu/ganesh/image/GrImageUtils.h"
 #include "src/image/SkImage_Base.h"
 #include "src/shaders/SkLocalMatrixShader.h"
 #endif
@@ -425,7 +426,8 @@ std::unique_ptr<GrFragmentProcessor> SkPictureShader::asFragmentProcessor(
         if (!image) {
             return nullptr;
         }
-        auto [v, ct] = as_IB(image)->asView(ctx, GrMipmapped::kNo);
+
+        auto [v, ct] = skgpu::ganesh::AsView(ctx, image, GrMipmapped::kNo);
         view = std::move(v);
         provider->assignUniqueKeyToProxy(key, view.asTextureProxy());
     }

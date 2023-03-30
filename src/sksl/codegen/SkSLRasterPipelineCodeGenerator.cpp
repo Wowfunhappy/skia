@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkPoint.h"
 #include "include/core/SkSpan.h"
 #include "include/private/SkSLDefines.h"
 #include "include/private/SkSLIRNode.h"
@@ -58,19 +59,21 @@
 #include "src/sksl/ir/SkSLVarDeclarations.h"
 #include "src/sksl/ir/SkSLVariable.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
-#include "src/sksl/tracing/SkRPDebugTrace.h"
-#include "src/sksl/tracing/SkSLDebugInfo.h"
+#include "src/sksl/tracing/SkSLDebugTracePriv.h"
 #include "src/sksl/transform/SkSLTransform.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <float.h>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
+
+using namespace skia_private;
 
 namespace SkSL {
 namespace RP {
@@ -80,11 +83,15 @@ static bool unsupported() {
     return false;
 }
 
+class AutoContinueMask;
+class Generator;
+class LValue;
+
 class SlotManager {
 public:
     SlotManager(std::vector<SlotDebugInfo>* i) : fSlotDebugInfo(i) {}
 
-    /** Used by `create` to add this variable to SlotDebugInfo inside SkRPDebugTrace. */
+    /** Used by `create` to add this variable to SlotDebugInfo inside the DebugTrace. */
     void addSlotDebugInfoForGroup(const std::string& varName,
                                   const Type& type,
                                   Position pos,
@@ -120,22 +127,59 @@ private:
     std::vector<SlotDebugInfo>* fSlotDebugInfo;
 };
 
-class AutoContinueMask;
-class LValue;
+class AutoStack {
+public:
+    /**
+     * Creates a temporary stack. The caller is responsible for discarding every entry on this
+     * stack before ~AutoStack is reached.
+     */
+    explicit AutoStack(Generator* g);
+    ~AutoStack();
+
+    /** Activates the associated stack. */
+    void enter();
+
+    /** Undoes a call to `enter`, returning to the previously-active stack. */
+    void exit();
+
+    /** Returns the stack ID of this AutoStack. */
+    int stackID() { return fStackID; }
+
+    /** Clones values from the top of the active stack onto this one. */
+    void pushClone(int slots);
+
+    /** Clones values from a fixed range of the active stack onto this one. */
+    void pushClone(SlotRange range, int offsetFromStackTop);
+
+    /** Clones values from a dynamic range of the active stack onto this one. */
+    void pushCloneIndirect(SlotRange range, int dynamicStackID, int offsetFromStackTop);
+
+private:
+    Generator* fGenerator;
+    int fStackID = 0;
+    int fParentStackID = 0;
+};
 
 class Generator {
 public:
-    Generator(const SkSL::Program& program, SkRPDebugTrace* debugTrace)
+    Generator(const SkSL::Program& program, DebugTracePriv* debugTrace, bool writeTraceOps)
             : fProgram(program)
             , fContext(fProgram.fContext->fTypes,
                        fProgram.fContext->fCaps,
                        *fProgram.fContext->fErrors)
             , fDebugTrace(debugTrace)
+            , fWriteTraceOps(writeTraceOps)
             , fProgramSlots(debugTrace ? &debugTrace->fSlotInfo : nullptr)
             , fUniformSlots(debugTrace ? &debugTrace->fUniformInfo : nullptr) {
         fContext.fModifiersPool = &fModifiersPool;
         fContext.fConfig = fProgram.fConfig.get();
         fContext.fModule = fProgram.fContext->fModule;
+    }
+
+    ~Generator() {
+        // ~AutoStack calls into the Generator, so we need to make sure the trace mask is reset
+        // before the Generator is destroyed.
+        fTraceMask.reset();
     }
 
     /** Converts the SkSL main() function into a set of Instructions. */
@@ -152,7 +196,7 @@ public:
                                            const FunctionDefinition& function);
 
     /**
-     * Returns the slot index of this function inside the FunctionDebugInfo array in SkRPDebugTrace.
+     * Returns the slot index of this function inside the FunctionDebugInfo array in DebugTracePriv.
      * The FunctionDebugInfo slot will be created if it doesn't already exist.
      */
     int getFunctionDebugInfo(const FunctionDeclaration& decl);
@@ -265,14 +309,44 @@ public:
     [[nodiscard]] bool pushVariableReference(const VariableReference& v);
 
     /** Pops an expression from the value stack and copies it into slots. */
-    void popToSlotRange(SlotRange r) { fBuilder.pop_slots(r); }
-    void popToSlotRangeUnmasked(SlotRange r) { fBuilder.pop_slots_unmasked(r); }
+    void popToSlotRange(SlotRange r) {
+        fBuilder.pop_slots(r);
+        if (this->shouldWriteTraceOps()) {
+            fBuilder.trace_var(fTraceMask->stackID(), r);
+        }
+    }
+    void popToSlotRangeUnmasked(SlotRange r) {
+        fBuilder.pop_slots_unmasked(r);
+        if (this->shouldWriteTraceOps()) {
+            fBuilder.trace_var(fTraceMask->stackID(), r);
+        }
+    }
 
     /** Pops an expression from the value stack and discards it. */
     void discardExpression(int slots) { fBuilder.discard_stack(slots); }
 
     /** Zeroes out a range of slots. */
-    void zeroSlotRangeUnmasked(SlotRange r) { fBuilder.zero_slots_unmasked(r); }
+    void zeroSlotRangeUnmasked(SlotRange r) {
+        fBuilder.zero_slots_unmasked(r);
+        if (this->shouldWriteTraceOps()) {
+            fBuilder.trace_var(fTraceMask->stackID(), r);
+        }
+    }
+
+    /**
+     * Emits a trace_line opcode. writeStatement does this, and statements that alter control flow
+     * may need to explicitly add additional traces.
+     */
+    void emitTraceLine(Position pos);
+
+    /** Emits a trace_scope opcode, which alters the SkSL variable-scope depth. */
+    void emitTraceScope(int delta);
+
+    /** Prepares our position-to-line-offset conversion table (stored in `fLineOffsets`). */
+    void calculateLineOffsets();
+
+    bool shouldWriteTraceOps() { return fDebugTrace && fWriteTraceOps; }
+    int traceMaskStackID() { return fTraceMask->stackID(); }
 
     /** Expression utilities. */
     struct TypedOps {
@@ -295,6 +369,7 @@ public:
     [[nodiscard]] bool pushIntrinsic(BuilderOp builderOp,
                                      const Expression& arg0,
                                      const Expression& arg1);
+    [[nodiscard]] bool pushLengthIntrinsic(int slotCount);
     [[nodiscard]] bool pushVectorizedExpression(const Expression& expr, const Type& vectorType);
     [[nodiscard]] bool pushVariableReferencePartial(const VariableReference& v, SlotRange subset);
     [[nodiscard]] bool pushLValueOrExpression(LValue* lvalue, const Expression& expr);
@@ -351,21 +426,31 @@ private:
     SkSL::Context fContext;
     SkSL::ModifiersPool fModifiersPool;
     Builder fBuilder;
-    SkRPDebugTrace* fDebugTrace = nullptr;
+    DebugTracePriv* fDebugTrace = nullptr;
+    bool fWriteTraceOps = false;
     SkTHashMap<const Variable*, int> fChildEffectMap;
 
     SlotManager fProgramSlots;
     SlotManager fUniformSlots;
 
+    std::optional<AutoStack> fTraceMask;
     const FunctionDefinition* fCurrentFunction = nullptr;
     SlotRange fCurrentFunctionResult;
     AutoContinueMask* fCurrentContinueMask = nullptr;
     int fCurrentBreakTarget = -1;
     int fCurrentStack = 0;
     int fNextStackID = 0;
-    SkTArray<int> fRecycledStacks;
+    TArray<int> fRecycledStacks;
 
     SkTHashMap<const FunctionDefinition*, Analysis::ReturnComplexity> fReturnComplexityMap;
+
+    // `fInsideCompoundStatement` will be nonzero if we are currently writing statements inside of a
+    // compound-statement Block. (Conceptually those statements should all count as one.)
+    int fInsideCompoundStatement = 0;
+
+    // `fLineOffsets` contains the position of each newline in the source, plus a zero at the
+    // beginning, and the total source length at the end, as sentinels.
+    TArray<int> fLineOffsets;
 
     static constexpr auto kAbsOps = TypedOps{BuilderOp::abs_float,
                                              BuilderOp::abs_int,
@@ -403,6 +488,10 @@ private:
                                                   BuilderOp::cmpne_n_ints,
                                                   BuilderOp::cmpne_n_ints,
                                                   BuilderOp::cmpne_n_ints};
+    static constexpr auto kModOps = TypedOps{BuilderOp::mod_n_floats,
+                                             BuilderOp::unsupported,
+                                             BuilderOp::unsupported,
+                                             BuilderOp::unsupported};
     static constexpr auto kMinOps = TypedOps{BuilderOp::min_n_floats,
                                              BuilderOp::min_n_ints,
                                              BuilderOp::min_n_uints,
@@ -415,51 +504,43 @@ private:
                                              BuilderOp::unsupported,
                                              BuilderOp::unsupported,
                                              BuilderOp::unsupported};
+    static constexpr auto kInverseSqrtOps = TypedOps{BuilderOp::invsqrt_float,
+                                                     BuilderOp::unsupported,
+                                                     BuilderOp::unsupported,
+                                                     BuilderOp::unsupported};
     friend class AutoContinueMask;
 };
 
-class AutoStack {
-public:
-    explicit AutoStack(Generator* g)
-            : fGenerator(g)
-            , fStackID(g->createStack()) {}
+AutoStack::AutoStack(Generator* g)
+        : fGenerator(g)
+        , fStackID(g->createStack()) {}
 
-    ~AutoStack() {
-        fGenerator->recycleStack(fStackID);
-    }
+AutoStack::~AutoStack() {
+    fGenerator->recycleStack(fStackID);
+}
 
-    void enter() {
-        fParentStackID = fGenerator->currentStack();
-        fGenerator->setCurrentStack(fStackID);
-    }
+void AutoStack::enter() {
+    fParentStackID = fGenerator->currentStack();
+    fGenerator->setCurrentStack(fStackID);
+}
 
-    void exit() {
-        SkASSERT(fGenerator->currentStack() == fStackID);
-        fGenerator->setCurrentStack(fParentStackID);
-    }
+void AutoStack::exit() {
+    SkASSERT(fGenerator->currentStack() == fStackID);
+    fGenerator->setCurrentStack(fParentStackID);
+}
 
-    void pushClone(int slots) {
-        this->pushClone(SlotRange{0, slots}, /*offsetFromStackTop=*/slots);
-    }
+void AutoStack::pushClone(int slots) {
+    this->pushClone(SlotRange{0, slots}, /*offsetFromStackTop=*/slots);
+}
 
-    void pushClone(SlotRange range, int offsetFromStackTop) {
-        fGenerator->builder()->push_clone_from_stack(range, fStackID, offsetFromStackTop);
-    }
+void AutoStack::pushClone(SlotRange range, int offsetFromStackTop) {
+    fGenerator->builder()->push_clone_from_stack(range, fStackID, offsetFromStackTop);
+}
 
-    void pushCloneIndirect(SlotRange range, int dynamicStackID, int offsetFromStackTop) {
-        fGenerator->builder()->push_clone_indirect_from_stack(
-                range, dynamicStackID, /*otherStackID=*/fStackID, offsetFromStackTop);
-    }
-
-    int stackID() const {
-        return fStackID;
-    }
-
-private:
-    Generator* fGenerator;
-    int fStackID = 0;
-    int fParentStackID = 0;
-};
+void AutoStack::pushCloneIndirect(SlotRange range, int dynamicStackID, int offsetFromStackTop) {
+    fGenerator->builder()->push_clone_indirect_from_stack(
+            range, dynamicStackID, /*otherStackID=*/fStackID, offsetFromStackTop);
+}
 
 class AutoContinueMask {
 public:
@@ -697,10 +778,23 @@ public:
             }
         } else {
             if (dynamicOffset) {
-                // TODO: implement indirect swizzled store
-                return unsupported();
+                gen->builder()->swizzle_copy_stack_to_slots_indirect(fixedOffset,
+                                                                     dynamicOffset->stackID(),
+                                                                     this->fixedSlotRange(gen),
+                                                                     swizzle,
+                                                                     swizzle.size());
             } else {
                 gen->builder()->swizzle_copy_stack_to_slots(fixedOffset, swizzle, swizzle.size());
+            }
+        }
+        if (gen->shouldWriteTraceOps()) {
+            if (dynamicOffset) {
+                gen->builder()->trace_var_indirect(gen->traceMaskStackID(),
+                                                   fixedOffset,
+                                                   dynamicOffset->stackID(),
+                                                   this->fixedSlotRange(gen));
+            } else {
+                gen->builder()->trace_var(gen->traceMaskStackID(), fixedOffset);
             }
         }
         return true;
@@ -1171,7 +1265,9 @@ std::optional<SlotRange> Generator::writeFunction(const IRNode& callSite,
     if (fDebugTrace) {
         funcIndex = this->getFunctionDebugInfo(function.declaration());
         SkASSERT(funcIndex >= 0);
-        // TODO(debugger): add trace for function-enter
+        if (fWriteTraceOps) {
+            fBuilder.trace_enter(fTraceMask->stackID(), funcIndex);
+        }
     }
 
     SlotRange lastFunctionResult = fCurrentFunctionResult;
@@ -1184,11 +1280,42 @@ std::optional<SlotRange> Generator::writeFunction(const IRNode& callSite,
     SlotRange functionResult = fCurrentFunctionResult;
     fCurrentFunctionResult = lastFunctionResult;
 
-    if (fDebugTrace) {
-        // TODO(debugger): add trace for function-exit
+    if (fDebugTrace && fWriteTraceOps) {
+        fBuilder.trace_exit(fTraceMask->stackID(), funcIndex);
     }
 
     return functionResult;
+}
+
+void Generator::emitTraceLine(Position pos) {
+    if (fDebugTrace && fWriteTraceOps && pos.valid() && fInsideCompoundStatement == 0) {
+        // Binary search within fLineOffets to convert the position into a line number.
+        SkASSERT(fLineOffsets.size() >= 2);
+        SkASSERT(fLineOffsets[0] == 0);
+        SkASSERT(fLineOffsets.back() == (int)fProgram.fSource->length());
+        int lineNumber = std::distance(
+                fLineOffsets.begin(),
+                std::upper_bound(fLineOffsets.begin(), fLineOffsets.end(), pos.startOffset()));
+
+        fBuilder.trace_line(fTraceMask->stackID(), lineNumber);
+    }
+}
+
+void Generator::emitTraceScope(int delta) {
+    if (fDebugTrace && fWriteTraceOps) {
+        fBuilder.trace_scope(fTraceMask->stackID(), delta);
+    }
+}
+
+void Generator::calculateLineOffsets() {
+    SkASSERT(fLineOffsets.empty());
+    fLineOffsets.push_back(0);
+    for (size_t i = 0; i < fProgram.fSource->length(); ++i) {
+        if ((*fProgram.fSource)[i] == '\n') {
+            fLineOffsets.push_back(i);
+        }
+    }
+    fLineOffsets.push_back(fProgram.fSource->length());
 }
 
 bool Generator::writeGlobals() {
@@ -1238,6 +1365,11 @@ bool Generator::writeGlobals() {
 }
 
 bool Generator::writeStatement(const Statement& s) {
+    // The debugger should stop on all types of statements, except for Blocks.
+    if (!s.is<Block>()) {
+        this->emitTraceLine(s.fPosition);
+    }
+
     switch (s.kind()) {
         case Statement::Kind::kBlock:
             return this->writeBlock(s.as<Block>());
@@ -1278,11 +1410,25 @@ bool Generator::writeStatement(const Statement& s) {
 }
 
 bool Generator::writeBlock(const Block& b) {
+    if (b.blockKind() == Block::Kind::kCompoundStatement) {
+        this->emitTraceLine(b.fPosition);
+        ++fInsideCompoundStatement;
+    } else {
+        this->emitTraceScope(+1);
+    }
+
     for (const std::unique_ptr<Statement>& stmt : b.children()) {
         if (!this->writeStatement(*stmt)) {
             return unsupported();
         }
     }
+
+    if (b.blockKind() == Block::Kind::kCompoundStatement) {
+        --fInsideCompoundStatement;
+    } else {
+        this->emitTraceScope(-1);
+    }
+
     return true;
 }
 
@@ -1338,6 +1484,9 @@ bool Generator::writeDoStatement(const DoStatement& d) {
 
     autoContinueMask.exitLoopBody();
 
+    // Point the debugger at the do-statement's test-expression before we run it.
+    this->emitTraceLine(d.test()->fPosition);
+
     // Emit the test-expression, in order to combine it with the loop mask.
     if (!this->pushExpression(*d.test())) {
         return false;
@@ -1368,6 +1517,10 @@ bool Generator::writeMasklessForStatement(const ForStatement& f) {
     SkASSERT(f.test());
     SkASSERT(f.next());
 
+    // We want the loop index to disappear at the end of the loop, so wrap the for statement in a
+    // trace scope.
+    this->emitTraceScope(+1);
+
     // If no lanes are active, skip over the loop entirely. This guards against looping forever;
     // with no lanes active, we wouldn't be able to write the loop variable back to its slot, so
     // we'd never make forward progress.
@@ -1389,6 +1542,16 @@ bool Generator::writeMasklessForStatement(const ForStatement& f) {
         return unsupported();
     }
 
+    // Point the debugger at the for-statement's next-expression before we run it, or as close as we
+    // can reasonably get.
+    if (f.next()) {
+        this->emitTraceLine(f.next()->fPosition);
+    } else if (f.test()) {
+        this->emitTraceLine(f.test()->fPosition);
+    } else {
+        this->emitTraceLine(f.fPosition);
+    }
+
     // If the loop only runs for a single iteration, we are already done. If not...
     if (f.unrollInfo()->fCount > 1) {
         // ... run the next-expression, and immediately discard its result.
@@ -1408,6 +1571,8 @@ bool Generator::writeMasklessForStatement(const ForStatement& f) {
     }
 
     fBuilder.label(loopExitID);
+
+    this->emitTraceScope(-1);
     return true;
 }
 
@@ -1424,6 +1589,10 @@ bool Generator::writeForStatement(const ForStatement& f) {
     if (!loopInfo.fHasContinue && !loopInfo.fHasBreak && !loopInfo.fHasReturn && f.unrollInfo()) {
         return this->writeMasklessForStatement(f);
     }
+
+    // We want the loop index to disappear at the end of the loop, so wrap the for statement in a
+    // trace scope.
+    this->emitTraceScope(+1);
 
     // Set up a break target.
     AutoLoopTarget breakTarget(this, &fCurrentBreakTarget);
@@ -1460,6 +1629,16 @@ bool Generator::writeForStatement(const ForStatement& f) {
 
     autoContinueMask.exitLoopBody();
 
+    // Point the debugger at the for-statement's next-expression before we run it, or as close as we
+    // can reasonably get.
+    if (f.next()) {
+        this->emitTraceLine(f.next()->fPosition);
+    } else if (f.test()) {
+        this->emitTraceLine(f.test()->fPosition);
+    } else {
+        this->emitTraceLine(f.fPosition);
+    }
+
     // Run the next-expression. Immediately discard its result.
     if (f.next()) {
         if (!this->pushExpression(*f.next(), /*usesResult=*/false)) {
@@ -1490,6 +1669,7 @@ bool Generator::writeForStatement(const ForStatement& f) {
     fBuilder.pop_loop_mask();
     fBuilder.disableExecutionMaskWrites();
 
+    this->emitTraceScope(-1);
     return true;
 }
 
@@ -2365,7 +2545,7 @@ bool Generator::pushFunctionCall(const FunctionCall& c) {
     // Write all the arguments into their parameter's variable slots. Because we never allow
     // recursion, we don't need to worry about overwriting any existing values in those slots.
     // (In fact, we don't even need to apply the write mask.)
-    SkTArray<std::unique_ptr<LValue>> lvalues;
+    TArray<std::unique_ptr<LValue>> lvalues;
     lvalues.resize(c.arguments().size());
 
     for (int index = 0; index < c.arguments().size(); ++index) {
@@ -2460,6 +2640,19 @@ bool Generator::pushIntrinsic(const FunctionCall& c) {
     return unsupported();
 }
 
+bool Generator::pushLengthIntrinsic(int slotCount) {
+    if (slotCount > 1) {
+        // Implement `length(vec)` as `sqrt(dot(x, x))`.
+        fBuilder.push_clone(slotCount);
+        fBuilder.dot_floats(slotCount);
+        fBuilder.unary_op(BuilderOp::sqrt_float, 1);
+    } else {
+        // `length(scalar)` is `sqrt(x^2)`, which is equivalent to `abs(x)`.
+        fBuilder.unary_op(BuilderOp::abs_float, 1);
+    }
+    return true;
+}
+
 bool Generator::pushVectorizedExpression(const Expression& expr, const Type& vectorType) {
     if (!this->pushExpression(expr)) {
         return unsupported();
@@ -2505,6 +2698,12 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
             this->foldWithMultiOp(BuilderOp::bitwise_and_n_ints, arg0.type().slotCount());
             return true;
 
+        case IntrinsicKind::k_acos_IntrinsicKind:
+            return this->pushIntrinsic(BuilderOp::acos_float, arg0);
+
+        case IntrinsicKind::k_asin_IntrinsicKind:
+            return this->pushIntrinsic(BuilderOp::asin_float, arg0);
+
         case IntrinsicKind::k_atan_IntrinsicKind:
             return this->pushIntrinsic(BuilderOp::atan_float, arg0);
 
@@ -2527,6 +2726,9 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
         case IntrinsicKind::k_exp_IntrinsicKind:
             return this->pushIntrinsic(BuilderOp::exp_float, arg0);
 
+        case IntrinsicKind::k_exp2_IntrinsicKind:
+            return this->pushIntrinsic(BuilderOp::exp2_float, arg0);
+
         case IntrinsicKind::k_floor_IntrinsicKind:
             return this->pushIntrinsic(BuilderOp::floor_float, arg0);
 
@@ -2539,21 +2741,62 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
             fBuilder.unary_op(BuilderOp::floor_float, arg0.type().slotCount());
             return this->binaryOp(arg0.type(), kSubtractOps);
 
-        case IntrinsicKind::k_length_IntrinsicKind:
+        case IntrinsicKind::k_inverse_IntrinsicKind:
+            SkASSERT(arg0.type().isMatrix());
+            SkASSERT(arg0.type().rows() == arg0.type().columns());
             if (!this->pushExpression(arg0)) {
                 return unsupported();
             }
-            // Implement length as `sqrt(dot(x, x))`.
-            if (arg0.type().slotCount() > 1) {
-                fBuilder.push_clone(arg0.type().slotCount());
-                fBuilder.dot_floats(arg0.type().slotCount());
-                fBuilder.unary_op(BuilderOp::sqrt_float, 1);
-            } else {
-                // The length of a scalar is `sqrt(x^2)`, which is equivalent to `abs(x)`.
-                fBuilder.unary_op(BuilderOp::abs_float, 1);
-            }
+            fBuilder.inverse_matrix(arg0.type().rows());
             return true;
 
+        case IntrinsicKind::k_inversesqrt_IntrinsicKind:
+            return this->pushIntrinsic(kInverseSqrtOps, arg0);
+
+        case IntrinsicKind::k_length_IntrinsicKind:
+            return this->pushExpression(arg0) &&
+                   this->pushLengthIntrinsic(arg0.type().slotCount());
+
+        case IntrinsicKind::k_log_IntrinsicKind:
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            fBuilder.unary_op(BuilderOp::log_float, arg0.type().slotCount());
+            return true;
+
+        case IntrinsicKind::k_log2_IntrinsicKind:
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            fBuilder.unary_op(BuilderOp::log2_float, arg0.type().slotCount());
+            return true;
+
+        case IntrinsicKind::k_normalize_IntrinsicKind: {
+            // Implement normalize as `x / length(x)`. First, push the expression.
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            int slotCount = arg0.type().slotCount();
+            if (slotCount > 1) {
+                // Instead of `x / sqrt(dot(x, x))`, we can get roughly the same result in less time
+                // by computing `x * invsqrt(dot(x, x))`.
+                fBuilder.push_clone(slotCount);
+                fBuilder.push_clone(slotCount);
+                fBuilder.dot_floats(slotCount);
+
+                // Compute `vec(inversesqrt(dot(x, x)))`.
+                fBuilder.unary_op(BuilderOp::invsqrt_float, 1);
+                fBuilder.push_duplicates(slotCount - 1);
+
+                // Return `x * vec(inversesqrt(dot(x, x)))`.
+                return this->binaryOp(arg0.type(), kMultiplyOps);
+            } else {
+                // For single-slot normalization, we can simplify `sqrt(x * x)` into `abs(x)`.
+                fBuilder.push_clone(slotCount);
+                fBuilder.unary_op(BuilderOp::abs_float, 1);
+                return this->binaryOp(arg0.type(), kDivideOps);
+            }
+        }
         case IntrinsicKind::k_not_IntrinsicKind:
             return this->pushPrefixExpression(OperatorKind::LOGICALNOT, arg0);
 
@@ -2727,8 +2970,13 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             subexpressionStack.exit();
             return true;
         }
+        case IntrinsicKind::k_distance_IntrinsicKind:
+            // Implement distance as `length(a - b)`.
+            SkASSERT(arg0.type().slotCount() == arg1.type().slotCount());
+            return this->pushBinaryExpression(arg0, OperatorKind::MINUS, arg1) &&
+                   this->pushLengthIntrinsic(arg0.type().slotCount());
+
         case IntrinsicKind::k_dot_IntrinsicKind:
-            // Implement dot as `a*b`, followed by folding via addition.
             SkASSERT(arg0.type().matches(arg1.type()));
             if (!this->pushExpression(arg0) || !this->pushExpression(arg1)) {
                 return unsupported();
@@ -2772,10 +3020,40 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             SkASSERT(arg0.type().componentType().matches(arg1.type().componentType()));
             return this->pushIntrinsic(kMaxOps, arg0, arg1);
 
+        case IntrinsicKind::k_mod_IntrinsicKind:
+            SkASSERT(arg0.type().componentType().matches(arg1.type().componentType()));
+            return this->pushIntrinsic(kModOps, arg0, arg1);
+
         case IntrinsicKind::k_pow_IntrinsicKind:
             SkASSERT(arg0.type().matches(arg1.type()));
             return this->pushIntrinsic(BuilderOp::pow_n_floats, arg0, arg1);
 
+        case IntrinsicKind::k_reflect_IntrinsicKind: {
+            // Implement reflect as `I - (N * dot(I,N) * 2)`.
+            SkASSERT(arg0.type().matches(arg1.type()));
+            SkASSERT(arg0.type().slotCount() == arg1.type().slotCount());
+            SkASSERT(arg0.type().componentType().isFloat());
+            int slotCount = arg0.type().slotCount();
+
+            // Stack: I, N.
+            if (!this->pushExpression(arg0) || !this->pushExpression(arg1)) {
+                return unsupported();
+            }
+            // Stack: I, N, I, N.
+            fBuilder.push_clone(2 * slotCount);
+            // Stack: I, N, dot(I,N)
+            fBuilder.dot_floats(slotCount);
+            // Stack: I, N, dot(I,N), 2
+            fBuilder.push_literal_f(2.0);
+            // Stack: I, N, dot(I,N) * 2
+            fBuilder.binary_op(BuilderOp::mul_n_floats, 1);
+            // Stack: I, N * dot(I,N) * 2
+            fBuilder.push_duplicates(slotCount - 1);
+            fBuilder.binary_op(BuilderOp::mul_n_floats, slotCount);
+            // Stack: I - (N * dot(I,N) * 2)
+            fBuilder.binary_op(BuilderOp::sub_n_floats, slotCount);
+            return true;
+        }
         case IntrinsicKind::k_step_IntrinsicKind: {
             // Compute step as `float(lessThan(edge, x))`. We convert from boolean 0/~0 to floating
             // point zero/one by using a bitwise-and against the bit-pattern of 1.0.
@@ -2823,6 +3101,35 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             }
             return true;
 
+        case IntrinsicKind::k_faceforward_IntrinsicKind: {
+            // Implement faceforward as `N ^ ((0 <= dot(I, NRef)) & 0x80000000)`.
+            // In other words, flip the sign bit of N if `0 <= dot(I, NRef)`.
+            SkASSERT(arg0.type().matches(arg1.type()));
+            SkASSERT(arg0.type().matches(arg2.type()));
+            int slotCount = arg0.type().slotCount();
+
+            // Stack: N, 0, I, Nref
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            fBuilder.push_literal_f(0.0);
+            if (!this->pushExpression(arg1) || !this->pushExpression(arg2)) {
+                return unsupported();
+            }
+            // Stack: N, 0, dot(I,NRef)
+            fBuilder.dot_floats(slotCount);
+            // Stack: N, (0 <= dot(I,NRef))
+            fBuilder.binary_op(BuilderOp::cmple_n_floats, 1);
+            // Stack: N, (0 <= dot(I,NRef)), 0x80000000
+            fBuilder.push_literal_i(0x80000000);
+            // Stack: N, (0 <= dot(I,NRef)) & 0x80000000)
+            fBuilder.binary_op(BuilderOp::bitwise_and_n_ints, 1);
+            // Stack: N, vec(0 <= dot(I,NRef)) & 0x80000000)
+            fBuilder.push_duplicates(slotCount - 1);
+            // Stack: N ^ vec((0 <= dot(I,NRef)) & 0x80000000)
+            fBuilder.binary_op(BuilderOp::bitwise_xor_n_ints, slotCount);
+            return true;
+        }
         case IntrinsicKind::k_mix_IntrinsicKind:
             // Note: our SkRP mix op takes the interpolation point first, not the interpolants.
             SkASSERT(arg0.type().matches(arg1.type()));
@@ -2850,6 +3157,42 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
                 return true;
             }
             return unsupported();
+
+        case IntrinsicKind::k_refract_IntrinsicKind: {
+            // We always calculate refraction using vec4s, so we pad out unused N/I slots with zero.
+            int padding = 4 - arg0.type().slotCount();
+            if (!this->pushExpression(arg0)) {
+                return unsupported();
+            }
+            fBuilder.push_zeros(padding);
+
+            if (!this->pushExpression(arg1)) {
+                return unsupported();
+            }
+            fBuilder.push_zeros(padding);
+
+            // eta is always a scalar and doesn't need padding.
+            if (!this->pushExpression(arg2)) {
+                return unsupported();
+            }
+            fBuilder.refract_floats();
+
+            // The result vector was returned as a vec4, so discard the extra columns.
+            fBuilder.discard_stack(padding);
+            return true;
+        }
+        case IntrinsicKind::k_smoothstep_IntrinsicKind:
+            SkASSERT(arg0.type().componentType().isFloat());
+            SkASSERT(arg1.type().matches(arg0.type()));
+            SkASSERT(arg2.type().componentType().isFloat());
+
+            if (!this->pushVectorizedExpression(arg0, arg2.type()) ||
+                !this->pushVectorizedExpression(arg1, arg2.type()) ||
+                !this->pushExpression(arg2)) {
+                return unsupported();
+            }
+            fBuilder.ternary_op(BuilderOp::smoothstep_n_floats, arg2.type().slotCount());
+            return true;
 
         default:
             break;
@@ -3186,7 +3529,27 @@ bool Generator::writeProgram(const FunctionDefinition& function) {
     if (fDebugTrace) {
         // Copy the program source into the debug info so that it will be written in the trace file.
         fDebugTrace->setSource(*fProgram.fSource);
+
+        if (fWriteTraceOps) {
+            // The Raster Pipeline blitter generates centered pixel coordinates. (0.5, 1.5, 2.5,
+            // etc.) Add 0.5 to the requested trace coordinate to match this, then compare against
+            // src.rg, which contains the shader's coordinates. We keep this result in a dedicated
+            // trace-mask stack.
+            fTraceMask.emplace(this);
+            fTraceMask->enter();
+            fBuilder.push_device_xy01();
+            fBuilder.discard_stack(2);
+            fBuilder.push_literal_f(fDebugTrace->fTraceCoord.fX + 0.5f);
+            fBuilder.push_literal_f(fDebugTrace->fTraceCoord.fY + 0.5f);
+            fBuilder.binary_op(BuilderOp::cmpeq_n_floats, 2);
+            fBuilder.binary_op(BuilderOp::bitwise_and_n_ints, 1);
+            fTraceMask->exit();
+
+            // Assemble a position-to-line-number mapping for the debugger.
+            this->calculateLineOffsets();
+        }
     }
+
     // Assign slots to the parameters of main; copy src and dst into those slots as appropriate.
     for (const SkSL::Variable* param : function.declaration().parameters()) {
         switch (param->modifiers().fLayout.fBuiltin) {
@@ -3247,6 +3610,14 @@ bool Generator::writeProgram(const FunctionDefinition& function) {
     } else {
         fBuilder.pop_src_rgba();
     }
+
+    // Discard the trace mask.
+    if (fTraceMask.has_value()) {
+        fTraceMask->enter();
+        fBuilder.discard_stack(1);
+        fTraceMask->exit();
+    }
+
     return true;
 }
 
@@ -3258,8 +3629,9 @@ std::unique_ptr<RP::Program> Generator::finish() {
 
 std::unique_ptr<RP::Program> MakeRasterPipelineProgram(const SkSL::Program& program,
                                                        const FunctionDefinition& function,
-                                                       SkRPDebugTrace* debugTrace) {
-    RP::Generator generator(program, debugTrace);
+                                                       DebugTracePriv* debugTrace,
+                                                       bool writeTraceOps) {
+    RP::Generator generator(program, debugTrace, writeTraceOps);
     if (!generator.writeProgram(function)) {
         return nullptr;
     }

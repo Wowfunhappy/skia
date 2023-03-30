@@ -40,7 +40,7 @@
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
-#include "src/sksl/tracing/SkVMDebugTrace.h"
+#include "src/sksl/tracing/SkSLDebugTracePriv.h"
 
 #if defined(SK_GANESH)
 #include "include/gpu/GrRecordingContext.h"
@@ -53,7 +53,7 @@
 #include "src/gpu/ganesh/SurfaceFillContext.h"
 #include "src/gpu/ganesh/effects/GrMatrixEffect.h"
 #include "src/gpu/ganesh/effects/GrSkSLFP.h"
-#include "src/image/SkImage_Gpu.h"
+#include "src/gpu/ganesh/image/SkImage_Ganesh.h"
 #endif
 
 #if defined(SK_GRAPHITE)
@@ -68,7 +68,6 @@
 #ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
 #include "src/core/SkStreamPriv.h"
 #include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
-#include "src/sksl/tracing/SkRPDebugTrace.h"
 constexpr bool kRPEnableLiveTrace = false;
 #endif
 
@@ -199,17 +198,25 @@ sk_sp<const SkData> SkRuntimeEffectPriv::TransformUniforms(
     return data ? data : originalData;
 }
 
-const SkSL::RP::Program* SkRuntimeEffect::getRPProgram() const {
+const SkSL::RP::Program* SkRuntimeEffect::getRPProgram(SkSL::DebugTracePriv* debugTrace) const {
     // Lazily compile the program the first time `getRPProgram` is called.
     // By using an SkOnce, we avoid thread hazards and behave in a conceptually const way, but we
     // can avoid the cost of invoking the RP code generator until it's actually needed.
     fCompileRPProgramOnce([&] {
 #ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
-        SkSL::SkRPDebugTrace debugTrace;
-        const_cast<SkRuntimeEffect*>(this)->fRPProgram =
-                MakeRasterPipelineProgram(*fBaseProgram,
-                                          fMain,
-                                          kRPEnableLiveTrace ? &debugTrace : nullptr);
+        SkSL::DebugTracePriv tempDebugTrace;
+        if (debugTrace) {
+            const_cast<SkRuntimeEffect*>(this)->fRPProgram = MakeRasterPipelineProgram(
+                    *fBaseProgram, fMain, debugTrace, /*writeTraceOps=*/true);
+        } else if (kRPEnableLiveTrace) {
+            debugTrace = &tempDebugTrace;
+            const_cast<SkRuntimeEffect*>(this)->fRPProgram = MakeRasterPipelineProgram(
+                    *fBaseProgram, fMain, debugTrace, /*writeTraceOps=*/false);
+        } else {
+            const_cast<SkRuntimeEffect*>(this)->fRPProgram = MakeRasterPipelineProgram(
+                    *fBaseProgram, fMain, /*debugTrace=*/nullptr, /*writeTraceOps=*/false);
+        }
+
         if (kRPEnableLiveTrace) {
             if (fRPProgram) {
                 SkDebugf("-----\n\n");
@@ -346,9 +353,9 @@ SkRuntimeEffect::ChildPtr::ChildPtr(sk_sp<SkFlattenable> f) : fChild(std::move(f
     SkASSERT(flattenable_is_valid_as_child(fChild.get()));
 }
 
-static sk_sp<SkSL::SkVMDebugTrace> make_skvm_debug_trace(SkRuntimeEffect* effect,
-                                                         const SkIPoint& coord) {
-    auto debugTrace = sk_make_sp<SkSL::SkVMDebugTrace>();
+static sk_sp<SkSL::DebugTracePriv> make_debug_trace(SkRuntimeEffect* effect,
+                                                    const SkIPoint& coord) {
+    auto debugTrace = sk_make_sp<SkSL::DebugTracePriv>();
     debugTrace->setSource(effect->source());
     debugTrace->setTraceCoord(coord);
     return debugTrace;
@@ -1261,7 +1268,7 @@ public:
             // usage in runtime effects to just #version 100.
             return false;
         }
-        if (const SkSL::RP::Program* program = fEffect->getRPProgram()) {
+        if (const SkSL::RP::Program* program = fEffect->getRPProgram(/*debugTrace=*/nullptr)) {
             SkSpan<const float> uniforms = uniforms_as_span(fEffect->uniforms(),
                                                             fUniforms,
                                                             rec.fDstCS,
@@ -1388,7 +1395,7 @@ using UniformsCallback = SkRuntimeEffectPriv::UniformsCallback;
 class SkRTShader : public SkShaderBase {
 public:
     SkRTShader(sk_sp<SkRuntimeEffect> effect,
-               sk_sp<SkSL::SkVMDebugTrace> debugTrace,
+               sk_sp<SkSL::DebugTracePriv> debugTrace,
                sk_sp<const SkData> uniforms,
                SkSpan<SkRuntimeEffect::ChildPtr> children)
             : fEffect(std::move(effect))
@@ -1397,7 +1404,7 @@ public:
             , fChildren(children.begin(), children.end()) {}
 
     SkRTShader(sk_sp<SkRuntimeEffect> effect,
-               sk_sp<SkSL::SkVMDebugTrace> debugTrace,
+               sk_sp<SkSL::DebugTracePriv> debugTrace,
                UniformsCallback uniformsCallback,
                SkSpan<SkRuntimeEffect::ChildPtr> children)
             : fEffect(std::move(effect))
@@ -1407,7 +1414,7 @@ public:
 
     SkRuntimeEffect::TracedShader makeTracedClone(const SkIPoint& coord) {
         sk_sp<SkRuntimeEffect> unoptimized = fEffect->makeUnoptimizedClone();
-        sk_sp<SkSL::SkVMDebugTrace> debugTrace = make_skvm_debug_trace(unoptimized.get(), coord);
+        sk_sp<SkSL::DebugTracePriv> debugTrace = make_debug_trace(unoptimized.get(), coord);
         auto debugShader = sk_make_sp<SkRTShader>(
                 unoptimized, debugTrace, this->uniformData(nullptr), SkSpan(fChildren));
 
@@ -1478,11 +1485,7 @@ public:
             // usage in runtime effects to just #version 100.
             return false;
         }
-        if (fDebugTrace) {
-            // SkRP doesn't support debug traces yet; fall back to SkVM until this is implemented.
-            return false;
-        }
-        if (const SkSL::RP::Program* program = fEffect->getRPProgram()) {
+        if (const SkSL::RP::Program* program = fEffect->getRPProgram(fDebugTrace.get())) {
             std::optional<MatrixRec> newMRec = mRec.apply(rec);
             if (!newMRec.has_value()) {
                 return false;
@@ -1567,7 +1570,7 @@ private:
     }
 
     sk_sp<SkRuntimeEffect> fEffect;
-    sk_sp<SkSL::SkVMDebugTrace> fDebugTrace;
+    sk_sp<SkSL::DebugTracePriv> fDebugTrace;
     sk_sp<const SkData> fUniformData;
     UniformsCallback fUniformsCallback;
     std::vector<SkRuntimeEffect::ChildPtr> fChildren;
@@ -1630,14 +1633,14 @@ public:
 
     SkRuntimeEffect* asRuntimeEffect() const override { return fEffect.get(); }
 
-    bool appendStages(const SkStageRec& rec) const override {
+    bool onAppendStages(const SkStageRec& rec) const override {
 #ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
         if (!SkRuntimeEffectPriv::CanDraw(SkCapabilities::RasterBackend().get(), fEffect.get())) {
             // SkRP has support for many parts of #version 300 already, but for now, we restrict its
             // usage in runtime effects to just #version 100.
             return false;
         }
-        if (const SkSL::RP::Program* program = fEffect->getRPProgram()) {
+        if (const SkSL::RP::Program* program = fEffect->getRPProgram(/*debugTrace=*/nullptr)) {
             SkSpan<const float> uniforms = uniforms_as_span(fEffect->uniforms(),
                                                             fUniforms,
                                                             rec.fDstCS,

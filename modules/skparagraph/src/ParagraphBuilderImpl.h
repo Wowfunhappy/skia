@@ -107,9 +107,9 @@ protected:
 private:
     SkOnce fillUTF16MappingOnce;
     void ensureUTF16Mapping();
-    SkTArray<TextIndex, true> fUTF8IndexForUTF16Index;
-    SkTArray<TextIndex, true> fUTF16IndexForUTF8Index;
-#if !defined(SK_UNICODE_ICU_IMPLEMENTATION) && defined(SK_UNICODE_CLIENT_IMPLEMENTATION)
+    skia_private::TArray<TextIndex, true> fUTF8IndexForUTF16Index;
+    skia_private::TArray<TextIndex, true> fUTF16IndexForUTF8Index;
+#if defined(SK_UNICODE_CLIENT_IMPLEMENTATION)
     bool fTextIsFinalized;
     bool fUsingClientInfo;
     std::vector<SkUnicode::Position> fWordsUtf16;

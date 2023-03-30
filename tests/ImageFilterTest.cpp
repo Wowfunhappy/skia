@@ -51,7 +51,7 @@
 #include "src/core/SkSpecialSurface.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
-#include "src/image/SkImage_Base.h"
+#include "src/gpu/ganesh/image/GrImageUtils.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
 #include "tools/Resources.h"
@@ -62,6 +62,8 @@
 #include <cstring>
 #include <utility>
 #include <limits>
+
+using namespace skia_private;
 
 class SkReadBuffer;
 class SkWriteBuffer;
@@ -279,7 +281,7 @@ private:
         fFilters.push_back(Filter(name, std::move(filter), needsSaveLayer));
     }
 
-    SkTArray<Filter> fFilters;
+    TArray<Filter> fFilters;
 };
 
 class FixedBoundsImageFilter : public SkImageFilter_Base {
@@ -1811,7 +1813,7 @@ static void test_make_with_filter(skiatest::Reporter* reporter, GrRecordingConte
         // In GPU-mode, we want the result image (and all intermediate steps) to have used the same
         // origin as the original surface.
         if (rContext) {
-            auto [proxyView, _] = as_IB(result)->asView(rContext, GrMipmapped::kNo);
+            auto [proxyView, _] = skgpu::ganesh::AsView(rContext, result, GrMipmapped::kNo);
             REPORTER_ASSERT(reporter, proxyView && proxyView.origin() == kTestSurfaceOrigin);
         }
     }

@@ -6,10 +6,10 @@
  */
 
 #include "gm/gm.h"
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkSize.h"
@@ -130,8 +130,9 @@ protected:
 
         for (SkAlphaType alphaType : alphaTypes) {
             auto src = make_image(colorType, alphaType);
-            auto decoded = src ? SkImage::MakeFromEncoded(src->encodeToData(fFormat, fQuality))
-                               : nullptr;
+            auto decoded =
+                    src ? SkImages::DeferredFromEncodedData(src->encodeToData(fFormat, fQuality))
+                        : nullptr;
             if (!src || !decoded) {
                 break;
             }

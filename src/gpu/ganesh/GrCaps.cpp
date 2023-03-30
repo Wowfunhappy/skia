@@ -91,6 +91,7 @@ GrCaps::GrCaps(const GrContextOptions& options) {
     fNativeDrawIndexedIndirectIsBroken = false;
     fAvoidReorderingRenderTasks = false;
     fAvoidDithering = false;
+    fAvoidLineDraws = false;
     fDisablePerspectiveSDFText = false;
 
     fPreferVRAMUseOverFlushes = true;
@@ -429,7 +430,7 @@ bool GrCaps::areColorTypeAndFormatCompatible(GrColorType grCT,
     SkTextureCompressionType compression = GrBackendFormatToCompressionType(format);
     if (compression != SkTextureCompressionType::kNone) {
         return grCT == (SkTextureCompressionTypeIsOpaque(compression) ? GrColorType::kRGB_888x
-                                                               : GrColorType::kRGBA_8888);
+                                                                      : GrColorType::kRGBA_8888);
     }
 
     return this->onAreColorTypeAndFormatCompatible(grCT, format);

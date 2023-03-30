@@ -6,11 +6,11 @@
  */
 
 #include "gm/gm.h"
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorPriv.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageEncoder.h"
 #include "include/core/SkRefCnt.h"
@@ -56,7 +56,7 @@ protected:
             }
         }
         auto jpegData = SkEncodeBitmap(bmp, SkEncodedImageFormat::kJPEG, 100);
-        fImage = SkImage::MakeFromEncoded(std::move(jpegData));
+        fImage = SkImages::DeferredFromEncodedData(std::move(jpegData));
     }
 
     void onDraw(SkCanvas* canvas) override {

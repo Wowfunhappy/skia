@@ -15,8 +15,8 @@
 #include "src/core/SkRasterPipelineOpContexts.h"
 #include "src/core/SkRasterPipelineOpList.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
-#include "src/sksl/tracing/SkRPDebugTrace.h"
-#include "src/sksl/tracing/SkSLDebugInfo.h"
+#include "src/sksl/tracing/SkSLDebugTracePriv.h"
+#include "src/sksl/tracing/SkSLTraceHook.h"
 #include "src/utils/SkBitSet.h"
 
 #if !defined(SKSL_STANDALONE)
@@ -33,13 +33,20 @@
 #include <utility>
 #include <vector>
 
+using namespace skia_private;
+
 namespace SkSL {
 namespace RP {
 
 #define ALL_SINGLE_SLOT_UNARY_OP_CASES  \
-         BuilderOp::atan_float:         \
+         BuilderOp::acos_float:         \
+    case BuilderOp::asin_float:         \
+    case BuilderOp::atan_float:         \
     case BuilderOp::cos_float:          \
     case BuilderOp::exp_float:          \
+    case BuilderOp::exp2_float:         \
+    case BuilderOp::log_float:          \
+    case BuilderOp::log2_float:         \
     case BuilderOp::sin_float:          \
     case BuilderOp::sqrt_float:         \
     case BuilderOp::tan_float
@@ -53,7 +60,8 @@ namespace RP {
     case BuilderOp::cast_to_int_from_float:  \
     case BuilderOp::cast_to_uint_from_float: \
     case BuilderOp::ceil_float:              \
-    case BuilderOp::floor_float              \
+    case BuilderOp::floor_float:             \
+    case BuilderOp::invsqrt_float
 
 #define ALL_N_WAY_BINARY_OP_CASES   \
          BuilderOp::atan2_n_floats: \
@@ -72,6 +80,7 @@ namespace RP {
     case BuilderOp::bitwise_and_n_ints: \
     case BuilderOp::bitwise_or_n_ints:  \
     case BuilderOp::bitwise_xor_n_ints: \
+    case BuilderOp::mod_n_floats:       \
     case BuilderOp::min_n_floats:       \
     case BuilderOp::min_n_ints:         \
     case BuilderOp::min_n_uints:        \
@@ -88,6 +97,9 @@ namespace RP {
     case BuilderOp::cmpeq_n_ints:       \
     case BuilderOp::cmpne_n_floats:     \
     case BuilderOp::cmpne_n_ints
+
+#define ALL_N_WAY_TERNARY_OP_CASES       \
+         BuilderOp::smoothstep_n_floats
 
 #define ALL_MULTI_SLOT_TERNARY_OP_CASES \
          BuilderOp::mix_n_floats:       \
@@ -121,6 +133,7 @@ void Builder::binary_op(BuilderOp op, int32_t slots) {
 
 void Builder::ternary_op(BuilderOp op, int32_t slots) {
     switch (op) {
+        case ALL_N_WAY_TERNARY_OP_CASES:
         case ALL_MULTI_SLOT_TERNARY_OP_CASES:
             fInstructions.push_back({op, {}, slots});
             break;
@@ -141,6 +154,19 @@ void Builder::dot_floats(int32_t slots) {
         default:
             SkDEBUGFAIL("invalid number of slots");
             break;
+    }
+}
+
+void Builder::refract_floats() {
+    fInstructions.push_back({BuilderOp::refract_4_floats, {}});
+}
+
+void Builder::inverse_matrix(int32_t n) {
+    switch (n) {
+        case 2:  fInstructions.push_back({BuilderOp::inverse_mat2, {}, 4});  break;
+        case 3:  fInstructions.push_back({BuilderOp::inverse_mat3, {}, 9});  break;
+        case 4:  fInstructions.push_back({BuilderOp::inverse_mat4, {}, 16}); break;
+        default: SkUNREACHABLE;
     }
 }
 
@@ -373,6 +399,22 @@ void Builder::push_uniform_indirect(SlotRange fixedRange,
                              dynamicStackID});
 }
 
+void Builder::trace_var_indirect(int traceMaskStackID,
+                                 SlotRange fixedRange,
+                                 int dynamicStackID,
+                                 SlotRange limitRange) {
+    // SlotA: fixed-range start
+    // SlotB: limit-range end
+    // immA: trace-mask stack ID
+    // immB: number of slots
+    // immC: dynamic stack ID
+    fInstructions.push_back({BuilderOp::trace_var_indirect,
+                             {fixedRange.index, limitRange.index + limitRange.count},
+                             traceMaskStackID,
+                             fixedRange.count,
+                             dynamicStackID});
+}
+
 void Builder::push_duplicates(int count) {
     if (!fInstructions.empty()) {
         Instruction& lastInstruction = fInstructions.back();
@@ -397,7 +439,7 @@ void Builder::push_duplicates(int count) {
     switch (count) {
         case 3:  this->swizzle(/*consumedSlots=*/1, {0, 0, 0, 0}); break;
         case 2:  this->swizzle(/*consumedSlots=*/1, {0, 0, 0});    break;
-        case 1:  this->push_clone(/*numSlots=*/1);              break;
+        case 1:  this->push_clone(/*numSlots=*/1);                 break;
         default: break;
     }
 }
@@ -689,12 +731,51 @@ static void unpack_nybbles_to_offsets(uint32_t components, SkSpan<uint16_t> offs
     }
 }
 
+static int max_packed_nybble(uint32_t components, size_t numComponents) {
+    int largest = 0;
+    for (size_t index = 0; index < numComponents; ++index) {
+        largest = std::max<int>(largest, components & 0xF);
+        components >>= 4;
+    }
+    return largest;
+}
+
 void Builder::swizzle_copy_stack_to_slots(SlotRange dst,
                                           SkSpan<const int8_t> components,
                                           int offsetFromStackTop) {
-    // An unmasked version of this op could squeeze out a little bit of extra speed, if needed.
+    // When the execution-mask writes-enabled flag is off, we could squeeze out a little bit of
+    // extra speed here by implementing and using an unmasked version of this op.
+
+    // SlotA: fixed-range start
+    // immA: number of swizzle components
+    // immB: swizzle components
+    // immC: offset from stack top
     fInstructions.push_back({BuilderOp::swizzle_copy_stack_to_slots, {dst.index},
-                             (int)components.size(), offsetFromStackTop, pack_nybbles(components)});
+                             (int)components.size(),
+                             pack_nybbles(components),
+                             offsetFromStackTop});
+}
+
+void Builder::swizzle_copy_stack_to_slots_indirect(SlotRange fixedRange,
+                                                   int dynamicStackID,
+                                                   SlotRange limitRange,
+                                                   SkSpan<const int8_t> components,
+                                                   int offsetFromStackTop) {
+    // When the execution-mask writes-enabled flag is off, we could squeeze out a little bit of
+    // extra speed here by implementing and using an unmasked version of this op.
+
+    // SlotA: fixed-range start
+    // SlotB: limit-range end
+    // immA: number of swizzle components
+    // immB: swizzle components
+    // immC: offset from stack top
+    // immD: dynamic stack ID
+    fInstructions.push_back({BuilderOp::swizzle_copy_stack_to_slots_indirect,
+                             {fixedRange.index, limitRange.index + limitRange.count},
+                             (int)components.size(),
+                             pack_nybbles(components),
+                             offsetFromStackTop,
+                             dynamicStackID});
 }
 
 void Builder::swizzle(int consumedSlots, SkSpan<const int8_t> components) {
@@ -818,7 +899,7 @@ void Builder::matrix_resize(int origColumns, int origRows, int newColumns, int n
 
 std::unique_ptr<Program> Builder::finish(int numValueSlots,
                                          int numUniformSlots,
-                                         SkRPDebugTrace* debugTrace) {
+                                         DebugTracePriv* debugTrace) {
     // Verify that calls to enableExecutionMaskWrites and disableExecutionMaskWrites are balanced.
     SkASSERT(fExecutionMaskWritesEnabled == 0);
 
@@ -840,6 +921,7 @@ static int stack_usage(const Instruction& inst) {
 
         case BuilderOp::push_src_rgba:
         case BuilderOp::push_dst_rgba:
+        case BuilderOp::push_device_xy01:
             return 4;
 
         case BuilderOp::push_slots:
@@ -871,6 +953,7 @@ static int stack_usage(const Instruction& inst) {
         case BuilderOp::select:
             return -inst.fImmA;
 
+        case ALL_N_WAY_TERNARY_OP_CASES:
         case ALL_MULTI_SLOT_TERNARY_OP_CASES:
             return 2 * -inst.fImmA;
 
@@ -889,6 +972,9 @@ static int stack_usage(const Instruction& inst) {
             return -5;  // consumes two 3-slot vectors and emits one scalar
         case BuilderOp::dot_4_floats:
             return -7;  // consumes two 4-slot vectors and emits one scalar
+
+        case BuilderOp::refract_4_floats:
+            return -5;  // consumes nine slots (N + I + eta) and emits a 4-slot vector (R)
 
         case BuilderOp::shuffle: {
             int consumed = inst.fImmA >> 16;
@@ -924,11 +1010,11 @@ Program::StackDepthMap Program::tempStackMaxDepths() const {
     return largest;
 }
 
-Program::Program(SkTArray<Instruction> instrs,
+Program::Program(TArray<Instruction> instrs,
                  int numValueSlots,
                  int numUniformSlots,
                  int numLabels,
-                 SkRPDebugTrace* debugTrace)
+                 DebugTracePriv* debugTrace)
         : fInstructions(std::move(instrs))
         , fNumValueSlots(numValueSlots)
         , fNumUniformSlots(numUniformSlots)
@@ -943,9 +1029,15 @@ Program::Program(SkTArray<Instruction> instrs,
         (void)stackIdx;
         fNumTempStackSlots += depth;
     }
+
+    if (fDebugTrace) {
+        fTraceHook = SkSL::Tracer::Make(&fDebugTrace->fTraceInfo);
+    }
 }
 
-void Program::appendCopy(SkTArray<Stage>* pipeline,
+Program::~Program() = default;
+
+void Program::appendCopy(TArray<Stage>* pipeline,
                          SkArenaAlloc* alloc,
                          ProgramOp baseStage,
                          float* dst, int dstStride,
@@ -969,7 +1061,7 @@ void Program::appendCopy(SkTArray<Stage>* pipeline,
     }
 }
 
-void Program::appendCopySlotsUnmasked(SkTArray<Stage>* pipeline,
+void Program::appendCopySlotsUnmasked(TArray<Stage>* pipeline,
                                       SkArenaAlloc* alloc,
                                       float* dst,
                                       const float* src,
@@ -981,7 +1073,7 @@ void Program::appendCopySlotsUnmasked(SkTArray<Stage>* pipeline,
                      numSlots);
 }
 
-void Program::appendCopySlotsMasked(SkTArray<Stage>* pipeline,
+void Program::appendCopySlotsMasked(TArray<Stage>* pipeline,
                                     SkArenaAlloc* alloc,
                                     float* dst,
                                     const float* src,
@@ -993,7 +1085,7 @@ void Program::appendCopySlotsMasked(SkTArray<Stage>* pipeline,
                      numSlots);
 }
 
-void Program::appendCopyConstants(SkTArray<Stage>* pipeline,
+void Program::appendCopyConstants(TArray<Stage>* pipeline,
                                   SkArenaAlloc* alloc,
                                   float* dst,
                                   const float* src,
@@ -1005,7 +1097,7 @@ void Program::appendCopyConstants(SkTArray<Stage>* pipeline,
                      numSlots);
 }
 
-void Program::appendSingleSlotUnaryOp(SkTArray<Stage>* pipeline, ProgramOp stage,
+void Program::appendSingleSlotUnaryOp(TArray<Stage>* pipeline, ProgramOp stage,
                                       float* dst, int numSlots) const {
     SkASSERT(numSlots >= 0);
     while (numSlots--) {
@@ -1014,7 +1106,7 @@ void Program::appendSingleSlotUnaryOp(SkTArray<Stage>* pipeline, ProgramOp stage
     }
 }
 
-void Program::appendMultiSlotUnaryOp(SkTArray<Stage>* pipeline, ProgramOp baseStage,
+void Program::appendMultiSlotUnaryOp(TArray<Stage>* pipeline, ProgramOp baseStage,
                                      float* dst, int numSlots) const {
     SkASSERT(numSlots >= 0);
     while (numSlots > 4) {
@@ -1028,7 +1120,7 @@ void Program::appendMultiSlotUnaryOp(SkTArray<Stage>* pipeline, ProgramOp baseSt
     pipeline->push_back({stage, dst});
 }
 
-void Program::appendAdjacentNWayBinaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+void Program::appendAdjacentNWayBinaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                          ProgramOp stage,
                                          float* dst, const float* src, int numSlots) const {
     // The source and destination must be directly next to one another.
@@ -1040,11 +1132,10 @@ void Program::appendAdjacentNWayBinaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc
         ctx->dst = dst;
         ctx->src = src;
         pipeline->push_back({stage, ctx});
-        return;
     }
 }
 
-void Program::appendAdjacentMultiSlotBinaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+void Program::appendAdjacentMultiSlotBinaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                               ProgramOp baseStage,
                                               float* dst, const float* src, int numSlots) const {
     // The source and destination must be directly next to one another.
@@ -1061,7 +1152,24 @@ void Program::appendAdjacentMultiSlotBinaryOp(SkTArray<Stage>* pipeline, SkArena
     }
 }
 
-void Program::appendAdjacentMultiSlotTernaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+void Program::appendAdjacentNWayTernaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
+                                          ProgramOp stage, float* dst, const float* src0,
+                                          const float* src1, int numSlots) const {
+    // The float pointers must all be immediately adjacent to each other.
+    SkASSERT(numSlots >= 0);
+    SkASSERT((dst  + SkOpts::raster_pipeline_highp_stride * numSlots) == src0);
+    SkASSERT((src0 + SkOpts::raster_pipeline_highp_stride * numSlots) == src1);
+
+    if (numSlots > 0) {
+        auto ctx = alloc->make<SkRasterPipeline_TernaryOpCtx>();
+        ctx->dst = dst;
+        ctx->src0 = src0;
+        ctx->src1 = src1;
+        pipeline->push_back({stage, ctx});
+    }
+}
+
+void Program::appendAdjacentMultiSlotTernaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                                ProgramOp baseStage, float* dst, const float* src0,
                                                const float* src1, int numSlots) const {
     // The float pointers must all be immediately adjacent to each other.
@@ -1070,11 +1178,7 @@ void Program::appendAdjacentMultiSlotTernaryOp(SkTArray<Stage>* pipeline, SkAren
     SkASSERT((src0 + SkOpts::raster_pipeline_highp_stride * numSlots) == src1);
 
     if (numSlots > 4) {
-        auto ctx = alloc->make<SkRasterPipeline_TernaryOpCtx>();
-        ctx->dst = dst;
-        ctx->src0 = src0;
-        ctx->src1 = src1;
-        pipeline->push_back({baseStage, ctx});
+        this->appendAdjacentNWayTernaryOp(pipeline, alloc, baseStage, dst, src0, src1, numSlots);
         return;
     }
     if (numSlots > 0) {
@@ -1083,7 +1187,7 @@ void Program::appendAdjacentMultiSlotTernaryOp(SkTArray<Stage>* pipeline, SkAren
     }
 }
 
-void Program::appendStackRewind(SkTArray<Stage>* pipeline) const {
+void Program::appendStackRewind(TArray<Stage>* pipeline) const {
 #if defined(SKSL_STANDALONE) || !SK_HAS_MUSTTAIL
     pipeline->push_back({ProgramOp::stack_rewind, nullptr});
 #endif
@@ -1115,16 +1219,16 @@ bool Program::appendStages(SkRasterPipeline* pipeline,
                            RP::Callbacks* callbacks,
                            SkSpan<const float> uniforms) const {
     // Convert our Instruction list to an array of ProgramOps.
-    SkTArray<Stage> stages;
+    TArray<Stage> stages;
     this->makeStages(&stages, alloc, uniforms, this->allocateSlotData(alloc));
 
     // Allocate buffers for branch targets and labels; these are needed to convert labels into
     // actual offsets into the pipeline and fix up branches.
-    SkTArray<SkRasterPipeline_BranchCtx*> branchContexts;
+    TArray<SkRasterPipeline_BranchCtx*> branchContexts;
     branchContexts.reserve_back(fNumLabels);
-    SkTArray<int> labelOffsets;
+    TArray<int> labelOffsets;
     labelOffsets.push_back_n(fNumLabels, -1);
-    SkTArray<int> branchGoesToLabel;
+    TArray<int> branchGoesToLabel;
     branchGoesToLabel.reserve_back(fNumLabels);
 
     for (const Stage& stage : stages) {
@@ -1213,7 +1317,7 @@ bool Program::appendStages(SkRasterPipeline* pipeline,
 
 #endif
 
-void Program::makeStages(SkTArray<Stage>* pipeline,
+void Program::makeStages(TArray<Stage>* pipeline,
                          SkArenaAlloc* alloc,
                          SkSpan<const float> uniforms,
                          const SlotData& slots) const {
@@ -1255,6 +1359,14 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
         auto SlotA    = [&]() { return &slots.values[N * inst.fSlotA]; };
         auto SlotB    = [&]() { return &slots.values[N * inst.fSlotB]; };
         auto UniformA = [&]() { return &uniforms[inst.fSlotA]; };
+        auto AllocTraceContext = [&](auto* ctx) {
+            // We pass `ctx` solely for its type; the value is unused.
+            using ContextType = typename std::remove_reference<decltype(*ctx)>::type;
+            ctx = alloc->make<ContextType>();
+            ctx->traceMask = reinterpret_cast<int*>(tempStackMap[inst.fImmA] - N);
+            ctx->traceHook = fTraceHook.get();
+            return ctx;
+        };
         float*& tempStackPtr = tempStackMap[currentStack];
 
         switch (inst.fOp) {
@@ -1339,6 +1451,14 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                                                       dst, src, inst.fImmA);
                 break;
             }
+            case ALL_N_WAY_TERNARY_OP_CASES: {
+                float* src1 = tempStackPtr - (inst.fImmA * N);
+                float* src0 = tempStackPtr - (inst.fImmA * 2 * N);
+                float* dst  = tempStackPtr - (inst.fImmA * 3 * N);
+                this->appendAdjacentNWayTernaryOp(pipeline, alloc, (ProgramOp)inst.fOp,
+                                                  dst, src0, src1, inst.fImmA);
+                break;
+            }
             case ALL_MULTI_SLOT_TERNARY_OP_CASES: {
                 float* src1 = tempStackPtr - (inst.fImmA * N);
                 float* src0 = tempStackPtr - (inst.fImmA * 2 * N);
@@ -1366,6 +1486,18 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                                              SlotA(), inst.fImmA);
                 break;
 
+            case BuilderOp::refract_4_floats: {
+                float* dst = tempStackPtr - (9 * N);
+                pipeline->push_back({ProgramOp::refract_4_floats, dst});
+                break;
+            }
+            case BuilderOp::inverse_mat2:
+            case BuilderOp::inverse_mat3:
+            case BuilderOp::inverse_mat4: {
+                float* dst = tempStackPtr - (inst.fImmA * N);
+                pipeline->push_back({(ProgramOp)inst.fOp, dst});
+                break;
+            }
             case BuilderOp::dot_2_floats:
             case BuilderOp::dot_3_floats:
             case BuilderOp::dot_4_floats: {
@@ -1405,6 +1537,11 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
             case BuilderOp::push_dst_rgba: {
                 float* dst = tempStackPtr;
                 pipeline->push_back({ProgramOp::store_dst, dst});
+                break;
+            }
+            case BuilderOp::push_device_xy01: {
+                float* dst = tempStackPtr;
+                pipeline->push_back({ProgramOp::store_device_xy01, dst});
                 break;
             }
             case BuilderOp::pop_src_rg: {
@@ -1549,11 +1686,15 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                 break;
             }
             case BuilderOp::swizzle_copy_stack_to_slots: {
+                // SlotA: fixed-range start
+                // immA: number of swizzle components
+                // immB: swizzle components
+                // immC: offset from stack top
                 auto stage = (ProgramOp)((int)ProgramOp::swizzle_copy_slot_masked + inst.fImmA - 1);
                 auto* ctx = alloc->make<SkRasterPipeline_SwizzleCopyCtx>();
-                ctx->src = tempStackPtr - (inst.fImmB * N);
+                ctx->src = tempStackPtr - (inst.fImmC * N);
                 ctx->dst = SlotA();
-                unpack_nybbles_to_offsets(inst.fImmC, SkSpan(ctx->offsets));
+                unpack_nybbles_to_offsets(inst.fImmB, SkSpan(ctx->offsets));
                 pipeline->push_back({stage, ctx});
                 break;
             }
@@ -1590,6 +1731,25 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                 pipeline->push_back({ProgramOp::copy_from_indirect_unmasked, ctx});
                 break;
             }
+            case BuilderOp::swizzle_copy_stack_to_slots_indirect: {
+                // SlotA: fixed-range start
+                // SlotB: limit-range end
+                // immA: number of swizzle components
+                // immB: swizzle components
+                // immC: offset from stack top
+                // immD: dynamic stack ID
+                auto* ctx = alloc->make<SkRasterPipeline_SwizzleCopyIndirectCtx>();
+                ctx->src = tempStackPtr - (inst.fImmC * N);
+                ctx->dst = SlotA();
+                ctx->indirectOffset =
+                        reinterpret_cast<const uint32_t*>(tempStackMap[inst.fImmD]) - (1 * N);
+                ctx->indirectLimit =
+                        inst.fSlotB - inst.fSlotA - (max_packed_nybble(inst.fImmB, inst.fImmA) + 1);
+                ctx->slots = inst.fImmA;
+                unpack_nybbles_to_offsets(inst.fImmB, SkSpan(ctx->offsets));
+                pipeline->push_back({ProgramOp::swizzle_copy_to_indirect_masked, ctx});
+                break;
+            }
             case BuilderOp::case_op: {
                 auto* ctx = alloc->make<SkRasterPipeline_CaseOpCtx>();
                 ctx->ptr = reinterpret_cast<int*>(tempStackPtr - 2 * N);
@@ -1615,14 +1775,58 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
                 pipeline->push_back({(ProgramOp)inst.fOp, nullptr});
                 break;
 
+            case BuilderOp::trace_line: {
+                auto* ctx = AllocTraceContext((SkRasterPipeline_TraceLineCtx*)nullptr);
+                ctx->lineNumber = inst.fImmB;
+                pipeline->push_back({ProgramOp::trace_line, ctx});
+                break;
+            }
+            case BuilderOp::trace_scope: {
+                auto* ctx = AllocTraceContext((SkRasterPipeline_TraceScopeCtx*)nullptr);
+                ctx->delta = inst.fImmB;
+                pipeline->push_back({ProgramOp::trace_scope, ctx});
+                break;
+            }
+            case BuilderOp::trace_enter:
+            case BuilderOp::trace_exit: {
+                auto* ctx = AllocTraceContext((SkRasterPipeline_TraceFuncCtx*)nullptr);
+                ctx->funcIdx = inst.fImmB;
+                pipeline->push_back({(ProgramOp)inst.fOp, ctx});
+                break;
+            }
+            case BuilderOp::trace_var:
+            case BuilderOp::trace_var_indirect: {
+                // SlotA: fixed-range start
+                // SlotB: limit-range end
+                // immA: trace-mask stack ID
+                // immB: number of slots
+                // immC: dynamic stack ID
+                auto* ctx = AllocTraceContext((SkRasterPipeline_TraceVarCtx*)nullptr);
+                ctx->slotIdx = inst.fSlotA;
+                ctx->numSlots = inst.fImmB;
+                ctx->data = reinterpret_cast<int*>(SlotA());
+                if (inst.fOp == BuilderOp::trace_var_indirect) {
+                    ctx->indirectOffset =
+                            reinterpret_cast<const uint32_t*>(tempStackMap[inst.fImmC]) - (1 * N);
+                    ctx->indirectLimit = inst.fSlotB - inst.fSlotA - inst.fImmB;
+                } else {
+                    ctx->indirectOffset = nullptr;
+                    ctx->indirectLimit = 0;
+                }
+                pipeline->push_back({ProgramOp::trace_var, ctx});
+                break;
+            }
             default:
                 SkDEBUGFAILF("Raster Pipeline: unsupported instruction %d", (int)inst.fOp);
                 break;
         }
 
-        tempStackPtr += stack_usage(inst) * N;
-        SkASSERT(tempStackPtr >= slots.stack.begin());
-        SkASSERT(tempStackPtr <= slots.stack.end());
+        int stackUsage = stack_usage(inst);
+        if (stackUsage != 0) {
+            tempStackPtr += stackUsage * N;
+            SkASSERT(tempStackPtr >= slots.stack.begin());
+            SkASSERT(tempStackPtr <= slots.stack.end());
+        }
 
         // Periodically rewind the stack every 500 instructions. When SK_HAS_MUSTTAIL is set,
         // rewinds are not actually used; the appendStackRewind call becomes a no-op. On platforms
@@ -1637,8 +1841,8 @@ void Program::makeStages(SkTArray<Stage>* pipeline,
 }
 
 // Finds duplicate names in the program and disambiguates them with subscripts.
-SkTArray<std::string> build_unique_slot_name_list(const SkRPDebugTrace* debugTrace) {
-    SkTArray<std::string> slotName;
+TArray<std::string> build_unique_slot_name_list(const DebugTracePriv* debugTrace) {
+    TArray<std::string> slotName;
     if (debugTrace) {
         slotName.reserve_back(debugTrace->fSlotInfo.size());
 
@@ -1685,7 +1889,7 @@ void Program::dump(SkWStream* out) const {
     SkSpan<float> uniforms = SkSpan(uniformPtr, fNumUniformSlots);
 
     // Turn this program into an array of Raster Pipeline stages.
-    SkTArray<Stage> stages;
+    TArray<Stage> stages;
     this->makeStages(&stages, &alloc, uniforms, slots);
 
     // Find the labels in the program, and keep track of their offsets.
@@ -1700,7 +1904,7 @@ void Program::dump(SkWStream* out) const {
 
     // Assign unique names to each variable slot; our trace might have multiple variables with the
     // same name, which can make a dump hard to read.
-    SkTArray<std::string> slotName = build_unique_slot_name_list(fDebugTrace);
+    TArray<std::string> slotName = build_unique_slot_name_list(fDebugTrace);
 
     // Emit the program's instruction list.
     for (int index = 0; index < stages.size(); ++index) {
@@ -1912,15 +2116,9 @@ void Program::dump(SkWStream* out) const {
             return Adjacent3PtrCtx(ctx->dst, numSlots);
         };
 
-        // Stringize a swizzled pointer. Note that the slot-width of the original expression is not
-        // preserved in the instruction encoding, so we need to do our best using the data we have.
-        // (e.g., myFloat4.y would be indistinguishable from myFloat2.y.)
-        auto SwizzlePtr = [&](const float* ptr, SkSpan<const uint16_t> offsets) {
-            size_t highestComponent = *std::max_element(offsets.begin(), offsets.end()) /
-                                      (N * sizeof(float));
-
-            std::string src = "(" + PtrCtx(ptr, std::max(offsets.size(), highestComponent + 1)) +
-                              ").";
+        // Stringize a span of swizzle offsets to the textual equivalent (`xyzw`).
+        auto SwizzleOffsetSpan = [&](SkSpan<const uint16_t> offsets) {
+            std::string src;
             for (uint16_t offset : offsets) {
                 if (offset == (0 * N * sizeof(float))) {
                     src.push_back('x');
@@ -1935,6 +2133,21 @@ void Program::dump(SkWStream* out) const {
                 }
             }
             return src;
+        };
+
+        // When we decode a swizzle, we don't know the slot width of the original value; that's not
+        // preserved in the instruction encoding. (e.g., myFloat4.y would be indistinguishable from
+        // myFloat2.y.) We do our best to make a readable dump using the data we have.
+        auto SwizzleWidth = [&](SkSpan<const uint16_t> offsets) {
+            size_t highestComponent = *std::max_element(offsets.begin(), offsets.end()) /
+                                      (N * sizeof(float));
+            size_t swizzleWidth = offsets.size();
+            return std::max(swizzleWidth, highestComponent + 1);
+        };
+
+        // Stringize a swizzled pointer.
+        auto SwizzlePtr = [&](const float* ptr, SkSpan<const uint16_t> offsets) {
+            return "(" + PtrCtx(ptr, SwizzleWidth(offsets)) + ")." + SwizzleOffsetSpan(offsets);
         };
 
         // Interpret the context value as a Swizzle structure.
@@ -1974,7 +2187,7 @@ void Program::dump(SkWStream* out) const {
             return std::make_tuple(dst, src);
         };
 
-        std::string opArg1, opArg2, opArg3;
+        std::string opArg1, opArg2, opArg3, opSwizzle;
         using POp = ProgramOp;
         switch (stage.op) {
             case POp::label:
@@ -2003,6 +2216,11 @@ void Program::dump(SkWStream* out) const {
             case POp::swizzle_copy_3_slots_masked:
             case POp::swizzle_copy_4_slots_masked:
                 std::tie(opArg1, opArg2) = SwizzleCopyCtx(stage.op, stage.ctx);
+                break;
+
+            case POp::refract_4_floats:
+                std::tie(opArg1, opArg2) = AdjacentPtrCtx(stage.ctx, 4);
+                opArg3 = PtrCtx((const float*)(stage.ctx) + (8 * N), 1);
                 break;
 
             case POp::dot_2_floats:
@@ -2037,11 +2255,17 @@ void Program::dump(SkWStream* out) const {
             case POp::cast_to_float_from_int: case POp::cast_to_float_from_uint:
             case POp::cast_to_int_from_float: case POp::cast_to_uint_from_float:
             case POp::abs_float:              case POp::abs_int:
+            case POp::acos_float:
+            case POp::asin_float:
             case POp::atan_float:
             case POp::ceil_float:
             case POp::cos_float:
             case POp::exp_float:
+            case POp::exp2_float:
+            case POp::log_float:
+            case POp::log2_float:
             case POp::floor_float:
+            case POp::invsqrt_float:
             case POp::sin_float:
             case POp::sqrt_float:
             case POp::tan_float:
@@ -2056,6 +2280,7 @@ void Program::dump(SkWStream* out) const {
             case POp::abs_2_floats:              case POp::abs_2_ints:
             case POp::ceil_2_floats:
             case POp::floor_2_floats:
+            case POp::invsqrt_2_floats:
                 opArg1 = PtrCtx(stage.ctx, 2);
                 break;
 
@@ -2066,6 +2291,7 @@ void Program::dump(SkWStream* out) const {
             case POp::abs_3_floats:              case POp::abs_3_ints:
             case POp::ceil_3_floats:
             case POp::floor_3_floats:
+            case POp::invsqrt_3_floats:
                 opArg1 = PtrCtx(stage.ctx, 3);
                 break;
 
@@ -2081,8 +2307,19 @@ void Program::dump(SkWStream* out) const {
             case POp::abs_4_floats:              case POp::abs_4_ints:
             case POp::ceil_4_floats:
             case POp::floor_4_floats:
+            case POp::invsqrt_4_floats:
+            case POp::inverse_mat2:
                 opArg1 = PtrCtx(stage.ctx, 4);
                 break;
+
+            case POp::inverse_mat3:
+                opArg1 = PtrCtx(stage.ctx, 9);
+                break;
+
+            case POp::inverse_mat4:
+                opArg1 = PtrCtx(stage.ctx, 16);
+                break;
+
 
             case POp::copy_constant:
                 std::tie(opArg1, opArg2) = CopyConstantCtx(stage.ctx, 1);
@@ -2136,6 +2373,14 @@ void Program::dump(SkWStream* out) const {
                 opArg3 = PtrCtx(ctx->indirectOffset, 1);
                 break;
             }
+            case POp::swizzle_copy_to_indirect_masked: {
+                const auto* ctx = static_cast<SkRasterPipeline_SwizzleCopyIndirectCtx*>(stage.ctx);
+                opArg1 = PtrCtx(ctx->dst, SwizzleWidth(SkSpan(ctx->offsets, ctx->slots)));
+                opArg2 = PtrCtx(ctx->src, ctx->slots);
+                opArg3 = PtrCtx(ctx->indirectOffset, 1);
+                opSwizzle = SwizzleOffsetSpan(SkSpan(ctx->offsets, ctx->slots));
+                break;
+            }
             case POp::merge_condition_mask:
             case POp::add_float:   case POp::add_int:
             case POp::sub_float:   case POp::sub_int:
@@ -2144,6 +2389,7 @@ void Program::dump(SkWStream* out) const {
                                    case POp::bitwise_and_int:
                                    case POp::bitwise_or_int:
                                    case POp::bitwise_xor_int:
+            case POp::mod_float:
             case POp::min_float:   case POp::min_int:   case POp::min_uint:
             case POp::max_float:   case POp::max_int:   case POp::max_uint:
             case POp::cmplt_float: case POp::cmplt_int: case POp::cmplt_uint:
@@ -2164,6 +2410,7 @@ void Program::dump(SkWStream* out) const {
                                       case POp::bitwise_and_2_ints:
                                       case POp::bitwise_or_2_ints:
                                       case POp::bitwise_xor_2_ints:
+            case POp::mod_2_floats:
             case POp::min_2_floats:   case POp::min_2_ints:   case POp::min_2_uints:
             case POp::max_2_floats:   case POp::max_2_ints:   case POp::max_2_uints:
             case POp::cmplt_2_floats: case POp::cmplt_2_ints: case POp::cmplt_2_uints:
@@ -2184,6 +2431,7 @@ void Program::dump(SkWStream* out) const {
                                       case POp::bitwise_and_3_ints:
                                       case POp::bitwise_or_3_ints:
                                       case POp::bitwise_xor_3_ints:
+            case POp::mod_3_floats:
             case POp::min_3_floats:   case POp::min_3_ints:   case POp::min_3_uints:
             case POp::max_3_floats:   case POp::max_3_ints:   case POp::max_3_uints:
             case POp::cmplt_3_floats: case POp::cmplt_3_ints: case POp::cmplt_3_uints:
@@ -2204,6 +2452,7 @@ void Program::dump(SkWStream* out) const {
                                       case POp::bitwise_and_4_ints:
                                       case POp::bitwise_or_4_ints:
                                       case POp::bitwise_xor_4_ints:
+            case POp::mod_4_floats:
             case POp::min_4_floats:   case POp::min_4_ints:   case POp::min_4_uints:
             case POp::max_4_floats:   case POp::max_4_ints:   case POp::max_4_uints:
             case POp::cmplt_4_floats: case POp::cmplt_4_ints: case POp::cmplt_4_uints:
@@ -2224,6 +2473,7 @@ void Program::dump(SkWStream* out) const {
                                       case POp::bitwise_and_n_ints:
                                       case POp::bitwise_or_n_ints:
                                       case POp::bitwise_xor_n_ints:
+            case POp::mod_n_floats:
             case POp::min_n_floats:   case POp::min_n_ints:   case POp::min_n_uints:
             case POp::max_n_floats:   case POp::max_n_ints:   case POp::max_n_uints:
             case POp::cmplt_n_floats: case POp::cmplt_n_ints: case POp::cmplt_n_uints:
@@ -2235,7 +2485,8 @@ void Program::dump(SkWStream* out) const {
                 std::tie(opArg1, opArg2) = AdjacentBinaryOpCtx(stage.ctx);
                 break;
 
-            case POp::mix_n_floats:   case POp::mix_n_ints:
+            case POp::mix_n_floats:        case POp::mix_n_ints:
+            case POp::smoothstep_n_floats:
                 std::tie(opArg1, opArg2, opArg3) = AdjacentTernaryOpCtx(stage.ctx);
                 break;
 
@@ -2253,6 +2504,38 @@ void Program::dump(SkWStream* out) const {
                 opArg3 = Imm(sk_bit_cast<float>(ctx->value));
                 break;
             }
+            case POp::trace_var: {
+                const auto* ctx = static_cast<SkRasterPipeline_TraceVarCtx*>(stage.ctx);
+                opArg1 = PtrCtx(ctx->traceMask, 1);
+                opArg2 = PtrCtx(ctx->data, ctx->numSlots);
+                if (ctx->indirectOffset != nullptr) {
+                    opArg3 = " + " + PtrCtx(ctx->indirectOffset, 1);
+                }
+                break;
+            }
+            case POp::trace_line: {
+                const auto* ctx = static_cast<SkRasterPipeline_TraceLineCtx*>(stage.ctx);
+                opArg1 = PtrCtx(ctx->traceMask, 1);
+                opArg2 = std::to_string(ctx->lineNumber);
+                break;
+            }
+            case POp::trace_enter:
+            case POp::trace_exit: {
+                const auto* ctx = static_cast<SkRasterPipeline_TraceFuncCtx*>(stage.ctx);
+                opArg1 = PtrCtx(ctx->traceMask, 1);
+                opArg2 = (fDebugTrace &&
+                          ctx->funcIdx >= 0 &&
+                          ctx->funcIdx < (int)fDebugTrace->fFuncInfo.size())
+                                 ? fDebugTrace->fFuncInfo[ctx->funcIdx].name
+                                 : "???";
+                break;
+            }
+            case POp::trace_scope: {
+                const auto* ctx = static_cast<SkRasterPipeline_TraceScopeCtx*>(stage.ctx);
+                opArg1 = PtrCtx(ctx->traceMask, 1);
+                opArg2 = SkSL::String::printf("%+d", ctx->delta);
+                break;
+            }
             default:
                 break;
         }
@@ -2261,17 +2544,32 @@ void Program::dump(SkWStream* out) const {
         switch (stage.op) {
         #define M(x) case POp::x: opName = #x; break;
             SK_RASTER_PIPELINE_OPS_ALL(M)
+            SKRP_EXTENDED_OPS(M)
         #undef M
-            case POp::label:                   opName = "label";                   break;
-            case POp::invoke_shader:           opName = "invoke_shader";           break;
-            case POp::invoke_color_filter:     opName = "invoke_color_filter";     break;
-            case POp::invoke_blender:          opName = "invoke_blender";          break;
-            case POp::invoke_to_linear_srgb:   opName = "invoke_to_linear_srgb";   break;
-            case POp::invoke_from_linear_srgb: opName = "invoke_from_linear_srgb"; break;
         }
 
         std::string opText;
         switch (stage.op) {
+            case POp::trace_var:
+                opText = "TraceVar(" + opArg2 + opArg3 + ") when " + opArg1 + " is true";
+                break;
+
+            case POp::trace_line:
+                opText = "TraceLine(" + opArg2 + ") when " + opArg1 + " is true";
+                break;
+
+            case POp::trace_enter:
+                opText = "TraceEnter(" + opArg2 + ") when " + opArg1 + " is true";
+                break;
+
+            case POp::trace_exit:
+                opText = "TraceExit(" + opArg2 + ") when " + opArg1 + " is true";
+                break;
+
+            case POp::trace_scope:
+                opText = "TraceScope(" + opArg2 + ") when " + opArg1 + " is true";
+                break;
+
             case POp::init_lane_masks:
                 opText = "CondMask = LoopMask = RetMask = true";
                 break;
@@ -2433,6 +2731,11 @@ void Program::dump(SkWStream* out) const {
                 opText = "Indirect(" + opArg1 + " + " + opArg3 + ") = Mask(" + opArg2 + ")";
                 break;
 
+            case POp::swizzle_copy_to_indirect_masked:
+                opText = "Indirect(" + opArg1 + " + " + opArg3 + ")." + opSwizzle + " = Mask(" +
+                         opArg2 + ")";
+                break;
+
             case POp::zero_slot_unmasked:    case POp::zero_2_slots_unmasked:
             case POp::zero_3_slots_unmasked: case POp::zero_4_slots_unmasked:
                 opText = opArg1 + " = 0";
@@ -2443,6 +2746,14 @@ void Program::dump(SkWStream* out) const {
             case POp::abs_3_floats: case POp::abs_3_ints:
             case POp::abs_4_floats: case POp::abs_4_ints:
                 opText = opArg1 + " = abs(" + opArg1 + ")";
+                break;
+
+            case POp::acos_float:
+                opText = opArg1 + " = acos(" + opArg1 + ")";
+                break;
+
+            case POp::asin_float:
+                opText = opArg1 + " = asin(" + opArg1 + ")";
                 break;
 
             case POp::atan_float:
@@ -2464,6 +2775,10 @@ void Program::dump(SkWStream* out) const {
                 opText = opArg1 + " = cos(" + opArg1 + ")";
                 break;
 
+            case POp::refract_4_floats:
+                opText = opArg1 + " = refract(" + opArg1 + ", " + opArg2 + ", " + opArg3 + ")";
+                break;
+
             case POp::dot_2_floats:
             case POp::dot_3_floats:
             case POp::dot_4_floats:
@@ -2472,6 +2787,18 @@ void Program::dump(SkWStream* out) const {
 
             case POp::exp_float:
                 opText = opArg1 + " = exp(" + opArg1 + ")";
+                break;
+
+            case POp::exp2_float:
+                opText = opArg1 + " = exp2(" + opArg1 + ")";
+                break;
+
+            case POp::log_float:
+                opText = opArg1 + " = log(" + opArg1 + ")";
+                break;
+
+            case POp::log2_float:
+                opText = opArg1 + " = log2(" + opArg1 + ")";
                 break;
 
             case POp::pow_n_floats:
@@ -2495,6 +2822,19 @@ void Program::dump(SkWStream* out) const {
             case POp::floor_3_floats:
             case POp::floor_4_floats:
                 opText = opArg1 + " = floor(" + opArg1 + ")";
+                break;
+
+            case POp::invsqrt_float:
+            case POp::invsqrt_2_floats:
+            case POp::invsqrt_3_floats:
+            case POp::invsqrt_4_floats:
+                opText = opArg1 + " = inversesqrt(" + opArg1 + ")";
+                break;
+
+            case POp::inverse_mat2:
+            case POp::inverse_mat3:
+            case POp::inverse_mat4:
+                opText = opArg1 + " = inverse(" + opArg1 + ")";
                 break;
 
             case POp::add_float:    case POp::add_int:
@@ -2527,6 +2867,14 @@ void Program::dump(SkWStream* out) const {
             case POp::div_4_floats: case POp::div_4_ints: case POp::div_4_uints:
             case POp::div_n_floats: case POp::div_n_ints: case POp::div_n_uints:
                 opText = opArg1 + " /= " + opArg2;
+                break;
+
+            case POp::mod_float:
+            case POp::mod_2_floats:
+            case POp::mod_3_floats:
+            case POp::mod_4_floats:
+            case POp::mod_n_floats:
+                opText = opArg1 + " = mod(" + opArg1 + ", " + opArg2 + ")";
                 break;
 
             case POp::min_float:    case POp::min_int:    case POp::min_uint:
@@ -2583,6 +2931,10 @@ void Program::dump(SkWStream* out) const {
             case POp::mix_4_floats:   case POp::mix_4_ints:
             case POp::mix_n_floats:   case POp::mix_n_ints:
                 opText = opArg1 + " = mix(" + opArg2 + ", " + opArg3 + ", " + opArg1 + ")";
+                break;
+
+            case POp::smoothstep_n_floats:
+                opText = opArg1 + " = smoothstep(" + opArg1 + ", " + opArg2 + ", " + opArg3 + ")";
                 break;
 
             case POp::jump:

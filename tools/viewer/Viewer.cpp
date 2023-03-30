@@ -804,7 +804,7 @@ static std::vector<sk_sp<SkImage>> find_data_uri_images(sk_sp<SkData> data) {
         if (!raw) {
             continue;
         }
-        auto image = SkImage::MakeFromEncoded(std::move(raw));
+        auto image = SkImages::DeferredFromEncodedData(std::move(raw));
         if (image) {
             images.push_back(std::move(image));
         }
@@ -869,7 +869,7 @@ void Viewer::initSlides() {
         // single file mode
         const SkString file(FLAGS_file[0]);
 
-        // `--file -` parses stdin, looking for data URIs that encode images
+        // `--file stdin` parses stdin, looking for data URIs that encode images
         if (file.equals("stdin")) {
             sk_sp<SkData> data = data_from_file(stdin);
             std::vector<sk_sp<SkImage>> images = find_data_uri_images(std::move(data));
@@ -2125,10 +2125,10 @@ void Viewer::drawImGui() {
 #if defined(SK_GANESH)
                         if (fWindow->sampleCount() > 1 || FLAGS_dmsaa) {
                             const auto* caps = ctx->priv().caps();
-                            if (skgpu::v1::AtlasPathRenderer::IsSupported(ctx)) {
+                            if (skgpu::ganesh::AtlasPathRenderer::IsSupported(ctx)) {
                                 prButton(GpuPathRenderers::kAtlas);
                             }
-                            if (skgpu::v1::TessellationPathRenderer::IsSupported(*caps)) {
+                            if (skgpu::ganesh::TessellationPathRenderer::IsSupported(*caps)) {
                                 prButton(GpuPathRenderers::kTessellation);
                             }
                         }
@@ -3085,10 +3085,10 @@ void Viewer::updateUIState() {
 #if defined(SK_GANESH)
                 if (fWindow->sampleCount() > 1 || FLAGS_dmsaa) {
                     const auto* caps = ctx->priv().caps();
-                    if (skgpu::v1::AtlasPathRenderer::IsSupported(ctx)) {
+                    if (skgpu::ganesh::AtlasPathRenderer::IsSupported(ctx)) {
                         writer.appendString(gPathRendererNames[GpuPathRenderers::kAtlas]);
                     }
-                    if (skgpu::v1::TessellationPathRenderer::IsSupported(*caps)) {
+                    if (skgpu::ganesh::TessellationPathRenderer::IsSupported(*caps)) {
                         writer.appendString(gPathRendererNames[GpuPathRenderers::kTessellation]);
                     }
                 }

@@ -13,7 +13,7 @@
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/private/SkSLProgramKind.h"
-#include "src/core/SkConvertPixels.h"
+#include "src/base/SkRectMemcpy.h"
 #include "src/gpu/dawn/DawnUtilsPriv.h"
 #include "src/gpu/ganesh/GrDataUtils.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
@@ -43,6 +43,8 @@
 #if !defined(SK_BUILD_FOR_WIN)
 #include <unistd.h>
 #endif // !defined(SK_BUILD_FOR_WIN)
+
+using namespace skia_private;
 
 static const int kMaxRenderPipelineEntries = 1024;
 
@@ -174,7 +176,7 @@ GrOpsRenderPass* GrDawnGpu::onGetOpsRenderPass(
         const SkIRect& bounds,
         const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
         const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
-        const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+        const TArray<GrSurfaceProxy*, true>& sampledProxies,
         GrXferBarrierFlags renderPassXferBarriers) {
     fOpsRenderPass.reset(new GrDawnOpsRenderPass(this, rt, origin, colorInfo, stencilInfo));
     return fOpsRenderPass.get();
@@ -1027,12 +1029,19 @@ std::string GrDawnGpu::SkSLToSPIRV(const char* shaderString,
 }
 
 wgpu::ShaderModule GrDawnGpu::createShaderModule(const std::string& spirvSource) {
-    wgpu::ShaderModuleSPIRVDescriptor desc;
-    desc.codeSize = spirvSource.size() / 4;
-    desc.code = reinterpret_cast<const uint32_t*>(spirvSource.c_str());
+    wgpu::ShaderModuleSPIRVDescriptor spirvDesc;
+    spirvDesc.codeSize = spirvSource.size() / 4;
+    spirvDesc.code = reinterpret_cast<const uint32_t*>(spirvSource.c_str());
 
-    wgpu::ShaderModuleDescriptor smDesc;
-    smDesc.nextInChain = &desc;
+    // Skia often generates shaders that select a texture/sampler conditionally based on an
+    // attribute (specifically in the case of texture atlas indexing). We disable derivative
+    // uniformity warnings as we expect Skia's behavior to result in well-defined values.
+    wgpu::DawnShaderModuleSPIRVOptionsDescriptor dawnSpirvOptions;
+    dawnSpirvOptions.allowNonUniformDerivatives = true;
 
-    return fDevice.CreateShaderModule(&smDesc);
+    wgpu::ShaderModuleDescriptor desc;
+    desc.nextInChain = &spirvDesc;
+    spirvDesc.nextInChain = &dawnSpirvOptions;
+
+    return fDevice.CreateShaderModule(&desc);
 }

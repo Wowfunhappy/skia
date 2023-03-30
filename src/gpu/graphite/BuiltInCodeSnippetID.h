@@ -24,16 +24,21 @@ enum class BuiltInCodeSnippetID : int32_t {
     kSolidColorShader,
     kLinearGradientShader4,
     kLinearGradientShader8,
+    kLinearGradientShaderTexture,
     kRadialGradientShader4,
     kRadialGradientShader8,
+    kRadialGradientShaderTexture,
     kSweepGradientShader4,
     kSweepGradientShader8,
+    kSweepGradientShaderTexture,
     kConicalGradientShader4,
     kConicalGradientShader8,
+    kConicalGradientShaderTexture,
 
     kLocalMatrixShader,
     kImageShader,
     kCoordClampShader,
+    kDitherShader,
     kPerlinNoiseShader,
     kPorterDuffBlendShader,     // ComposeShader (lightweight, only supports Porter-Duff blends)
     kBlendShader,               // ComposeShader (more code, but supports every SkBlendMode)

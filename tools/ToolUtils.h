@@ -8,9 +8,9 @@
 #ifndef ToolUtils_DEFINED
 #define ToolUtils_DEFINED
 
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontStyle.h"
 #include "include/core/SkFontTypes.h"
@@ -34,6 +34,8 @@
 #if defined(SK_GRAPHITE)
 #include "include/gpu/graphite/Recorder.h"
 #endif
+
+#include <functional>
 
 class SkBitmap;
 class SkCanvas;

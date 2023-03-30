@@ -22,7 +22,8 @@ class SkWStream;
 
 namespace SkSL {
 
-class SkRPDebugTrace;
+class DebugTracePriv;
+class TraceHook;
 
 namespace RP {
 
@@ -36,26 +37,30 @@ struct SlotRange {
     int count = 0;
 };
 
+#define SKRP_EXTENDED_OPS(M)     \
+    /* branch targets */         \
+    M(label)                     \
+                                 \
+    /* child programs */         \
+    M(invoke_shader)             \
+    M(invoke_color_filter)       \
+    M(invoke_blender)            \
+                                 \
+    /* color space transforms */ \
+    M(invoke_to_linear_srgb)     \
+    M(invoke_from_linear_srgb)
+
 // An RP::Program will consist entirely of ProgramOps. The ProgramOps list is a superset of the
 // native SkRasterPipelineOps op-list. It also has a few extra ops to indicate child-effect
 // invocation, and a `label` op to indicate branch targets.
 enum class ProgramOp {
-    // A finished program can contain any native Raster Pipeline op...
     #define M(stage) stage,
+        // A finished program can contain any native Raster Pipeline op...
         SK_RASTER_PIPELINE_OPS_ALL(M)
+
+        // ... as well as our extended ops.
+        SKRP_EXTENDED_OPS(M)
     #undef M
-
-    // ... has branch targets...
-    label,
-
-    // ... can invoke child programs ...
-    invoke_shader,
-    invoke_color_filter,
-    invoke_blender,
-
-    // ... and can invoke color space transforms.
-    invoke_to_linear_srgb,
-    invoke_from_linear_srgb,
 };
 
 // BuilderOps are a superset of ProgramOps. They are used by the RP::Builder, which works in terms
@@ -65,22 +70,13 @@ enum class ProgramOp {
 // RP::Program::Stages, which will contain only native SkRasterPipelineOps and (optionally)
 // child-effect invocations.
 enum class BuilderOp {
-    // An in-flight program can contain all the native Raster Pipeline ops...
     #define M(stage) stage,
+        // An in-flight program can contain all the native Raster Pipeline ops...
         SK_RASTER_PIPELINE_OPS_ALL(M)
+
+        // ... and our extended ops...
+        SKRP_EXTENDED_OPS(M)
     #undef M
-
-    // ... has branch targets...
-    label,
-
-    // ... can invoke child programs...
-    invoke_shader,
-    invoke_color_filter,
-    invoke_blender,
-
-    // ... can invoke color space transforms ...
-    invoke_to_linear_srgb,
-    invoke_from_linear_srgb,
 
     // ... and also has Builder-specific ops. These ops generally interface with the stack, and are
     // converted into ProgramOps during `makeStages`.
@@ -97,6 +93,7 @@ enum class BuilderOp {
     copy_stack_to_slots_unmasked,
     copy_stack_to_slots_indirect,
     swizzle_copy_stack_to_slots,
+    swizzle_copy_stack_to_slots_indirect,
     discard_stack,
     select,
     push_condition_mask,
@@ -108,21 +105,18 @@ enum class BuilderOp {
     pop_return_mask,
     push_src_rgba,
     push_dst_rgba,
+    push_device_xy01,
     pop_src_rg,
     pop_src_rgba,
     pop_dst_rgba,
     set_current_stack,
+    trace_var_indirect,
     branch_if_no_active_lanes_on_stack_top_equal,
     unsupported
 };
 
-// If the child-invocation enums are not in sync between enums, program creation will not work.
-static_assert((int)ProgramOp::label                   == (int)BuilderOp::label);
-static_assert((int)ProgramOp::invoke_shader           == (int)BuilderOp::invoke_shader);
-static_assert((int)ProgramOp::invoke_color_filter     == (int)BuilderOp::invoke_color_filter);
-static_assert((int)ProgramOp::invoke_blender          == (int)BuilderOp::invoke_blender);
-static_assert((int)ProgramOp::invoke_to_linear_srgb   == (int)BuilderOp::invoke_to_linear_srgb);
-static_assert((int)ProgramOp::invoke_from_linear_srgb == (int)BuilderOp::invoke_from_linear_srgb);
+// If the extended ops are not in sync between enums, program creation will not work.
+static_assert((int)ProgramOp::label == (int)BuilderOp::label);
 
 // Represents a single raster-pipeline SkSL instruction.
 struct Instruction {
@@ -158,11 +152,12 @@ public:
 
 class Program {
 public:
-    Program(SkTArray<Instruction> instrs,
+    Program(skia_private::TArray<Instruction> instrs,
             int numValueSlots,
             int numUniformSlots,
             int numLabels,
-            SkRPDebugTrace* debugTrace);
+            DebugTracePriv* debugTrace);
+    ~Program();
 
 #if !defined(SKSL_STANDALONE)
     bool appendStages(SkRasterPipeline* pipeline,
@@ -186,7 +181,7 @@ private:
         ProgramOp op;
         void*     ctx;
     };
-    void makeStages(SkTArray<Stage>* pipeline,
+    void makeStages(skia_private::TArray<Stage>* pipeline,
                     SkArenaAlloc* alloc,
                     SkSpan<const float> uniforms,
                     const SlotData& slots) const;
@@ -194,20 +189,20 @@ private:
     StackDepthMap tempStackMaxDepths() const;
 
     // These methods are used to split up large multi-slot operations into multiple ops as needed.
-    void appendCopy(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    void appendCopy(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                     ProgramOp baseStage,
                     float* dst, int dstStride, const float* src, int srcStride, int numSlots) const;
-    void appendCopySlotsUnmasked(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    void appendCopySlotsUnmasked(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                  float* dst, const float* src, int numSlots) const;
-    void appendCopySlotsMasked(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    void appendCopySlotsMasked(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                float* dst, const float* src, int numSlots) const;
-    void appendCopyConstants(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    void appendCopyConstants(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                              float* dst, const float* src, int numSlots) const;
 
     // Appends a single-slot single-input math operation to the pipeline. The op `stage` will
     // appended `numSlots` times, starting at position `dst` and advancing one slot for each
     // subsequent invocation.
-    void appendSingleSlotUnaryOp(SkTArray<Stage>* pipeline, ProgramOp stage,
+    void appendSingleSlotUnaryOp(skia_private::TArray<Stage>* pipeline, ProgramOp stage,
                                  float* dst, int numSlots) const;
 
     // Appends a multi-slot single-input math operation to the pipeline. `baseStage` must refer to
@@ -215,14 +210,14 @@ private:
     // 2-4 slots. For instance, {`zero_slot`, `zero_2_slots`, `zero_3_slots`, `zero_4_slots`}
     // must be contiguous ops in the stage list, listed in that order; pass `zero_slot` and we
     // pick the appropriate op based on `numSlots`.
-    void appendMultiSlotUnaryOp(SkTArray<Stage>* pipeline, ProgramOp baseStage,
+    void appendMultiSlotUnaryOp(skia_private::TArray<Stage>* pipeline, ProgramOp baseStage,
                                 float* dst, int numSlots) const;
 
     // Appends a two-input math operation to the pipeline. `src` must be _immediately_ after `dst`
     // in memory. `baseStage` must refer to an unbounded "apply_to_n_slots" stage. A BinaryOpCtx
     // will be used to pass pointers to the destination and source; the delta between the two
     // pointers implicitly gives the number of slots.
-    void appendAdjacentNWayBinaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    void appendAdjacentNWayBinaryOp(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                     ProgramOp stage,
                                     float* dst, const float* src, int numSlots) const;
 
@@ -232,7 +227,7 @@ private:
     // `add_float`, `add_2_floats`, `add_3_floats`, `add_4_floats`} must be contiguous ops in the
     // stage list, listed in that order; pass `add_n_floats` and we pick the appropriate op based on
     // `numSlots`.
-    void appendAdjacentMultiSlotBinaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    void appendAdjacentMultiSlotBinaryOp(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                          ProgramOp baseStage,
                                          float* dst, const float* src, int numSlots) const;
 
@@ -240,20 +235,30 @@ private:
     // (dst) to the pipeline. The three inputs must be _immediately_ adjacent in memory. `baseStage`
     // must refer to an unbounded "apply_to_n_slots" stage, which must be immediately followed by
     // specializations for 1-4 slots.
-    void appendAdjacentMultiSlotTernaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    void appendAdjacentMultiSlotTernaryOp(skia_private::TArray<Stage>* pipeline,
+                                          SkArenaAlloc* alloc,
                                           ProgramOp stage, float* dst,
                                           const float* src0, const float* src1, int numSlots) const;
 
-    // Appends a stack_rewind op on platforms where it is needed (when SK_HAS_MUSTTAIL is not set).
-    void appendStackRewind(SkTArray<Stage>* pipeline) const;
+    // Appends a math operation having three inputs (dst, src0, src1) and one output (dst) to the
+    // pipeline. The three inputs must be _immediately_ adjacent in memory. `baseStage` must refer
+    // to an unbounded "apply_to_n_slots" stage. A TernaryOpCtx will be used to pass pointers to the
+    // destination and sources; the delta between the each pointer implicitly gives the slot count.
+    void appendAdjacentNWayTernaryOp(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
+                                     ProgramOp stage, float* dst,
+                                     const float* src0, const float* src1, int numSlots) const;
 
-    SkTArray<Instruction> fInstructions;
+    // Appends a stack_rewind op on platforms where it is needed (when SK_HAS_MUSTTAIL is not set).
+    void appendStackRewind(skia_private::TArray<Stage>* pipeline) const;
+
+    skia_private::TArray<Instruction> fInstructions;
     int fNumValueSlots = 0;
     int fNumUniformSlots = 0;
     int fNumTempStackSlots = 0;
     int fNumLabels = 0;
     SkTHashMap<int, int> fTempStackMaxDepths;
-    SkRPDebugTrace* fDebugTrace = nullptr;
+    DebugTracePriv* fDebugTrace = nullptr;
+    std::unique_ptr<SkSL::TraceHook> fTraceHook;
 };
 
 class Builder {
@@ -261,7 +266,7 @@ public:
     /** Finalizes and optimizes the program. */
     std::unique_ptr<Program> finish(int numValueSlots,
                                     int numUniformSlots,
-                                    SkRPDebugTrace* debugTrace = nullptr);
+                                    DebugTracePriv* debugTrace = nullptr);
     /**
      * Peels off a label ID for use in the program. Set the label's position in the program with
      * the `label` instruction. Actually branch to the target with an instruction like
@@ -374,11 +379,14 @@ public:
 
     void push_zeros(int count) {
         // Translates into zero_slot_unmasked in Raster Pipeline.
-        if (!fInstructions.empty() && fInstructions.back().fOp == BuilderOp::push_zeros) {
-            // Coalesce adjacent push_zero ops into a single op.
-            fInstructions.back().fImmA += count;
-        } else {
-            fInstructions.push_back({BuilderOp::push_zeros, {}, count});
+        SkASSERT(count >= 0);
+        if (count > 0) {
+            if (!fInstructions.empty() && fInstructions.back().fOp == BuilderOp::push_zeros) {
+                // Coalesce adjacent push_zero ops into a single op.
+                fInstructions.back().fImmA += count;
+            } else {
+                fInstructions.push_back({BuilderOp::push_zeros, {}, count});
+            }
         }
     }
 
@@ -404,6 +412,14 @@ public:
     void swizzle_copy_stack_to_slots(SlotRange dst,
                                      SkSpan<const int8_t> components,
                                      int offsetFromStackTop);
+
+    // Translates into swizzle_copy_to_indirect_masked (from temp stack to values) in Raster
+    // Pipeline. Does not discard any values on the temp stack.
+    void swizzle_copy_stack_to_slots_indirect(SlotRange fixedRange,
+                                              int dynamicStackID,
+                                              SlotRange limitRange,
+                                              SkSpan<const int8_t> components,
+                                              int offsetFromStackTop);
 
     // Translates into copy_slots_unmasked (from temp stack to values) in Raster Pipeline.
     // Does not discard any values on the temp stack.
@@ -442,6 +458,13 @@ public:
     // Computes a dot product on the stack. The slots consumed (`slots`) must be between 1 and 4.
     // Two n-slot input vectors are consumed, and a scalar result is pushed onto the stack.
     void dot_floats(int32_t slots);
+
+    // Computes refract(N, I, eta) on the stack. N and I are assumed to be 4-slot vectors, and can
+    // be padded with zeros for smaller inputs. Eta is a scalar. The result is a 4-slot vector.
+    void refract_floats();
+
+    // Computes inverse(matN) on the stack. Pass 2, 3 or 4 for n to specify matrix size.
+    void inverse_matrix(int32_t n);
 
     // Shrinks the temp stack, discarding values on top.
     void discard_stack(int32_t count = 1);
@@ -546,6 +569,10 @@ public:
         fInstructions.push_back({BuilderOp::push_dst_rgba, {}});
     }
 
+    void push_device_xy01() {
+        fInstructions.push_back({BuilderOp::push_device_xy01, {}});
+    }
+
     void pop_src_rg() {
         fInstructions.push_back({BuilderOp::pop_src_rg, {}});
     }
@@ -611,10 +638,39 @@ public:
         fInstructions.push_back({BuilderOp::invoke_from_linear_srgb, {}});
     }
 
+    // Writes the current line number to the debug trace.
+    void trace_line(int traceMaskStackID, int line) {
+        fInstructions.push_back({BuilderOp::trace_line, {}, traceMaskStackID, line});
+    }
+
+    // Writes a variable update to the debug trace.
+    void trace_var(int traceMaskStackID, SlotRange r) {
+        fInstructions.push_back({BuilderOp::trace_var, {r.index}, traceMaskStackID, r.count});
+    }
+
+    // Writes a variable update (via indirection) to the debug trace.
+    void trace_var_indirect(int traceMaskStackID, SlotRange fixedRange,
+                            int dynamicStackID, SlotRange limitRange);
+
+    // Writes a function-entrance to the debug trace.
+    void trace_enter(int traceMaskStackID, int funcID) {
+        fInstructions.push_back({BuilderOp::trace_enter, {}, traceMaskStackID, funcID});
+    }
+
+    // Writes a function-exit to the debug trace.
+    void trace_exit(int traceMaskStackID, int funcID) {
+        fInstructions.push_back({BuilderOp::trace_exit, {}, traceMaskStackID, funcID});
+    }
+
+    // Writes a scope-level change to the debug trace.
+    void trace_scope(int traceMaskStackID, int delta) {
+        fInstructions.push_back({BuilderOp::trace_scope, {}, traceMaskStackID, delta});
+    }
+
 private:
     void simplifyPopSlotsUnmasked(SlotRange* dst);
 
-    SkTArray<Instruction> fInstructions;
+    skia_private::TArray<Instruction> fInstructions;
     int fNumLabels = 0;
     int fExecutionMaskWritesEnabled = 0;
 };

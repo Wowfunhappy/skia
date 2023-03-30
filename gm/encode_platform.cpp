@@ -6,10 +6,10 @@
  */
 
 #include "gm/gm.h"
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkPixmap.h"
@@ -128,9 +128,9 @@ protected:
 
         for (const auto& rec : gRecs) {
             auto fmt = rec.format; int q = rec.quality;
-            auto opaqueImage   = SkImage::MakeFromEncoded(encode_data(fmt, opaqueBm,   q));
-            auto premulImage   = SkImage::MakeFromEncoded(encode_data(fmt, premulBm,   q));
-            auto unpremulImage = SkImage::MakeFromEncoded(encode_data(fmt, unpremulBm, q));
+            auto opaqueImage = SkImages::DeferredFromEncodedData(encode_data(fmt, opaqueBm, q));
+            auto premulImage = SkImages::DeferredFromEncodedData(encode_data(fmt, premulBm, q));
+            auto unpremulImage = SkImages::DeferredFromEncodedData(encode_data(fmt, unpremulBm, q));
 
             canvas->drawImage(opaqueImage.get(), 0.0f, 0.0f);
             canvas->drawImage(premulImage.get(), 0.0f, 256.0f);

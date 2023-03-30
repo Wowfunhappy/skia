@@ -19,7 +19,11 @@ class GrMockRenderTask;
 class GrOpFlushState;
 class GrResourceAllocator;
 class GrTextureResolveRenderTask;
-namespace skgpu { namespace v1 { class OpsTask; }}
+namespace skgpu {
+namespace ganesh {
+class OpsTask;
+}
+}  // namespace skgpu
 
 // This class abstracts a task that targets a single GrSurfaceProxy, participates in the
 // GrDrawingManager's DAG, and implements the onExecute method to modify its target proxy's
@@ -99,7 +103,7 @@ public:
     /*
      * Safely cast this GrRenderTask to a OpsTask (if possible).
      */
-    virtual skgpu::v1::OpsTask* asOpsTask() { return nullptr; }
+    virtual skgpu::ganesh::OpsTask* asOpsTask() { return nullptr; }
 
 #if GR_TEST_UTILS
     /*
@@ -177,7 +181,7 @@ protected:
     // List of texture proxies whose contents are being prepared on a worker thread
     // TODO: this list exists so we can fire off the proper upload when an renderTask begins
     // executing. Can this be replaced?
-    SkTArray<GrTextureProxy*, true> fDeferredProxies;
+    skia_private::TArray<GrTextureProxy*, true> fDeferredProxies;
 
     enum Flags {
         kClosed_Flag           = 0x01,   //!< This task can't accept any more dependencies.

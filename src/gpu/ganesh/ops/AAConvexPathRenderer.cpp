@@ -33,7 +33,9 @@
 #include "src/gpu/ganesh/ops/GrMeshDrawOp.h"
 #include "src/gpu/ganesh/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
 
-namespace skgpu::v1 {
+using namespace skia_private;
+
+namespace skgpu::ganesh {
 
 namespace {
 
@@ -66,7 +68,7 @@ struct Segment {
     }
 };
 
-typedef SkTArray<Segment, true> SegmentArray;
+typedef TArray<Segment, true> SegmentArray;
 
 bool center_of_mass(const SegmentArray& segments, SkPoint* c) {
     SkScalar area = 0;
@@ -365,7 +367,7 @@ struct Draw {
     int fIndexCnt;
 };
 
-typedef SkTArray<Draw, true> DrawArray;
+typedef TArray<Draw, true> DrawArray;
 
 void create_vertices(const SegmentArray& segments,
                      const SkPoint& fanPt,
@@ -932,7 +934,7 @@ bool AAConvexPathRenderer::onDrawPath(const DrawPathArgs& args) {
     return true;
 }
 
-} // namespace skgpu::v1
+}  // namespace skgpu::ganesh
 
 #if GR_TEST_UTILS
 
@@ -940,8 +942,8 @@ GR_DRAW_OP_TEST_DEFINE(AAConvexPathOp) {
     SkMatrix viewMatrix = GrTest::TestMatrixInvertible(random);
     const SkPath& path = GrTest::TestPathConvex(random);
     const GrUserStencilSettings* stencilSettings = GrGetRandomStencil(random, context);
-    return skgpu::v1::AAConvexPathOp::Make(context, std::move(paint), viewMatrix, path,
-                                           stencilSettings);
+    return skgpu::ganesh::AAConvexPathOp::Make(
+            context, std::move(paint), viewMatrix, path, stencilSettings);
 }
 
 #endif
