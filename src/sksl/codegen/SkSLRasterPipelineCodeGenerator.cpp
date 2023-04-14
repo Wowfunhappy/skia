@@ -91,7 +91,7 @@ class SlotManager {
 public:
     SlotManager(std::vector<SlotDebugInfo>* i) : fSlotDebugInfo(i) {}
 
-    /** Used by `create` to add this variable to SlotDebugInfo inside the DebugTrace. */
+    /** Used by `createSlots` to add this variable to SlotDebugInfo inside the DebugTrace. */
     void addSlotDebugInfoForGroup(const std::string& varName,
                                   const Type& type,
                                   Position pos,
@@ -122,7 +122,7 @@ public:
     int slotCount() const { return fSlotCount; }
 
 private:
-    SkTHashMap<const IRNode*, SlotRange> fSlotMap;
+    THashMap<const IRNode*, SlotRange> fSlotMap;
     int fSlotCount = 0;
     std::vector<SlotDebugInfo>* fSlotDebugInfo;
 };
@@ -145,13 +145,13 @@ public:
     /** Returns the stack ID of this AutoStack. */
     int stackID() { return fStackID; }
 
-    /** Clones values from the top of the active stack onto this one. */
+    /** Clones values from this stack onto the top of the active stack. */
     void pushClone(int slots);
 
-    /** Clones values from a fixed range of the active stack onto this one. */
+    /** Clones values from a fixed range of this stack onto the top of the active stack. */
     void pushClone(SlotRange range, int offsetFromStackTop);
 
-    /** Clones values from a dynamic range of the active stack onto this one. */
+    /** Clones values from a dynamic range of this stack onto the top of the active stack. */
     void pushCloneIndirect(SlotRange range, int dynamicStackID, int offsetFromStackTop);
 
 private:
@@ -193,7 +193,8 @@ public:
      * contained unsupported statements or expressions.
      */
     std::optional<SlotRange> writeFunction(const IRNode& callSite,
-                                           const FunctionDefinition& function);
+                                           const FunctionDefinition& function,
+                                           SkSpan<std::unique_ptr<Expression> const> arguments);
 
     /**
      * Returns the slot index of this function inside the FunctionDebugInfo array in DebugTracePriv.
@@ -339,7 +340,13 @@ public:
      */
     void emitTraceLine(Position pos);
 
-    /** Emits a trace_scope opcode, which alters the SkSL variable-scope depth. */
+    /**
+     * Emits a trace_scope opcode, which alters the SkSL variable-scope depth.
+     * Unlike the other trace ops, trace_scope takes a dedicated mask instead of the trace-scope
+     * mask. Call `pushTraceScopeMask` to synthesize this mask; discard it when you're done.
+     */
+    void pushTraceScopeMask();
+    void discardTraceScopeMask();
     void emitTraceScope(int delta);
 
     /** Prepares our position-to-line-offset conversion table (stored in `fLineOffsets`). */
@@ -389,22 +396,21 @@ public:
     BuilderOp getTypedOp(const SkSL::Type& type, const TypedOps& ops) const;
 
     Analysis::ReturnComplexity returnComplexity(const FunctionDefinition* func) {
-        Analysis::ReturnComplexity* complexity = fReturnComplexityMap.find(fCurrentFunction);
+        Analysis::ReturnComplexity* complexity = fReturnComplexityMap.find(func);
         if (!complexity) {
             complexity = fReturnComplexityMap.set(fCurrentFunction,
-                                                  Analysis::GetReturnComplexity(*fCurrentFunction));
+                                                  Analysis::GetReturnComplexity(*func));
         }
         return *complexity;
     }
 
-    bool needsReturnMask() {
-        return this->returnComplexity(fCurrentFunction) >=
-               Analysis::ReturnComplexity::kEarlyReturns;
+    bool needsReturnMask(const FunctionDefinition* func) {
+        return this->returnComplexity(func) >= Analysis::ReturnComplexity::kEarlyReturns;
     }
 
-    bool needsFunctionResultSlots() {
-        return this->returnComplexity(fCurrentFunction) >
-               Analysis::ReturnComplexity::kSingleSafeReturn;
+    bool needsFunctionResultSlots(const FunctionDefinition* func) {
+        return this->shouldWriteTraceOps() || (this->returnComplexity(func) >
+                                               Analysis::ReturnComplexity::kSingleSafeReturn);
     }
 
     static bool IsUniform(const Variable& var) {
@@ -428,7 +434,7 @@ private:
     Builder fBuilder;
     DebugTracePriv* fDebugTrace = nullptr;
     bool fWriteTraceOps = false;
-    SkTHashMap<const Variable*, int> fChildEffectMap;
+    THashMap<const Variable*, int> fChildEffectMap;
 
     SlotManager fProgramSlots;
     SlotManager fUniformSlots;
@@ -442,7 +448,7 @@ private:
     int fNextStackID = 0;
     TArray<int> fRecycledStacks;
 
-    SkTHashMap<const FunctionDefinition*, Analysis::ReturnComplexity> fReturnComplexityMap;
+    THashMap<const FunctionDefinition*, Analysis::ReturnComplexity> fReturnComplexityMap;
 
     // `fInsideCompoundStatement` will be nonzero if we are currently writing statements inside of a
     // compound-statement Block. (Conceptually those statements should all count as one.)
@@ -573,7 +579,7 @@ public:
     void enterLoopBody() {
         if (fContinueMaskStack.has_value()) {
             fContinueMaskStack->enter();
-            fGenerator->builder()->push_literal_i(0);
+            fGenerator->builder()->push_constant_i(0);
             fContinueMaskStack->exit();
         }
     }
@@ -959,7 +965,7 @@ public:
         // Multiply the index-expression result by the per-value slot count.
         int slotCount = fIndexExpr->type().slotCount();
         if (slotCount != 1) {
-            fGenerator->builder()->push_literal_i(fIndexExpr->type().slotCount());
+            fGenerator->builder()->push_constant_i(fIndexExpr->type().slotCount());
             fGenerator->builder()->binary_op(BuilderOp::mul_n_ints, 1);
         }
 
@@ -1259,29 +1265,117 @@ void Generator::setCurrentStack(int stackID) {
     }
 }
 
-std::optional<SlotRange> Generator::writeFunction(const IRNode& callSite,
-                                                  const FunctionDefinition& function) {
-    [[maybe_unused]] int funcIndex = -1;
+std::optional<SlotRange> Generator::writeFunction(
+        const IRNode& callSite,
+        const FunctionDefinition& function,
+        SkSpan<std::unique_ptr<Expression> const> arguments) {
+    // Generate debug information and emit a trace-enter op.
+    int funcIndex = -1;
     if (fDebugTrace) {
         funcIndex = this->getFunctionDebugInfo(function.declaration());
         SkASSERT(funcIndex >= 0);
-        if (fWriteTraceOps) {
+        if (this->shouldWriteTraceOps()) {
             fBuilder.trace_enter(fTraceMask->stackID(), funcIndex);
         }
     }
 
+    // Handle parameter lvalues.
+    SkSpan<Variable* const> parameters = function.declaration().parameters();
+    TArray<std::unique_ptr<LValue>> lvalues;
+    if (function.declaration().isMain()) {
+        // For main(), the parameter slots have already been populated by `writeProgram`, but we
+        // still need to explicitly emit trace ops for the variables in main(), since they are
+        // initialized before it is safe to use trace-var. (We can't invoke init-lane-masks until
+        // after we've copied the inputs from main into slots, because dst.rgba is used to pass in a
+        // blend-destination color, but we clobber it and put in the execution mask instead.)
+        if (this->shouldWriteTraceOps()) {
+            for (const Variable* var : parameters) {
+                fBuilder.trace_var(fTraceMask->stackID(), this->getVariableSlots(*var));
+            }
+        }
+    } else {
+        // Write all the arguments into their parameter's variable slots. Because we never allow
+        // recursion, we don't need to worry about overwriting any existing values in those slots.
+        // (In fact, we don't even need to apply the write mask.)
+        lvalues.resize(arguments.size());
+
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            const Expression& arg = *arguments[index];
+            const Variable& param = *parameters[index];
+
+            // Use LValues for out-parameters and inout-parameters, so we can store back to them
+            // later.
+            if (IsInoutParameter(param) || IsOutParameter(param)) {
+                lvalues[index] = this->makeLValue(arg);
+                if (!lvalues[index]) {
+                    return std::nullopt;
+                }
+                // There are no guarantees on the starting value of an out-parameter, so we only
+                // need to store the lvalues associated with an inout parameter.
+                if (IsInoutParameter(param)) {
+                    if (!this->push(*lvalues[index])) {
+                        return std::nullopt;
+                    }
+                    this->popToSlotRangeUnmasked(this->getVariableSlots(param));
+                }
+            } else {
+                // Copy input arguments into their respective parameter slots.
+                if (!this->pushExpression(arg)) {
+                    return std::nullopt;
+                }
+                this->popToSlotRangeUnmasked(this->getVariableSlots(param));
+            }
+        }
+    }
+
+    // Set up a slot range dedicated to this function's return value.
     SlotRange lastFunctionResult = fCurrentFunctionResult;
     fCurrentFunctionResult = this->getFunctionSlots(callSite, function.declaration());
 
+    // Save off the return mask.
+    if (this->needsReturnMask(&function)) {
+        fBuilder.enableExecutionMaskWrites();
+        if (!function.declaration().isMain()) {
+            fBuilder.push_return_mask();
+        }
+    }
+
+    // Emit the function body.
     if (!this->writeStatement(*function.body())) {
         return std::nullopt;
     }
 
+    // Restore the original return mask.
+    if (this->needsReturnMask(&function)) {
+        if (!function.declaration().isMain()) {
+            fBuilder.pop_return_mask();
+        }
+        fBuilder.disableExecutionMaskWrites();
+    }
+
+    // Restore the function-result slot range.
     SlotRange functionResult = fCurrentFunctionResult;
     fCurrentFunctionResult = lastFunctionResult;
 
+    // Emit a trace-exit op.
     if (fDebugTrace && fWriteTraceOps) {
         fBuilder.trace_exit(fTraceMask->stackID(), funcIndex);
+    }
+
+    // Copy out-parameters and inout-parameters back to their homes.
+    for (int index = 0; index < lvalues.size(); ++index) {
+        if (lvalues[index]) {
+            // Only out- and inout-parameters should have an associated lvalue.
+            const Variable& param = *parameters[index];
+            SkASSERT(IsInoutParameter(param) || IsOutParameter(param));
+
+            // Copy the parameter's slots directly into the lvalue.
+            fBuilder.push_slots(this->getVariableSlots(param));
+            if (!this->store(*lvalues[index])) {
+                return std::nullopt;
+            }
+            this->discardExpression(param.type().slotCount());
+        }
     }
 
     return functionResult;
@@ -1301,9 +1395,26 @@ void Generator::emitTraceLine(Position pos) {
     }
 }
 
+void Generator::pushTraceScopeMask() {
+    if (this->shouldWriteTraceOps()) {
+        // Take the intersection of the trace mask and the execution mask. To do this, start with an
+        // all-zero mask, then use select to overwrite those zeros with the trace mask across all
+        // executing lanes. We'll get the trace mask in executing lanes, and zero in dead lanes.
+        fBuilder.push_constant_i(0);
+        fTraceMask->pushClone(/*slots=*/1);
+        fBuilder.select(/*slots=*/1);
+    }
+}
+
+void Generator::discardTraceScopeMask() {
+    if (this->shouldWriteTraceOps()) {
+        this->discardExpression(/*slots=*/1);
+    }
+}
+
 void Generator::emitTraceScope(int delta) {
-    if (fDebugTrace && fWriteTraceOps) {
-        fBuilder.trace_scope(fTraceMask->stackID(), delta);
+    if (this->shouldWriteTraceOps()) {
+        fBuilder.trace_scope(this->currentStack(), delta);
     }
 }
 
@@ -1350,7 +1461,19 @@ bool Generator::writeGlobals() {
 
             if (IsUniform(*var)) {
                 // Create the uniform slot map in first-to-last order.
-                (void)this->getUniformSlots(*var);
+                SlotRange uniformSlotRange = this->getUniformSlots(*var);
+
+                if (this->shouldWriteTraceOps()) {
+                    // We expect uniform values to show up in the debug trace. To make this happen
+                    // without updating the file format, we synthesize a value-slot range for the
+                    // uniform here, and copy the uniform data into the value slots. This allows
+                    // trace_var to work naturally. This wastes a bit of memory, but debug traces
+                    // don't need to be hyper-efficient.
+                    SlotRange copyRange = fProgramSlots.getVariableSlots(*var);
+                    fBuilder.push_uniform(uniformSlotRange);
+                    this->popToSlotRangeUnmasked(copyRange);
+                }
+
                 continue;
             }
 
@@ -1365,9 +1488,19 @@ bool Generator::writeGlobals() {
 }
 
 bool Generator::writeStatement(const Statement& s) {
-    // The debugger should stop on all types of statements, except for Blocks.
-    if (!s.is<Block>()) {
-        this->emitTraceLine(s.fPosition);
+    switch (s.kind()) {
+        case Statement::Kind::kBlock:
+            // The debugger will stop on statements inside Blocks; there's no need for an additional
+            // stop on the block's initial open-brace.
+        case Statement::Kind::kFor:
+            // The debugger will stop on the init-statement of a for statement, so we don't need to
+            // stop on the outer for-statement itself as well.
+            break;
+
+        default:
+            // The debugger should stop on other statements.
+            this->emitTraceLine(s.fPosition);
+            break;
     }
 
     switch (s.kind()) {
@@ -1414,6 +1547,7 @@ bool Generator::writeBlock(const Block& b) {
         this->emitTraceLine(b.fPosition);
         ++fInsideCompoundStatement;
     } else {
+        this->pushTraceScopeMask();
         this->emitTraceScope(+1);
     }
 
@@ -1427,6 +1561,7 @@ bool Generator::writeBlock(const Block& b) {
         --fInsideCompoundStatement;
     } else {
         this->emitTraceScope(-1);
+        this->discardTraceScopeMask();
     }
 
     return true;
@@ -1446,7 +1581,7 @@ bool Generator::writeContinueStatement(const ContinueStatement&) {
 
     // Set any currently-executing lanes in the continue-mask to true via `select.`
     fCurrentContinueMask->enter();
-    fBuilder.push_literal_i(~0);
+    fBuilder.push_constant_i(~0);
     fBuilder.select(/*slots=*/1);
 
     // Disable any currently-executing lanes from the loop mask.
@@ -1519,6 +1654,7 @@ bool Generator::writeMasklessForStatement(const ForStatement& f) {
 
     // We want the loop index to disappear at the end of the loop, so wrap the for statement in a
     // trace scope.
+    this->pushTraceScopeMask();
     this->emitTraceScope(+1);
 
     // If no lanes are active, skip over the loop entirely. This guards against looping forever;
@@ -1573,6 +1709,7 @@ bool Generator::writeMasklessForStatement(const ForStatement& f) {
     fBuilder.label(loopExitID);
 
     this->emitTraceScope(-1);
+    this->discardTraceScopeMask();
     return true;
 }
 
@@ -1592,14 +1729,19 @@ bool Generator::writeForStatement(const ForStatement& f) {
 
     // We want the loop index to disappear at the end of the loop, so wrap the for statement in a
     // trace scope.
+    this->pushTraceScopeMask();
     this->emitTraceScope(+1);
 
     // Set up a break target.
     AutoLoopTarget breakTarget(this, &fCurrentBreakTarget);
 
     // Run the loop initializer.
-    if (f.initializer() && !this->writeStatement(*f.initializer())) {
-        return unsupported();
+    if (f.initializer()) {
+        if (!this->writeStatement(*f.initializer())) {
+            return unsupported();
+        }
+    } else {
+        this->emitTraceLine(f.fPosition);
     }
 
     AutoContinueMask autoContinueMask(this);
@@ -1670,6 +1812,7 @@ bool Generator::writeForStatement(const ForStatement& f) {
     fBuilder.disableExecutionMaskWrites();
 
     this->emitTraceScope(-1);
+    this->discardTraceScopeMask();
     return true;
 }
 
@@ -1764,11 +1907,11 @@ bool Generator::writeReturnStatement(const ReturnStatement& r) {
         if (!this->pushExpression(*r.expression())) {
             return unsupported();
         }
-        if (this->needsFunctionResultSlots()) {
+        if (this->needsFunctionResultSlots(fCurrentFunction)) {
             this->popToSlotRange(fCurrentFunctionResult);
         }
     }
-    if (fBuilder.executionMaskWritesAreEnabled() && this->needsReturnMask()) {
+    if (fBuilder.executionMaskWritesAreEnabled() && this->needsReturnMask(fCurrentFunction)) {
         fBuilder.mask_off_return_mask();
     }
     return true;
@@ -2449,9 +2592,9 @@ bool Generator::pushConstructorCast(const AnyConstructor& c) {
     if (inner.type().componentType().isBoolean()) {
         // Converting boolean to int or float can be accomplished via bitwise-and.
         if (c.type().componentType().isFloat()) {
-            fBuilder.push_literal_f(1.0f);
+            fBuilder.push_constant_f(1.0f);
         } else if (c.type().componentType().isSigned() || c.type().componentType().isUnsigned()) {
-            fBuilder.push_literal_i(1);
+            fBuilder.push_constant_i(1);
         } else {
             SkDEBUGFAILF("unexpected cast from bool to %s", c.type().description().c_str());
             return unsupported();
@@ -2531,85 +2674,24 @@ bool Generator::pushFunctionCall(const FunctionCall& c) {
     fCurrentFunction = c.function().definition();
 
     // Skip over the function body entirely if there are no active lanes.
-    // (If the function call was trivial, it would likely have been inlined in the frontend, so this
-    // is likely to save a significant amount of work if the lanes are all dead.)
+    // (If the function call was trivial, it would likely have been inlined in the frontend, so we
+    // assume here that function calls generally represent a significant amount of work.)
     int skipLabelID = fBuilder.nextLabelID();
     fBuilder.branch_if_no_lanes_active(skipLabelID);
 
-    // Save off the return mask.
-    if (this->needsReturnMask()) {
-        fBuilder.enableExecutionMaskWrites();
-        fBuilder.push_return_mask();
-    }
-
-    // Write all the arguments into their parameter's variable slots. Because we never allow
-    // recursion, we don't need to worry about overwriting any existing values in those slots.
-    // (In fact, we don't even need to apply the write mask.)
-    TArray<std::unique_ptr<LValue>> lvalues;
-    lvalues.resize(c.arguments().size());
-
-    for (int index = 0; index < c.arguments().size(); ++index) {
-        const Expression& arg = *c.arguments()[index];
-        const Variable& param = *c.function().parameters()[index];
-
-        // Use LValues for out-parameters and inout-parameters, so we can store back to them later.
-        if (IsInoutParameter(param) || IsOutParameter(param)) {
-            lvalues[index] = this->makeLValue(arg);
-            if (!lvalues[index]) {
-                return unsupported();
-            }
-            // There are no guarantees on the starting value of an out-parameter, so we only need to
-            // store the lvalues associated with an inout parameter.
-            if (IsInoutParameter(param)) {
-                if (!this->push(*lvalues[index])) {
-                    return unsupported();
-                }
-                this->popToSlotRangeUnmasked(this->getVariableSlots(param));
-            }
-        } else {
-            // Copy input arguments into their respective parameter slots.
-            if (!this->pushExpression(arg)) {
-                return unsupported();
-            }
-            this->popToSlotRangeUnmasked(this->getVariableSlots(param));
-        }
-    }
-
     // Emit the function body.
-    std::optional<SlotRange> r = this->writeFunction(c, *fCurrentFunction);
+    std::optional<SlotRange> r = this->writeFunction(c, *fCurrentFunction, c.arguments());
     if (!r.has_value()) {
         return unsupported();
     }
 
-    // Restore the original return mask.
-    if (this->needsReturnMask()) {
-        fBuilder.pop_return_mask();
-        fBuilder.disableExecutionMaskWrites();
-    }
-
     // If the function uses result slots, move its result from slots onto the stack.
-    if (this->needsFunctionResultSlots()) {
+    if (this->needsFunctionResultSlots(fCurrentFunction)) {
         fBuilder.push_slots(*r);
     }
 
     // We've returned back to the last function.
     fCurrentFunction = lastFunction;
-
-    // Copy out-parameters and inout-parameters back to their homes.
-    for (int index = 0; index < c.arguments().size(); ++index) {
-        if (lvalues[index]) {
-            // Only out- and inout-parameters should have an associated lvalue.
-            const Variable& param = *c.function().parameters()[index];
-            SkASSERT(IsInoutParameter(param) || IsOutParameter(param));
-
-            // Copy the parameter's slots directly into the lvalue.
-            fBuilder.push_slots(this->getVariableSlots(param));
-            if (!this->store(*lvalues[index])) {
-                return unsupported();
-            }
-            this->discardExpression(param.type().slotCount());
-        }
-    }
 
     // Copy the function result from its slots onto the stack.
     fBuilder.label(skipLabelID);
@@ -2875,7 +2957,7 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
                 return unsupported();
             }
             // The intrinsics accept a three-component value; add alpha for the push/pop_src_rgba
-            fBuilder.push_literal_f(1.0f);
+            fBuilder.push_constant_f(1.0f);
             // Copy arguments from the stack into src
             fBuilder.pop_src_rgba();
 
@@ -3044,7 +3126,7 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             // Stack: I, N, dot(I,N)
             fBuilder.dot_floats(slotCount);
             // Stack: I, N, dot(I,N), 2
-            fBuilder.push_literal_f(2.0);
+            fBuilder.push_constant_f(2.0);
             // Stack: I, N, dot(I,N) * 2
             fBuilder.binary_op(BuilderOp::mul_n_floats, 1);
             // Stack: I, N * dot(I,N) * 2
@@ -3112,7 +3194,7 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             if (!this->pushExpression(arg0)) {
                 return unsupported();
             }
-            fBuilder.push_literal_f(0.0);
+            fBuilder.push_constant_f(0.0);
             if (!this->pushExpression(arg1) || !this->pushExpression(arg2)) {
                 return unsupported();
             }
@@ -3121,7 +3203,7 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
             // Stack: N, (0 <= dot(I,NRef))
             fBuilder.binary_op(BuilderOp::cmple_n_floats, 1);
             // Stack: N, (0 <= dot(I,NRef)), 0x80000000
-            fBuilder.push_literal_i(0x80000000);
+            fBuilder.push_constant_i(0x80000000);
             // Stack: N, (0 <= dot(I,NRef)) & 0x80000000)
             fBuilder.binary_op(BuilderOp::bitwise_and_n_ints, 1);
             // Stack: N, vec(0 <= dot(I,NRef)) & 0x80000000)
@@ -3203,19 +3285,19 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic,
 bool Generator::pushLiteral(const Literal& l) {
     switch (l.type().numberKind()) {
         case Type::NumberKind::kFloat:
-            fBuilder.push_literal_f(l.floatValue());
+            fBuilder.push_constant_f(l.floatValue());
             return true;
 
         case Type::NumberKind::kSigned:
-            fBuilder.push_literal_i(l.intValue());
+            fBuilder.push_constant_i(l.intValue());
             return true;
 
         case Type::NumberKind::kUnsigned:
-            fBuilder.push_literal_u(l.intValue());
+            fBuilder.push_constant_u(l.intValue());
             return true;
 
         case Type::NumberKind::kBoolean:
-            fBuilder.push_literal_i(l.boolValue() ? ~0 : 0);
+            fBuilder.push_constant_i(l.boolValue() ? ~0 : 0);
             return true;
 
         default:
@@ -3539,8 +3621,8 @@ bool Generator::writeProgram(const FunctionDefinition& function) {
             fTraceMask->enter();
             fBuilder.push_device_xy01();
             fBuilder.discard_stack(2);
-            fBuilder.push_literal_f(fDebugTrace->fTraceCoord.fX + 0.5f);
-            fBuilder.push_literal_f(fDebugTrace->fTraceCoord.fY + 0.5f);
+            fBuilder.push_constant_f(fDebugTrace->fTraceCoord.fX + 0.5f);
+            fBuilder.push_constant_f(fDebugTrace->fTraceCoord.fY + 0.5f);
             fBuilder.binary_op(BuilderOp::cmpeq_n_floats, 2);
             fBuilder.binary_op(BuilderOp::bitwise_and_n_ints, 1);
             fTraceMask->exit();
@@ -3590,22 +3672,14 @@ bool Generator::writeProgram(const FunctionDefinition& function) {
     }
 
     // Invoke main().
-    if (this->needsReturnMask()) {
-        fBuilder.enableExecutionMaskWrites();
-    }
-
-    std::optional<SlotRange> mainResult = this->writeFunction(function, function);
+    std::optional<SlotRange> mainResult = this->writeFunction(function, function, /*arguments=*/{});
     if (!mainResult.has_value()) {
         return unsupported();
     }
 
-    if (this->needsReturnMask()) {
-        fBuilder.disableExecutionMaskWrites();
-    }
-
     // Move the result of main() from slots into RGBA. Allow dRGBA to remain in a trashed state.
     SkASSERT(mainResult->count == 4);
-    if (this->needsFunctionResultSlots()) {
+    if (this->needsFunctionResultSlots(fCurrentFunction)) {
         fBuilder.load_src(*mainResult);
     } else {
         fBuilder.pop_src_rgba();

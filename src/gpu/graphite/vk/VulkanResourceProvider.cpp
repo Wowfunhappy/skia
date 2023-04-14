@@ -15,13 +15,16 @@
 #include "src/gpu/graphite/Texture.h"
 #include "src/gpu/graphite/vk/VulkanBuffer.h"
 #include "src/gpu/graphite/vk/VulkanCommandBuffer.h"
+#include "src/gpu/graphite/vk/VulkanSampler.h"
 #include "src/gpu/graphite/vk/VulkanSharedContext.h"
+#include "src/gpu/graphite/vk/VulkanTexture.h"
 
 namespace skgpu::graphite {
 
 VulkanResourceProvider::VulkanResourceProvider(SharedContext* sharedContext,
-                                               SingleOwner* singleOwner)
-        : ResourceProvider(sharedContext, singleOwner) {}
+                                               SingleOwner* singleOwner,
+                                               uint32_t recorderID)
+        : ResourceProvider(sharedContext, singleOwner, recorderID) {}
 
 VulkanResourceProvider::~VulkanResourceProvider() {}
 
@@ -44,8 +47,9 @@ sk_sp<ComputePipeline> VulkanResourceProvider::createComputePipeline(const Compu
     return nullptr;
 }
 
-sk_sp<Texture> VulkanResourceProvider::createTexture(SkISize, const TextureInfo&, skgpu::Budgeted) {
-    return nullptr;
+sk_sp<Texture> VulkanResourceProvider::createTexture(SkISize size, const TextureInfo& info,
+                                                     skgpu::Budgeted budgeted) {
+    return VulkanTexture::Make(this->vulkanSharedContext(), size, info, budgeted);
 }
 
 sk_sp<Buffer> VulkanResourceProvider::createBuffer(size_t size,
@@ -54,10 +58,10 @@ sk_sp<Buffer> VulkanResourceProvider::createBuffer(size_t size,
     return VulkanBuffer::Make(this->vulkanSharedContext(), size, type, prioritizeGpuReads);
 }
 
-sk_sp<Sampler> VulkanResourceProvider::createSampler(const SkSamplingOptions&,
+sk_sp<Sampler> VulkanResourceProvider::createSampler(const SkSamplingOptions& samplingOptions,
                                                      SkTileMode xTileMode,
                                                      SkTileMode yTileMode) {
-    return nullptr;
+    return VulkanSampler::Make(this->vulkanSharedContext(), samplingOptions, xTileMode, yTileMode);
 }
 
 BackendTexture VulkanResourceProvider::onCreateBackendTexture(SkISize dimensions,

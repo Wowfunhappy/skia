@@ -9,6 +9,34 @@ Milestone 114
     hue method options are based on the CSS Color Level 4 specfication:
     * https://www.w3.org/TR/css-color-4/#interpolation-space
     * https://www.w3.org/TR/css-color-4/#hue-interpolation
+  * `SkImages::GetBackendTextureFromImage` has been renamed `SkImages::MakeBackendTextureFromImage`.
+  * `SkImage::getBackendTexture()` has been moved to `SkImages::GetBackendTextureFromImage()` in
+    `SkImageGanesh.h`.
+  * `SkImage::makeTextureImage()` has been moved to `SkImages::TextureFromImage()` in
+    `SkImageGanesh.h`.
+  * `SkImage::flush()` and `SkImage::flushAndSubmit()` has been moved to
+    `GrDirectContext::flush()` and `GrDirectContext::flushAndSubmit()` in `SkImageGanesh.h`.
+  * `SkSurfaceProperties::kAlwaysDither_Flag` added to globally enable dithering for a specific
+    `SkSurface` target.
+  * `SkSerialImageProc` and `SkDeserialImageProc` are now also used to encode/decode the SkMipmap
+    layers of certain SkImages.
+  * The defines `SK_USE_WIC_ENCODER` and `SK_USE_CG_ENCODER` have been removed, as well as the code
+    to use the Windows Image Codecs and Core Graphics as a way to have Skia encode files in PNG,
+    JPEG, and WEBP format. Skia continues to support use of the NDK codecs on Android, as well
+    as using external C++ libraries (e.g. libpng, libjpeg-turbo) to *encode* images. WIC and CG
+    are still used to *decode* images on the appropriate platforms.
+  * `SkImage::encodeToData` has been deprecated. Clients should use `refEncodedData` if the image
+    was from an encoded bytestream or one of `SkPngEncoder::Encode`, `SkJpegEncoder::Encode`,
+    `SkWebpEncoder::Encode` directly.
+  * The following defines no longer do anything. GN clients should instead set the provided
+    arguments (from gn/skia.gni) as necessary:
+      - `SK_ENCODE_PNG` -> `skia_use_libjpeg_turbo_encode`
+      - `SK_ENCODE_JPEG` -> `skia_use_libpng_encode`
+      - `SK_ENCODE_WEBP` -> `skia_use_libwebp_encode`
+    Other clients should make sure the appropriate `*EncoderImpl.cpp` files from `src/encode` are
+    included in the build.
+  * `SkImageEncoder` has been deprecated. Clients should use one of `SkPngEncoder::Encode`,
+    `SkJpegEncoder::Encode` or `SkWebpEncoder::Encode` directly.
 
 * * *
 

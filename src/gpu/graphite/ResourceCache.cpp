@@ -11,17 +11,22 @@
 #include "src/base/SkRandom.h"
 #include "src/core/SkTMultiMap.h"
 #include "src/gpu/graphite/GraphiteResourceKey.h"
+#include "src/gpu/graphite/ProxyCache.h"
 #include "src/gpu/graphite/Resource.h"
 
 namespace skgpu::graphite {
 
 #define ASSERT_SINGLE_OWNER SKGPU_ASSERT_SINGLE_OWNER(fSingleOwner)
 
-sk_sp<ResourceCache> ResourceCache::Make(SingleOwner* singleOwner) {
-    return sk_sp<ResourceCache>(new ResourceCache(singleOwner));
+sk_sp<ResourceCache> ResourceCache::Make(SingleOwner* singleOwner, uint32_t recorderID) {
+    return sk_sp<ResourceCache>(new ResourceCache(singleOwner, recorderID));
 }
 
-ResourceCache::ResourceCache(SingleOwner* singleOwner) : fSingleOwner(singleOwner) {
+ResourceCache::ResourceCache(SingleOwner* singleOwner, uint32_t recorderID)
+        : fSingleOwner(singleOwner) {
+    if (recorderID != SK_InvalidGenID) {
+        fProxyCache = std::make_unique<ProxyCache>(recorderID);
+    }
     // TODO: Maybe when things start using ResourceCache, then like Ganesh the compiler won't
     // complain about not using fSingleOwner in Release builds and we can delete this.
 #ifndef SK_DEBUG
@@ -87,8 +92,10 @@ void ResourceCache::insertResource(Resource* resource) {
     if (resource->key().shareable() == Shareable::kYes) {
         fResourceMap.insert(resource->key(), resource);
     }
-    // TODO: If the resource is budgeted update our memory usage. Then purge resources if adding
-    // this one put us over budget (when we actually have a budget).
+
+    if (resource->budgeted() == skgpu::Budgeted::kYes) {
+        fBudgetedBytes += resource->gpuMemorySize();
+    }
 }
 
 Resource* ResourceCache::findAndRefResource(const GraphiteResourceKey& key,
@@ -108,9 +115,8 @@ Resource* ResourceCache::findAndRefResource(const GraphiteResourceKey& key,
             // so that it isn't found again.
             fResourceMap.remove(key, resource);
             if (budgeted == skgpu::Budgeted::kNo) {
-                // TODO: Once we track our budget we also need to decrease our usage here since the
-                // resource no longer counts against the budget.
                 resource->makeUnbudgeted();
+                fBudgetedBytes -= resource->gpuMemorySize();
             }
             SkDEBUGCODE(resource->fNonShareableInCache = false;)
         } else {
@@ -236,8 +242,8 @@ void ResourceCache::returnResourceToCache(Resource* resource, LastRemovedRef rem
             SkDEBUGCODE(resource->fNonShareableInCache = true;)
             fResourceMap.insert(resource->key(), resource);
             if (resource->budgeted() == skgpu::Budgeted::kNo) {
-                // TODO: Update budgeted tracking
                 resource->makeBudgeted();
+                fBudgetedBytes += resource->gpuMemorySize();
             }
         }
     }
@@ -393,6 +399,7 @@ void ResourceCache::validate() const {
     struct Stats {
         int fShareable;
         int fScratch;
+        size_t fBudgetedBytes;
         const ResourceMap* fResourceMap;
 
         Stats(const ResourceCache* cache) {
@@ -429,6 +436,10 @@ void ResourceCache::validate() const {
                 ++fShareable;
                 SkASSERT(fResourceMap->has(resource, key));
                 SkASSERT(resource->budgeted() == skgpu::Budgeted::kYes);
+            }
+
+            if (resource->budgeted() == skgpu::Budgeted::kYes) {
+                fBudgetedBytes += resource->gpuMemorySize();
             }
         }
     };
@@ -469,6 +480,7 @@ void ResourceCache::validate() const {
     }
 
     SkASSERT((stats.fScratch + stats.fShareable) == fResourceMap.count());
+    SkASSERT(stats.fBudgetedBytes == fBudgetedBytes);
 }
 
 bool ResourceCache::isInCache(const Resource* resource) const {

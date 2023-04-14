@@ -100,6 +100,7 @@
     M(alter_2pt_conical_unswap)                                    \
     M(mask_2pt_conical_nan)                                        \
     M(mask_2pt_conical_degenerates) M(apply_vector_mask)           \
+    M(set_base_pointer)                                            \
     /* Dedicated SkSL stages begin here: */                                                   \
     M(init_lane_masks) M(store_device_xy01)                                                   \
     M(load_condition_mask) M(store_condition_mask) M(merge_condition_mask)                    \
@@ -133,14 +134,13 @@
     M(asin_float)       M(acos_float)          M(atan_float)          M(atan2_n_floats)       \
     M(sqrt_float)       M(pow_n_floats)        M(exp_float)           M(exp2_float)           \
     M(log_float)        M(log2_float)          M(refract_4_floats)                            \
-    M(copy_constant)    M(copy_2_constants)    M(copy_3_constants)    M(copy_4_constants)     \
+    M(copy_uniform)     M(copy_2_uniforms)     M(copy_3_uniforms)     M(copy_4_uniforms)      \
+    M(copy_constant)    M(splat_2_constants)   M(splat_3_constants)   M(splat_4_constants)    \
     M(copy_slot_masked) M(copy_2_slots_masked) M(copy_3_slots_masked) M(copy_4_slots_masked)  \
     M(copy_from_indirect_unmasked) M(copy_from_indirect_uniform_unmasked)                     \
     M(copy_to_indirect_masked)     M(swizzle_copy_to_indirect_masked)                         \
     M(copy_slot_unmasked)          M(copy_2_slots_unmasked)                                   \
     M(copy_3_slots_unmasked)       M(copy_4_slots_unmasked)                                   \
-    M(zero_slot_unmasked)          M(zero_2_slots_unmasked)                                   \
-    M(zero_3_slots_unmasked)       M(zero_4_slots_unmasked)                                   \
     M(swizzle_copy_slot_masked)    M(swizzle_copy_2_slots_masked)                             \
     M(swizzle_copy_3_slots_masked) M(swizzle_copy_4_slots_masked)                             \
     M(swizzle_1) M(swizzle_2) M(swizzle_3) M(swizzle_4) M(shuffle)                            \

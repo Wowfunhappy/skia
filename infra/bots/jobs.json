@@ -69,7 +69,10 @@
    },
   {"name": "Build-Debian10-Clang-arm64-Debug-Android_API30"},
   {"name": "Build-Debian10-Clang-arm64-Debug-Android_FrameworkWorkarounds"},
-  {"name": "Build-Debian10-Clang-arm64-Debug-Android_Graphite_Dawn"},
+  {"name": "Build-Debian10-Clang-arm64-Debug-Android_Graphite_Dawn",
+   "cq_config": {"location_regexes": ["(tests|src/gpu)/graphite/.*",
+     "bazel/external/dawn/*", "DEPS"]}
+  },
   {"name": "Build-Debian10-Clang-arm64-Debug-Android_Graphite_Vulkan"},
   {"name": "Build-Debian10-Clang-arm64-Debug-Android_HWASAN"},
   {"name": "Build-Debian10-Clang-arm64-Debug-Android_Vulkan"},
@@ -108,7 +111,7 @@
    },
   {"name": "Build-Debian10-Clang-x86_64-Debug-Graphite_Dawn"},
   {"name": "Build-Debian10-Clang-x86_64-Debug-Graphite_Vulkan",
-   "cq_config": {"location_regexes": ["(tests|src/gpu)/graphite/.*"]}
+   "cq_config": {}
    },
   {"name": "Build-Debian10-Clang-x86_64-Debug-Vulkan"},
   {"name": "Build-Debian10-Clang-x86_64-Debug-Wuffs",
@@ -278,7 +281,9 @@
   {"name": "Build-Win-MSVC-x86-Release"},
   {"name": "Build-Win-MSVC-x86_64-Debug"},
   {"name": "Build-Win-MSVC-x86_64-Debug-Direct3D"},
-  {"name": "Build-Win-MSVC-x86_64-Debug-Graphite_Dawn"},
+  {"name": "Build-Win-MSVC-x86_64-Debug-Graphite_Dawn",
+   "cq_config": {}
+   },
   {"name": "Build-Win-MSVC-x86_64-Debug-Graphite_Vulkan",
    "cq_config": {"location_regexes": ["(tests|src/gpu)/graphite/.*"]}
    },

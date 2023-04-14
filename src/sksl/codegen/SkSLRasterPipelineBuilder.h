@@ -10,8 +10,8 @@
 #include "include/private/base/SkTArray.h"
 #include "src/base/SkUtils.h"
 #include "src/core/SkRasterPipelineOpList.h"
-#include "src/core/SkTHash.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
@@ -19,6 +19,7 @@
 class SkArenaAlloc;
 class SkRasterPipeline;
 class SkWStream;
+using SkRPOffset = uint32_t;
 
 namespace SkSL {
 
@@ -80,18 +81,18 @@ enum class BuilderOp {
 
     // ... and also has Builder-specific ops. These ops generally interface with the stack, and are
     // converted into ProgramOps during `makeStages`.
-    push_literal,
+    push_constant,
     push_slots,
     push_slots_indirect,
     push_uniform,
     push_uniform_indirect,
-    push_zeros,
     push_clone,
     push_clone_from_stack,
     push_clone_indirect_from_stack,
     copy_stack_to_slots,
     copy_stack_to_slots_unmasked,
     copy_stack_to_slots_indirect,
+    copy_uniform_to_slots_unmasked,
     swizzle_copy_stack_to_slots,
     swizzle_copy_stack_to_slots_indirect,
     discard_stack,
@@ -168,8 +169,10 @@ public:
 
     void dump(SkWStream* out) const;
 
+    int numUniforms() const { return fNumUniformSlots; }
+
 private:
-    using StackDepthMap = SkTHashMap<int, int>; // <stack index, depth of stack>
+    using StackDepths = skia_private::TArray<int>; // [stack index] = depth of stack
 
     struct SlotData {
         SkSpan<float> values;
@@ -186,18 +189,25 @@ private:
                     SkSpan<const float> uniforms,
                     const SlotData& slots) const;
     void optimize();
-    StackDepthMap tempStackMaxDepths() const;
+    StackDepths tempStackMaxDepths() const;
 
-    // These methods are used to split up large multi-slot operations into multiple ops as needed.
-    void appendCopy(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
+    // These methods are used to split up multi-slot copies into multiple ops as needed.
+    void appendCopy(skia_private::TArray<Stage>* pipeline,
+                    SkArenaAlloc* alloc,
                     ProgramOp baseStage,
-                    float* dst, int dstStride, const float* src, int srcStride, int numSlots) const;
-    void appendCopySlotsUnmasked(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
-                                 float* dst, const float* src, int numSlots) const;
-    void appendCopySlotsMasked(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
-                               float* dst, const float* src, int numSlots) const;
-    void appendCopyConstants(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
-                             float* dst, const float* src, int numSlots) const;
+                    SkRPOffset dst,
+                    SkRPOffset src,
+                    int numSlots) const;
+    void appendCopySlotsUnmasked(skia_private::TArray<Stage>* pipeline,
+                                 SkArenaAlloc* alloc,
+                                 SkRPOffset dst,
+                                 SkRPOffset src,
+                                 int numSlots) const;
+    void appendCopySlotsMasked(skia_private::TArray<Stage>* pipeline,
+                               SkArenaAlloc* alloc,
+                               SkRPOffset dst,
+                               SkRPOffset src,
+                               int numSlots) const;
 
     // Appends a single-slot single-input math operation to the pipeline. The op `stage` will
     // appended `numSlots` times, starting at position `dst` and advancing one slot for each
@@ -207,8 +217,8 @@ private:
 
     // Appends a multi-slot single-input math operation to the pipeline. `baseStage` must refer to
     // an single-slot "apply_op" stage, which must be immediately followed by specializations for
-    // 2-4 slots. For instance, {`zero_slot`, `zero_2_slots`, `zero_3_slots`, `zero_4_slots`}
-    // must be contiguous ops in the stage list, listed in that order; pass `zero_slot` and we
+    // 2-4 slots. For instance, {`ceil_float`, `ceil_2_floats`, `ceil_3_floats`, `ceil_4_floats`}
+    // must be contiguous ops in the stage list, listed in that order; pass `ceil_float` and we
     // pick the appropriate op based on `numSlots`.
     void appendMultiSlotUnaryOp(skia_private::TArray<Stage>* pipeline, ProgramOp baseStage,
                                 float* dst, int numSlots) const;
@@ -219,7 +229,7 @@ private:
     // pointers implicitly gives the number of slots.
     void appendAdjacentNWayBinaryOp(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
                                     ProgramOp stage,
-                                    float* dst, const float* src, int numSlots) const;
+                                    SkRPOffset dst, SkRPOffset src, int numSlots) const;
 
     // Appends a multi-slot two-input math operation to the pipeline. `src` must be _immediately_
     // after `dst` in memory. `baseStage` must refer to an unbounded "apply_to_n_slots" stage, which
@@ -228,8 +238,8 @@ private:
     // stage list, listed in that order; pass `add_n_floats` and we pick the appropriate op based on
     // `numSlots`.
     void appendAdjacentMultiSlotBinaryOp(skia_private::TArray<Stage>* pipeline, SkArenaAlloc* alloc,
-                                         ProgramOp baseStage,
-                                         float* dst, const float* src, int numSlots) const;
+                                         ProgramOp baseStage, std::byte* basePtr,
+                                         SkRPOffset dst, SkRPOffset src, int numSlots) const;
 
     // Appends a multi-slot math operation having three inputs (dst, src0, src1) and one output
     // (dst) to the pipeline. The three inputs must be _immediately_ adjacent in memory. `baseStage`
@@ -256,7 +266,7 @@ private:
     int fNumUniformSlots = 0;
     int fNumTempStackSlots = 0;
     int fNumLabels = 0;
-    SkTHashMap<int, int> fTempStackMaxDepths;
+    StackDepths fTempStackMaxDepths;
     DebugTracePriv* fDebugTrace = nullptr;
     std::unique_ptr<SkSL::TraceHook> fTraceHook;
 };
@@ -352,43 +362,31 @@ public:
     void branch_if_no_active_lanes_on_stack_top_equal(int value, int labelID);
 
     // We use the same SkRasterPipeline op regardless of the literal type, and bitcast the value.
-    void push_literal_f(float val) {
-        this->push_literal_i(sk_bit_cast<int32_t>(val));
+    void push_constant_i(int32_t val, int count = 1);
+
+    void push_zeros(int count) {
+        this->push_constant_i(/*val=*/0, count);
     }
 
-    void push_literal_i(int32_t val) {
-        if (val == 0) {
-            this->push_zeros(1);
-        } else {
-            fInstructions.push_back({BuilderOp::push_literal, {}, val});
-        }
+    void push_constant_f(float val) {
+        this->push_constant_i(sk_bit_cast<int32_t>(val), /*count=*/1);
     }
 
-    void push_literal_u(uint32_t val) {
-        this->push_literal_i(sk_bit_cast<int32_t>(val));
+    void push_constant_u(uint32_t val) {
+        this->push_constant_i(sk_bit_cast<int32_t>(val), /*count=*/1);
     }
 
-    // Translates into copy_constants (from uniforms into temp stack) in Raster Pipeline.
+    // Translates into copy_uniforms (from uniforms into temp stack) in Raster Pipeline.
     void push_uniform(SlotRange src);
+
+    // Translates into copy_uniforms (from uniforms into value-slots) in Raster Pipeline.
+    void copy_uniform_to_slots_unmasked(SlotRange dst, SlotRange src);
 
     // Translates into copy_from_indirect_uniform_unmasked (from values into temp stack) in Raster
     // Pipeline. `fixedRange` denotes a fixed set of slots; this range is pushed forward by the
     // value at the top of stack `dynamicStack`. Pass the range of the uniform being indexed as
     // `limitRange`; this is used as a hard cap, to avoid indexing outside of bounds.
     void push_uniform_indirect(SlotRange fixedRange, int dynamicStack, SlotRange limitRange);
-
-    void push_zeros(int count) {
-        // Translates into zero_slot_unmasked in Raster Pipeline.
-        SkASSERT(count >= 0);
-        if (count > 0) {
-            if (!fInstructions.empty() && fInstructions.back().fOp == BuilderOp::push_zeros) {
-                // Coalesce adjacent push_zero ops into a single op.
-                fInstructions.back().fImmA += count;
-            } else {
-                fInstructions.push_back({BuilderOp::push_zeros, {}, count});
-            }
-        }
-    }
 
     // Translates into copy_slots_unmasked (from values into temp stack) in Raster Pipeline.
     void push_slots(SlotRange src);
@@ -477,10 +475,7 @@ public:
 
     // Creates a single clone of an item on the current temp stack. The cloned item can consist of
     // any number of slots, and can be copied from an earlier position on the stack.
-    void push_clone(int numSlots, int offsetFromStackTop = 0) {
-        fInstructions.push_back({BuilderOp::push_clone, {}, numSlots,
-                                 numSlots + offsetFromStackTop});
-    }
+    void push_clone(int numSlots, int offsetFromStackTop = 0);
 
     // Clones a range of slots from another stack onto this stack.
     void push_clone_from_stack(SlotRange range, int otherStackID, int offsetFromStackTop);
@@ -516,9 +511,8 @@ public:
 
     void copy_slots_unmasked(SlotRange dst, SlotRange src);
 
-    void copy_constant(Slot slot, int constantValue) {
-        fInstructions.push_back({BuilderOp::copy_constant, {slot}, constantValue});
-    }
+    // Directly writes a constant value into a slot.
+    void copy_constant(Slot slot, int constantValue);
 
     // Stores zeros across the entire slot range.
     void zero_slots_unmasked(SlotRange dst);

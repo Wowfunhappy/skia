@@ -27,6 +27,7 @@
 #include "include/core/SkSize.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkSurface.h"
+#include "include/encode/SkPngEncoder.h"
 #include "include/pathops/SkPathOps.h"
 #include "include/private/base/SkTDArray.h"
 #include "include/private/base/SkTemplates.h"
@@ -785,7 +786,7 @@ void TestSVGTypeface::exportTtxCbdt(SkWStream* out, SkSpan<unsigned> strikeSizes
     this->getFamilyName(&name);
 
     // The CBDT/CBLC format is quite restrictive. Only write strikes which fully fit.
-    SkSTArray<8, int> goodStrikeSizes;
+    STArray<8, int> goodStrikeSizes;
     for (size_t strikeIndex = 0; strikeIndex < strikeSizes.size(); ++strikeIndex) {
         font.setSize(strikeSizes[strikeIndex]);
 
@@ -864,7 +865,7 @@ void TestSVGTypeface::exportTtxCbdt(SkWStream* out, SkSpan<unsigned> strikeSizes
                                    paint);
             surface->flushAndSubmit();
             sk_sp<SkImage> image = surface->makeImageSnapshot();
-            sk_sp<SkData>  data  = image->encodeToData(SkEncodedImageFormat::kPNG, 100);
+            sk_sp<SkData> data = SkPngEncoder::Encode(nullptr, image.get(), {});
 
             out->writeText("      <cbdt_bitmap_format_17 name=\"glyf");
             out->writeHexAsText(i, 4);
@@ -1086,7 +1087,7 @@ void TestSVGTypeface::exportTtxSbix(SkWStream* out, SkSpan<unsigned> strikeSizes
                                    paint);
             surface->flushAndSubmit();
             sk_sp<SkImage> image = surface->makeImageSnapshot();
-            sk_sp<SkData>  data  = image->encodeToData(SkEncodedImageFormat::kPNG, 100);
+            sk_sp<SkData> data = SkPngEncoder::Encode(nullptr, image.get(), {});
 
             // The originOffset values are difficult to use as DirectWrite and FreeType interpret
             // the origin to be the initial glyph position on the baseline, but CoreGraphics
@@ -1246,7 +1247,7 @@ public:
                  const TestSVGTypeface&     typeface,
                  SkGlyphID                  glyphId,
                  TestSVGTypeface::GlyfInfo* glyf,
-                 SkTHashMap<SkColor, int>*  colors,
+                 THashMap<SkColor, int>*    colors,
                  SkWStream*                 out)
             : SkNoDrawCanvas(glyphBounds.roundOut().width(), glyphBounds.roundOut().height())
             , fBaselineOffset(glyphBounds.top())
@@ -1431,7 +1432,7 @@ private:
     const TestSVGTypeface&     fTypeface;
     SkGlyphID                  fGlyphId;
     TestSVGTypeface::GlyfInfo* fGlyf;
-    SkTHashMap<SkColor, int>*  fColors;
+    THashMap<SkColor, int>*    fColors;
     SkWStream* const           fOut;
     SkOpBuilder                fBasePath;
     int                        fLayerId;
@@ -1443,7 +1444,7 @@ void TestSVGTypeface::exportTtxColr(SkWStream* out) const {
     out->writeText("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out->writeText("<ttFont sfntVersion=\"\\x00\\x01\\x00\\x00\" ttLibVersion=\"3.19\">\n");
 
-    SkTHashMap<SkColor, int> colors;
+    THashMap<SkColor, int> colors;
     TArray<GlyfInfo>       glyfInfos(fGlyphCount);
 
     // Need to know all the glyphs up front for the common tables.

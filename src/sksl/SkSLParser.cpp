@@ -469,7 +469,7 @@ bool Parser::functionDeclarationEnd(Position start,
                                     DSLModifiers& modifiers,
                                     DSLType type,
                                     const Token& name) {
-    SkSTArray<8, DSLParameter> parameters;
+    STArray<8, DSLParameter> parameters;
     Token lookahead = this->peek();
     if (lookahead.fKind == Token::Kind::TK_RPAREN) {
         // `()` means no parameters at all.
@@ -492,7 +492,7 @@ bool Parser::functionDeclarationEnd(Position start,
     if (!this->expect(Token::Kind::TK_RPAREN, "')'")) {
         return false;
     }
-    SkSTArray<8, DSLParameter*> parameterPointers;
+    STArray<8, DSLParameter*> parameterPointers;
     parameterPointers.reserve_back(parameters.size());
     for (DSLParameter& param : parameters) {
         parameterPointers.push_back(&param);
@@ -743,7 +743,7 @@ DSLType Parser::structDeclaration() {
         return DSLType(nullptr);
     }
     TArray<DSLField> fields;
-    SkTHashSet<std::string_view> fieldNames;
+    THashSet<std::string_view> fieldNames;
     while (!this->checkNext(Token::Kind::TK_RBRACE)) {
         Token fieldStart = this->peek();
         DSLModifiers modifiers = this->modifiers();
@@ -886,7 +886,7 @@ DSLLayout Parser::layout() {
         WGSL
     };
 
-    using LayoutMap = SkTHashMap<std::string_view, LayoutToken>;
+    using LayoutMap = THashMap<std::string_view, LayoutToken>;
     static LayoutMap* sLayoutTokens = new LayoutMap{
             {"location",                    LayoutToken::LOCATION},
             {"offset",                      LayoutToken::OFFSET},
@@ -1110,7 +1110,7 @@ bool Parser::interfaceBlock(const dsl::DSLModifiers& modifiers) {
     }
     this->nextToken();
     TArray<DSLField> fields;
-    SkTHashSet<std::string_view> fieldNames;
+    THashSet<std::string_view> fieldNames;
     while (!this->checkNext(Token::Kind::TK_RBRACE)) {
         Position fieldPos = this->position(this->peek());
         DSLModifiers fieldModifiers = this->modifiers();

@@ -90,7 +90,7 @@ public:
     TArray<V>&& detach() { return std::move(fIndexToData); }
 
 private:
-    SkTHashMap<T, Index> fDataToIndex;
+    THashMap<T, Index> fDataToIndex;
     TArray<V> fIndexToData;
 };
 
@@ -632,9 +632,9 @@ bool DrawPass::prepareResources(ResourceProvider* resourceProvider,
     fSamplers.reserve_back(fSamplerDescs.size());
     for (int i = 0; i < fSamplerDescs.size(); ++i) {
         sk_sp<Sampler> sampler = resourceProvider->findOrCreateCompatibleSampler(
-                fSamplerDescs[i].fSamplingOptions,
-                fSamplerDescs[i].fTileModes[0],
-                fSamplerDescs[i].fTileModes[1]);
+                fSamplerDescs[i].samplingOptions(),
+                fSamplerDescs[i].tileModeX(),
+                fSamplerDescs[i].tileModeY());
         if (!sampler) {
             SKGPU_LOG_W("Failed to create sampler. Will not create renderpass!");
             return false;

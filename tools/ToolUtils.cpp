@@ -24,6 +24,7 @@
 #include "include/core/SkShader.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTextBlob.h"
+#include "include/encode/SkPngEncoder.h"
 #include "include/private/SkColorData.h"
 #include "include/private/base/SkFloatingPoint.h"
 #include "src/core/SkFontPriv.h"
@@ -45,6 +46,7 @@
 #if defined(SK_GANESH)
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #endif
@@ -583,7 +585,7 @@ sk_sp<SkImage> MakeTextureImage(SkCanvas* canvas, sk_sp<SkImage> orig) {
             return orig;
         }
 
-        return orig->makeTextureImage(dContext);
+        return SkImages::TextureFromImage(dContext, orig);
     }
 #if defined(SK_GRAPHITE)
     else if (canvas->recorder()) {
@@ -736,5 +738,15 @@ skgpu::graphite::RecorderOptions CreateTestingRecorderOptions() {
 }
 
 #endif // SK_GRAPHITE
+
+bool EncodeImageToPngFile(const char* path, const SkBitmap& src) {
+    SkFILEWStream file(path);
+    return file.isValid() && SkPngEncoder::Encode(&file, src.pixmap(), {});
+}
+
+bool EncodeImageToPngFile(const char* path, const SkPixmap& src) {
+    SkFILEWStream file(path);
+    return file.isValid() && SkPngEncoder::Encode(&file, src, {});
+}
 
 }  // namespace ToolUtils

@@ -37,6 +37,8 @@ public:
                                                   uint32_t sampleCount,
                                                   Protected) const override;
 
+    TextureInfo getDefaultStorageTextureInfo(SkColorType) const override;
+
     UniqueKey makeGraphicsPipelineKey(const GraphicsPipelineDesc&,
                                       const RenderPassDesc&) const override { return {}; }
     UniqueKey makeComputePipelineKey(const ComputePipelineDesc&) const override { return {}; }
@@ -44,12 +46,16 @@ public:
     uint32_t channelMask(const TextureInfo&) const override;
 
     bool isRenderable(const TextureInfo&) const override { return false; }
+    bool isStorage(const TextureInfo&) const override {
+        // TODO: support storage textures
+        return false;
+    }
 
     void buildKeyForTexture(SkISize dimensions,
                             const TextureInfo&,
                             ResourceType,
                             Shareable,
-                            GraphiteResourceKey*) const override {}
+                            GraphiteResourceKey*) const override;
 
     size_t bytesPerPixel(const TextureInfo&) const override;
 
@@ -96,9 +102,7 @@ private:
                                      VkPhysicalDevice,
                                      const VkPhysicalDeviceProperties&);
 
-    const ColorTypeInfo* getColorTypeInfo(SkColorType, const TextureInfo&) const override {
-        return nullptr;
-    }
+    const ColorTypeInfo* getColorTypeInfo(SkColorType, const TextureInfo&) const override;
 
     bool onIsTexturable(const TextureInfo&) const override { return false; }
 
@@ -147,6 +151,7 @@ private:
 
         bool isTexturable(VkImageTiling) const;
         bool isRenderable(VkImageTiling, uint32_t sampleCount) const;
+        bool isStorage(VkImageTiling) const;
 
         std::unique_ptr<ColorTypeInfo[]> fColorTypeInfos;
         int fColorTypeInfoCount = 0;
@@ -160,6 +165,7 @@ private:
     private:
         bool isTexturable(VkFormatFeatureFlags) const;
         bool isRenderable(VkFormatFeatureFlags) const;
+        bool isStorage(VkFormatFeatureFlags) const;
     };
 
     // Map SkColorType to VkFormat.

@@ -141,11 +141,8 @@ SKIA_DEFINES="
 -DSK_FORCE_8_BYTE_ALIGNMENT \
 -DSK_HAS_WUFFS_LIBRARY \
 -DSK_HAS_HEIF_LIBRARY \
--DSK_ENCODE_WEBP \
 -DSK_CODEC_DECODES_WEBP \
--DSK_ENCODE_PNG \
 -DSK_CODEC_DECODES_PNG \
--DSK_ENCODE_JPEG \
 -DSK_CODEC_DECODES_JPEG \
 -DSK_SHAPER_HARFBUZZ_AVAILABLE \
 -DSK_UNICODE_AVAILABLE \
@@ -165,6 +162,7 @@ fi
 # These gms do not compile or link with the WASM code. Thus, we omit them.
 GLOBIGNORE="gm/compressed_textures.cpp:"\
 "gm/fiddle.cpp:"\
+"gm/fontations.cpp:"\
 "gm/video_decoder.cpp:"
 
 # These tests do not compile with the WASM code (require other deps).

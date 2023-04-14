@@ -7,11 +7,10 @@
 
 #include "include/private/SkJpegGainmapEncoder.h"
 
-#ifdef SK_ENCODE_JPEG
-
 #include "include/core/SkBitmap.h"
 #include "include/core/SkPixmap.h"
 #include "include/core/SkStream.h"
+#include "include/encode/SkEncoder.h"
 #include "include/encode/SkJpegEncoder.h"
 #include "include/private/SkGainmapInfo.h"
 #include "src/codec/SkCodecPriv.h"
@@ -149,14 +148,7 @@ sk_sp<SkData> get_hdrgm_xmp_data(const SkGainmapInfo& gainmapInfo) {
             s, hdrgmPrefix, "HDRCapacityMin", sk_float_log(gainmapInfo.fDisplayRatioSdr) / kLog2);
     xmp_write_scalar_attr(
             s, hdrgmPrefix, "HDRCapacityMax", sk_float_log(gainmapInfo.fDisplayRatioHdr) / kLog2);
-    switch (gainmapInfo.fBaseImageType) {
-        case SkGainmapInfo::BaseImageType::kSDR:
-            xmp_write_string_attr(s, hdrgmPrefix, "BaseRendition", "SDR", /*newLine=*/false);
-            break;
-        case SkGainmapInfo::BaseImageType::kHDR:
-            xmp_write_string_attr(s, hdrgmPrefix, "BaseRendition", "HDR", /*newLine=*/false);
-            break;
-    }
+    xmp_write_string_attr(s, hdrgmPrefix, "BaseRenditionIsHDR", "False", /*newLine=*/false);
     s.writeText(
             "/>\n"
             "  </rdf:RDF>\n"
@@ -175,14 +167,14 @@ static sk_sp<SkData> get_gcontainer_xmp_data(size_t gainmapItemLength) {
             "     xmlns:Item=\"http://ns.google.com/photos/1.0/container/item/\">\n"
             "      <Container:Directory>\n"
             "        <rdf:Seq>\n"
-            "          <rdf:li>\n"
+            "          <rdf:li rdf:parseType=\"Resource\">\n"
             "            <Container:Item\n"
             "             Item:Semantic=\"Primary\"\n"
             "             Item:Mime=\"image/jpeg\"/>\n"
             "          </rdf:li>\n"
-            "          <rdf:li>\n"
+            "          <rdf:li rdf:parseType=\"Resource\">\n"
             "            <Container:Item\n"
-            "             Item:Semantic=\"RecoveryMap\"\n"
+            "             Item:Semantic=\"GainMap\"\n"
             "             Item:Mime=\"image/jpeg\"\n"
             "             ");
     xmp_write_decimal_attr(s, "Item", "Length", gainmapItemLength, /*newLine=*/false);
@@ -377,7 +369,7 @@ bool SkJpegGainmapEncoder::MakeMPF(SkWStream* dst, const SkData** images, size_t
             uint32_t offset =
                     static_cast<uint32_t>(bytesRemaining + mpSegmentSize - kJpegMarkerCodeSize -
                                           kJpegSegmentParameterLengthSize - sizeof(kMpfSig));
-            for (size_t i = 0; i < imageCount; ++i) {
+            for (size_t i = 1; i < imageCount; ++i) {
                 mpParams.images[i].dataOffset = offset;
                 mpParams.images[i].size = static_cast<uint32_t>(images[i]->size());
                 offset += mpParams.images[i].size;
@@ -409,5 +401,3 @@ bool SkJpegGainmapEncoder::MakeMPF(SkWStream* dst, const SkData** images, size_t
     }
     return true;
 }
-
-#endif  // SK_ENCODE_JPEG

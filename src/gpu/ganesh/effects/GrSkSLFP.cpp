@@ -11,6 +11,7 @@
 #include "include/private/SkSLString.h"
 #include "include/private/gpu/ganesh/GrContext_Base.h"
 #include "src/core/SkColorSpacePriv.h"
+#include "src/core/SkFilterColorProgram.h"
 #include "src/core/SkRuntimeEffectPriv.h"
 #include "src/core/SkSLTypeShared.h"
 #include "src/core/SkVM.h"
@@ -443,8 +444,6 @@ GR_DEFINE_FRAGMENT_PROCESSOR_TEST(GrSkSLFP)
 
 #include "include/effects/SkOverdrawColorFilter.h"
 #include "src/core/SkColorFilterBase.h"
-
-extern const char* SKSL_OVERDRAW_SRC;
 
 std::unique_ptr<GrFragmentProcessor> GrSkSLFP::TestCreate(GrProcessorTestData* d) {
     SkColor colors[SkOverdrawColorFilter::kNumColors];

@@ -41,6 +41,7 @@ class Device;
 class DrawBufferManager;
 class GlobalCache;
 class ImageProvider;
+class ProxyCache;
 class RecorderPriv;
 class ResourceProvider;
 class RuntimeEffectDictionary;
@@ -137,7 +138,7 @@ public:
     RecorderPriv priv();
     const RecorderPriv priv() const;  // NOLINT(readability-const-return-type)
 
-#if GR_TEST_UTILS
+#if GRAPHITE_TEST_UTILS
     bool deviceIsRegistered(Device*);
 #endif
 

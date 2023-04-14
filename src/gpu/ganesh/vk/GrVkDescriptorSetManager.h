@@ -25,7 +25,7 @@ class GrVkUniformHandler;
  */
 class GrVkDescriptorSetManager {
 public:
-    GR_DEFINE_RESOURCE_HANDLE_CLASS(Handle);
+    GR_DEFINE_RESOURCE_HANDLE_CLASS(Handle)
 
     static GrVkDescriptorSetManager* CreateUniformManager(GrVkGpu* gpu);
     static GrVkDescriptorSetManager* CreateSamplerManager(GrVkGpu* gpu, VkDescriptorType type,
@@ -90,10 +90,10 @@ private:
                              const skia_private::TArray<const GrVkSampler*>& immutableSamplers);
 
 
-    DescriptorPoolManager                    fPoolManager;
+    DescriptorPoolManager                                fPoolManager;
     skia_private::TArray<const GrVkDescriptorSet*, true> fFreeSets;
-    SkSTArray<4, uint32_t>                   fBindingVisibilities;
-    SkSTArray<4, const GrVkSampler*>         fImmutableSamplers;
+    skia_private::STArray<4, uint32_t>                   fBindingVisibilities;
+    skia_private::STArray<4, const GrVkSampler*>         fImmutableSamplers;
 };
 
 #endif

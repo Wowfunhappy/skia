@@ -18,11 +18,12 @@
 
 #include <initializer_list>
 
-namespace SkSL {
+using namespace skia_private;
 
+namespace SkSL {
 namespace {
 
-using CapsLookupTable = SkTHashMap<std::string_view, Setting::CapsPtr>;
+using CapsLookupTable = THashMap<std::string_view, Setting::CapsPtr>;
 
 static const CapsLookupTable& caps_lookup_table() {
     // Create a lookup table that converts strings into the equivalent ShaderCaps member-pointers.
@@ -43,6 +44,8 @@ static const CapsLookupTable& caps_lookup_table() {
                               &ShaderCaps::fRewriteMatrixVectorMultiply),
         CapsLookupTable::Pair("colorSpaceMathNeedsFloat",
                               &ShaderCaps::fColorSpaceMathNeedsFloat),
+        CapsLookupTable::Pair("PerlinNoiseRoundingFix",
+                              &ShaderCaps::fPerlinNoiseRoundingFix),
     });
     return *sCapsLookupTable;
 }

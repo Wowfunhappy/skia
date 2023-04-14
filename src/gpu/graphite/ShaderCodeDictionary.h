@@ -12,6 +12,7 @@
 #include "include/core/SkTypes.h"
 #include "include/private/SkSpinlock.h"
 #include "include/private/base/SkMacros.h"
+#include "include/private/base/SkTArray.h"
 #include "include/private/base/SkThreadAnnotations.h"
 #include "include/private/base/SkTo.h"
 #include "src/base/SkArenaAlloc.h"
@@ -28,6 +29,8 @@
 #include <memory>
 #include <string>
 #include <string_view>
+
+// TODO: Remove once BlockReader is not a thing
 #include <vector>
 
 class SkRuntimeEffect;
@@ -88,8 +91,7 @@ struct ShaderSnippet {
                   const char* functionName,
                   GenerateExpressionForSnippetFn expressionGenerator,
                   GeneratePreambleForSnippetFn preambleGenerator,
-                  int numChildren,
-                  SkSpan<const PaintParamsKey::DataPayloadField> dataPayloadExpectations)
+                  int numChildren)
         : fName(name)
         , fUniforms(uniforms)
         , fSnippetRequirementFlags(snippetRequirementFlags)
@@ -97,8 +99,7 @@ struct ShaderSnippet {
         , fStaticFunctionName(functionName)
         , fExpressionGenerator(expressionGenerator)
         , fPreambleGenerator(preambleGenerator)
-        , fNumChildren(numChildren)
-        , fDataPayloadExpectations(dataPayloadExpectations) {}
+        , fNumChildren(numChildren) {}
 
     std::string getMangledUniformName(const ShaderInfo& shaderInfo,
                                       int uniformIdx,
@@ -126,7 +127,6 @@ struct ShaderSnippet {
     GenerateExpressionForSnippetFn fExpressionGenerator = nullptr;
     GeneratePreambleForSnippetFn fPreambleGenerator = nullptr;
     int fNumChildren = 0;
-    SkSpan<const PaintParamsKey::DataPayloadField> fDataPayloadExpectations;
 };
 
 // This is just a simple collection object that gathers together all the information needed
@@ -189,48 +189,15 @@ class ShaderCodeDictionary {
 public:
     ShaderCodeDictionary();
 
-    struct Entry {
-    public:
-        UniquePaintParamsID uniqueID() const {
-            SkASSERT(fUniqueID.isValid());
-            return fUniqueID;
-        }
-        const PaintParamsKey& paintParamsKey() const { return fKey; }
-        const skgpu::BlendInfo& blendInfo() const { return fBlendInfo; }
+    UniquePaintParamsID findOrCreate(PaintParamsKeyBuilder*) SK_EXCLUDES(fSpinLock);
 
-    private:
-        friend class ShaderCodeDictionary;
-
-        Entry(const PaintParamsKey& key, const skgpu::BlendInfo& blendInfo)
-                : fKey(key.asSpan())
-                , fBlendInfo(blendInfo) {
-        }
-
-        void setUniqueID(uint32_t newID) {
-            SkASSERT(!fUniqueID.isValid());
-            fUniqueID = UniquePaintParamsID(newID);
-        }
-
-        UniquePaintParamsID fUniqueID;  // fixed-size (uint32_t) unique ID assigned to a key
-        PaintParamsKey fKey; // variable-length paint key descriptor
-
-        // The BlendInfo isn't used in the hash (that is the key's job) but it does directly vary
-        // with the key. It could, theoretically, be recreated from the key but that would add
-        // extra complexity.
-        skgpu::BlendInfo fBlendInfo;
-    };
-
-    const Entry* findOrCreate(PaintParamsKeyBuilder*) SK_EXCLUDES(fSpinLock);
-
-    const Entry* lookup(UniquePaintParamsID) const SK_EXCLUDES(fSpinLock);
+    PaintParamsKey lookup(UniquePaintParamsID) const SK_EXCLUDES(fSpinLock);
 
     SkSpan<const Uniform> getUniforms(BuiltInCodeSnippetID) const;
     SkEnumBitMask<SnippetRequirementFlags> getSnippetRequirementFlags(
             BuiltInCodeSnippetID id) const {
         return fBuiltInCodeSnippets[(int) id].fSnippetRequirementFlags;
     }
-
-    SkSpan<const PaintParamsKey::DataPayloadField> dataPayloadExpectations(int snippetID) const;
 
     bool isValidID(int snippetID) const;
 
@@ -244,14 +211,13 @@ public:
 
     int findOrCreateRuntimeEffectSnippet(const SkRuntimeEffect* effect);
 
-    int addUserDefinedSnippet(const char* name,
-                              SkSpan<const PaintParamsKey::DataPayloadField> expectations);
+    // TODO: Remove or make testing-only
+    int addUserDefinedSnippet(const char* name);
 
 private:
-    Entry* makeEntry(const PaintParamsKey&, const skgpu::BlendInfo&);
-
     // TODO: this is still experimental but, most likely, it will need to be made thread-safe
-    // It returns the code snippet ID to use to identify the supplied user-defined code
+    // It returns the code snippet ID to use to identify the supplied user-defined code.
+    // TODO: Rename to addRuntimeEffectSnippet().
     int addUserDefinedSnippet(
         const char* name,
         SkSpan<const Uniform> uniforms,
@@ -260,8 +226,7 @@ private:
         const char* functionName,
         ShaderSnippet::GenerateExpressionForSnippetFn expressionGenerator,
         ShaderSnippet::GeneratePreambleForSnippetFn preambleGenerator,
-        int numChildren,
-        SkSpan<const PaintParamsKey::DataPayloadField> dataPayloadExpectations);
+        int numChildren);
 
     const char* addTextToArena(std::string_view text);
 
@@ -271,26 +236,17 @@ private:
 
     // The value returned from 'getEntry' must be stable so, hold the user-defined code snippet
     // entries as pointers.
-    std::vector<std::unique_ptr<ShaderSnippet>> fUserDefinedCodeSnippets;
+    skia_private::TArray<std::unique_ptr<ShaderSnippet>> fUserDefinedCodeSnippets;
 
     // TODO: can we do something better given this should have write-seldom/read-often behavior?
     mutable SkSpinlock fSpinLock;
 
-    struct PaintParamsKeyPtr {
-        const PaintParamsKey* fKey;
+    using PaintIDMap = skia_private::THashMap<PaintParamsKey,
+                                              UniquePaintParamsID,
+                                              PaintParamsKey::Hash>;
 
-        bool operator==(PaintParamsKeyPtr rhs) const {
-            return *fKey == *rhs.fKey;
-        }
-        struct Hash {
-            size_t operator()(PaintParamsKeyPtr) const;
-        };
-    };
-
-    using PaintHashMap = SkTHashMap<PaintParamsKeyPtr, Entry*, PaintParamsKeyPtr::Hash>;
-
-    PaintHashMap fHash SK_GUARDED_BY(fSpinLock);
-    std::vector<Entry*> fEntryVector SK_GUARDED_BY(fSpinLock);
+    PaintIDMap fPaintKeyToID SK_GUARDED_BY(fSpinLock);
+    skia_private::TArray<PaintParamsKey> fIDToPaintKey SK_GUARDED_BY(fSpinLock);
 
     SK_BEGIN_REQUIRE_DENSE
     struct RuntimeEffectKey {
@@ -300,9 +256,6 @@ private:
         bool operator==(RuntimeEffectKey rhs) const {
             return fHash == rhs.fHash && fUniformSize == rhs.fUniformSize;
         }
-        struct Hash {
-            size_t operator()(RuntimeEffectKey) const;
-        };
     };
     SK_END_REQUIRE_DENSE
 
@@ -312,11 +265,11 @@ private:
     // an existing ID. Entries in the runtime-effect map are never removed; they only disappear when
     // the context is discarded, which takes the ShaderCodeDictionary along with it. However, they
     // are extremely small (< 20 bytes) so the memory footprint should be unnoticeable.
-    using RuntimeEffectMap = SkTHashMap<RuntimeEffectKey, int32_t>;
+    using RuntimeEffectMap = skia_private::THashMap<RuntimeEffectKey, int32_t>;
     RuntimeEffectMap fRuntimeEffectMap SK_GUARDED_BY(fSpinLock);
 
     // This arena holds:
-    //   - the Entries held in `fHash` and `fEntryVector`
+    //   - the backing data for PaintParamsKeys in `fPaintKeyToID` and `fIDToPaintKey`
     //   - Uniform data created by `findOrCreateRuntimeEffectSnippet`
     // and in all cases is guarded by `fSpinLock`
     SkArenaAlloc fArena{256};

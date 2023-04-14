@@ -97,7 +97,6 @@ CORE_FILES = [
     "SkCubicClipper.cpp",
     "SkCubicClipper.h",
     "SkCubicMap.cpp",
-    "SkCubicSolver.h",
     "SkDataTable.cpp",
     "SkDebug.cpp",
     "SkDebugUtils.h",
@@ -250,6 +249,7 @@ CORE_FILES = [
     "SkRasterPipeline.cpp",
     "SkRasterPipeline.h",
     "SkRasterPipelineBlitter.cpp",
+    "SkRasterPipelineContextUtils.h",
     "SkRasterPipelineOpContexts.h",
     "SkRasterPipelineOpList.h",
     "SkReadBuffer.cpp",
@@ -367,6 +367,8 @@ split_srcs_and_hdrs(
 
 # These files are only needed if SkSL is enabled (GPU backend or SkVM).
 SKSL_FILES = [
+    "SkFilterColorProgram.cpp",
+    "SkFilterColorProgram.h",
     "SkRuntimeEffect.cpp",
     "SkSLTypeShared.cpp",
     "SkSLTypeShared.h",

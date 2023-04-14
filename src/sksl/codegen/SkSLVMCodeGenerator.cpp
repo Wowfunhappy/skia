@@ -72,6 +72,8 @@
 #include <utility>
 #include <vector>
 
+using namespace skia_private;
+
 namespace {
     // sksl allows the optimizations of fast_mul(), so we want to use that most of the time.
     // This little sneaky snippet of code lets us use ** as a fast multiply infix operator.
@@ -127,7 +129,7 @@ struct Value {
     SkSpan<skvm::Val> asSpan() { return SkSpan(fVals); }
 
 private:
-    SkSTArray<4, skvm::Val, true> fVals;
+    STArray<4, skvm::Val, true> fVals;
 };
 
 }  // namespace
@@ -321,7 +323,7 @@ private:
     std::vector<Slot> fSlots;
 
     // [Variable/Function, first slot in fSlots]
-    SkTHashMap<const IRNode*, size_t> fSlotMap;
+    THashMap<const IRNode*, size_t> fSlotMap;
 
     // Debug trace mask (set to true when fTraceCoord matches device coordinates)
     skvm::I32 fTraceMask;
@@ -1757,7 +1759,7 @@ Value SkVMGenerator::writeStore(const Expression& lhs, const Value& rhs) {
     // IndexExpressions. The underlying VariableReference has a range of slots for its storage,
     // and each expression wrapped around that selects a sub-set of those slots (Field/Index),
     // or rearranges them (Swizzle).
-    SkSTArray<4, size_t, true> slots;
+    STArray<4, size_t, true> slots;
     slots.resize(rhs.slots());
 
     // Start with the identity slot map - this basically says that the values from rhs belong in

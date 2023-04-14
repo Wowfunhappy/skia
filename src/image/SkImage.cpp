@@ -7,12 +7,10 @@
 
 #include "include/core/SkImage.h"
 
-#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkData.h"
-#include "include/core/SkImageEncoder.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPixmap.h"
 #include "include/core/SkPoint.h"
@@ -31,7 +29,6 @@
 #include "src/shaders/SkImageShader.h"
 
 #if defined(SK_GANESH)
-#include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/private/gpu/ganesh/GrImageContext.h"
@@ -200,6 +197,9 @@ sk_sp<SkShader> SkImage::makeRawShader(SkTileMode tmx, SkTileMode tmy,
                                   sampling, localMatrix);
 }
 
+#if !defined(SK_DISABLE_LEGACY_IMAGE_ENCODE_METHODS)
+#include "include/core/SkImageEncoder.h"
+#include "include/codec/SkEncodedImageFormat.h"
 sk_sp<SkData> SkImage::encodeToData(GrDirectContext* context, SkEncodedImageFormat type,
                                     int quality) const {
     SkBitmap bm;
@@ -217,7 +217,6 @@ sk_sp<SkData> SkImage::encodeToData(GrDirectContext* context) const {
     return this->encodeToData(context, SkEncodedImageFormat::kPNG, 100);
 }
 
-#ifndef SK_IMAGE_READ_PIXELS_DISABLE_LEGACY_API
 sk_sp<SkData> SkImage::encodeToData(SkEncodedImageFormat type, int quality) const {
     auto dContext = as_IB(this)->directContext();
     return this->encodeToData(dContext, type, quality);
@@ -260,60 +259,6 @@ sk_sp<SkImage> SkImage::makeSubset(const SkIRect& subset, GrDirectContext* direc
 
     return as_IB(this)->onMakeSubset(subset, direct);
 }
-
-#if defined(SK_GANESH)
-
-bool SkImage::isTextureBacked() const {
-    return as_IB(this)->isGaneshBacked() || as_IB(this)->isGraphiteBacked();
-}
-
-size_t SkImage::textureSize() const { return as_IB(this)->onTextureSize(); }
-
-GrBackendTexture SkImage::getBackendTexture(bool flushPendingGrContextIO,
-                                            GrSurfaceOrigin* origin) const {
-    return as_IB(this)->onGetBackendTexture(flushPendingGrContextIO, origin);
-}
-
-bool SkImage::isValid(GrRecordingContext* rContext) const {
-    if (rContext && rContext->abandoned()) {
-        return false;
-    }
-    return as_IB(this)->onIsValid(rContext);
-}
-
-void SkImage::flush(GrDirectContext* context) const { this->flush(context, {}); }
-
-GrSemaphoresSubmitted SkImage::flush(GrDirectContext* dContext,
-                                     const GrFlushInfo& flushInfo) const {
-    return as_IB(this)->onFlush(dContext, flushInfo);
-}
-
-void SkImage::flushAndSubmit(GrDirectContext* dContext) const {
-    this->flush(dContext, {});
-    dContext->submit();
-}
-
-#else
-
-bool SkImage::isTextureBacked() const { return false; }
-
-bool SkImage::isValid(GrRecordingContext* rContext) const {
-    if (rContext) {
-        return false;
-    }
-    return as_IB(this)->onIsValid(nullptr);
-}
-
-void SkImage::flush(GrDirectContext* context) const {}
-
-GrSemaphoresSubmitted SkImage::flush(GrDirectContext* dContext,
-                                     const GrFlushInfo& flushInfo) const {
-    return {};
-}
-
-void SkImage::flushAndSubmit(GrDirectContext* dContext) const {}
-
-#endif
 
 bool SkImage::readPixels(GrDirectContext* dContext, const SkPixmap& pmap, int srcX, int srcY,
                          CachingHint chint) const {
@@ -501,238 +446,3 @@ sk_sp<SkImage> SkImage::withDefaultMipmaps() const {
     return this->withMipmaps(nullptr);
 }
 
-#if !defined(SK_DISABLE_LEGACY_IMAGE_FACTORIES)
-#include "include/core/SkImageGenerator.h"
-#include "include/core/SkPicture.h"
-
-sk_sp<SkImage> SkImage::MakeRasterData(const SkImageInfo& i, sk_sp<SkData> d, size_t rb) {
-    return SkImages::RasterFromData(i, d, rb);
-}
-
-sk_sp<SkImage> SkImage::MakeFromGenerator(std::unique_ptr<SkImageGenerator> ig) {
-    return SkImages::DeferredFromGenerator(std::move(ig));
-}
-
-sk_sp<SkImage> SkImage::MakeFromEncoded(sk_sp<SkData> e, std::optional<SkAlphaType> at) {
-    return SkImages::DeferredFromEncodedData(e, at);
-}
-
-sk_sp<SkImage> SkImage::MakeRasterFromCompressed(sk_sp<SkData> d,
-                                                 int w,
-                                                 int h,
-                                                 SkTextureCompressionType t) {
-    return SkImages::RasterFromCompressedTextureData(d, w, h, t);
-}
-
-sk_sp<SkImage> SkImage::MakeFromPicture(sk_sp<SkPicture> p,
-                                        const SkISize& dimensions,
-                                        const SkMatrix* matrix,
-                                        const SkPaint* paint,
-                                        BitDepth bitDepth,
-                                        sk_sp<SkColorSpace> colorSpace,
-                                        SkSurfaceProps props) {
-    return SkImages::DeferredFromPicture(std::move(p), dimensions, matrix, paint, bitDepth,
-                                         std::move(colorSpace), props);
-}
-
-sk_sp<SkImage> SkImage::MakeFromPicture(sk_sp<SkPicture> p,
-                                        const SkISize& dimensions,
-                                        const SkMatrix* matrix,
-                                        const SkPaint* paint,
-                                        BitDepth bitDepth,
-                                        sk_sp<SkColorSpace> colorSpace) {
-    return SkImages::DeferredFromPicture(std::move(p), dimensions, matrix, paint, bitDepth,
-                                         std::move(colorSpace));
-}
-#endif  // !SK_DISABLE_LEGACY_IMAGE_FACTORIES
-
-#if !defined(SK_DISABLE_LEGACY_IMAGE_FACTORIES) && defined(SK_GANESH)
-
-#include "include/gpu/GrContextThreadSafeProxy.h"
-#include "include/gpu/ganesh/SkImageGanesh.h"
-
-bool SkImage::MakeBackendTextureFromSkImage(GrDirectContext* context,
-                                                   sk_sp<SkImage> image,
-                                                   GrBackendTexture* backendTexture,
-                                                   BackendTextureReleaseProc* proc) {
-    return SkImages::GetBackendTextureFromImage(context, std::move(image), backendTexture, proc);
-}
-
-sk_sp<SkImage> SkImage::MakeFromAdoptedTexture(GrRecordingContext* context,
-                                               const GrBackendTexture& backendTexture,
-                                               GrSurfaceOrigin textureOrigin,
-                                               SkColorType colorType) {
-    return SkImages::AdoptTextureFrom(context, backendTexture, textureOrigin, colorType);
-}
-
-sk_sp<SkImage> SkImage::MakeFromAdoptedTexture(GrRecordingContext* context,
-                                               const GrBackendTexture& backendTexture,
-                                               GrSurfaceOrigin textureOrigin,
-                                               SkColorType colorType,
-                                               SkAlphaType alphaType) {
-    return SkImages::AdoptTextureFrom(context, backendTexture, textureOrigin, colorType, alphaType);
-}
-
-sk_sp<SkImage> SkImage::MakeFromAdoptedTexture(GrRecordingContext* context,
-                                               const GrBackendTexture& backendTexture,
-                                               GrSurfaceOrigin textureOrigin,
-                                               SkColorType colorType,
-                                               SkAlphaType alphaType,
-                                               sk_sp<SkColorSpace> colorSpace) {
-    return SkImages::AdoptTextureFrom(
-            context, backendTexture, textureOrigin, colorType, alphaType, colorSpace);
-}
-
-sk_sp<SkImage> SkImage::MakeFromCompressedTexture(GrRecordingContext* context,
-                                                  const GrBackendTexture& backendTexture,
-                                                  GrSurfaceOrigin origin,
-                                                  SkAlphaType alphaType,
-                                                  sk_sp<SkColorSpace> colorSpace,
-                                                  TextureReleaseProc textureReleaseProc,
-                                                  ReleaseContext releaseContext) {
-    return SkImages::TextureFromCompressedTexture(context,
-                                                  backendTexture,
-                                                  origin,
-                                                  alphaType,
-                                                  colorSpace,
-                                                  textureReleaseProc,
-                                                  releaseContext);
-}
-
-sk_sp<SkImage> SkImage::MakeCrossContextFromPixmap(GrDirectContext* context,
-                                                   const SkPixmap& pixmap,
-                                                   bool buildMips,
-                                                   bool limitToMaxTextureSize) {
-    return SkImages::CrossContextTextureFromPixmap(
-            context, pixmap, buildMips, limitToMaxTextureSize);
-}
-
-sk_sp<SkImage> SkImage::MakeFromTexture(GrRecordingContext* context,
-                                        const GrBackendTexture& backendTexture,
-                                        GrSurfaceOrigin origin,
-                                        SkColorType colorType,
-                                        SkAlphaType alphaType,
-                                        sk_sp<SkColorSpace> colorSpace,
-                                        TextureReleaseProc textureReleaseProc,
-                                        ReleaseContext rContext) {
-    return SkImages::BorrowTextureFrom(context,
-                                       backendTexture,
-                                       origin,
-                                       colorType,
-                                       alphaType,
-                                       colorSpace,
-                                       textureReleaseProc,
-                                       rContext);
-}
-
-sk_sp<SkImage> SkImage::MakePromiseTexture(sk_sp<GrContextThreadSafeProxy> gpuContextProxy,
-                                           const GrBackendFormat& backendFormat,
-                                           SkISize dimensions,
-                                           GrMipmapped mipmapped,
-                                           GrSurfaceOrigin origin,
-                                           SkColorType colorType,
-                                           SkAlphaType alphaType,
-                                           sk_sp<SkColorSpace> colorSpace,
-                                           PromiseImageTextureFulfillProc textureFulfillProc,
-                                           PromiseImageTextureReleaseProc textureReleaseProc,
-                                           PromiseImageTextureContext textureContext) {
-    return SkImages::PromiseTextureFrom(gpuContextProxy,
-                                        backendFormat,
-                                        dimensions,
-                                        mipmapped,
-                                        origin,
-                                        colorType,
-                                        alphaType,
-                                        colorSpace,
-                                        textureFulfillProc,
-                                        textureReleaseProc,
-                                        textureContext);
-}
-
-sk_sp<SkImage> SkImage::MakePromiseYUVATexture(sk_sp<GrContextThreadSafeProxy> gpuContextProxy,
-                                               const GrYUVABackendTextureInfo& backendTextureInfo,
-                                               sk_sp<SkColorSpace> imageColorSpace,
-                                               PromiseImageTextureFulfillProc textureFulfillProc,
-                                               PromiseImageTextureReleaseProc textureReleaseProc,
-                                               PromiseImageTextureContext textureContexts[]) {
-    return SkImages::PromiseTextureFromYUVA(gpuContextProxy,
-                                            backendTextureInfo,
-                                            imageColorSpace,
-                                            textureFulfillProc,
-                                            textureReleaseProc,
-                                            textureContexts);
-}
-
-sk_sp<SkImage> SkImage::MakeTextureFromCompressed(GrDirectContext* direct,
-                                                  sk_sp<SkData> data,
-                                                  int width,
-                                                  int height,
-                                                  SkTextureCompressionType type,
-                                                  GrMipmapped mipmapped,
-                                                  GrProtected isProtected) {
-    return SkImages::TextureFromCompressedTextureData(
-            direct, data, width, height, type, mipmapped, isProtected);
-}
-
-sk_sp<SkImage> SkImage::MakeFromYUVATextures(GrRecordingContext* context,
-                                             const GrYUVABackendTextures& yuvaTextures,
-                                             sk_sp<SkColorSpace> imageColorSpace,
-                                             TextureReleaseProc textureReleaseProc,
-                                             ReleaseContext releaseContext) {
-    return SkImages::TextureFromYUVATextures(
-            context, yuvaTextures, imageColorSpace, textureReleaseProc, releaseContext);
-}
-
-sk_sp<SkImage> SkImage::MakeFromYUVATextures(GrRecordingContext* context,
-                                             const GrYUVABackendTextures& yuvaTextures) {
-    return SkImages::TextureFromYUVATextures(context, yuvaTextures);
-}
-
-sk_sp<SkImage> SkImage::MakeFromYUVAPixmaps(GrRecordingContext* context,
-                                            const SkYUVAPixmaps& pixmaps,
-                                            GrMipmapped buildMips,
-                                            bool limitToMaxTextureSize,
-                                            sk_sp<SkColorSpace> imageColorSpace) {
-    return SkImages::TextureFromYUVAPixmaps(
-            context, pixmaps, buildMips, limitToMaxTextureSize, imageColorSpace);
-}
-
-sk_sp<SkImage> SkImage::MakeFromYUVAPixmaps(GrRecordingContext* context,
-                                            const SkYUVAPixmaps& pixmaps,
-                                            GrMipmapped buildMips,
-                                            bool limitToMaxTextureSize) {
-    return SkImages::TextureFromYUVAPixmaps(context, pixmaps, buildMips, limitToMaxTextureSize);
-}
-
-#endif  // !SK_DISABLE_LEGACY_IMAGE_FACTORIES && SK_GANESH
-
-#if !defined(SK_DISABLE_LEGACY_IMAGE_FACTORIES) && defined(SK_BUILD_FOR_ANDROID) && \
-        __ANDROID_API__ >= 26 && !defined(SK_BUILD_FOR_GOOGLE3)
-
-#include "include/android/SkImageAndroid.h"
-
-sk_sp<SkImage> SkImage::MakeFromAHardwareBuffer(
-            AHardwareBuffer* hardwareBuffer,
-            SkAlphaType alphaType) {
-    return SkImages::DeferredFromAHardwareBuffer(hardwareBuffer, alphaType);
-}
-
-sk_sp<SkImage> SkImage::MakeFromAHardwareBuffer(
-            AHardwareBuffer* hardwareBuffer,
-            SkAlphaType alphaType,
-            sk_sp<SkColorSpace> colorSpace,
-            GrSurfaceOrigin surfaceOrigin) {
-    return SkImages::DeferredFromAHardwareBuffer(hardwareBuffer, alphaType, colorSpace,
-                                                 surfaceOrigin);
-}
-
-sk_sp<SkImage> SkImage::MakeFromAHardwareBufferWithData(
-            GrDirectContext* context,
-            const SkPixmap& pixmap,
-            AHardwareBuffer* hardwareBuffer,
-            GrSurfaceOrigin surfaceOrigin) {
-    return SkImages::TextureFromAHardwareBufferWithData(context, pixmap, hardwareBuffer,
-                                                        surfaceOrigin);
-}
-
-#endif

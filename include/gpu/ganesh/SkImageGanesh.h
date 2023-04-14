@@ -15,6 +15,7 @@
 #include "include/private/base/SkAPI.h"
 
 #include <functional>
+#include <utility>
 
 class GrBackendFormat;
 class GrBackendTexture;
@@ -182,6 +183,36 @@ SK_API sk_sp<SkImage> TextureFromCompressedTextureData(GrDirectContext* direct,
                                                        GrMipmapped mipmapped = GrMipmapped::kNo,
                                                        GrProtected isProtected = GrProtected::kNo);
 
+/** Returns SkImage backed by GPU texture associated with context. Returned SkImage is
+    compatible with SkSurface created with dstColorSpace. The returned SkImage respects
+    mipmapped setting; if mipmapped equals skgpu::Mipmapped::kYes, the backing texture
+    allocates mip map levels.
+    The mipmapped parameter is effectively treated as kNo if MIP maps are not supported by the
+    GPU.
+    Returns original SkImage if the image is already texture-backed, the context matches, and
+    mipmapped is compatible with the backing GPU texture. skgpu::Budgeted is ignored in this
+   case.
+    Returns nullptr if context is nullptr, or if SkImage was created with another
+    GrDirectContext.
+    @param GrDirectContext  the GrDirectContext in play, if it exists
+    @param SkImage          a non-null pointer to an SkImage.
+    @param skgpu::Mipmapped Whether created SkImage texture must allocate mip map levels.
+                            Defaults to no.
+    @param skgpu::Budgeted  Whether to count a newly created texture for the returned image
+                            counts against the context's budget. Defaults to yes.
+    @return                 created SkImage, or nullptr
+*/
+SK_API sk_sp<SkImage> TextureFromImage(GrDirectContext*,
+                                       const SkImage*,
+                                       skgpu::Mipmapped = skgpu::Mipmapped::kNo,
+                                       skgpu::Budgeted = skgpu::Budgeted::kYes);
+inline sk_sp<SkImage> TextureFromImage(GrDirectContext* ctx,
+                                       sk_sp<const SkImage> img,
+                                       skgpu::Mipmapped m = skgpu::Mipmapped::kNo,
+                                       skgpu::Budgeted b = skgpu::Budgeted::kYes) {
+    return TextureFromImage(ctx, img.get(), m, b);
+}
+
 /** Creates a GPU-backed SkImage from SkYUVAPixmaps.
     The image will remain planar with each plane converted to a texture using the passed
     GrRecordingContext.
@@ -302,6 +333,28 @@ SK_API sk_sp<SkImage> PromiseTextureFromYUVA(sk_sp<GrContextThreadSafeProxy> gpu
                                              PromiseImageTextureReleaseProc textureReleaseProc,
                                              PromiseImageTextureContext textureContexts[]);
 
+/** Retrieves the existing backend texture. If SkImage is not a Ganesh-backend texture image
+    or otherwise does not have such a texture, false is returned. Otherwise, outTexture will
+    be set to the image's texture.
+
+    If flushPendingGrContextIO is true, completes deferred I/O operations.
+    If origin in not nullptr, copies location of content drawn into SkImage.
+    @param outTexture               Will be set to the underlying texture of the image if non-null.
+    @param flushPendingGrContextIO  flag to flush outstanding requests
+    @param origin                   Will be set to the origin orientation of the image if non-null.
+    @return                         false if a Ganesh backend texture cannot be retrieved.
+*/
+SK_API bool GetBackendTextureFromImage(const SkImage* img,
+                                       GrBackendTexture* outTexture,
+                                       bool flushPendingGrContextIO,
+                                       GrSurfaceOrigin* origin = nullptr);
+inline bool GetBackendTextureFromImage(sk_sp<const SkImage> img,
+                                       GrBackendTexture* outTexture,
+                                       bool flushPendingGrContextIO,
+                                       GrSurfaceOrigin* origin = nullptr) {
+    return GetBackendTextureFromImage(img.get(), outTexture, flushPendingGrContextIO, origin);
+}
+
 /** Extracts the backendTexture from an existing SkImage.
     If the image is not already GPU-backed, the raster data will be uploaded as a texture
     and returned.
@@ -312,11 +365,20 @@ SK_API sk_sp<SkImage> PromiseTextureFromYUVA(sk_sp<GrContextThreadSafeProxy> gpu
     @param image                      image, either CPU-backed or GPU-backed
     @param backendTexture             Will be set to the underlying texture of the image.
     @param backendTextureReleaseProc  Called when the texture is released
+    @return                           false if image cannot be uploaded.
 */
-SK_API bool GetBackendTextureFromImage(GrDirectContext* context,
+SK_API bool MakeBackendTextureFromImage(GrDirectContext* context,
+                                        sk_sp<SkImage> image,
+                                        GrBackendTexture* backendTexture,
+                                        BackendTextureReleaseProc* backendTextureReleaseProc);
+// Legacy name
+inline bool GetBackendTextureFromImage(GrDirectContext* context,
                                        sk_sp<SkImage> image,
                                        GrBackendTexture* backendTexture,
-                                       BackendTextureReleaseProc* backendTextureReleaseProc);
+                                       BackendTextureReleaseProc* backendTextureReleaseProc) {
+    return MakeBackendTextureFromImage(context, std::move(image), backendTexture,
+                                       backendTextureReleaseProc);
+}
 
 }  // namespace SkImages
 

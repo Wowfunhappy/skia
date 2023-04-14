@@ -42,11 +42,14 @@ config("skia_public") {
   if (skia_enable_optimize_size) {
     defines += [
       "SK_ENABLE_OPTIMIZE_SIZE",
-      "SK_DISABLE_AAA",
+      "SK_FORCE_AAA",
     ]
   }
   if (skia_enable_sksl) {
     defines += [ "SK_ENABLE_SKSL" ]
+  }
+  if (skia_enable_sksl_in_raster_pipeline) {
+    defines += [ "SK_ENABLE_SKSL_IN_RASTER_PIPELINE" ]
   }
   if (skia_enable_precompile) {
     defines += [ "SK_ENABLE_PRECOMPILE" ]
@@ -1235,11 +1238,10 @@ optional("jpeg_decode") {
 }
 
 optional("jpeg_encode") {
-  enabled = skia_use_libjpeg_turbo_encode
-  public_defines = [ "SK_ENCODE_JPEG" ]
+  enabled = skia_use_libjpeg_turbo_encode && !skia_use_ndk_images
 
   deps = [ "//third_party/libjpeg-turbo:libjpeg" ]
-  public = [ "include/encode/SkJpegEncoder.h" ]
+  public = skia_encode_jpeg_public
   sources = skia_encode_jpeg_srcs
 
   if (skia_use_jpeg_gainmaps) {
@@ -1350,8 +1352,8 @@ optional("png_decode") {
 }
 
 optional("png_encode") {
-  enabled = skia_use_libpng_encode
-  public_defines = [ "SK_ENCODE_PNG" ]
+  enabled = skia_use_libpng_encode && !skia_use_ndk_images
+  public = skia_encode_png_public
 
   deps = [ "//third_party/libpng" ]
   sources = skia_encode_png_srcs
@@ -1386,6 +1388,14 @@ optional("typeface_freetype") {
   ]
 }
 
+optional("typeface_fontations") {
+  enabled = skia_use_fontations
+  sources = [
+    "src/ports/SkTypeface_fontations.cpp",
+    "src/ports/SkTypeface_fontations.h",
+  ]
+}
+
 optional("webp_decode") {
   enabled = skia_use_libwebp_decode
   public_defines = [ "SK_CODEC_DECODES_WEBP" ]
@@ -1395,8 +1405,8 @@ optional("webp_decode") {
 }
 
 optional("webp_encode") {
-  enabled = skia_use_libwebp_encode
-  public_defines = [ "SK_ENCODE_WEBP" ]
+  enabled = skia_use_libwebp_encode && !skia_use_ndk_images
+  public = skia_encode_webp_public
 
   deps = [ "//third_party/libwebp" ]
   sources = skia_encode_webp_srcs
@@ -1415,13 +1425,10 @@ optional("xml") {
   public_defines = [ "SK_XML" ]
 
   deps = [ "//third_party/expat" ]
-  sources = [
-    "src/svg/SkSVGCanvas.cpp",
-    "src/svg/SkSVGDevice.cpp",
-    "src/xml/SkDOM.cpp",
-    "src/xml/SkXMLParser.cpp",
-    "src/xml/SkXMLWriter.cpp",
-  ]
+  sources = skia_xml_sources + [
+              "src/svg/SkSVGCanvas.cpp",
+              "src/svg/SkSVGDevice.cpp",
+            ]
 }
 
 optional("skvm_jit") {
@@ -1549,10 +1556,19 @@ skia_component("skia") {
     defines += [ "SK_BUILD_FOR_DEBUGGER" ]
   }
 
+  if (skia_use_no_jpeg_encode) {
+    sources += skia_no_encode_jpeg_srcs
+  }
+  if (skia_use_no_png_encode) {
+    sources += skia_no_encode_png_srcs
+  }
+  if (skia_use_no_webp_encode) {
+    sources += skia_no_encode_webp_srcs
+  }
+
   if (is_win) {
     sources += [
       "src/ports/SkDebug_win.cpp",
-      "src/ports/SkImageEncoder_WIC.cpp",
       "src/ports/SkImageGeneratorWIC.cpp",
       "src/ports/SkOSFile_win.cpp",
       "src/ports/SkOSLibrary_win.cpp",
@@ -1601,7 +1617,6 @@ skia_component("skia") {
     public += [ "include/ports/SkCFObject.h" ]
     sources += [
       "src/ports/SkDebug_stdio.cpp",
-      "src/ports/SkImageEncoder_CG.cpp",
       "src/ports/SkImageGeneratorCG.cpp",
     ]
     frameworks = [
@@ -1614,7 +1629,6 @@ skia_component("skia") {
     public += [ "include/ports/SkCFObject.h" ]
     sources += [
       "src/ports/SkDebug_stdio.cpp",
-      "src/ports/SkImageEncoder_CG.cpp",
       "src/ports/SkImageGeneratorCG.cpp",
     ]
     frameworks = [
@@ -1631,6 +1645,10 @@ skia_component("skia") {
   if (skia_enable_spirv_validation) {
     deps += [ "//third_party/externals/spirv-tools:spvtools_val" ]
     defines += [ "SK_ENABLE_SPIRV_VALIDATION" ]
+  }
+
+  if (skia_use_fontations) {
+    deps += [ ":typeface_fontations" ]
   }
 
   if (skia_include_multiframe_procs) {
@@ -2208,6 +2226,9 @@ if (skia_enable_tools) {
     }
     if (!skia_enable_ganesh) {
       sources -= ganesh_gm_sources
+    }
+    if (skia_use_fontations) {
+      sources += fontations_gm_sources
     }
     deps = [
       ":etc1",
@@ -2979,6 +3000,7 @@ if (skia_enable_tools) {
         "tools/viewer/AnimBlurSlide.cpp",
         "tools/viewer/AnimTimer.h",
         "tools/viewer/AnimatedImageSlide.cpp",
+        "tools/viewer/AnimatedRectsSlide.cpp",
         "tools/viewer/AnimatedTextSlide.cpp",
         "tools/viewer/ArcSlide.cpp",
         "tools/viewer/AtlasSlide.cpp",
@@ -3583,5 +3605,30 @@ if (is_ios && skia_use_metal && skia_enable_ganesh &&
 if (is_ios && skia_enable_skottie && !skia_enable_flutter_defines) {
   group("skottie_ios") {
     deps = [ "tools/skottie_ios_app" ]
+  }
+}
+
+if (skia_build_rust_targets) {
+  action("rust_hello_world") {
+    script = "gn/bazel_build.py"
+    sources = [ "experimental/rust_cxx/hello-world.rs" ]
+    outputs = [ "$root_out_dir/rust_hello_world" ]
+    args = [
+      "//experimental/rust_cxx:rust_hello_world",
+      "../../bazel-bin/experimental/rust_cxx/rust_hello_world",
+    ]
+  }
+
+  action("cpp_with_rust") {
+    script = "gn/bazel_build.py"
+    sources = [
+      "experimental/rust_cxx/hype-bridge.rs",
+      "experimental/rust_cxx/main.cpp",
+    ]
+    outputs = [ "$root_out_dir/cpp_with_rust" ]
+    args = [
+      "//experimental/rust_cxx:cpp_with_rust",
+      "../../bazel-bin/experimental/rust_cxx/cpp_with_rust",
+    ]
   }
 }
