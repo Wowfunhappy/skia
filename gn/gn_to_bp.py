@@ -88,6 +88,18 @@ cc_defaults {
             srcs: [
                 $arm64_srcs
             ],
+            // TODO(b/267542007): Re-enable stack tagging when miscompile is
+            // fixed
+            sanitize: {
+                memtag_stack: false,
+            },
+        },
+
+        riscv64: {
+            // TODO(b/254713216): Re-enable thinlto for targets failing the build
+            lto: {
+                thin: false,
+            },
         },
 
         x86: {
@@ -277,12 +289,6 @@ cc_defaults {
       android: {
         shared_libs: [
             "libheif",
-            "libimage_io",
-        ],
-        static_libs: [
-            "libjpegrecoverymap",
-            "libjpegdecoder",
-            "libjpegencoder",
         ],
       },
       darwin: {
@@ -537,11 +543,9 @@ def generate_args(target_os, enable_gpu, renderengine = False):
 
   if target_os == '"android"' and not renderengine:
     d['skia_use_libheif']  = 'true'
-    d['skia_use_jpegr'] = 'true'
     d['skia_use_jpeg_gainmaps'] = 'true'
   else:
     d['skia_use_libheif']  = 'false'
-    d['skia_use_jpegr'] = 'false'
 
   if renderengine:
     d['skia_use_libpng_decode'] = 'false'

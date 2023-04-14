@@ -129,6 +129,7 @@ SkDCubicPair SkDCubic::chopAt(double t) const {
     return dst;
 }
 
+// TODO(skbug.com/14063) deduplicate this with SkBezierCubic::ConvertToPolynomial
 void SkDCubic::Coefficients(const double* src, double* A, double* B, double* C, double* D) {
     *A = src[6];  // d
     *B = src[4] * 3;  // 3*c
@@ -523,6 +524,7 @@ SkDVector SkDCubic::dxdyAtT(double t) const {
 }
 
 // OPTIMIZE? share code with formulate_F1DotF2
+// e.g. https://stackoverflow.com/a/35927917
 int SkDCubic::findInflections(double tValues[2]) const {
     double Ax = fPts[1].fX - fPts[0].fX;
     double Ay = fPts[1].fY - fPts[0].fY;

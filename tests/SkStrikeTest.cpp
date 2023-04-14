@@ -11,18 +11,23 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkPoint.h"
+#include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkScalar.h"
 #include "include/core/SkSurfaceProps.h"
 #include "include/core/SkTypeface.h"
 #include "include/core/SkTypes.h"
 #include "include/private/base/SkTo.h"
 #include "src/base/SkZip.h"
+#include "src/core/SkEnumerate.h"
+#include "src/core/SkGlyph.h"
 #include "src/core/SkGlyphBuffer.h"
 #include "src/core/SkScalerContext.h"
 #include "src/core/SkStrike.h"
 #include "src/core/SkStrikeCache.h"
 #include "src/core/SkStrikeSpec.h"
 #include "src/core/SkTaskGroup.h"
+#include "src/text/StrikeForGPU.h"
 #include "tests/Test.h"
 #include "tools/ToolUtils.h"
 
@@ -31,6 +36,9 @@
 #include <functional>
 #include <initializer_list>
 #include <memory>
+
+using namespace sktext;
+using namespace skglyph;
 
 class Barrier {
 public:
@@ -43,6 +51,30 @@ public:
 private:
     std::atomic<int> fThreadCount;
 };
+
+// This should stay in sync with the implementation from SubRunContainer.
+static SkRect prepare_for_mask_drawing(StrikeForGPU* strike,
+                                       SkDrawableGlyphBuffer* accepted,
+                                       SkSourceGlyphBuffer* rejected) {
+    SkGlyphRect boundingRect = skglyph::empty_rect();
+    StrikeMutationMonitor m{strike};
+    for (auto [i, packedID, pos] : SkMakeEnumerate(accepted->input())) {
+        if (SkScalarsAreFinite(pos.x(), pos.y())) {
+            SkGlyphDigest digest = strike->digestFor(kDirectMask, packedID);
+            if (!digest.isEmpty()) {
+                if (digest.fitsInAtlasDirect()) {
+                    const SkGlyphRect glyphBounds = digest.bounds().offset(pos);
+                    boundingRect = skglyph::rect_union(boundingRect, glyphBounds);
+                    accepted->accept(packedID, glyphBounds.leftTop(), digest.maskFormat());
+                } else {
+                    rejected->reject(i);
+                }
+            }
+        }
+    }
+
+    return boundingRect.rect();
+}
 
 DEF_TEST(SkStrikeMultiThread, Reporter) {
     sk_sp<SkTypeface> typeface =
@@ -89,9 +121,8 @@ DEF_TEST(SkStrikeMultiThread, Reporter) {
                 accepted.ensureSize(glyphCount);
                 rejected.setSource(local);
 
-                accepted.startDevicePositioning(
-                        rejected.source(), SkMatrix::I(), strike.roundingSpec());
-                strike.prepareForMaskDrawing(&accepted, &rejected);
+                accepted.startSource(rejected.source());
+                prepare_for_mask_drawing(&strike, &accepted, &rejected);
                 rejected.flipRejectsToSource();
                 accepted.reset();
             }

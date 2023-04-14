@@ -74,10 +74,6 @@ GrFPResult SkColorFilterBase::asFragmentProcessor(std::unique_ptr<GrFragmentProc
 }
 #endif
 
-bool SkColorFilterBase::appendStages(const SkStageRec& rec, bool shaderIsOpaque) const {
-    return this->onAppendStages(rec, shaderIsOpaque);
-}
-
 skvm::Color SkColorFilterBase::program(skvm::Builder* p, skvm::Color c,
                                        const SkColorInfo& dst,
                                        skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const {
@@ -88,7 +84,7 @@ skvm::Color SkColorFilterBase::program(skvm::Builder* p, skvm::Color c,
         }
         return c;
     }
-    //SkDebugf("cannot onProgram %s\n", this->getTypeName());
+    //SkDebugf("cannot program %s\n", this->getTypeName());
     return {};
 }
 
@@ -113,14 +109,13 @@ SkPMColor4f SkColorFilterBase::onFilterColor4f(const SkPMColor4f& color,
     SkSTArenaAlloc<kEnoughForCommonFilters> alloc;
     SkRasterPipeline    pipeline(&alloc);
     pipeline.append_constant_color(&alloc, color.vec());
-    SkPaint blankPaint;
+    SkPaint solidPaint;
+    solidPaint.setColor4f(color.unpremul());
     SkMatrixProvider matrixProvider(SkMatrix::I());
     SkSurfaceProps props{}; // default OK; colorFilters don't render text
-    SkStageRec rec = {
-        &pipeline, &alloc, kRGBA_F32_SkColorType, dstCS, blankPaint, nullptr, matrixProvider, props
-    };
+    SkStageRec rec = {&pipeline, &alloc, kRGBA_F32_SkColorType, dstCS, solidPaint, props};
 
-    if (as_CFB(this)->onAppendStages(rec, color.fA == 1)) {
+    if (as_CFB(this)->appendStages(rec, color.fA == 1)) {
         SkPMColor4f dst;
         SkRasterPipeline_MemoryCtx dstPtr = { &dst, 0 };
         pipeline.append(SkRasterPipelineOp::store_f32, &dstPtr);
@@ -169,7 +164,7 @@ public:
         return fOuter->isAlphaUnchanged() && fInner->isAlphaUnchanged();
     }
 
-    bool onAppendStages(const SkStageRec& rec, bool shaderIsOpaque) const override {
+    bool appendStages(const SkStageRec& rec, bool shaderIsOpaque) const override {
         bool innerIsOpaque = shaderIsOpaque;
         if (!fInner->isAlphaUnchanged()) {
             innerIsOpaque = false;
@@ -305,7 +300,7 @@ public:
     }
 #endif
 
-    bool onAppendStages(const SkStageRec& rec, bool shaderIsOpaque) const override {
+    bool appendStages(const SkStageRec& rec, bool shaderIsOpaque) const override {
         if (!shaderIsOpaque) {
             rec.fPipeline->append(SkRasterPipelineOp::unpremul);
         }
@@ -461,7 +456,31 @@ public:
     }
 #endif
 
-    bool onAppendStages(const SkStageRec&, bool) const override { return false; }
+    bool appendStages(const SkStageRec& rec, bool shaderIsOpaque) const override {
+        sk_sp<SkColorSpace> dstCS = sk_ref_sp(rec.fDstCS);
+
+        if (!dstCS) { dstCS = SkColorSpace::MakeSRGB(); }
+
+        SkAlphaType workingAT;
+        sk_sp<SkColorSpace> workingCS = this->workingFormat(dstCS, &workingAT);
+
+        SkColorInfo dst = {rec.fDstColorType, kPremul_SkAlphaType, dstCS},
+                working = {rec.fDstColorType, workingAT, workingCS};
+
+        SkStageRec workingRec = {rec.fPipeline,
+                                 rec.fAlloc,
+                                 rec.fDstColorType,
+                                 workingCS.get(),
+                                 rec.fPaint,
+                                 rec.fSurfaceProps};
+
+        rec.fAlloc->make<SkColorSpaceXformSteps>(dst, working)->apply(rec.fPipeline);
+        if (!as_CFB(fChild)->appendStages(workingRec, shaderIsOpaque)) {
+            return false;
+        }
+        rec.fAlloc->make<SkColorSpaceXformSteps>(working, dst)->apply(rec.fPipeline);
+        return true;
+    }
 
     skvm::Color onProgram(skvm::Builder* p, skvm::Color c, const SkColorInfo& rawDst,
                           skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const override {
