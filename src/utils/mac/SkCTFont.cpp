@@ -269,7 +269,7 @@ SkCTFontSmoothBehavior SkCTFontGetSmoothBehavior() {
 				{
 					SkUniqueCFRef<CGDataProviderRef> data(
                   CGDataProviderCreateWithData(nullptr, kSpiderSymbol_ttf,
-                                               SK_ARRAY_COUNT(kSpiderSymbol_ttf), nullptr));
+                                               std::size(kSpiderSymbol_ttf), nullptr));
           SkUniqueCFRef<CGFontRef> cgFont(CGFontCreateWithDataProvider(data.get()));
           SkASSERT(cgFont);
           SkUniqueCFRef<CTFontRef> tmp(

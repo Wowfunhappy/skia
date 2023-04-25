@@ -1138,7 +1138,7 @@ int SkTypeface_Mac::onCountGlyphs() const {
 }
 
 /** Creates a dictionary suitable for setting the axes on a CTFont. */
-static CTFontVariation ctvariation_from_SkFontArguments(CTFontRef ct, CFArrayRef ctAxes,
+CTFontVariation ctvariation_from_SkFontArguments(CTFontRef ct, CFArrayRef ctAxes,
                                                         const SkFontArguments& args) {
     OpszVariation opsz;
     constexpr const SkFourByteTag opszTag = SkSetFourByteTag('o','p','s','z');

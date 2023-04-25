@@ -55,6 +55,9 @@ struct CTFontVariation {
     OpszVariation opsz;
 };
 
+CTFontVariation ctvariation_from_SkFontArguments(CTFontRef ct, CFArrayRef ctAxes,
+                                                        const SkFontArguments& args);
+
 SkUniqueCFRef<CTFontRef> SkCTFontCreateExactCopy(CTFontRef baseFont, CGFloat textSize,
                                                  OpszVariation opsz);
 

@@ -266,6 +266,56 @@ static const char* map_css_names(const char* name) {
 
 namespace {
 
+static sk_sp<SkData> skdata_from_skstreamasset(std::unique_ptr<SkStreamAsset> stream) {
+    size_t size = stream->getLength();
+    if (const void* base = stream->getMemoryBase()) {
+        return SkData::MakeWithProc(base, size,
+                                    [](const void*, void* ctx) -> void {
+                                        delete (SkStreamAsset*)ctx;
+                                    }, stream.release());
+    }
+    return SkData::MakeFromStream(stream.get(), size);
+}
+
+static SkUniqueCFRef<CFDataRef> cfdata_from_skdata(sk_sp<SkData> data) {
+    void const * const addr = data->data();
+    size_t const size = data->size();
+
+    CFAllocatorContext ctx = {
+        0, // CFIndex version
+        data.release(), // void* info
+        nullptr, // const void *(*retain)(const void *info);
+        nullptr, // void (*release)(const void *info);
+        nullptr, // CFStringRef (*copyDescription)(const void *info);
+        nullptr, // void * (*allocate)(CFIndex size, CFOptionFlags hint, void *info);
+        nullptr, // void*(*reallocate)(void* ptr,CFIndex newsize,CFOptionFlags hint,void* info);
+        [](void*,void* info) -> void { // void (*deallocate)(void *ptr, void *info);
+            SkASSERT(info);
+            ((SkData*)info)->unref();
+        },
+        nullptr, // CFIndex (*preferredSize)(CFIndex size, CFOptionFlags hint, void *info);
+    };
+    SkUniqueCFRef<CFAllocatorRef> alloc(CFAllocatorCreate(kCFAllocatorDefault, &ctx));
+    return SkUniqueCFRef<CFDataRef>(CFDataCreateWithBytesNoCopy(
+            kCFAllocatorDefault, (const UInt8 *)addr, size, alloc.get()));
+}
+
+static SkUniqueCFRef<CTFontRef> ctfont_from_skdata(sk_sp<SkData> data, int ttcIndex) {
+    // TODO: Use CTFontManagerCreateFontDescriptorsFromData when available.
+    if (ttcIndex != 0) {
+        return nullptr;
+    }
+
+    SkUniqueCFRef<CFDataRef> cfData(cfdata_from_skdata(std::move(data)));
+
+    SkUniqueCFRef<CTFontDescriptorRef> desc(
+            CTFontManagerCreateFontDescriptorFromData(cfData.get()));
+    if (!desc) {
+        return nullptr;
+    }
+    return SkUniqueCFRef<CTFontRef>(CTFontCreateWithFontDescriptor(desc.get(), 0, nullptr));
+}
+
 static bool find_desc_str(CTFontDescriptorRef desc, CFStringRef name, SkString* value) {
     SkUniqueCFRef<CFStringRef> ref((CFStringRef)CTFontDescriptorCopyAttribute(desc, name));
     if (!ref) {
@@ -510,7 +560,7 @@ static int ct_width_to_fontstyle(CGFloat cgWidth) {
         { -0.5,  0 },
         {  0.5, 10 },
     };
-    static constexpr Interpolator interpolator(widthMappings, SK_ARRAY_COUNT(widthMappings));
+    static constexpr Interpolator interpolator(widthMappings, std::size(widthMappings));
     return interpolator.map(cgWidth);
 }
 /** Convert the [-1, 1] CTFontDescriptor weight to [0, 1000] CSS weight.
@@ -539,9 +589,9 @@ static int ct_weight_to_fontstyle(CGFloat cgWeight, bool fromDataProvider) {
         }
     });
     static constexpr Interpolator nativeInterpolator(
-            nativeWeightMappings, SK_ARRAY_COUNT(nativeWeightMappings));
+            nativeWeightMappings, std::size(nativeWeightMappings));
     static constexpr Interpolator dataProviderInterpolator(
-            dataProviderWeightMappings, SK_ARRAY_COUNT(dataProviderWeightMappings));
+            dataProviderWeightMappings, std::size(dataProviderWeightMappings));
 
     return fromDataProvider ? dataProviderInterpolator.map(cgWeight)
                             : nativeInterpolator.map(cgWeight);
@@ -778,14 +828,14 @@ protected:
           }
           SkUniqueCFRef<CTFontRef> ctbuf(ctfont_from_skdata(std::move(data), ttcIndex));
           ct = std::move(ctbuf);
-				}
+	}
 
         if (!ct) {
-					return nullptr;
+          return nullptr;
         }
 
         SkUniqueCFRef<CFArrayRef> axes(CTFontCopyVariationAxes(ct.get()));
-        CTFontVariation ctVariation = SkCTVariationFromSkFontArguments(ct.get(), axes.get(), args);
+        CTFontVariation ctVariation = ctvariation_from_SkFontArguments(ct.get(), axes.get(), args);
 
         SkUniqueCFRef<CTFontRef> ctVariant;
         if (ctVariation.variation) {
@@ -807,11 +857,6 @@ protected:
 
         return this->makeFromStream(std::move(stream),
                                     SkFontArguments().setCollectionIndex(ttcIndex));
-    }
-
-    sk_sp<SkTypeface> onMakeFromStreamArgs(std::unique_ptr<SkStreamAsset> stream,
-                                           const SkFontArguments& args) const override {
-        return SkTypeface_Mac::MakeFromStream(std::move(stream), args);
     }
 
     sk_sp<SkTypeface> onMakeFromFile(const char path[], int ttcIndex) const override {
