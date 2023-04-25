@@ -35,8 +35,13 @@ Milestone 114
       - `SK_ENCODE_WEBP` -> `skia_use_libwebp_encode`
     Other clients should make sure the appropriate `*EncoderImpl.cpp` files from `src/encode` are
     included in the build.
-  * `SkImageEncoder` has been deprecated. Clients should use one of `SkPngEncoder::Encode`,
+  * `SkImageEncoder` has been removed. Clients should use one of `SkPngEncoder::Encode`,
     `SkJpegEncoder::Encode` or `SkWebpEncoder::Encode` directly.
+  * `SkImageGenerator` has a new subclass `GrTextureGenerator` which can be used if clients want to
+    provide specialized ways of making Ganesh texture-backed Images.
+  * `SkImageGenerator::MakeFromPicture` has been removed from the public API. Clients should be
+    drawing the picture directly instead of turning it into an image first.
+
 
 * * *
 

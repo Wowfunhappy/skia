@@ -8,14 +8,7 @@
 #include "include/core/SkPoint.h"
 #include "include/core/SkSpan.h"
 #include "include/private/SkSLDefines.h"
-#include "include/private/SkSLIRNode.h"
-#include "include/private/SkSLLayout.h"
-#include "include/private/SkSLModifiers.h"
-#include "include/private/SkSLProgramElement.h"
-#include "include/private/SkSLStatement.h"
 #include "include/private/base/SkTArray.h"
-#include "include/sksl/SkSLOperator.h"
-#include "include/sksl/SkSLPosition.h"
 #include "src/base/SkStringView.h"
 #include "src/core/SkTHash.h"
 #include "src/sksl/SkSLAnalysis.h"
@@ -25,6 +18,8 @@
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLIntrinsicList.h"
 #include "src/sksl/SkSLModifiersPool.h"
+#include "src/sksl/SkSLOperator.h"
+#include "src/sksl/SkSLPosition.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
 #include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
@@ -44,13 +39,18 @@
 #include "src/sksl/ir/SkSLFunctionCall.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
+#include "src/sksl/ir/SkSLIRNode.h"
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
+#include "src/sksl/ir/SkSLLayout.h"
 #include "src/sksl/ir/SkSLLiteral.h"
+#include "src/sksl/ir/SkSLModifiers.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
 #include "src/sksl/ir/SkSLProgram.h"
+#include "src/sksl/ir/SkSLProgramElement.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
+#include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLSwitchCase.h"
 #include "src/sksl/ir/SkSLSwitchStatement.h"
 #include "src/sksl/ir/SkSLSwizzle.h"
@@ -2126,46 +2126,15 @@ bool Generator::pushMatrixMultiply(LValue* lvalue,
     SkASSERT(left.type().isMatrix() || left.type().isVector());
     SkASSERT(right.type().isMatrix() || right.type().isVector());
 
-    SkASSERT(leftColumns == rightRows);
-    int outColumns   = rightColumns,
-        outRows      = leftRows;
+    // Insert padding space on the stack to hold the result.
+    fBuilder.pad_stack(rightColumns * leftRows);
 
-    // Push the left matrix onto the adjacent-neighbor stack. We transpose it so that we can copy
-    // rows from it in a single op, instead of gathering one element at a time.
-    AutoStack matrixStack(this);
-    matrixStack.enter();
-    if (!this->pushLValueOrExpression(lvalue, left)) {
+    // Push the left and right matrices onto the stack.
+    if (!this->pushLValueOrExpression(lvalue, left) || !this->pushExpression(right)) {
         return unsupported();
     }
-    fBuilder.transpose(leftColumns, leftRows);
 
-    // Push the right matrix as well, then go back to the primary stack.
-    if (!this->pushExpression(right)) {
-        return unsupported();
-    }
-    matrixStack.exit();
-
-    // Calculate the offsets of the left- and right-matrix, relative to the stack-top.
-    int leftMtxBase  = left.type().slotCount() + right.type().slotCount();
-    int rightMtxBase = right.type().slotCount();
-
-    // Emit each matrix element.
-    for (int c = 0; c < outColumns; ++c) {
-        for (int r = 0; r < outRows; ++r) {
-            // Dot a vector from left[*][r] with right[c][*].
-            // (Because the left=matrix has been transposed, we actually pull left[r][*], which
-            // allows us to clone a column at once instead of cloning each slot individually.)
-            matrixStack.pushClone(SlotRange{r * leftColumns, leftColumns}, leftMtxBase);
-            matrixStack.pushClone(SlotRange{c * leftColumns, leftColumns}, rightMtxBase);
-            fBuilder.dot_floats(leftColumns);
-        }
-    }
-
-    // Dispose of the source matrices on the adjacent-neighbor stack.
-    matrixStack.enter();
-    this->discardExpression(left.type().slotCount());
-    this->discardExpression(right.type().slotCount());
-    matrixStack.exit();
+    fBuilder.matrix_multiply(leftColumns, leftRows, rightColumns, rightRows);
 
     // If this multiply was actually an assignment (via *=), write the result back to the lvalue.
     return lvalue ? this->store(*lvalue)
@@ -2501,9 +2470,9 @@ bool Generator::pushChildCall(const ChildCall& c) {
     SkASSERT(childIdx != nullptr);
     SkASSERT(!c.arguments().empty());
 
-    // Save the dst.rgba fields; these hold our execution masks, and could potentially be
-    // clobbered by the child effect.
-    fBuilder.push_dst_rgba();
+    // Save the src.rgba fields; these hold our execution masks, but are also used to pass colors
+    // and coordinates to the child effect.
+    fBuilder.push_src_rgba();
 
     // All child calls have at least one argument.
     const Expression* arg = c.arguments()[0].get();
@@ -2555,11 +2524,10 @@ bool Generator::pushChildCall(const ChildCall& c) {
         }
     }
 
-    // Restore dst.rgba so our execution masks are back to normal.
-    fBuilder.pop_dst_rgba();
-
-    // The child call has returned the result color via src.rgba; push it onto the stack.
-    fBuilder.push_src_rgba();
+    // The child call has returned the result color via src.rgba, and the SkRP execution mask is
+    // on top of the stack. Swapping the two puts the result color on top of the stack, and also
+    // restores our execution masks.
+    fBuilder.exchange_src();
     return true;
 }
 
@@ -2571,57 +2539,71 @@ bool Generator::pushConstructorCast(const AnyConstructor& c) {
     if (!this->pushExpression(inner)) {
         return unsupported();
     }
-    if (inner.type().componentType().numberKind() == c.type().componentType().numberKind()) {
+    const Type::NumberKind innerKind = inner.type().componentType().numberKind();
+    const Type::NumberKind outerKind = c.type().componentType().numberKind();
+
+    if (innerKind == outerKind) {
         // Since we ignore type precision, this cast is effectively a no-op.
         return true;
     }
-    if (inner.type().componentType().isSigned() && c.type().componentType().isUnsigned()) {
-        // Treat uint(int) as a no-op.
-        return true;
-    }
-    if (inner.type().componentType().isUnsigned() && c.type().componentType().isSigned()) {
-        // Treat int(uint) as a no-op.
-        return true;
+
+    switch (innerKind) {
+        case Type::NumberKind::kSigned:
+            if (outerKind == Type::NumberKind::kUnsigned) {
+                // Treat uint(int) as a no-op.
+                return true;
+            }
+            if (outerKind == Type::NumberKind::kFloat) {
+                fBuilder.unary_op(BuilderOp::cast_to_float_from_int, c.type().slotCount());
+                return true;
+            }
+            break;
+
+        case Type::NumberKind::kUnsigned:
+            if (outerKind == Type::NumberKind::kSigned) {
+                // Treat int(uint) as a no-op.
+                return true;
+            }
+            if (outerKind == Type::NumberKind::kFloat) {
+                fBuilder.unary_op(BuilderOp::cast_to_float_from_uint, c.type().slotCount());
+                return true;
+            }
+            break;
+
+        case Type::NumberKind::kBoolean:
+            // Converting boolean to int or float can be accomplished via bitwise-and.
+            if (outerKind == Type::NumberKind::kFloat) {
+                fBuilder.push_constant_f(1.0f);
+            } else if (outerKind == Type::NumberKind::kSigned ||
+                       outerKind == Type::NumberKind::kUnsigned) {
+                fBuilder.push_constant_i(1);
+            } else {
+                SkDEBUGFAILF("unexpected cast from bool to %s", c.type().description().c_str());
+                return unsupported();
+            }
+            fBuilder.push_duplicates(c.type().slotCount() - 1);
+            fBuilder.binary_op(BuilderOp::bitwise_and_n_ints, c.type().slotCount());
+            return true;
+
+        case Type::NumberKind::kFloat:
+            if (outerKind == Type::NumberKind::kSigned) {
+                fBuilder.unary_op(BuilderOp::cast_to_int_from_float, c.type().slotCount());
+                return true;
+            }
+            if (outerKind == Type::NumberKind::kUnsigned) {
+                fBuilder.unary_op(BuilderOp::cast_to_uint_from_float, c.type().slotCount());
+                return true;
+            }
+            break;
+
+        case Type::NumberKind::kNonnumeric:
+            break;
     }
 
-    if (c.type().componentType().isBoolean()) {
+    if (outerKind == Type::NumberKind::kBoolean) {
         // Converting int or float to boolean can be accomplished via `notEqual(x, 0)`.
         fBuilder.push_zeros(c.type().slotCount());
         return this->binaryOp(inner.type(), kNotEqualOps);
-    }
-    if (inner.type().componentType().isBoolean()) {
-        // Converting boolean to int or float can be accomplished via bitwise-and.
-        if (c.type().componentType().isFloat()) {
-            fBuilder.push_constant_f(1.0f);
-        } else if (c.type().componentType().isSigned() || c.type().componentType().isUnsigned()) {
-            fBuilder.push_constant_i(1);
-        } else {
-            SkDEBUGFAILF("unexpected cast from bool to %s", c.type().description().c_str());
-            return unsupported();
-        }
-        fBuilder.push_duplicates(c.type().slotCount() - 1);
-        fBuilder.binary_op(BuilderOp::bitwise_and_n_ints, c.type().slotCount());
-        return true;
-    }
-    // We have dedicated ops to cast between float and integer types.
-    if (inner.type().componentType().isFloat()) {
-        if (c.type().componentType().isSigned()) {
-            fBuilder.unary_op(BuilderOp::cast_to_int_from_float, c.type().slotCount());
-            return true;
-        }
-        if (c.type().componentType().isUnsigned()) {
-            fBuilder.unary_op(BuilderOp::cast_to_uint_from_float, c.type().slotCount());
-            return true;
-        }
-    } else if (c.type().componentType().isFloat()) {
-        if (inner.type().componentType().isSigned()) {
-            fBuilder.unary_op(BuilderOp::cast_to_float_from_int, c.type().slotCount());
-            return true;
-        }
-        if (inner.type().componentType().isUnsigned()) {
-            fBuilder.unary_op(BuilderOp::cast_to_float_from_uint, c.type().slotCount());
-            return true;
-        }
     }
 
     SkDEBUGFAILF("unexpected cast from %s to %s",
@@ -2951,14 +2933,18 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
 
         case IntrinsicKind::k_fromLinearSrgb_IntrinsicKind:
         case IntrinsicKind::k_toLinearSrgb_IntrinsicKind: {
+            // Save the src.rgba fields; these hold our execution masks, but are also used to pass
+            // colors and coordinates to the color transform function.
+            fBuilder.push_src_rgba();
+
             // The argument must be a half3.
             SkASSERT(arg0.type().matches(*fContext.fTypes.fHalf3));
             if (!this->pushExpression(arg0)) {
                 return unsupported();
             }
-            // The intrinsics accept a three-component value; add alpha for the push/pop_src_rgba
+            // The intrinsics accept a three-component value; add alpha for the push/pop_src_rgba.
             fBuilder.push_constant_f(1.0f);
-            // Copy arguments from the stack into src
+            // Copy arguments from the stack into src.
             fBuilder.pop_src_rgba();
 
             if (intrinsic == IntrinsicKind::k_fromLinearSrgb_IntrinsicKind) {
@@ -2967,9 +2953,11 @@ bool Generator::pushIntrinsic(IntrinsicKind intrinsic, const Expression& arg0) {
                 fBuilder.invoke_to_linear_srgb();
             }
 
-            // The xform has left the result color in src.rgba; push it onto the stack
-            fBuilder.push_src_rgba();
-            // The intrinsic returns a three-component value; discard alpha
+            // The xform has left the result color in src.rgba; exchange it with the execution masks
+            // on the top of the stack.
+            fBuilder.exchange_src();
+
+            // The intrinsic returns a three-component value; discard alpha.
             this->discardExpression(/*slots=*/1);
             return true;
         }
@@ -3677,7 +3665,7 @@ bool Generator::writeProgram(const FunctionDefinition& function) {
         return unsupported();
     }
 
-    // Move the result of main() from slots into RGBA. Allow dRGBA to remain in a trashed state.
+    // Move the result of main() from slots into RGBA.
     SkASSERT(mainResult->count == 4);
     if (this->needsFunctionResultSlots(fCurrentFunction)) {
         fBuilder.load_src(*mainResult);

@@ -8,10 +8,10 @@
 #include "src/sksl/ir/SkSLSetting.h"
 
 #include "include/core/SkTypes.h"
-#include "include/sksl/SkSLErrorReporter.h"
 #include "src/core/SkTHash.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLContext.h"
+#include "src/sksl/SkSLErrorReporter.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/ir/SkSLLiteral.h"
@@ -42,8 +42,6 @@ static const CapsLookupTable& caps_lookup_table() {
                               &ShaderCaps::fBuiltinDeterminantSupport),
         CapsLookupTable::Pair("rewriteMatrixVectorMultiply",
                               &ShaderCaps::fRewriteMatrixVectorMultiply),
-        CapsLookupTable::Pair("colorSpaceMathNeedsFloat",
-                              &ShaderCaps::fColorSpaceMathNeedsFloat),
         CapsLookupTable::Pair("PerlinNoiseRoundingFix",
                               &ShaderCaps::fPerlinNoiseRoundingFix),
     });

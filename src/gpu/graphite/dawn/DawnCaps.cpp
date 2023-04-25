@@ -32,7 +32,7 @@ static constexpr wgpu::TextureFormat kFormats[] = {
 
     wgpu::TextureFormat::Stencil8,
     wgpu::TextureFormat::Depth32Float,
-    wgpu::TextureFormat::Depth32FloatStencil8,
+    wgpu::TextureFormat::Depth24PlusStencil8,
 
     wgpu::TextureFormat::Undefined,
 };
@@ -182,7 +182,6 @@ const Caps::ColorTypeInfo* DawnCaps::getColorTypeInfo(SkColorType colorType,
         }
     }
 
-    SkASSERT(false);
     return nullptr;
 }
 
@@ -251,6 +250,9 @@ void DawnCaps::initShaderCaps() {
     // WGSL does not support infinities regardless of hardware support. There are discussions around
     // enabling it using an extension in the future.
     shaderCaps->fInfinitySupport = false;
+
+    // WGSL supports shader derivatives in the fragment shader
+    shaderCaps->fShaderDerivativeSupport = true;
 }
 
 void DawnCaps::initFormatTable(const wgpu::Device& device) {
@@ -356,9 +358,9 @@ void DawnCaps::initFormatTable(const wgpu::Device& device) {
         info->fColorTypeInfoCount = 0;
     }
 
-    // Format: Depth32Float_Stencil8
+    // Format: Depth24PlusStencil8
     {
-        info = &fFormatTable[GetFormatIndex(wgpu::TextureFormat::Depth32FloatStencil8)];
+        info = &fFormatTable[GetFormatIndex(wgpu::TextureFormat::Depth24PlusStencil8)];
         info->fFlags = FormatInfo::kMSAA_Flag;
         info->fColorTypeInfoCount = 0;
     }

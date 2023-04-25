@@ -5,6 +5,9 @@
  * found in the LICENSE file.
  */
 
+#ifndef SKSL_RASTERPIPELINEBUILDER
+#define SKSL_RASTERPIPELINEBUILDER
+
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/base/SkTArray.h"
@@ -96,6 +99,7 @@ enum class BuilderOp {
     swizzle_copy_stack_to_slots,
     swizzle_copy_stack_to_slots_indirect,
     discard_stack,
+    pad_stack,
     select,
     push_condition_mask,
     pop_condition_mask,
@@ -465,7 +469,10 @@ public:
     void inverse_matrix(int32_t n);
 
     // Shrinks the temp stack, discarding values on top.
-    void discard_stack(int32_t count = 1);
+    void discard_stack(int32_t count);
+
+    // Grows the temp stack, leaving any preexisting values in place.
+    void pad_stack(int32_t count);
 
     // Copies vales from the temp stack into slots, and then shrinks the temp stack.
     void pop_slots(SlotRange dst);
@@ -530,6 +537,9 @@ public:
     // Resizes a CxR matrix at the top of the stack to C'xR'.
     void matrix_resize(int origColumns, int origRows, int newColumns, int newRows);
 
+    // Multiplies a CxR matrix/vector against an adjacent CxR matrix/vector on the stack.
+    void matrix_multiply(int leftColumns, int leftRows, int rightColumns, int rightRows);
+
     void push_condition_mask() {
         SkASSERT(this->executionMaskWritesAreEnabled());
         fInstructions.push_back({BuilderOp::push_condition_mask, {}});
@@ -555,6 +565,11 @@ public:
         fInstructions.push_back({BuilderOp::pop_loop_mask, {}});
     }
 
+    // Exchanges src.rgba with the four values at the top of the stack.
+    void exchange_src() {
+        fInstructions.push_back({BuilderOp::exchange_src, {}});
+    }
+
     void push_src_rgba() {
         fInstructions.push_back({BuilderOp::push_src_rgba, {}});
     }
@@ -571,9 +586,7 @@ public:
         fInstructions.push_back({BuilderOp::pop_src_rg, {}});
     }
 
-    void pop_src_rgba() {
-        fInstructions.push_back({BuilderOp::pop_src_rgba, {}});
-    }
+    void pop_src_rgba();
 
     void pop_dst_rgba() {
         fInstructions.push_back({BuilderOp::pop_dst_rgba, {}});
@@ -671,3 +684,5 @@ private:
 
 }  // namespace RP
 }  // namespace SkSL
+
+#endif  // SKSL_RASTERPIPELINEBUILDER

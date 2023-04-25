@@ -68,21 +68,19 @@ sk_sp<SkBlender> SkBlender::Mode(SkBlendMode mode) {
 }
 
 #if defined(SK_GRAPHITE)
-void SkBlenderBase::addToKey(const skgpu::graphite::KeyContext& keyContext,
-                             skgpu::graphite::PaintParamsKeyBuilder* builder,
-                             skgpu::graphite::PipelineDataGatherer* gatherer,
-                             skgpu::graphite::DstColorType dstColorType) const {
-    using namespace skgpu::graphite;
-    SkASSERT(dstColorType == DstColorType::kSurface || dstColorType == DstColorType::kPrimitive);
+#include "src/gpu/Blend.h"
 
-    const bool primitiveColorBlender = dstColorType == DstColorType::kPrimitive;
-    std::optional<SkBlendMode> bm = as_BB(this)->asBlendMode();
-    if (primitiveColorBlender && bm.has_value()) {
-        PrimitiveBlendModeBlock::BeginBlock(keyContext, builder, gatherer, bm.value());
+void SkBlendModeBlender::addToKey(const skgpu::graphite::KeyContext& keyContext,
+                                  skgpu::graphite::PaintParamsKeyBuilder* builder,
+                                  skgpu::graphite::PipelineDataGatherer* gatherer) const {
+    using namespace skgpu::graphite;
+
+    SkSpan<const float> coeffs = skgpu::GetPorterDuffBlendConstants(fMode);
+    if (!coeffs.empty()) {
+        CoeffBlenderBlock::BeginBlock(keyContext, builder, gatherer, coeffs);
         builder->endBlock();
-    } else if (!primitiveColorBlender) {
-        BlendModeBlock::BeginBlock(keyContext, builder, gatherer,
-                                   bm.value_or(SkBlendMode::kSrcOver));
+    } else {
+        BlendModeBlenderBlock::BeginBlock(keyContext, builder, gatherer, fMode);
         builder->endBlock();
     }
 }
@@ -111,8 +109,10 @@ bool SkBlendModeBlender::onAppendStages(const SkStageRec& rec) const {
     return true;
 }
 
+#if defined(SK_ENABLE_SKVM)
 skvm::Color SkBlendModeBlender::onProgram(skvm::Builder* p, skvm::Color src, skvm::Color dst,
                                           const SkColorInfo& colorInfo, skvm::Uniforms* uniforms,
                                           SkArenaAlloc* alloc) const {
     return p->blend(fMode, src, dst);
 }
+#endif

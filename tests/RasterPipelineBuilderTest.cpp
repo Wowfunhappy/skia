@@ -157,6 +157,7 @@ DEF_TEST(RasterPipelineBuilderPushPopSrcDst, r) {
 
     builder.push_src_rgba();
     builder.push_dst_rgba();
+    builder.exchange_src();
     builder.push_src_rgba();
     builder.pop_src_rgba();
     builder.pop_dst_rgba();
@@ -168,11 +169,12 @@ DEF_TEST(RasterPipelineBuilderPushPopSrcDst, r) {
     check(r, *program,
 R"(    1. store_src                      $0..3 = src.rgba
     2. store_dst                      $4..7 = dst.rgba
-    3. store_src                      $8..11 = src.rgba
-    4. load_src                       src.rgba = $8..11
-    5. load_dst                       dst.rgba = $4..7
-    6. load_src_rg                    src.rg = $2..3
-    7. load_src_rg                    src.rg = $0..1
+    3. exchange_src                   swap(src.rgba, $4..7)
+    4. store_src                      $8..11 = src.rgba
+    5. load_src                       src.rgba = $8..11
+    6. load_dst                       dst.rgba = $4..7
+    7. load_src_rg                    src.rg = $2..3
+    8. load_src_rg                    src.rg = $0..1
 )");
 }
 
@@ -202,14 +204,17 @@ DEF_TEST(RasterPipelineBuilderPushPopTempImmediates, r) {
     builder.push_constant_f(13.5f);                                       // push into 0
     builder.push_clone_from_stack(one_slot_at(0), /*otherStackID=*/1, /*offsetFromStackTop=*/1);
                                                                           // push into 1 from 2
-    builder.discard_stack();                                              // discard 2
+    builder.discard_stack(1);                                             // discard 2
     builder.push_constant_u(357);                                         // push into 2
     builder.set_current_stack(1);
     builder.push_clone_from_stack(one_slot_at(0), /*otherStackID=*/0, /*offsetFromStackTop=*/1);
                                                                           // push into 3 from 0
     builder.discard_stack(2);                                             // discard 2 and 3
     builder.set_current_stack(0);
-    builder.discard_stack(2);                                             // discard 0 and 1
+    builder.push_constant_f(1.2f);                                        // push into 2
+    builder.pad_stack(3);                                                 // pad slots 3,4,5
+    builder.push_constant_f(3.4f);                                        // push into 6
+    builder.discard_stack(7);                                             // discard 0 through 6
     std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/1,
                                                                 /*numUniformSlots=*/0);
     check(r, *program,

@@ -10,10 +10,10 @@
 
 #include "include/private/SkColorData.h"
 #include "include/private/SkSLSampleUsage.h"
-#include "include/private/SkSLString.h"
 #include "include/private/base/SkMacros.h"
 #include "src/gpu/ganesh/GrProcessor.h"
 #include "src/gpu/ganesh/glsl/GrGLSLUniformHandler.h"
+#include "src/sksl/SkSLString.h"
 
 #include <tuple>
 
@@ -272,6 +272,10 @@ public:
     }
     bool hasConstantOutputForConstantInput() const {
         return SkToBool(fFlags & kConstantOutputForConstantInput_OptimizationFlag);
+    }
+
+    void clearConstantOutputForConstantInputFlag() {
+        fFlags &= ~kConstantOutputForConstantInput_OptimizationFlag;
     }
 
     /** Returns true if this and other processor conservatively draw identically. It can only return

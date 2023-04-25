@@ -8,17 +8,26 @@
 #include "tools/viewer/SkSLDebuggerSlide.h"
 
 #include "include/core/SkCanvas.h"
+#include "include/core/SkColor.h"
 #include "include/core/SkStream.h"
-#include "tools/viewer/Viewer.h"
+#include "include/core/SkString.h"
+#include "include/private/base/SkAssert.h"
+#include "tools/sk_app/Application.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
 #include "imgui.h"
+
+#ifdef SKSL_ENABLE_TRACING
 
 using namespace sk_app;
 using LineNumberMap = SkSL::SkSLDebugTracePlayer::LineNumberMap;
-
-///////////////////////////////////////////////////////////////////////////////
 
 SkSLDebuggerSlide::SkSLDebuggerSlide() {
     fName = "Debugger";
@@ -283,3 +292,5 @@ void SkSLDebuggerSlide::draw(SkCanvas* canvas) {
 bool SkSLDebuggerSlide::animate(double nanos) {
     return true;
 }
+
+#endif  // SKSL_ENABLE_TRACING

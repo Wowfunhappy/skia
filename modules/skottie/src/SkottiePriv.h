@@ -171,9 +171,11 @@ public:
         const PropertyObserver::NodeType fNodeType;
     };
 
-    bool dispatchColorProperty(const sk_sp<sksg::Color>&) const;
+    bool dispatchColorProperty(const sk_sp<sksg::Color>&,
+                               const skjson::ObjectValue* jcolor = nullptr) const;
     bool dispatchOpacityProperty(const sk_sp<sksg::OpacityEffect>&) const;
-    bool dispatchTextProperty(const sk_sp<TextAdapter>&) const;
+    bool dispatchTextProperty(const sk_sp<TextAdapter>&,
+                              const skjson::ObjectValue* jtext) const;
     bool dispatchTransformProperty(const sk_sp<TransformAdapter2D>&) const;
 
     sk_sp<ExpressionManager> expression_manager() const;
@@ -252,7 +254,7 @@ private:
                                fFrameRate;
     const uint32_t             fFlags;
     mutable AnimatorScope*     fCurrentAnimatorScope;
-    mutable const char*        fPropertyObserverContext;
+    mutable const char*        fPropertyObserverContext = nullptr;
     mutable bool               fHasNontrivialBlending : 1;
 
     struct LayerInfo {

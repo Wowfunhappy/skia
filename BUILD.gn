@@ -51,6 +51,9 @@ config("skia_public") {
   if (skia_enable_sksl_in_raster_pipeline) {
     defines += [ "SK_ENABLE_SKSL_IN_RASTER_PIPELINE" ]
   }
+  if (skia_enable_skvm) {
+    defines += [ "SK_ENABLE_SKVM" ]
+  }
   if (skia_enable_precompile) {
     defines += [ "SK_ENABLE_PRECOMPILE" ]
   }
@@ -116,9 +119,6 @@ config("skia_private") {
     if (skia_enable_graphite) {
       defines += [ "GRAPHITE_TEST_UTILS=1" ]
     }
-  }
-  if (skia_compare_vm_vs_rp) {
-    defines += [ "SKIA_COMPARE_VM_VS_RP" ]
   }
   libs = []
   lib_dirs = []
@@ -814,6 +814,7 @@ if (skia_compile_sksl_tests) {
       "SKSL_ENABLE_TRACING",
       "SKSL_STANDALONE",
       "SK_DISABLE_TRACING",
+      "SK_ENABLE_SKVM",
       "SK_ENABLE_SPIRV_CROSS",
       "SK_ENABLE_SPIRV_VALIDATION",
       "SK_ENABLE_WGSL_VALIDATION",
@@ -1287,10 +1288,12 @@ optional("graphite") {
   }
 
   if (skia_use_dawn) {
+    public += skia_graphite_dawn_public
     sources += skia_graphite_dawn_sources
   }
   if (skia_use_metal) {
     public_defines += [ "SK_METAL" ]
+    public += skia_graphite_mtl_public
     sources += skia_graphite_mtl_sources
     if (skia_enable_metal_debug_info) {
       public_defines += [ "SK_ENABLE_MTL_DEBUG_INFO" ]
@@ -1302,6 +1305,7 @@ optional("graphite") {
     }
   }
   if (skia_use_vulkan) {
+    public += skia_graphite_vk_public
     sources += skia_graphite_vk_sources
   }
   if (skia_enable_precompile) {
@@ -1478,7 +1482,10 @@ skia_component("skia") {
     ":fontmgr_win_gdi",
     ":gpu",
     ":graphite",
+    ":jpeg_encode",
     ":pdf",
+    ":png_encode",
+    ":webp_encode",
     ":xps",
   ]
 
@@ -1491,19 +1498,16 @@ skia_component("skia") {
     ":heif",
     ":hsw",
     ":jpeg_decode",
-    ":jpeg_encode",
     ":jpegxl_decode",
     ":ndk_images",
     ":piet",
     ":png_decode",
-    ":png_encode",
     ":raw",
     ":skvm_jit",
     ":skx",
     ":sse42",
     ":ssse3",
     ":webp_decode",
-    ":webp_encode",
     ":wuffs",
     ":xml",
     "modules/skcms",

@@ -407,6 +407,9 @@ SkImageShader::asFragmentProcessor(const GrFPArgs& args, const MatrixRec& mRec) 
 #endif
 
 #if defined(SK_GRAPHITE)
+
+#include "src/gpu/Blend.h"
+
 void SkImageShader::addToKey(const skgpu::graphite::KeyContext& keyContext,
                              skgpu::graphite::PaintParamsKeyBuilder* builder,
                              skgpu::graphite::PipelineDataGatherer* gatherer) const {
@@ -442,17 +445,18 @@ void SkImageShader::addToKey(const skgpu::graphite::KeyContext& keyContext,
 
         if (fImage->isAlphaOnly()) {
             SkSpan<const float> constants = skgpu::GetPorterDuffBlendConstants(SkBlendMode::kDstIn);
-            // expects dst, src
-            PorterDuffBlendShaderBlock::BeginBlock(keyContext, builder, gatherer,
-                                                   {constants});
+            BlendShaderBlock::BeginBlock(keyContext, builder, gatherer);
+
+                // src
+                ImageShaderBlock::BeginBlock(keyContext, builder, gatherer, &imgData);
+                builder->endBlock();
 
                 // dst
                 SolidColorShaderBlock::BeginBlock(keyContext, builder, gatherer,
                                                   keyContext.paintColor());
                 builder->endBlock();
 
-                // src
-                ImageShaderBlock::BeginBlock(keyContext, builder, gatherer, &imgData);
+                CoeffBlenderBlock::BeginBlock(keyContext, builder, gatherer, constants);
                 builder->endBlock();
 
             builder->endBlock();
@@ -850,6 +854,7 @@ bool SkImageShader::appendStages(const SkStageRec& rec, const MatrixRec& mRec) c
     return append_misc();
 }
 
+#if defined(SK_ENABLE_SKVM)
 skvm::Color SkImageShader::program(skvm::Builder* p,
                                    skvm::Coord device,
                                    skvm::Coord origLocal,
@@ -1138,3 +1143,4 @@ skvm::Color SkImageShader::program(skvm::Builder* p,
                 : SkColorSpaceXformSteps{cs, at, dst.colorSpace(), dst.alphaType()}.program(
                           p, uniforms, c);
 }
+#endif
