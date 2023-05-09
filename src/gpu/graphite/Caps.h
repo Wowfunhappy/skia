@@ -75,6 +75,7 @@ public:
     virtual UniqueKey makeComputePipelineKey(const ComputePipelineDesc&) const = 0;
 
     bool areColorTypeAndTextureInfoCompatible(SkColorType, const TextureInfo&) const;
+    virtual uint32_t channelMask(const TextureInfo&) const = 0;
 
     bool isTexturable(const TextureInfo&) const;
     virtual bool isRenderable(const TextureInfo&) const = 0;
@@ -86,6 +87,9 @@ public:
                                     ResourceType,
                                     Shareable,
                                     GraphiteResourceKey*) const = 0;
+
+    // Returns the number of bytes for the backend format in the TextureInfo
+    virtual size_t bytesPerPixel(const TextureInfo&) const = 0;
 
     const ResourceBindingRequirements& resourceBindingRequirements() const {
         return fResourceBindingReqs;

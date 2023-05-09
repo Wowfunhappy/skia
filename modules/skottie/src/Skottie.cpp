@@ -37,6 +37,7 @@
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <ratio>
 
 #include <stdlib.h>
 
@@ -144,6 +145,7 @@ AnimationBuilder::AnimationInfo AnimationBuilder::parse(const skjson::ObjectValu
 
     this->parseAssets(jroot["assets"]);
     this->parseFonts(jroot["fonts"], jroot["chars"]);
+    fSlotsRoot = jroot["slots"];
 
     auto root = CompositionBuilder(*this, fCompSize, jroot).build(*this);
 

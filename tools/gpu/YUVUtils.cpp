@@ -7,6 +7,7 @@
 
 #include "tools/gpu/YUVUtils.h"
 
+#include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkColorPriv.h"
@@ -19,7 +20,11 @@
 #include "src/core/SkYUVMath.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
+#include "src/image/SkImage_Base.h"
 #include "tools/gpu/ManagedBackendTexture.h"
+#ifdef SK_GRAPHITE
+#include "include/gpu/graphite/YUVABackendTextures.h"
+#endif
 
 namespace {
 
@@ -218,6 +223,18 @@ sk_sp<SkImage> LazyYUVImage::refImage(GrRecordingContext* rContext, Type type) {
     }
 }
 
+#if defined(SK_GRAPHITE)
+sk_sp<SkImage> LazyYUVImage::refImage(skgpu::graphite::Recorder* recorder, Type type) {
+    if (this->ensureYUVImage(recorder, type)) {
+        size_t idx = static_cast<size_t>(type);
+        SkASSERT(idx < std::size(fYUVImage));
+        return fYUVImage[idx];
+    } else {
+        return nullptr;
+    }
+}
+#endif
+
 bool LazyYUVImage::reset(sk_sp<SkData> data, GrMipmapped mipmapped, sk_sp<SkColorSpace> cs) {
     fMipmapped = mipmapped;
     auto codec = SkCodecImageGenerator::MakeFromEncodedCodec(data);
@@ -301,8 +318,8 @@ bool LazyYUVImage::ensureYUVImage(GrRecordingContext* rContext, Type type) {
                             direct,
                             fPixmaps.plane(i),
                             kTopLeft_GrSurfaceOrigin,
-                            GrRenderable::kNo,
-                            GrProtected::kNo);
+                            skgpu::Renderable::kNo,
+                            skgpu::Protected::kNo);
                     if (mbets[i]) {
                         textures[i] = mbets[i]->texture();
                     } else {
@@ -327,4 +344,79 @@ bool LazyYUVImage::ensureYUVImage(GrRecordingContext* rContext, Type type) {
     }
     return fYUVImage[idx] != nullptr;
 }
+
+#if defined(SK_GRAPHITE)
+using BackendTexture = skgpu::graphite::BackendTexture;
+using Recorder = skgpu::graphite::Recorder;
+using YUVABackendTextures = skgpu::graphite::YUVABackendTextures;
+
+bool LazyYUVImage::ensureYUVImage(Recorder* recorder, Type type) {
+    size_t idx = static_cast<size_t>(type);
+    SkASSERT(idx < std::size(fYUVImage));
+    if (fYUVImage[idx] && as_IB(fYUVImage[idx])->isGraphiteBacked()) {
+        return true;  // Have already made a YUV image suitable for Graphite.
+    }
+    // Try to make a new Graphite YUV image
+    switch (type) {
+        case Type::kFromPixmaps:
+            if (!recorder) {
+                return false;
+            }
+            fYUVImage[idx] = SkImage::MakeGraphiteFromYUVAPixmaps(recorder,
+                                                                  fPixmaps,
+                                                                  { fMipmapped },
+                                                                  /*limitToMaxTextureSize=*/false,
+                                                                  fColorSpace);
+            break;
+        case Type::kFromGenerator: {
+            // Make sure the generator has ownership of its backing planes.
+            auto generator = std::make_unique<Generator>(fPixmaps, fColorSpace);
+            fYUVImage[idx] = SkImage::MakeFromGenerator(std::move(generator));
+            break;
+        }
+        case Type::kFromTextures:
+            if (!recorder) {
+                return false;
+            }
+            if (fMipmapped == skgpu::Mipmapped::kYes) {
+                // If this becomes necessary we should invoke SkMipmapBuilder here to make mip
+                // maps from our src data (and then pass a pixmaps array to initialize the planar
+                // textures.
+                return false;
+            }
+            sk_sp<sk_gpu_test::ManagedGraphiteTexture> mbets[SkYUVAInfo::kMaxPlanes];
+            BackendTexture textures[SkYUVAInfo::kMaxPlanes];
+            for (int i = 0; i < fPixmaps.numPlanes(); ++i) {
+                mbets[i] = sk_gpu_test::ManagedGraphiteTexture::MakeFromPixmap(
+                        recorder,
+                        fPixmaps.plane(i),
+                        skgpu::Mipmapped::kNo,
+                        skgpu::Renderable::kNo,
+                        skgpu::Protected::kNo);
+                if (mbets[i]) {
+                    textures[i] = mbets[i]->texture();
+                } else {
+                    return false;
+                }
+            }
+            YUVABackendTextures yuvaTextures(recorder,
+                                             fPixmaps.yuvaInfo(),
+                                             textures);
+            if (!yuvaTextures.isValid()) {
+                return false;
+            }
+            void* imageRelContext =
+                    sk_gpu_test::ManagedGraphiteTexture::MakeYUVAReleaseContext(mbets);
+            fYUVImage[idx] = SkImage::MakeGraphiteFromYUVABackendTextures(
+                    recorder,
+                    yuvaTextures,
+                    fColorSpace,
+                    sk_gpu_test::ManagedGraphiteTexture::ImageReleaseProc,
+                    imageRelContext);
+            break;
+    }
+    return fYUVImage[idx] != nullptr;
+}
+#endif
+
 } // namespace sk_gpu_test

@@ -48,10 +48,14 @@ enum class ProgramOp {
     // ... has branch targets...
     label,
 
-    // ... and can invoke child programs.
+    // ... can invoke child programs ...
     invoke_shader,
     invoke_color_filter,
     invoke_blender,
+
+    // ... and can invoke color space transforms.
+    invoke_to_linear_srgb,
+    invoke_from_linear_srgb,
 };
 
 // BuilderOps are a superset of ProgramOps. They are used by the RP::Builder, which works in terms
@@ -74,17 +78,26 @@ enum class BuilderOp {
     invoke_color_filter,
     invoke_blender,
 
+    // ... can invoke color space transforms ...
+    invoke_to_linear_srgb,
+    invoke_from_linear_srgb,
+
     // ... and also has Builder-specific ops. These ops generally interface with the stack, and are
     // converted into ProgramOps during `makeStages`.
     push_literal,
     push_slots,
+    push_slots_indirect,
     push_uniform,
+    push_uniform_indirect,
     push_zeros,
     push_clone,
     push_clone_from_stack,
+    push_clone_indirect_from_stack,
     copy_stack_to_slots,
     copy_stack_to_slots_unmasked,
+    copy_stack_to_slots_indirect,
     swizzle_copy_stack_to_slots,
+    swizzle_copy_stack_to_slots_indirect,
     discard_stack,
     select,
     push_condition_mask,
@@ -105,29 +118,31 @@ enum class BuilderOp {
 };
 
 // If the child-invocation enums are not in sync between enums, program creation will not work.
-static_assert((int)ProgramOp::label               == (int)BuilderOp::label);
-static_assert((int)ProgramOp::invoke_shader       == (int)BuilderOp::invoke_shader);
-static_assert((int)ProgramOp::invoke_color_filter == (int)BuilderOp::invoke_color_filter);
-static_assert((int)ProgramOp::invoke_blender      == (int)BuilderOp::invoke_blender);
+static_assert((int)ProgramOp::label                   == (int)BuilderOp::label);
+static_assert((int)ProgramOp::invoke_shader           == (int)BuilderOp::invoke_shader);
+static_assert((int)ProgramOp::invoke_color_filter     == (int)BuilderOp::invoke_color_filter);
+static_assert((int)ProgramOp::invoke_blender          == (int)BuilderOp::invoke_blender);
+static_assert((int)ProgramOp::invoke_to_linear_srgb   == (int)BuilderOp::invoke_to_linear_srgb);
+static_assert((int)ProgramOp::invoke_from_linear_srgb == (int)BuilderOp::invoke_from_linear_srgb);
 
 // Represents a single raster-pipeline SkSL instruction.
 struct Instruction {
-    Instruction(BuilderOp op, std::initializer_list<Slot> slots, int a = 0, int b = 0, int c = 0)
-            : fOp(op), fImmA(a), fImmB(b), fImmC(c) {
+    Instruction(BuilderOp op, std::initializer_list<Slot> slots,
+                int a = 0, int b = 0, int c = 0, int d = 0)
+            : fOp(op), fImmA(a), fImmB(b), fImmC(c), fImmD(d) {
         auto iter = slots.begin();
         if (iter != slots.end()) { fSlotA = *iter++; }
         if (iter != slots.end()) { fSlotB = *iter++; }
-        if (iter != slots.end()) { fSlotC = *iter++; }
         SkASSERT(iter == slots.end());
     }
 
     BuilderOp fOp;
     Slot      fSlotA = NA;
     Slot      fSlotB = NA;
-    Slot      fSlotC = NA;
     int       fImmA = 0;
     int       fImmB = 0;
     int       fImmC = 0;
+    int       fImmD = 0;
 };
 
 class Callbacks {
@@ -230,6 +245,14 @@ private:
                                           ProgramOp stage, float* dst,
                                           const float* src0, const float* src1, int numSlots) const;
 
+    // Appends a math operation having three inputs (dst, src0, src1) and one output (dst) to the
+    // pipeline. The three inputs must be _immediately_ adjacent in memory. `baseStage` must refer
+    // to an unbounded "apply_to_n_slots" stage. A TernaryOpCtx will be used to pass pointers to the
+    // destination and sources; the delta between the each pointer implicitly gives the slot count.
+    void appendAdjacentNWayTernaryOp(SkTArray<Stage>* pipeline, SkArenaAlloc* alloc,
+                                     ProgramOp stage, float* dst,
+                                     const float* src0, const float* src1, int numSlots) const;
+
     // Appends a stack_rewind op on platforms where it is needed (when SK_HAS_MUSTTAIL is not set).
     void appendStackRewind(SkTArray<Stage>* pipeline) const;
 
@@ -251,7 +274,7 @@ public:
     /**
      * Peels off a label ID for use in the program. Set the label's position in the program with
      * the `label` instruction. Actually branch to the target with an instruction like
-     * `branch_if_any_active_lanes` or `jump`.
+     * `branch_if_any_lanes_active` or `jump`.
      */
     int nextLabelID() {
         return fNumLabels++;
@@ -320,11 +343,14 @@ public:
     // Unconditionally branches to a label.
     void jump(int labelID);
 
+    // Branches to a label if the execution mask is active in every lane.
+    void branch_if_all_lanes_active(int labelID);
+
     // Branches to a label if the execution mask is active in any lane.
-    void branch_if_any_active_lanes(int labelID);
+    void branch_if_any_lanes_active(int labelID);
 
     // Branches to a label if the execution mask is inactive across all lanes.
-    void branch_if_no_active_lanes(int labelID);
+    void branch_if_no_lanes_active(int labelID);
 
     // Branches to a label if the top value on the stack is _not_ equal to `value` in any lane.
     void branch_if_no_active_lanes_on_stack_top_equal(int value, int labelID);
@@ -349,18 +375,33 @@ public:
     // Translates into copy_constants (from uniforms into temp stack) in Raster Pipeline.
     void push_uniform(SlotRange src);
 
+    // Translates into copy_from_indirect_uniform_unmasked (from values into temp stack) in Raster
+    // Pipeline. `fixedRange` denotes a fixed set of slots; this range is pushed forward by the
+    // value at the top of stack `dynamicStack`. Pass the range of the uniform being indexed as
+    // `limitRange`; this is used as a hard cap, to avoid indexing outside of bounds.
+    void push_uniform_indirect(SlotRange fixedRange, int dynamicStack, SlotRange limitRange);
+
     void push_zeros(int count) {
         // Translates into zero_slot_unmasked in Raster Pipeline.
-        if (!fInstructions.empty() && fInstructions.back().fOp == BuilderOp::push_zeros) {
-            // Coalesce adjacent push_zero ops into a single op.
-            fInstructions.back().fImmA += count;
-        } else {
-            fInstructions.push_back({BuilderOp::push_zeros, {}, count});
+        SkASSERT(count >= 0);
+        if (count > 0) {
+            if (!fInstructions.empty() && fInstructions.back().fOp == BuilderOp::push_zeros) {
+                // Coalesce adjacent push_zero ops into a single op.
+                fInstructions.back().fImmA += count;
+            } else {
+                fInstructions.push_back({BuilderOp::push_zeros, {}, count});
+            }
         }
     }
 
     // Translates into copy_slots_unmasked (from values into temp stack) in Raster Pipeline.
     void push_slots(SlotRange src);
+
+    // Translates into copy_from_indirect_unmasked (from values into temp stack) in Raster Pipeline.
+    // `fixedRange` denotes a fixed set of slots; this range is pushed forward by the value at the
+    // top of stack `dynamicStack`. Pass the slot range of the variable being indexed as
+    // `limitRange`; this is used as a hard cap, to avoid indexing outside of bounds.
+    void push_slots_indirect(SlotRange fixedRange, int dynamicStack, SlotRange limitRange);
 
     // Translates into copy_slots_masked (from temp stack to values) in Raster Pipeline.
     // Does not discard any values on the temp stack.
@@ -376,6 +417,14 @@ public:
                                      SkSpan<const int8_t> components,
                                      int offsetFromStackTop);
 
+    // Translates into swizzle_copy_to_indirect_masked (from temp stack to values) in Raster
+    // Pipeline. Does not discard any values on the temp stack.
+    void swizzle_copy_stack_to_slots_indirect(SlotRange fixedRange,
+                                              int dynamicStackID,
+                                              SlotRange limitRange,
+                                              SkSpan<const int8_t> components,
+                                              int offsetFromStackTop);
+
     // Translates into copy_slots_unmasked (from temp stack to values) in Raster Pipeline.
     // Does not discard any values on the temp stack.
     void copy_stack_to_slots_unmasked(SlotRange dst) {
@@ -383,6 +432,20 @@ public:
     }
 
     void copy_stack_to_slots_unmasked(SlotRange dst, int offsetFromStackTop);
+
+    // Translates into copy_to_indirect_masked (from temp stack into values) in Raster Pipeline.
+    // `fixedRange` denotes a fixed set of slots; this range is pushed forward by the value at the
+    // top of stack `dynamicStack`. Pass the slot range of the variable being indexed as
+    // `limitRange`; this is used as a hard cap, to avoid indexing outside of bounds.
+    void copy_stack_to_slots_indirect(SlotRange fixedRange,
+                                      int dynamicStackID,
+                                      SlotRange limitRange);
+
+    // Copies from temp stack to slots, including an indirect offset, then shrinks the temp stack.
+    void pop_slots_indirect(SlotRange fixedRange, int dynamicStackID, SlotRange limitRange) {
+        this->copy_stack_to_slots_indirect(fixedRange, dynamicStackID, limitRange);
+        this->discard_stack(fixedRange.count);
+    }
 
     // Performs a unary op (like `bitwise_not`), given a slot count of `slots`. The stack top is
     // replaced with the result.
@@ -400,6 +463,13 @@ public:
     // Two n-slot input vectors are consumed, and a scalar result is pushed onto the stack.
     void dot_floats(int32_t slots);
 
+    // Computes refract(N, I, eta) on the stack. N and I are assumed to be 4-slot vectors, and can
+    // be padded with zeros for smaller inputs. Eta is a scalar. The result is a 4-slot vector.
+    void refract_floats();
+
+    // Computes inverse(matN) on the stack. Pass 2, 3 or 4 for n to specify matrix size.
+    void inverse_matrix(int32_t n);
+
     // Shrinks the temp stack, discarding values on top.
     void discard_stack(int32_t count = 1);
 
@@ -416,9 +486,16 @@ public:
                                  numSlots + offsetFromStackTop});
     }
 
-    // Creates a single clone from an item on any temp stack. The cloned item can consist of any
-    // number of slots.
-    void push_clone_from_stack(int numSlots, int otherStackIndex, int offsetFromStackTop = 0);
+    // Clones a range of slots from another stack onto this stack.
+    void push_clone_from_stack(SlotRange range, int otherStackID, int offsetFromStackTop);
+
+    // Translates into copy_from_indirect_unmasked (from one temp stack to another) in Raster
+    // Pipeline. `fixedOffset` denotes a range of slots within the top `offsetFromStackTop` slots of
+    // `otherStackID`. This range is pushed forward by the value at the top of `dynamicStackID`.
+    void push_clone_indirect_from_stack(SlotRange fixedOffset,
+                                        int dynamicStackID,
+                                        int otherStackID,
+                                        int offsetFromStackTop);
 
     // Compares the stack top with the passed-in value; if it matches, enables the loop mask.
     void case_op(int value) {
@@ -551,6 +628,14 @@ public:
 
     void invoke_blender(int childIdx) {
         fInstructions.push_back({BuilderOp::invoke_blender, {}, childIdx});
+    }
+
+    void invoke_to_linear_srgb() {
+        fInstructions.push_back({BuilderOp::invoke_to_linear_srgb, {}});
+    }
+
+    void invoke_from_linear_srgb() {
+        fInstructions.push_back({BuilderOp::invoke_from_linear_srgb, {}});
     }
 
 private:

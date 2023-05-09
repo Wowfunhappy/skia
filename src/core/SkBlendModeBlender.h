@@ -14,21 +14,23 @@ class SkBlendModeBlender : public SkBlenderBase {
 public:
     SkBlendModeBlender(SkBlendMode mode) : fMode(mode) {}
 
+    SK_FLATTENABLE_HOOKS(SkBlendModeBlender)
+
+private:
+    using INHERITED = SkBlenderBase;
+
     std::optional<SkBlendMode> asBlendMode() const final { return fMode; }
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
     std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(
             std::unique_ptr<GrFragmentProcessor> srcFP,
             std::unique_ptr<GrFragmentProcessor> dstFP,
             const GrFPArgs& fpArgs) const override;
 #endif
 
-    SK_FLATTENABLE_HOOKS(SkBlendModeBlender)
-
-private:
-    using INHERITED = SkBlenderBase;
-
     void flatten(SkWriteBuffer& buffer) const override;
+
+    bool onAppendStages(const SkStageRec& rec) const override;
 
     skvm::Color onProgram(skvm::Builder* p, skvm::Color src, skvm::Color dst,
                           const SkColorInfo& colorInfo, skvm::Uniforms* uniforms,

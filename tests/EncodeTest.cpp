@@ -6,6 +6,7 @@
  */
 
 #include "include/codec/SkCodec.h"
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkAlphaType.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
@@ -14,7 +15,6 @@
 #include "include/core/SkColorType.h"
 #include "include/core/SkData.h"
 #include "include/core/SkDataTable.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageEncoder.h"
 #include "include/core/SkImageInfo.h"
@@ -27,8 +27,8 @@
 #include "include/encode/SkJpegEncoder.h"
 #include "include/encode/SkPngEncoder.h"
 #include "include/encode/SkWebpEncoder.h"
-#include "include/private/base/SkTemplates.h"
 #include "include/private/base/SkMalloc.h"
+#include "include/private/base/SkTemplates.h"
 #include "src/core/SkImageInfoPriv.h"
 #include "tests/Test.h"
 #include "tools/Resources.h"
@@ -531,8 +531,9 @@ DEF_TEST(Encode_Alpha, r) {
             bm.allocPixels(SkImageInfo::Make(10, 10, ct, kPremul_SkAlphaType));
             sk_bzero(bm.getPixels(), bm.computeByteSize());
             auto data = SkEncodeBitmap(bm, format, 100);
-            if (format == SkEncodedImageFormat::kPNG && ct == kAlpha_8_SkColorType) {
-                // We support encoding alpha8 to png with our own private meaning.
+            if ((format == SkEncodedImageFormat::kJPEG || format == SkEncodedImageFormat::kPNG) &&
+                ct == kAlpha_8_SkColorType) {
+                // We support encoding alpha8 to png and jpeg with our own private meaning.
                 REPORTER_ASSERT(r, data != nullptr);
             } else {
                 REPORTER_ASSERT(r, data == nullptr);

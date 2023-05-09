@@ -25,6 +25,8 @@
 #include <cmath>
 #include <utility>
 
+using namespace skia_private;
+
 class SlideDir::Animator : public SkRefCnt {
 public:
     Animator(const Animator&) = delete;
@@ -102,8 +104,6 @@ private:
     }
 
     const sk_sp<Slide> fSlide;
-
-    using INHERITED = sksg::RenderNode;
 };
 
 SkMatrix SlideMatrix(const sk_sp<Slide>& slide, const SkRect& dst) {
@@ -258,11 +258,9 @@ private:
                     fOpacity1 = 1,
                     fTimeBase = 0;
     State           fState    = State::kIdle;
-
-    using INHERITED = Animator;
 };
 
-SlideDir::SlideDir(const SkString& name, SkTArray<sk_sp<Slide>>&& slides, int columns)
+SlideDir::SlideDir(const SkString& name, TArray<sk_sp<Slide>>&& slides, int columns)
     : fSlides(std::move(slides))
     , fColumns(columns) {
     fName = name;

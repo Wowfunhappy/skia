@@ -1,4 +1,5 @@
-load("//bazel:macros.bzl", "bool_flag", "selects", "skia_cc_library")
+load("//bazel:skia_rules.bzl", "skia_cc_library")
+load("//bazel:flags.bzl", "bool_flag", "selects")
 load(":tests.bzl", "skia_cpu_tests", "skia_ganesh_tests")
 
 CODEC_TESTS = [
@@ -152,13 +153,11 @@ CPU_ONLY_TESTS = [
     "SkDOMTest.cpp",
     "SkEnumBitMaskTest.cpp",
     "SkGaussFilterTest.cpp",
-    "SkGlyphBufferTest.cpp",
     "SkGlyphTest.cpp",
     "SkImageTest.cpp",
     "SkMallocTest.cpp",
     "SkPathRangeIterTest.cpp",
     "SkSLErrorTest.cpp",
-    "SkSLInterpreterTest.cpp",
     "SkSLMemoryLayoutTest.cpp",
     "SkSLTypeTest.cpp",
     "SkSharedMutexTest.cpp",

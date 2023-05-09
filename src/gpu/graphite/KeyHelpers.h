@@ -8,6 +8,7 @@
 #ifndef skgpu_graphite_KeyHelpers_DEFINED
 #define skgpu_graphite_KeyHelpers_DEFINED
 
+#include "include/core/SkBitmap.h"
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkM44.h"
 #include "include/core/SkSamplingOptions.h"
@@ -31,6 +32,16 @@ class PaintParamsKeyBuilder;
 class PipelineDataGatherer;
 class UniquePaintParamsID;
 enum class ReadSwizzle;
+
+// Types of logical "destinations" that a blender might blend with.
+enum class DstColorType {
+    // A color read from the framebuffer.
+    kSurface,
+    // A color provided by geometry.
+    kPrimitive,
+    // A color evaluated by a child shader.
+    kChildOutput,
+};
 
 /**
  * The KeyHelpers can be used to manually construct an SkPaintParamsKey.
@@ -68,8 +79,9 @@ struct SolidColorShaderBlock {
 struct GradientShaderBlocks {
 
     struct GradientData {
-        // TODO: For the sprint we only support 8 stops in the gradients
-        static constexpr int kMaxStops = 8;
+        // The number of stops stored internal to this data structure before falling back to
+        // bitmap storage.
+        static constexpr int kNumInternalStorageStops = 8;
 
         // This ctor is used during pre-compilation when we don't have enough information to
         // extract uniform data. However, we must be able to provide enough data to make all the
@@ -114,10 +126,16 @@ struct GradientShaderBlocks {
 
         SkTileMode             fTM;
         int                    fNumStops;
-        SkPMColor4f            fColors[kMaxStops];
-        float                  fOffsets[kMaxStops];
+
+        // For gradients w/ <= kNumInternalStorageStops stops we use fColors and fOffsets.
+        // Otherwise we use fColorsAndOffsetsBitmap.
+        SkPMColor4f            fColors[kNumInternalStorageStops];
+        float                  fOffsets[kNumInternalStorageStops];
+        SkBitmap               fColorsAndOffsetsBitmap;
+
 
         SkGradientShader::Interpolation fInterpolation;
+        bool                   fValid = true;
     };
 
     static void BeginBlock(const KeyContext&,
@@ -173,6 +191,73 @@ struct ImageShaderBlock {
                            const ImageData*);
 
 };
+
+struct CoordClampShaderBlock {
+
+    struct CoordClampData {
+        CoordClampData(SkRect subset) : fSubset(subset) {}
+
+        SkRect fSubset;
+    };
+
+    // The gatherer and data should be null or non-null together
+    static void BeginBlock(const KeyContext&,
+                           PaintParamsKeyBuilder*,
+                           PipelineDataGatherer*,
+                           const CoordClampData*);
+};
+
+struct DitherShaderBlock {
+
+    struct DitherData {
+        DitherData(float range) : fRange(range) {}
+
+        float fRange;
+    };
+
+    // The gatherer and data should be null or non-null together
+    static void BeginBlock(const KeyContext&,
+                           PaintParamsKeyBuilder*,
+                           PipelineDataGatherer*,
+                           const DitherData*);
+};
+
+struct PerlinNoiseShaderBlock {
+
+    enum class Type {
+        kFractalNoise,
+        kTurbulence,
+    };
+
+    struct PerlinNoiseData {
+        PerlinNoiseData(Type type,
+                        SkVector baseFrequency,
+                        int numOctaves,
+                        SkISize stitchData)
+            : fType(type)
+            , fBaseFrequency(baseFrequency)
+            , fNumOctaves(numOctaves)
+            , fStitchData{ SkIntToFloat(stitchData.fWidth), SkIntToFloat(stitchData.fHeight) } {
+        }
+
+        bool stitching() const { return !fStitchData.isZero(); }
+
+        Type fType;
+        SkVector fBaseFrequency;
+        int fNumOctaves;
+        SkVector fStitchData;
+
+        sk_sp<TextureProxy> fPermutationsProxy;
+        sk_sp<TextureProxy> fNoiseProxy;
+    };
+
+    // The gatherer and data should be null or non-null together
+    static void BeginBlock(const KeyContext&,
+                           PaintParamsKeyBuilder*,
+                           PipelineDataGatherer*,
+                           const PerlinNoiseData*);
+};
+
 
 struct PorterDuffBlendShaderBlock {
     struct PorterDuffBlendShaderData {

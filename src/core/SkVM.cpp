@@ -127,7 +127,7 @@ namespace skvm {
         int regs = 0;
         int loop = 0;
         std::vector<int> strides;
-        std::vector<TraceHook*> traceHooks;
+        std::vector<SkSL::TraceHook*> traceHooks;
         std::unique_ptr<viz::Visualizer> visualizer;
 
         std::atomic<void*> jit_entry{nullptr};   // TODO: minimal std::memory_orders
@@ -631,7 +631,7 @@ namespace skvm {
     #endif
     }
 
-    int Builder::attachTraceHook(TraceHook* hook) {
+    int Builder::attachTraceHook(SkSL::TraceHook* hook) {
         int traceHookID = (int)fTraceHooks.size();
         fTraceHooks.push_back(hook);
         return traceHookID;
@@ -909,16 +909,16 @@ namespace skvm {
         return x;
     }
 
-     // http://mathforum.org/library/drmath/view/54137.html
-     // referencing Handbook of Mathematical Functions,
-     //             by Milton Abramowitz and Irene Stegun
-     F32 Builder::approx_asin(F32 x) {
+    // http://mathforum.org/library/drmath/view/54137.html
+    // referencing Handbook of Mathematical Functions,
+    //             by Milton Abramowitz and Irene Stegun
+    F32 Builder::approx_asin(F32 x) {
          I32 neg = (x < 0.0f);
          x = select(neg, -x, x);
          x = SK_ScalarPI/2 - sqrt(1-x) * poly(x, -0.0187293f, 0.0742610f, -0.2121144f, 1.5707288f);
          x = select(neg, -x, x);
          return x;
-     }
+    }
 
     /*  Use 4th order polynomial approximation from https://arachnoid.com/polysolve/
      *      with 129 values of x,atan(x) for x:[0...1]
@@ -2694,7 +2694,7 @@ namespace skvm {
     Program::Program(const std::vector<OptimizedInstruction>& instructions,
                      std::unique_ptr<viz::Visualizer> visualizer,
                      const std::vector<int>& strides,
-                     const std::vector<TraceHook*>& traceHooks,
+                     const std::vector<SkSL::TraceHook*>& traceHooks,
                      const char* debug_name, bool allow_jit) : Program() {
         fImpl->visualizer = std::move(visualizer);
         fImpl->strides = strides;

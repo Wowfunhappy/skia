@@ -8,31 +8,66 @@
 
 #include "include/gpu/GrDirectContext.h"
 
+#include "include/core/SkImageInfo.h"
+#include "include/core/SkPixmap.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkSurface.h"
+#include "include/core/SkTextureCompressionType.h"
 #include "include/core/SkTraceMemoryDump.h"
+#include "include/gpu/GpuTypes.h"
 #include "include/gpu/GrBackendSemaphore.h"
+#include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrContextThreadSafeProxy.h"
+#include "include/private/base/SingleOwner.h"
+#include "include/private/base/SkTArray.h"
+#include "include/private/base/SkTemplates.h"
+#include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/base/SkAutoMalloc.h"
 #include "src/core/SkCompressedDataUtils.h"
+#include "src/core/SkMipmap.h"
 #include "src/core/SkTaskGroup.h"
 #include "src/core/SkTraceEvent.h"
+#include "src/gpu/RefCntedCallback.h"
+#include "src/gpu/Swizzle.h"
 #include "src/gpu/ganesh/GrBackendUtils.h"
+#include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrClientMappedBufferManager.h"
+#include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrContextThreadSafeProxyPriv.h"
+#include "src/gpu/ganesh/GrDataUtils.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
+#include "src/gpu/ganesh/GrDrawOpAtlas.h"
 #include "src/gpu/ganesh/GrDrawingManager.h"
 #include "src/gpu/ganesh/GrGpu.h"
+#include "src/gpu/ganesh/GrPixmap.h"
+#include "src/gpu/ganesh/GrProxyProvider.h"
+#include "src/gpu/ganesh/GrResourceCache.h"
 #include "src/gpu/ganesh/GrResourceProvider.h"
-#include "src/gpu/ganesh/GrSemaphore.h"
-#include "src/gpu/ganesh/GrThreadSafePipelineBuilder.h"
+#include "src/gpu/ganesh/GrShaderCaps.h"
+#include "src/gpu/ganesh/GrSurfaceProxy.h"
+#include "src/gpu/ganesh/GrSurfaceProxyView.h"
+#include "src/gpu/ganesh/GrThreadSafePipelineBuilder.h" // IWYU pragma: keep
 #include "src/gpu/ganesh/SurfaceContext.h"
-#include "src/gpu/ganesh/effects/GrSkSLFP.h"
 #include "src/gpu/ganesh/mock/GrMockGpu.h"
 #include "src/gpu/ganesh/ops/SmallPathAtlasMgr.h"
 #include "src/gpu/ganesh/text/GrAtlasManager.h"
-#include "src/image/SkImage_GpuBase.h"
 #include "src/text/gpu/StrikeCache.h"
-#include "src/utils/SkShaderUtils.h"
+#include "src/text/gpu/TextBlobRedrawCoordinator.h"
+
+#include <array>
+#include <atomic>
+#include <forward_list>
+#include <memory>
+#include <utility>
+
+class GrSemaphore;
+
 #ifdef SK_GL
+#include "include/gpu/gl/GrGLConfig.h"
+#include "include/gpu/gl/GrGLFunctions.h"
+#include "include/gpu/gl/GrGLInterface.h"
+#include "include/gpu/gl/GrGLTypes.h"
+#include "src/gpu/ganesh/gl/GrGLDefines_impl.h"
 #include "src/gpu/ganesh/gl/GrGLGpu.h"
 #endif
 #ifdef SK_METAL
@@ -48,7 +83,6 @@
 #ifdef SK_DAWN
 #include "src/gpu/ganesh/dawn/GrDawnGpu.h"
 #endif
-#include <memory>
 
 #if GR_TEST_UTILS
 #   include "src/base/SkRandom.h"
@@ -73,7 +107,9 @@ GrDirectContext::DirectContextID GrDirectContext::DirectContextID::Next() {
 }
 
 GrDirectContext::GrDirectContext(GrBackendApi backend, const GrContextOptions& options)
-        : INHERITED(GrContextThreadSafeProxyPriv::Make(backend, options), false)
+        : GrRecordingContext(GrContextThreadSafeProxyPriv::Make(backend, options), false)
+        , fDeleteCallbackHelper(new DeleteCallbackHelper(options.fContextDeleteContext,
+                                                         options.fContextDeleteProc))
         , fDirectContextID(DirectContextID::Next()) {
 }
 
@@ -100,7 +136,7 @@ GrDirectContext::~GrDirectContext() {
 }
 
 sk_sp<GrContextThreadSafeProxy> GrDirectContext::threadSafeProxy() {
-    return INHERITED::threadSafeProxy();
+    return GrRecordingContext::threadSafeProxy();
 }
 
 void GrDirectContext::resetGLTextureBindings() {
@@ -116,7 +152,7 @@ void GrDirectContext::resetContext(uint32_t state) {
 }
 
 void GrDirectContext::abandonContext() {
-    if (INHERITED::abandoned()) {
+    if (GrRecordingContext::abandoned()) {
         return;
     }
 
@@ -126,7 +162,7 @@ void GrDirectContext::abandonContext() {
         return;
     }
 
-    INHERITED::abandonContext();
+    GrRecordingContext::abandonContext();
 
     // We need to make sure all work is finished on the gpu before we start releasing resources.
     this->syncAllOutstandingGpuWork(this->caps()->mustSyncGpuDuringAbandon());
@@ -151,7 +187,7 @@ void GrDirectContext::abandonContext() {
 }
 
 bool GrDirectContext::abandoned() {
-    if (INHERITED::abandoned()) {
+    if (GrRecordingContext::abandoned()) {
         return true;
     }
 
@@ -165,11 +201,11 @@ bool GrDirectContext::abandoned() {
 bool GrDirectContext::oomed() { return fGpu ? fGpu->checkAndResetOOMed() : false; }
 
 void GrDirectContext::releaseResourcesAndAbandonContext() {
-    if (INHERITED::abandoned()) {
+    if (GrRecordingContext::abandoned()) {
         return;
     }
 
-    INHERITED::abandonContext();
+    GrRecordingContext::abandonContext();
 
     // We need to make sure all work is finished on the gpu before we start releasing resources.
     this->syncAllOutstandingGpuWork(/*shouldExecuteWhileAbandoned=*/true);
@@ -222,7 +258,7 @@ bool GrDirectContext::init() {
     }
 
     fThreadSafeProxy->priv().init(fGpu->refCaps(), fGpu->refPipelineBuilder());
-    if (!INHERITED::init()) {
+    if (!GrRecordingContext::init()) {
         return false;
     }
 
@@ -386,9 +422,9 @@ bool GrDirectContext::wait(int numSemaphores, const GrBackendSemaphore waitSemap
 }
 
 #if !defined(SK_ENABLE_OPTIMIZE_SIZE)
-skgpu::v1::SmallPathAtlasMgr* GrDirectContext::onGetSmallPathAtlasMgr() {
+skgpu::ganesh::SmallPathAtlasMgr* GrDirectContext::onGetSmallPathAtlasMgr() {
     if (!fSmallPathAtlasMgr) {
-        fSmallPathAtlasMgr = std::make_unique<skgpu::v1::SmallPathAtlasMgr>();
+        fSmallPathAtlasMgr = std::make_unique<skgpu::ganesh::SmallPathAtlasMgr>();
 
         this->priv().addOnFlushCallbackObject(fSmallPathAtlasMgr.get());
     }
@@ -485,6 +521,49 @@ GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
                                       mipmapped, isProtected, label);
 }
 
+GrBackendTexture GrDirectContext::createBackendTexture(const SkPixmap& srcData,
+                                                       GrSurfaceOrigin textureOrigin,
+                                                       GrRenderable renderable,
+                                                       GrProtected isProtected,
+                                                       GrGpuFinishedProc finishedProc,
+                                                       GrGpuFinishedContext finishedContext,
+                                                       std::string_view label) {
+     return this->createBackendTexture(&srcData, 1, textureOrigin, renderable, isProtected,
+                                       finishedProc, finishedContext, label);
+}
+
+GrBackendTexture GrDirectContext::createBackendTexture(const SkPixmap& srcData,
+                                                       GrRenderable renderable,
+                                                       GrProtected isProtected,
+                                                       GrGpuFinishedProc finishedProc,
+                                                       GrGpuFinishedContext finishedContext,
+                                                       std::string_view label) {
+    return this->createBackendTexture(&srcData,
+                                      1,
+                                      renderable,
+                                      isProtected,
+                                      finishedProc,
+                                      finishedContext,
+                                      label);
+}
+
+GrBackendTexture GrDirectContext::createBackendTexture(const SkPixmap srcData[],
+                                                       int numLevels,
+                                                       GrRenderable renderable,
+                                                       GrProtected isProtected,
+                                                       GrGpuFinishedProc finishedProc,
+                                                       GrGpuFinishedContext finishedContext,
+                                                       std::string_view label) {
+    return this->createBackendTexture(srcData,
+                                      numLevels,
+                                      kTopLeft_GrSurfaceOrigin,
+                                      renderable,
+                                      isProtected,
+                                      finishedProc,
+                                      finishedContext,
+                                      label);
+}
+
 GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
                                                        SkColorType skColorType,
                                                        GrMipmapped mipmapped,
@@ -551,7 +630,8 @@ static bool update_texture_with_pixmaps(GrDirectContext* context,
 
     skgpu::Swizzle swizzle = context->priv().caps()->getReadSwizzle(format, ct);
     GrSurfaceProxyView view(std::move(proxy), textureOrigin, swizzle);
-    skgpu::v1::SurfaceContext surfaceContext(context, std::move(view), src[0].info().colorInfo());
+    skgpu::ganesh::SurfaceContext surfaceContext(
+            context, std::move(view), src[0].info().colorInfo());
     AutoSTArray<15, GrCPixmap> tmpSrc(numLevels);
     for (int i = 0; i < numLevels; ++i) {
         tmpSrc[i] = src[i];
@@ -680,6 +760,19 @@ GrBackendTexture GrDirectContext::createBackendTexture(const SkPixmap srcData[],
     return beTex;
 }
 
+bool GrDirectContext::updateBackendTexture(const GrBackendTexture& texture,
+                                           const SkPixmap srcData[],
+                                           int numLevels,
+                                           GrGpuFinishedProc finishedProc,
+                                           GrGpuFinishedContext finishedContext) {
+    return this->updateBackendTexture(texture,
+                                      srcData,
+                                      numLevels,
+                                      kTopLeft_GrSurfaceOrigin,
+                                      finishedProc,
+                                      finishedContext);
+}
+
 bool GrDirectContext::updateBackendTexture(const GrBackendTexture& backendTexture,
                                            const SkColor4f& color,
                                            GrGpuFinishedProc finishedProc,
@@ -794,8 +887,8 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(
         return {};
     }
 
-    SkImage::CompressionType compression = GrBackendFormatToCompressionType(backendFormat);
-    if (compression == SkImage::CompressionType::kNone) {
+    SkTextureCompressionType compression = GrBackendFormatToCompressionType(backendFormat);
+    if (compression == SkTextureCompressionType::kNone) {
         return {};
     }
 
@@ -817,7 +910,7 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(
 
 GrBackendTexture GrDirectContext::createCompressedBackendTexture(
         int width, int height,
-        SkImage::CompressionType compression,
+        SkTextureCompressionType compression,
         const SkColor4f& color,
         GrMipmapped mipmapped,
         GrProtected isProtected,
@@ -858,7 +951,7 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(
 
 GrBackendTexture GrDirectContext::createCompressedBackendTexture(
         int width, int height,
-        SkImage::CompressionType compression,
+        SkTextureCompressionType compression,
         const void* data, size_t dataSize,
         GrMipmapped mipmapped,
         GrProtected isProtected,
@@ -880,9 +973,9 @@ bool GrDirectContext::updateCompressedBackendTexture(const GrBackendTexture& bac
         return false;
     }
 
-    SkImage::CompressionType compression =
+    SkTextureCompressionType compression =
             GrBackendFormatToCompressionType(backendTexture.getBackendFormat());
-    if (compression == SkImage::CompressionType::kNone) {
+    if (compression == SkTextureCompressionType::kNone) {
         return {};
     }
     size_t size = SkCompressedDataSize(compression,

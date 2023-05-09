@@ -7,6 +7,7 @@
 
 #include "include/android/SkAnimatedImage.h"
 #include "include/codec/SkAndroidCodec.h"
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkBlurTypes.h"
 #include "include/core/SkCanvas.h"
@@ -14,7 +15,6 @@
 #include "include/core/SkColorFilter.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkImage.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkImageGenerator.h"
@@ -112,7 +112,7 @@
 #endif
 
 #ifndef CK_NO_FONTS
-sk_sp<SkFontMgr> SkFontMgr_New_Custom_Data(sk_sp<SkData>* datas, int n);
+#include "include/ports/SkFontMgr_data.h"
 #endif
 
 struct OptionalMatrix : SkMatrix {
@@ -1446,7 +1446,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
                 skdatas[i] = SkData::MakeFromMalloc(datas[i], sizes[i]);
             }
 
-            return SkFontMgr_New_Custom_Data(skdatas.get(), numFonts);
+            return SkFontMgr_New_Custom_Data(SkSpan(skdatas.get(), numFonts));
         }), allow_raw_pointers())
         .function("countFamilies", &SkFontMgr::countFamilies)
         .function("getFamilyName", optional_override([](SkFontMgr& self, int index)->JSString {
@@ -1498,21 +1498,27 @@ EMSCRIPTEN_BINDINGS(Skia) {
             return result;
         }))
         .function("height", &SkImage::height)
-        .function("encodeToBytes", optional_override([](sk_sp<SkImage> self) -> Uint8Array {
-            sk_sp<SkData> data = self->encodeToData();
-            if (!data) {
-                return emscripten::val::null();
-            }
-            return toBytes(data);
-        }))
-       .function("encodeToBytes", optional_override([](sk_sp<SkImage> self,
-                                            SkEncodedImageFormat fmt, int quality) -> Uint8Array {
+       .function("_encodeToBytes", optional_override([](sk_sp<SkImage> self,
+                                                        SkEncodedImageFormat fmt,
+                                                        int quality) -> Uint8Array {
             sk_sp<SkData> data = self->encodeToData(fmt, quality);
             if (!data) {
                 return emscripten::val::null();
             }
             return toBytes(data);
         }))
+#if defined(ENABLE_GPU)
+        .function("_encodeToBytes", optional_override([](sk_sp<SkImage> self,
+                                                         SkEncodedImageFormat fmt,
+                                                         int quality,
+                                                         GrDirectContext* dContext) -> Uint8Array {
+            sk_sp<SkData> data = self->encodeToData(dContext, fmt, quality);
+            if (!data) {
+                return emscripten::val::null();
+            }
+            return toBytes(data);
+        }), allow_raw_pointers())
+#endif
         .function("makeCopyWithDefaultMipmaps", optional_override([](sk_sp<SkImage> self)->sk_sp<SkImage> {
             return self->withDefaultMipmaps();
         }))
@@ -1672,6 +1678,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
             self.setColor(SkColor4f::FromColor(color), colorSpace.get());
         }))
         .function("setColorFilter", &SkPaint::setColorFilter)
+        .function("setDither", &SkPaint::setDither)
         .function("setImageFilter", &SkPaint::setImageFilter)
         .function("setMaskFilter", &SkPaint::setMaskFilter)
         .function("setPathEffect", &SkPaint::setPathEffect)

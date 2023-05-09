@@ -9,16 +9,17 @@
 
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkPixmap.h"
+#include "include/core/SkTextureCompressionType.h"
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrBackendSemaphore.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
 #include "include/private/SkSLProgramKind.h"
-#include "src/base/SkHalf.h"
 #include "include/private/base/SkTemplates.h"
 #include "include/private/base/SkTo.h"
 #include "src/base/SkAutoMalloc.h"
+#include "src/base/SkHalf.h"
 #include "src/base/SkScopeExit.h"
 #include "src/core/SkCompressedDataUtils.h"
 #include "src/core/SkLRUCache.h"
@@ -1179,7 +1180,7 @@ void GrGLGpu::uploadTexData(SkISize texDims,
     }
 }
 
-bool GrGLGpu::uploadCompressedTexData(SkImage::CompressionType compressionType,
+bool GrGLGpu::uploadCompressedTexData(SkTextureCompressionType compressionType,
                                       GrGLFormat format,
                                       SkISize dimensions,
                                       GrMipmapped mipmapped,
@@ -1194,7 +1195,7 @@ bool GrGLGpu::uploadCompressedTexData(SkImage::CompressionType compressionType,
         return false;
     }
 
-    SkASSERT(compressionType != SkImage::CompressionType::kNone);
+    SkASSERT(compressionType != SkTextureCompressionType::kNone);
 
     bool useTexStorage = caps.formatSupportsTexStorage(format);
 
@@ -1575,7 +1576,7 @@ sk_sp<GrTexture> GrGLGpu::onCreateCompressedTexture(SkISize dimensions,
     if (isProtected == GrProtected::kYes) {
         return nullptr;
     }
-    SkImage::CompressionType compression = GrBackendFormatToCompressionType(format);
+    SkTextureCompressionType compression = GrBackendFormatToCompressionType(format);
 
     GrGLTextureParameters::SamplerOverriddenState initialState;
     GrGLTexture::Desc desc;
@@ -1627,7 +1628,7 @@ GrBackendTexture GrGLGpu::onCreateCompressedBackendTexture(
         return {};
     }
 
-    SkImage::CompressionType compression = GrBackendFormatToCompressionType(format);
+    SkTextureCompressionType compression = GrBackendFormatToCompressionType(format);
 
     GrGLTextureInfo info;
     GrGLTextureParameters::SamplerOverriddenState initialState;
@@ -1664,7 +1665,7 @@ bool GrGLGpu::onUpdateCompressedBackendTexture(const GrBackendTexture& backendTe
     if (glFormat == GrGLFormat::kUnknown) {
         return false;
     }
-    SkImage::CompressionType compression = GrBackendFormatToCompressionType(format);
+    SkTextureCompressionType compression = GrBackendFormatToCompressionType(format);
 
     GrMipmapped mipmapped = backendTexture.hasMipmaps() ? GrMipmapped::kYes : GrMipmapped::kNo;
 
@@ -1791,7 +1792,7 @@ static void set_khr_debug_label(GrGLGpu* gpu, const GrGLuint id, std::string_vie
 
 GrGLuint GrGLGpu::createCompressedTexture2D(
         SkISize dimensions,
-        SkImage::CompressionType compression,
+        SkTextureCompressionType compression,
         GrGLFormat format,
         GrMipmapped mipmapped,
         GrGLTextureParameters::SamplerOverriddenState* initialState) {
@@ -3674,7 +3675,7 @@ bool GrGLGpu::onRegenerateMipMapLevels(GrTexture* texture) {
     fHWBoundRenderTargetUniqueID.makeInvalid();
 
     // Bind the texture, to get things configured for filtering.
-    // We'll be changing our base level further below:
+    // We'll be changing our base level and max level further below:
     this->setTextureUnit(0);
     // The mipmap program does not do any swizzling.
     this->bindTexture(0, GrSamplerState::Filter::kLinear, skgpu::Swizzle::RGBA(), glTex);
@@ -3723,7 +3724,7 @@ bool GrGLGpu::onRegenerateMipMapLevels(GrTexture* texture) {
         if (!fMipmapPrograms[progIdx].fProgram) {
             if (!this->createMipmapProgram(progIdx)) {
                 SkDebugf("Failed to create mipmap program.\n");
-                // Invalidate all params to cover base level change in a previous iteration.
+                // Invalidate all params to cover base and max level change in a previous iteration.
                 glTex->textureParamsModified();
                 return false;
             }
@@ -3737,9 +3738,14 @@ bool GrGLGpu::onRegenerateMipMapLevels(GrTexture* texture) {
                           invWidth, (width - 1) * invWidth, invHeight, (height - 1) * invHeight));
         GL_CALL(Uniform1i(fMipmapPrograms[progIdx].fTextureUniform, 0));
 
-        // Only sample from previous mip
+        // Set the base level and max level so that we only sample from the
+        // previous mip. Setting the max level is technically unnecessary, but
+        // we do it as a performance optimization. By making it clear that a
+        // rendering feedback loop is not occurring, we avoid hitting a slow
+        // path on some drivers.
         SkASSERT(this->glCaps().mipmapLevelControlSupport());
         GL_CALL(TexParameteri(GR_GL_TEXTURE_2D, GR_GL_TEXTURE_BASE_LEVEL, level - 1));
+        GL_CALL(TexParameteri(GR_GL_TEXTURE_2D, GR_GL_TEXTURE_MAX_LEVEL, level - 1));
 
         GL_CALL(FramebufferTexture2D(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0, GR_GL_TEXTURE_2D,
                                      glTex->textureID(), level));
@@ -3755,10 +3761,11 @@ bool GrGLGpu::onRegenerateMipMapLevels(GrTexture* texture) {
     GL_CALL(FramebufferTexture2D(GR_GL_FRAMEBUFFER, GR_GL_COLOR_ATTACHMENT0,
                                  GR_GL_TEXTURE_2D, 0, 0));
 
-    // We modified the base level param.
+    // We modified the base level and max level params.
     GrGLTextureParameters::NonsamplerState nonsamplerState = glTex->parameters()->nonsamplerState();
     // We drew the 2nd to last level into the last level.
     nonsamplerState.fBaseMipMapLevel = levelCount - 2;
+    nonsamplerState.fMaxMipmapLevel = levelCount - 2;
     glTex->parameters()->set(nullptr, nonsamplerState, fResetTimestampForTextureParameters);
 
     return true;

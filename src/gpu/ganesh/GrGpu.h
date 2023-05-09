@@ -30,9 +30,6 @@ class GrBackendSemaphore;
 struct GrContextOptions;
 class GrDirectContext;
 class GrGLContext;
-class GrPath;
-class GrPathRenderer;
-class GrPathRendererChain;
 class GrPipeline;
 class GrGeometryProcessor;
 class GrRenderTarget;
@@ -45,6 +42,7 @@ class GrTexture;
 class GrThreadSafePipelineBuilder;
 struct GrVkDrawableInfo;
 class SkJSONWriter;
+enum class SkTextureCompressionType;
 
 namespace SkSL {
     class Compiler;
@@ -680,7 +678,7 @@ public:
 
 protected:
     static bool CompressedDataIsCorrect(SkISize dimensions,
-                                        SkImage::CompressionType,
+                                        SkTextureCompressionType,
                                         GrMipmapped,
                                         const void* data,
                                         size_t length);
@@ -885,7 +883,6 @@ private:
     int fCurrentSubmitRenderPassCount = 0;
 #endif
 
-    friend class GrPathRendering;
     using INHERITED = SkRefCnt;
 };
 

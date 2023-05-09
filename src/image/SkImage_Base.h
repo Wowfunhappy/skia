@@ -22,12 +22,12 @@
 #include <string_view>
 #include <tuple>
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
 #include "include/gpu/GrTypes.h"
 #include "src/gpu/ganesh/SkGr.h"
 #endif
 
-#if defined(SK_GRAPHITE_ENABLED)
+#if defined(SK_GRAPHITE)
 namespace skgpu {
 namespace graphite {
 class TextureProxyView;
@@ -109,7 +109,7 @@ public:
     /** this->context() try-casted to GrDirectContext. Useful for migrations – avoid otherwise! */
     GrDirectContext* directContext() const;
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
     virtual GrSemaphoresSubmitted onFlush(GrDirectContext*, const GrFlushInfo&) const {
         return GrSemaphoresSubmitted::kNo;
     }
@@ -145,7 +145,7 @@ public:
     virtual GrBackendTexture onGetBackendTexture(bool flushPendingGrContextIO,
                                                  GrSurfaceOrigin* origin) const;
 #endif
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
     // Returns a TextureProxyView representation of the image, if possible. This also returns
     // a color type. This may be different than the image's color type when the image is not
     // texture-backed and the capabilities of the GPU require a data type conversion to put
@@ -155,8 +155,10 @@ public:
             skgpu::Mipmapped) const;
 
 #endif
-#if SK_SUPPORT_GPU || defined(SK_GRAPHITE_ENABLED)
-    virtual bool isYUVA() const { return false; }
+#if defined(SK_GANESH) || defined(SK_GRAPHITE)
+    bool isYUVA() const {
+        return this->type() == Type::kGaneshYUVA || this->type() == Type::kGraphiteYUVA;
+    }
 #endif
 
     virtual bool onPinAsTexture(GrRecordingContext*) const { return false; }
@@ -174,14 +176,31 @@ public:
 
     virtual bool onAsLegacyBitmap(GrDirectContext*, SkBitmap*) const;
 
+    enum class Type {
+        kUnknown,
+        kRaster,
+        kRasterPinnable,
+        kLazy,
+        kGanesh,
+        kGaneshYUVA,
+        kGraphite,
+        kGraphiteYUVA,
+    };
+
+    virtual Type type() const { return Type::kUnknown; }
+
     // True for picture-backed and codec-backed
-    virtual bool onIsLazyGenerated() const { return false; }
+    bool onIsLazyGenerated() const { return this->type() == Type::kLazy; }
 
     // True for images instantiated by Ganesh in GPU memory
-    virtual bool isGaneshBacked() const { return false; }
+    bool isGaneshBacked() const {
+        return this->type() == Type::kGanesh || this->type() == Type::kGaneshYUVA;
+    }
 
     // True for images instantiated by Graphite in GPU memory
-    virtual bool isGraphiteBacked() const { return false; }
+    bool isGraphiteBacked() const {
+        return this->type() == Type::kGraphite || this->type() == Type::kGraphiteYUVA;
+    }
 
     // Amount of texture memory used by texture-backed images.
     virtual size_t onTextureSize() const { return 0; }
@@ -204,7 +223,7 @@ public:
         return nullptr;
     }
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
     virtual sk_sp<SkImage> onMakeTextureImage(skgpu::graphite::Recorder*,
                                               RequiredImageProperties) const = 0;
     virtual sk_sp<SkImage> onMakeSubset(const SkIRect&,
@@ -219,7 +238,7 @@ public:
 protected:
     SkImage_Base(const SkImageInfo& info, uint32_t uniqueID);
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
     // Utility for making a copy of an existing view when the GrImageTexGenPolicy is not kDraw.
     static GrSurfaceProxyView CopyView(GrRecordingContext*,
                                        GrSurfaceProxyView src,
@@ -249,7 +268,7 @@ protected:
 #endif
 
 private:
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
     virtual std::tuple<GrSurfaceProxyView, GrColorType> onAsView(
             GrRecordingContext*,
             GrMipmapped,

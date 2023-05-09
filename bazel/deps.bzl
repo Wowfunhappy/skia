@@ -22,7 +22,7 @@ def git_repos_from_deps():
     new_git_repository(
         name = "dawn",
         build_file = "@//bazel/external/dawn:BUILD.bazel",
-        commit = "f16b9bbd6e2ad12507956852297528acd164774f",
+        commit = "134ffd92e18523b527bce1e72745b10fbaa34c0b",
         remote = "https://dawn.googlesource.com/dawn.git",
     )
 
@@ -49,14 +49,14 @@ def git_repos_from_deps():
     new_git_repository(
         name = "freetype",
         build_file = "@//bazel/external/freetype:BUILD.bazel",
-        commit = "82ce172669f132839debe6e50a3a53fe88db9e31",
+        commit = "d857bd535b6c7e877f262a9b61ed21ee11b35dab",
         remote = "https://chromium.googlesource.com/chromium/src/third_party/freetype2.git",
     )
 
     new_git_repository(
         name = "harfbuzz",
         build_file = "@//bazel/external/harfbuzz:BUILD.bazel",
-        commit = "f1f2be776bcd994fa9262622e1a7098a066e5cf7",
+        commit = "09a266236147497bd8149240062c31c16fbc81e3",
         remote = "https://chromium.googlesource.com/external/github.com/harfbuzz/harfbuzz.git",
     )
 
@@ -111,7 +111,7 @@ def git_repos_from_deps():
     new_git_repository(
         name = "libwebp",
         build_file = "@//bazel/external/libwebp:BUILD.bazel",
-        commit = "603e8d7adb0ccc35237419c2938194623b60e9be",
+        commit = "fd7b5d48464475408d32d2611bdb6947d4246b97",
         remote = "https://chromium.googlesource.com/webm/libwebp.git",
     )
 
@@ -146,33 +146,33 @@ def git_repos_from_deps():
     new_git_repository(
         name = "spirv_cross",
         build_file = "@//bazel/external/spirv_cross:BUILD.bazel",
-        commit = "3550a54ae01b295c40ce972d951b420b388b9401",
+        commit = "09e60d74f6a1c8deed2c02c998661b2ec7dd712e",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Cross",
     )
 
     git_repository(
         name = "spirv_headers",
-        commit = "aa331ab0ffcb3a67021caa1a0c1c9017712f2f31",
+        commit = "5b21f14b20af8b07cc81f01bef627d562730e7c8",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers.git",
     )
 
     git_repository(
         name = "spirv_tools",
-        commit = "4183faa2eca6e531aecc7fb4a3f8a1b12c63a252",
+        commit = "9fbe1738ba674343d73b77d38a9e0b64964e8de2",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git",
     )
 
     new_git_repository(
         name = "vulkan_headers",
         build_file = "@//bazel/external/vulkan_headers:BUILD.bazel",
-        commit = "115820a6e5ff35881046a8e3920c2514c73e4a63",
+        commit = "ee15ae402bd724cc2d1734815cb8da038f8b53fc",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Headers",
     )
 
     new_git_repository(
         name = "vulkan_tools",
         build_file = "@//bazel/external/vulkan_tools:BUILD.bazel",
-        commit = "1a66f59f23ac2e45af4e38ee49c711df022a8f22",
+        commit = "728c1535dea8d04d4bd37308b3dbd3a0eff9726b",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Tools",
     )
 

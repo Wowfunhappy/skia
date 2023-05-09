@@ -7,11 +7,18 @@
 
 #include "include/core/SkImageGenerator.h"
 
-#include "include/core/SkImage.h"
+#include "include/core/SkAlphaType.h"
+#include "include/core/SkColorType.h"
+#include "include/core/SkGraphics.h"
+#include "include/core/SkSize.h"
+#include "include/private/base/SkAssert.h"
 #include "src/core/SkNextID.h"
 
-#if SK_SUPPORT_GPU
+#include <utility>
+
+#if defined(SK_GANESH)
 #include "include/gpu/GrRecordingContext.h"
+#include "src/gpu/ganesh/GrSurfaceProxyView.h"
 #endif
 
 SkImageGenerator::SkImageGenerator(const SkImageInfo& info, uint32_t uniqueID)
@@ -46,9 +53,7 @@ bool SkImageGenerator::getYUVAPlanes(const SkYUVAPixmaps& yuvaPixmaps) {
     return this->onGetYUVAPlanes(yuvaPixmaps);
 }
 
-#if SK_SUPPORT_GPU
-#include "src/gpu/ganesh/GrSurfaceProxyView.h"
-
+#if defined(SK_GANESH)
 GrSurfaceProxyView SkImageGenerator::generateTexture(GrRecordingContext* ctx,
                                                      const SkImageInfo& info,
                                                      GrMipmapped mipmapped,
@@ -68,9 +73,9 @@ GrSurfaceProxyView SkImageGenerator::onGenerateTexture(GrRecordingContext*,
                                                        GrImageTexGenPolicy) {
     return {};
 }
-#endif // SK_SUPPORT_GPU
+#endif // defined(SK_GANESH)
 
-#if SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 #include "src/gpu/graphite/Image_Graphite.h"
 
 sk_sp<SkImage> SkImageGenerator::makeTextureImage(skgpu::graphite::Recorder* recorder,
@@ -90,14 +95,9 @@ sk_sp<SkImage> SkImageGenerator::onMakeTextureImage(skgpu::graphite::Recorder*,
     return nullptr;
 }
 
-#endif // SK_GRAPHITE_ENABLED
+#endif // SK_GRAPHITE
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#include "include/core/SkBitmap.h"
-#include "src/codec/SkColorTable.h"
-
-#include "include/core/SkGraphics.h"
 
 static SkGraphics::ImageGeneratorFromEncodedDataFactory gFactory;
 

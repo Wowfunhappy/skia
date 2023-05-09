@@ -17,9 +17,10 @@
 #include "src/core/SkColorSpaceXformSteps.h"
 #include "src/core/SkRuntimeEffectPriv.h"
 #include "src/core/SkSLTypeShared.h"
+#include "src/gpu/Swizzle.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/ContextUtils.h"
-#include "src/gpu/graphite/ReadWriteSwizzle.h"
+#include "src/gpu/graphite/ReadSwizzle.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/RuntimeEffectDictionary.h"
 #include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
@@ -113,7 +114,8 @@ std::string ShaderInfo::toSkSL(const ResourceBindingRequirements& bindingReqs,
                                const RenderStep* step,
                                const bool useStorageBuffers,
                                const bool defineLocalCoordsVarying,
-                               int* numTexturesAndSamplersUsed) const {
+                               int* numTexturesAndSamplersUsed,
+                               Swizzle writeSwizzle) const {
     std::string preamble = EmitVaryings(step,
                                         /*direction=*/"in",
                                         /*emitShadingSsboIndexVarying=*/useStorageBuffers,
@@ -177,6 +179,11 @@ std::string ShaderInfo::toSkSL(const ResourceBindingRequirements& bindingReqs,
         emit_preamble_for_entry(*this, &entryIndex, &preamble);
     }
 
+    if (writeSwizzle != Swizzle::RGBA()) {
+        SkSL::String::appendf(&mainBody, "%s = %s.%s;", lastOutputVar.c_str(),
+                                                        lastOutputVar.c_str(),
+                                                        writeSwizzle.asString().c_str());
+    }
     if (step->emitsCoverage()) {
         mainBody += "half4 outputCoverage;";
         mainBody += step->fragmentCoverageSkSL();
@@ -209,6 +216,11 @@ size_t ShaderCodeDictionary::RuntimeEffectKey::Hash::operator()(RuntimeEffectKey
 
 const ShaderCodeDictionary::Entry* ShaderCodeDictionary::findOrCreate(
         PaintParamsKeyBuilder* builder) {
+    if (!builder->isValid()) {
+        builder->discard();
+        return nullptr;
+    }
+
     PaintParamsKey key = builder->lockAsKey();
 
     SkAutoSpinlock lock{fSpinLock};
@@ -294,10 +306,10 @@ static std::string append_default_snippet_arguments(const ShaderInfo& shaderInfo
         separator = ", ";
     }
 
-    // Append destination color.
-    if (entry->needsDestColor()) {
+    // Append runtime shader destination color.
+    if (entry->needsRuntimeShaderDstColor()) {
         code += separator;
-        code += args.fDestColor;
+        code += args.fRuntimeShaderDstColor;
         separator = ", ";
     }
 
@@ -399,11 +411,12 @@ std::string GenerateDefaultExpression(const ShaderInfo& shaderInfo,
     } else {
         // Return an expression which invokes the helper function from the preamble.
         std::string helperFnName = get_mangled_name(entry->fStaticFunctionName, entryIndex);
-        return SkSL::String::printf("%s(%.*s, %.*s, %.*s)",
-                                  helperFnName.c_str(),
-                                  (int)args.fPriorStageOutput.size(), args.fPriorStageOutput.data(),
-                                  (int)args.fDestColor.size(),        args.fDestColor.data(),
-                                  (int)args.fFragCoord.size(),        args.fFragCoord.data());
+        return SkSL::String::printf(
+                "%s(%.*s, %.*s, %.*s)",
+                helperFnName.c_str(),
+                (int)args.fPriorStageOutput.size(),      args.fPriorStageOutput.data(),
+                (int)args.fRuntimeShaderDstColor.size(), args.fRuntimeShaderDstColor.data(),
+                (int)args.fFragCoord.size(),             args.fFragCoord.data());
     }
 }
 
@@ -434,7 +447,7 @@ void GenerateDefaultPreamble(const ShaderInfo& shaderInfo,
 static constexpr int kFourStopGradient = 4;
 static constexpr int kEightStopGradient = 8;
 
-static constexpr Uniform kLinearGradientUniforms4[7] = {
+static constexpr Uniform kLinearGradientUniforms4[] = {
         { "colors",      SkSLType::kFloat4, kFourStopGradient },
         { "offsets",     SkSLType::kFloat,  kFourStopGradient },
         { "point0",      SkSLType::kFloat2 },
@@ -443,7 +456,7 @@ static constexpr Uniform kLinearGradientUniforms4[7] = {
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
 };
-static constexpr Uniform kLinearGradientUniforms8[7] = {
+static constexpr Uniform kLinearGradientUniforms8[] = {
         { "colors",      SkSLType::kFloat4, kEightStopGradient },
         { "offsets",     SkSLType::kFloat,  kEightStopGradient },
         { "point0",      SkSLType::kFloat2 },
@@ -452,8 +465,20 @@ static constexpr Uniform kLinearGradientUniforms8[7] = {
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
 };
+static constexpr Uniform kLinearGradientUniformsTexture[] = {
+        { "point0",      SkSLType::kFloat2 },
+        { "point1",      SkSLType::kFloat2 },
+        { "numStops",    SkSLType::kInt },
+        { "tilemode",    SkSLType::kInt },
+        { "colorSpace",  SkSLType::kInt },
+        { "doUnPremul",  SkSLType::kInt },
+};
 
-static constexpr Uniform kRadialGradientUniforms4[7] = {
+static constexpr TextureAndSampler kTextureGradientTexturesAndSamplers[] = {
+        {"colorAndOffsetSampler"},
+};
+
+static constexpr Uniform kRadialGradientUniforms4[] = {
         { "colors",      SkSLType::kFloat4, kFourStopGradient },
         { "offsets",     SkSLType::kFloat,  kFourStopGradient },
         { "center",      SkSLType::kFloat2 },
@@ -462,7 +487,7 @@ static constexpr Uniform kRadialGradientUniforms4[7] = {
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
 };
-static constexpr Uniform kRadialGradientUniforms8[7] = {
+static constexpr Uniform kRadialGradientUniforms8[] = {
         { "colors",      SkSLType::kFloat4, kEightStopGradient },
         { "offsets",     SkSLType::kFloat,  kEightStopGradient },
         { "center",      SkSLType::kFloat2 },
@@ -471,8 +496,16 @@ static constexpr Uniform kRadialGradientUniforms8[7] = {
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
 };
+static constexpr Uniform kRadialGradientUniformsTexture[] = {
+        { "center",      SkSLType::kFloat2 },
+        { "radius",      SkSLType::kFloat },
+        { "numStops",    SkSLType::kInt },
+        { "tilemode",    SkSLType::kInt },
+        { "colorSpace",  SkSLType::kInt },
+        { "doUnPremul",  SkSLType::kInt },
+};
 
-static constexpr Uniform kSweepGradientUniforms4[8] = {
+static constexpr Uniform kSweepGradientUniforms4[] = {
         { "colors",      SkSLType::kFloat4, kFourStopGradient },
         { "offsets",     SkSLType::kFloat,  kFourStopGradient },
         { "center",      SkSLType::kFloat2 },
@@ -482,7 +515,7 @@ static constexpr Uniform kSweepGradientUniforms4[8] = {
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
 };
-static constexpr Uniform kSweepGradientUniforms8[8] = {
+static constexpr Uniform kSweepGradientUniforms8[] = {
         { "colors",      SkSLType::kFloat4, kEightStopGradient },
         { "offsets",     SkSLType::kFloat,  kEightStopGradient },
         { "center",      SkSLType::kFloat2 },
@@ -492,8 +525,17 @@ static constexpr Uniform kSweepGradientUniforms8[8] = {
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
 };
+static constexpr Uniform kSweepGradientUniformsTexture[] = {
+        { "center",      SkSLType::kFloat2 },
+        { "bias",        SkSLType::kFloat },
+        { "scale",       SkSLType::kFloat },
+        { "numStops",    SkSLType::kInt },
+        { "tilemode",    SkSLType::kInt },
+        { "colorSpace",  SkSLType::kInt },
+        { "doUnPremul",  SkSLType::kInt },
+};
 
-static constexpr Uniform kConicalGradientUniforms4[9] = {
+static constexpr Uniform kConicalGradientUniforms4[] = {
         { "colors",      SkSLType::kFloat4, kFourStopGradient },
         { "offsets",     SkSLType::kFloat,  kFourStopGradient },
         { "point0",      SkSLType::kFloat2 },
@@ -504,13 +546,23 @@ static constexpr Uniform kConicalGradientUniforms4[9] = {
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
 };
-static constexpr Uniform kConicalGradientUniforms8[9] = {
+static constexpr Uniform kConicalGradientUniforms8[] = {
         { "colors",      SkSLType::kFloat4, kEightStopGradient },
         { "offsets",     SkSLType::kFloat,  kEightStopGradient },
         { "point0",      SkSLType::kFloat2 },
         { "point1",      SkSLType::kFloat2 },
         { "radius0",     SkSLType::kFloat },
         { "radius1",     SkSLType::kFloat },
+        { "tilemode",    SkSLType::kInt },
+        { "colorSpace",  SkSLType::kInt },
+        { "doUnPremul",  SkSLType::kInt },
+};
+static constexpr Uniform kConicalGradientUniformsTexture[] = {
+        { "point0",      SkSLType::kFloat2 },
+        { "point1",      SkSLType::kFloat2 },
+        { "radius0",     SkSLType::kFloat },
+        { "radius1",     SkSLType::kFloat },
+        { "numStops",    SkSLType::kInt },
         { "tilemode",    SkSLType::kInt },
         { "colorSpace",  SkSLType::kInt },
         { "doUnPremul",  SkSLType::kInt },
@@ -518,12 +570,19 @@ static constexpr Uniform kConicalGradientUniforms8[9] = {
 
 static constexpr char kLinearGradient4Name[] = "sk_linear_grad_4_shader";
 static constexpr char kLinearGradient8Name[] = "sk_linear_grad_8_shader";
+static constexpr char kLinearGradientTextureName[] = "sk_linear_grad_tex_shader";
+
 static constexpr char kRadialGradient4Name[] = "sk_radial_grad_4_shader";
 static constexpr char kRadialGradient8Name[] = "sk_radial_grad_8_shader";
+static constexpr char kRadialGradientTextureName[] = "sk_radial_grad_tex_shader";
+
 static constexpr char kSweepGradient4Name[] = "sk_sweep_grad_4_shader";
 static constexpr char kSweepGradient8Name[] = "sk_sweep_grad_8_shader";
+static constexpr char kSweepGradientTextureName[] = "sk_sweep_grad_tex_shader";
+
 static constexpr char kConicalGradient4Name[] = "sk_conical_grad_4_shader";
 static constexpr char kConicalGradient8Name[] = "sk_conical_grad_8_shader";
+static constexpr char kConicalGradientTextureName[] = "sk_conical_grad_tex_shader";
 
 //--------------------------------------------------------------------------------------------------
 static constexpr Uniform kSolidShaderUniforms[] = {
@@ -594,10 +653,10 @@ static constexpr Uniform kImageShaderUniforms[] = {
         // The next 6 uniforms are for the color space transformation
         { "csXformFlags",          SkSLType::kInt },
         { "csXformSrcKind",        SkSLType::kInt },
-        { "csXformDstKind",        SkSLType::kInt },
         { "csXformSrcCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
-        { "csXformDstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
         { "csXformGamutTransform", SkSLType::kHalf3x3 },
+        { "csXformDstKind",        SkSLType::kInt },
+        { "csXformDstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
 };
 
 static constexpr TextureAndSampler kISTexturesAndSamplers[] = {
@@ -626,6 +685,82 @@ static_assert(4 == static_cast<int>(ReadSwizzle::kBGRA),
               "ImageShader code depends on ReadSwizzle");
 
 static constexpr char kImageShaderName[] = "sk_image_shader";
+
+//--------------------------------------------------------------------------------------------------
+static constexpr Uniform kCoordClampShaderUniforms[] = {
+        { "subset", SkSLType::kFloat4 },
+};
+
+static constexpr char kCoordClampShaderName[] = "CoordClamp";
+
+static constexpr int kNumCoordClampShaderChildren = 1;
+
+// TODO: this has a lot of overlap with GenerateLocalMatrixPreamble
+void GenerateCoordClampPreamble(const ShaderInfo& shaderInfo,
+                                int* entryIndex,
+                                const PaintParamsKey::BlockReader& reader,
+                                std::string* preamble) {
+    const ShaderSnippet* entry = reader.entry();
+    SkASSERT(entry->fNumChildren == kNumCoordClampShaderChildren);
+
+    // Advance over the parent entry.
+    int curEntryIndex = *entryIndex;
+    *entryIndex += 1;
+
+    // Get the child's evaluation expression.
+    static constexpr char kUnusedDestColor[] = "half4(1)";
+    std::string childExpr = emit_expression_for_entry(shaderInfo, *entryIndex,
+                                                      {"inColor", kUnusedDestColor, "coords"});
+    // Emit preamble code for child.
+    emit_preamble_for_entry(shaderInfo, entryIndex, preamble);
+
+    std::string subsetUni = reader.entry()->getMangledUniformName(shaderInfo, 0, curEntryIndex);
+
+    /**
+     * Create a helper function that clamps the local coords to the subset, invokes the child
+     * entry with those updated coordinates, and returns the result. This helper function meets the
+     * requirements for use with GenerateDefaultExpression, so there's no need to have a separate
+     * special GenerateLocalMatrixExpression.
+     */
+    std::string helperFnName = get_mangled_name(entry->fStaticFunctionName, curEntryIndex);
+    SkSL::String::appendf(preamble,
+                          "half4 %s(half4 inColor, half4 destColor, float2 coords) {"
+                              "coords = clamp(coords, %s.LT, %s.RB);"
+                              "return %s;"
+                          "}",
+                          helperFnName.c_str(),
+                          subsetUni.c_str(),
+                          subsetUni.c_str(),
+                          childExpr.c_str());
+}
+
+
+//--------------------------------------------------------------------------------------------------
+static constexpr Uniform kDitherShaderUniforms[] = {
+        { "range", SkSLType::kFloat },
+};
+
+static constexpr TextureAndSampler kDitherTexturesAndSamplers[] = {
+        {"sampler"},
+};
+
+static constexpr char kDitherShaderName[] = "sk_dither_shader";
+
+//--------------------------------------------------------------------------------------------------
+static constexpr Uniform kPerlinNoiseShaderUniforms[] = {
+        { "baseFrequency", SkSLType::kFloat2 },
+        { "stitchData",    SkSLType::kFloat2 },
+        { "noiseType",     SkSLType::kInt },
+        { "numOctaves",    SkSLType::kInt },
+        { "stitching",     SkSLType::kInt },
+};
+
+static constexpr TextureAndSampler kPerlinNoiseShaderTexturesAndSamplers[] = {
+        { "permutationsSampler" },
+        { "noiseSampler" },
+};
+
+static constexpr char kPerlinNoiseShaderName[] = "perlin_noise_shader";
 
 //--------------------------------------------------------------------------------------------------
 static constexpr Uniform kPorterDuffBlendShaderUniforms[] = {
@@ -770,12 +905,13 @@ std::string GenerateRuntimeShaderExpression(const ShaderInfo& shaderInfo,
                                             const PaintParamsKey::BlockReader& reader,
                                             const ShaderSnippet::Args& args) {
     const ShaderSnippet* entry = reader.entry();
-    return SkSL::String::printf("%s_%d(%.*s, %.*s, %.*s)",
-                                entry->fName,
-                                entryIndex,
-                                (int)args.fPriorStageOutput.size(), args.fPriorStageOutput.data(),
-                                (int)args.fDestColor.size(),        args.fDestColor.data(),
-                                (int)args.fFragCoord.size(),        args.fFragCoord.data());
+    return SkSL::String::printf(
+            "%s_%d(%.*s, %.*s, %.*s)",
+            entry->fName,
+            entryIndex,
+            (int)args.fPriorStageOutput.size(),      args.fPriorStageOutput.data(),
+            (int)args.fRuntimeShaderDstColor.size(), args.fRuntimeShaderDstColor.data(),
+            (int)args.fFragCoord.size(),             args.fFragCoord.data());
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -854,10 +990,10 @@ static constexpr char kGaussianColorFilterName[] = "sk_gaussian_colorfilter";
 static constexpr Uniform kColorSpaceTransformUniforms[] = {
         { "flags",          SkSLType::kInt },
         { "srcKind",        SkSLType::kInt },
-        { "dstKind",        SkSLType::kInt },
         { "srcCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
-        { "dstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
         { "gamutTransform", SkSLType::kHalf3x3 },
+        { "dstKind",        SkSLType::kInt },
+        { "dstCoeffs",      SkSLType::kHalf, kNumXferFnCoeffs },
 };
 
 static_assert(0 == static_cast<int>(skcms_TFType_Invalid),
@@ -928,7 +1064,7 @@ std::string GenerateShaderBasedBlenderExpression(const ShaderInfo& shaderInfo,
                                                  int entryIndex,
                                                  const PaintParamsKey::BlockReader& reader,
                                                  const ShaderSnippet::Args& args) {
-    const bool usePrimitiveColorAsDst = reader.entry()->needsDestColor();
+    const bool usePrimitiveColorAsDst = reader.entry()->blendAgainstPrimitiveColor();
 
     SkASSERT(reader.entry()->fUniforms.size() == 1);
     SkASSERT(reader.numDataPayloadFields() == 0);
@@ -1092,7 +1228,7 @@ int ShaderCodeDictionary::findOrCreateRuntimeEffectSnippet(const SkRuntimeEffect
         snippetFlags |= SnippetRequirementFlags::kLocalCoords;
     }
     if (effect->allowBlender()) {
-        snippetFlags |= SnippetRequirementFlags::kDestColor;
+        snippetFlags |= SnippetRequirementFlags::kRuntimeShaderDstColor;
     }
     int newCodeSnippetID = this->addUserDefinedSnippet("RuntimeEffect",
                                                        this->convertUniforms(effect),
@@ -1136,7 +1272,8 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kPassthroughBlender] = {
             "PassthroughBlender",
             {},      // no uniforms
-            SnippetRequirementFlags::kPriorStageOutput | SnippetRequirementFlags::kDestColor,
+            SnippetRequirementFlags::kPriorStageOutput |
+                    SnippetRequirementFlags::kRuntimeShaderDstColor,
             {},      // no samplers
             kPassthroughBlenderName,
             GenerateDefaultExpression,
@@ -1177,6 +1314,17 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             kNoChildren,
             { }      // no data payload
     };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kLinearGradientShaderTexture] = {
+            "LinearGradientTexture",
+            SkSpan(kLinearGradientUniformsTexture),
+            SnippetRequirementFlags::kLocalCoords,
+            SkSpan(kTextureGradientTexturesAndSamplers),
+            kLinearGradientTextureName,
+            GenerateDefaultExpression,
+            GenerateDefaultPreamble,
+            kNoChildren,
+            { }
+    };
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kRadialGradientShader4] = {
             "RadialGradient4",
             SkSpan(kRadialGradientUniforms4),
@@ -1199,6 +1347,17 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             kNoChildren,
             { }      // no data payload
     };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kRadialGradientShaderTexture] = {
+            "RadialGradientTexture",
+            SkSpan(kRadialGradientUniformsTexture),
+            SnippetRequirementFlags::kLocalCoords,
+            SkSpan(kTextureGradientTexturesAndSamplers),
+            kRadialGradientTextureName,
+            GenerateDefaultExpression,
+            GenerateDefaultPreamble,
+            kNoChildren,
+            { }
+    };
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kSweepGradientShader4] = {
             "SweepGradient4",
             SkSpan(kSweepGradientUniforms4),
@@ -1216,6 +1375,17 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             SnippetRequirementFlags::kLocalCoords,
             { },     // no samplers
             kSweepGradient8Name,
+            GenerateDefaultExpression,
+            GenerateDefaultPreamble,
+            kNoChildren,
+            { }      // no data payload
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kSweepGradientShaderTexture] = {
+            "SweepGradientTexture",
+            SkSpan(kSweepGradientUniformsTexture),
+            SnippetRequirementFlags::kLocalCoords,
+            SkSpan(kTextureGradientTexturesAndSamplers),
+            kSweepGradientTextureName,
             GenerateDefaultExpression,
             GenerateDefaultPreamble,
             kNoChildren,
@@ -1243,6 +1413,17 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             kNoChildren,
             { }      // no data payload
     };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kConicalGradientShaderTexture] = {
+            "ConicalGradientTexture",
+            SkSpan(kConicalGradientUniformsTexture),
+            SnippetRequirementFlags::kLocalCoords,
+            SkSpan(kTextureGradientTexturesAndSamplers),
+            kConicalGradientTextureName,
+            GenerateDefaultExpression,
+            GenerateDefaultPreamble,
+            kNoChildren,
+            { }      // no data payload
+    };
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kLocalMatrixShader] = {
             "LocalMatrixShader",
             SkSpan(kLocalMatrixShaderUniforms),
@@ -1261,6 +1442,39 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             SnippetRequirementFlags::kLocalCoords,
             SkSpan(kISTexturesAndSamplers),
             kImageShaderName,
+            GenerateDefaultExpression,
+            GenerateDefaultPreamble,
+            kNoChildren,
+            { }      // no data payload
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCoordClampShader] = {
+            "CoordClampShader",
+            SkSpan(kCoordClampShaderUniforms),
+            SnippetRequirementFlags::kLocalCoords,
+            { },     // no samplers
+            kCoordClampShaderName,
+            GenerateDefaultExpression,
+            GenerateCoordClampPreamble,
+            kNumCoordClampShaderChildren,
+            { }      // no data payload
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kDitherShader] = {
+            "DitherShader",
+            SkSpan(kDitherShaderUniforms),
+            (SnippetRequirementFlags::kPriorStageOutput | SnippetRequirementFlags::kLocalCoords),
+            SkSpan(kDitherTexturesAndSamplers),
+            kDitherShaderName,
+            GenerateDefaultExpression,
+            GenerateDefaultPreamble,
+            kNoChildren,
+            { }      // no data payload
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kPerlinNoiseShader] = {
+            "PerlinNoiseShader",
+            SkSpan(kPerlinNoiseShaderUniforms),
+            SnippetRequirementFlags::kLocalCoords,
+            SkSpan(kPerlinNoiseShaderTexturesAndSamplers),
+            kPerlinNoiseShaderName,
             GenerateDefaultExpression,
             GenerateDefaultPreamble,
             kNoChildren,
@@ -1394,7 +1608,7 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kPrimitiveColorShaderBasedBlender] = {
             "PrimitiveColorShaderBasedBlender",
             SkSpan(kShaderBasedBlenderUniforms),
-            SnippetRequirementFlags::kDestColor,
+            SnippetRequirementFlags::kBlendAgainstPrimitiveColor,
             { },     // no samplers
             kBlendHelperName,
             GenerateShaderBasedBlenderExpression,

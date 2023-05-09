@@ -39,9 +39,6 @@ config("skia_public") {
   if (skia_enable_flutter_defines) {
     defines += flutter_defines
   }
-  if (!skia_enable_gpu) {
-    defines += [ "SK_SUPPORT_GPU=0" ]
-  }
   if (skia_enable_optimize_size) {
     defines += [
       "SK_ENABLE_OPTIMIZE_SIZE",
@@ -70,8 +67,11 @@ config("skia_public") {
       "SK_USE_WEBGL",
     ]
   }
-  if (!skia_enable_ganesh) {
-    defines += [ "SK_GPU_V1=0" ]
+  if (skia_enable_ganesh) {
+    defines += [ "SK_GANESH" ]
+  }
+  if (skia_enable_graphite) {
+    defines += [ "SK_GRAPHITE" ]
   }
   if (skia_use_perfetto) {
     defines += [ "SK_USE_PERFETTO" ]
@@ -980,7 +980,7 @@ if (skia_compile_sksl_tests) {
 }
 
 optional("gpu_shared") {
-  enabled = skia_enable_gpu || skia_enable_graphite
+  enabled = skia_enable_ganesh || skia_enable_graphite
 
   deps = []
   libs = []
@@ -988,15 +988,11 @@ optional("gpu_shared") {
   public_deps = []
   frameworks = []
 
-  if (skia_enable_gpu) {
-    public_defines += [ "SK_SUPPORT_GPU=1" ]
-  }
-  if (skia_enable_graphite) {
-    public_defines += [ "SK_GRAPHITE_ENABLED" ]
-  }
+  sources = skia_shared_gpu_sources + skia_sksl_gpu_sources
 
   if (skia_use_dawn) {
     public_defines += [ "SK_DAWN" ]
+    sources += skia_shared_dawn_sources
 
     # When building for WASM, the WebGPU headers are provided by Emscripten. For native builds we
     # have to depend on Dawn directly.
@@ -1030,8 +1026,6 @@ optional("gpu_shared") {
     deps += [ "//third_party/spirv-cross:spirv_cross" ]
   }
 
-  sources = skia_shared_gpu_sources + skia_sksl_gpu_sources
-
   if (skia_use_vulkan) {
     public_defines += [ "SK_VULKAN" ]
     sources += skia_shared_vk_sources
@@ -1050,7 +1044,7 @@ optional("gpu_shared") {
 }
 
 optional("gpu") {
-  enabled = skia_enable_gpu
+  enabled = skia_enable_ganesh
   deps = [
     ":compile_sksl_glsl_nosettings_tests",
     ":compile_sksl_glsl_tests",
@@ -1070,7 +1064,7 @@ optional("gpu") {
   public_deps = []
 
   public = skia_gpu_public
-  sources = skia_gpu_private
+  sources = skia_ganesh_private
 
   libs = []
   frameworks = []
@@ -1435,7 +1429,7 @@ optional("skvm_jit") {
   public_defines = [ "SKVM_JIT_WHEN_POSSIBLE" ]
 }
 
-if (skia_enable_gpu && skia_generate_workarounds) {
+if (skia_enable_ganesh && skia_generate_workarounds) {
   action("workaround_list") {
     script = "tools/build_workaround_header.py"
 
@@ -1538,7 +1532,7 @@ skia_component("skia") {
     "src/sfnt/SkOTUtils.cpp",
   ]
 
-  defines = [ "SK_HAS_ANDROID_CODEC" ]
+  defines = []
   libs = []
 
   if (skia_enable_sksl) {
@@ -2438,13 +2432,6 @@ if (skia_enable_tools) {
         ]
         deps = [ ":skia" ]
       }
-    }
-  }
-
-  if (!is_win) {
-    test_app("remote_demo") {
-      sources = [ "tools/remote_demo.cpp" ]
-      deps = [ ":skia" ]
     }
   }
 
@@ -3375,7 +3362,7 @@ if (skia_enable_tools) {
       deps = []
     }
 
-    if (skia_enable_gpu) {
+    if (skia_enable_ganesh) {
       libfuzzer_app("api_mock_gpu_canvas") {
         include_dirs = [
           "tools",
@@ -3582,7 +3569,7 @@ if (skia_enable_tools) {
   }
 }
 
-if (is_ios && skia_use_metal && skia_enable_gpu &&
+if (is_ios && skia_use_metal && skia_enable_ganesh &&
     !skia_enable_flutter_defines) {
   group("minimal_ios_mtl_skia_app") {
     deps = [ "experimental/minimal_ios_mtl_skia_app" ]

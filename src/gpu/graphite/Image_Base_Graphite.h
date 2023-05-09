@@ -10,7 +10,7 @@
 
 #include "src/image/SkImage_Base.h"
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
 #include "src/gpu/ganesh/GrSurfaceProxyView.h"
 #endif
 
@@ -31,8 +31,6 @@ public:
                       int srcX,
                       int srcY,
                       CachingHint) const override { return false; }
-
-    bool isGraphiteBacked() const override { return true; }
 
     bool getROPixels(GrDirectContext*,
                      SkBitmap*,
@@ -68,7 +66,7 @@ protected:
 
 private:
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
     std::unique_ptr<GrFragmentProcessor> onAsFragmentProcessor(
             GrRecordingContext*,
             SkSamplingOptions,

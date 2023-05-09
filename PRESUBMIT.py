@@ -390,14 +390,15 @@ def _CheckGNIGenerated(input_api, output_api):
   if 'darwin' in sys.platform:
       # This takes too long on Mac with default settings. Probably due to sandboxing.
       return []
+  should_run = False
   for affected_file in input_api.AffectedFiles(include_deletes=True):
     affected_file_path = affected_file.LocalPath()
     if affected_file_path.endswith('BUILD.bazel') or affected_file_path.endswith('.gni'):
-      # Generate GNI files and verify no changes.
-      results = _RunCommandAndCheckGitDiff(output_api,
-              ['make', '-C', 'bazel', 'generate_gni'])
-      if results:
-        return results
+      should_run = True
+  # Generate GNI files and verify no changes.
+  if should_run:
+    return _RunCommandAndCheckGitDiff(output_api,
+            ['make', '-C', 'bazel', 'generate_gni'])
 
   # No Bazel build files changed.
   return []
@@ -445,6 +446,13 @@ def _CheckBannedAPIs(input_api, output_api):
     (r'std::stold\(', 'std::strtold(), which does not throw'),
   ]
 
+  # These defines are either there or not, and using them with just an #if is a
+  # subtle, frustrating bug.
+  existence_defines = ['SK_GANESH', 'SK_GRAPHITE', 'SK_GL', 'SK_VULKAN', 'SK_DAWN',
+                       'SK_METAL', 'SK_DIRECT3D', 'SK_DEBUG']
+  for d in existence_defines:
+    banned_replacements.append(('#if {}'.format(d),
+                                '#if defined({})'.format(d)))
   compiled_replacements = []
   for rep in banned_replacements:
     exceptions = []

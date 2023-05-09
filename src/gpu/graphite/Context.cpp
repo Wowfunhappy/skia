@@ -13,6 +13,8 @@
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Recording.h"
 #include "include/gpu/graphite/TextureInfo.h"
+#include "src/base/SkRectMemcpy.h"
+#include "src/core/SkConvertPixels.h"
 #include "src/gpu/RefCntedCallback.h"
 #include "src/gpu/graphite/BufferManager.h"
 #include "src/gpu/graphite/Caps.h"
@@ -136,6 +138,11 @@ void Context::asyncReadPixels(const SkImage* image,
                               SkImage::ReadPixelsCallback callback,
                               SkImage::ReadPixelsContext callbackContext) {
     if (!as_IB(image)->isGraphiteBacked()) {
+        callback(callbackContext, nullptr);
+        return;
+    }
+    // TODO(b/238756380): YUVA read not supported right now
+    if (as_IB(image)->isYUVA()) {
         callback(callbackContext, nullptr);
         return;
     }

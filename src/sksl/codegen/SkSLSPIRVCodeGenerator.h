@@ -8,6 +8,7 @@
 #ifndef SKSL_SPIRVCODEGENERATOR
 #define SKSL_SPIRVCODEGENERATOR
 
+#include "include/core/SkSpan.h"
 #include "include/private/SkSLDefines.h"
 #include "include/private/SkSLLayout.h"
 #include "include/private/SkSLModifiers.h"
@@ -31,8 +32,6 @@
 #include <tuple>
 #include <vector>
 
-template <typename T> class SkSpan;
-
 namespace SkSL {
 
 class AnyConstructor;
@@ -51,6 +50,7 @@ class FieldAccess;
 class ForStatement;
 class FunctionCall;
 class IfStatement;
+class IndexExpression;
 class Literal;
 class Operator;
 class OutputStream;
@@ -61,14 +61,13 @@ class ProgramElement;
 class ReturnStatement;
 class Statement;
 class SwitchStatement;
+class Swizzle;
 class TernaryExpression;
 class VarDeclaration;
 class VariableReference;
 enum class ProgramKind : int8_t;
 enum IntrinsicKind : int8_t;
-struct IndexExpression;
 struct Program;
-struct Swizzle;
 
 /**
  * Converts a Program into a SPIR-V binary.

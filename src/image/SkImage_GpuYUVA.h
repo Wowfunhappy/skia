@@ -13,6 +13,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSamplingOptions.h"
 #include "src/gpu/ganesh/GrYUVATextureProxies.h"
+#include "src/image/SkImage_Base.h"
 #include "src/image/SkImage_GpuBase.h"
 
 #include <cstddef>
@@ -53,7 +54,7 @@ public:
 
     GrSemaphoresSubmitted onFlush(GrDirectContext*, const GrFlushInfo&) const override;
 
-    bool isGaneshBacked() const override { return true; }
+    SkImage_Base::Type type() const override { return SkImage_Base::Type::kGaneshYUVA; }
 
     size_t onTextureSize() const override;
 
@@ -63,13 +64,17 @@ public:
 
     sk_sp<SkImage> onReinterpretColorSpace(sk_sp<SkColorSpace>) const final;
 
-public:
-    bool isYUVA() const override { return true; }
-
     bool setupMipmapsForPlanes(GrRecordingContext*) const;
 
 private:
-    SkImage_GpuYUVA(sk_sp<GrImageContext>, const SkImage_GpuYUVA* image, sk_sp<SkColorSpace>);
+    enum class ColorSpaceMode {
+        kConvert,
+        kReinterpret,
+    };
+    SkImage_GpuYUVA(sk_sp<GrImageContext>,
+                    const SkImage_GpuYUVA* image,
+                    sk_sp<SkColorSpace> targetCS,
+                    ColorSpaceMode csMode);
 
     std::tuple<GrSurfaceProxyView, GrColorType> onAsView(GrRecordingContext*,
                                                          skgpu::Mipmapped,

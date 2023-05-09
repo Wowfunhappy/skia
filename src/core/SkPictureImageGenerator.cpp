@@ -12,10 +12,11 @@
 #include "include/core/SkPaint.h"
 #include "include/core/SkPicture.h"
 #include "include/core/SkSurface.h"
+#include "include/core/SkSurfaceProps.h"
 #include "src/base/SkTLazy.h"
 #include "src/image/SkImage_Base.h"
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
 #include "src/gpu/ganesh/GrTextureProxy.h"
 #endif
 
@@ -27,12 +28,12 @@ public:
 protected:
     bool onGetPixels(const SkImageInfo&, void* pixels, size_t rowBytes, const Options&) override;
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
     GrSurfaceProxyView onGenerateTexture(GrRecordingContext*, const SkImageInfo&,
                                          GrMipmapped, GrImageTexGenPolicy) override;
 #endif
 
-#if SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
     sk_sp<SkImage> onMakeTextureImage(skgpu::graphite::Recorder*,
                                       const SkImageInfo&,
                                       skgpu::Mipmapped) override;
@@ -48,6 +49,14 @@ private:
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
+
+std::unique_ptr<SkImageGenerator>
+SkImageGenerator::MakeFromPicture(const SkISize& size, sk_sp<SkPicture> picture,
+                                  const SkMatrix* matrix, const SkPaint* paint,
+                                  SkImage::BitDepth bitDepth, sk_sp<SkColorSpace> colorSpace) {
+    return SkImageGenerator::MakeFromPicture(size, picture, matrix, paint, bitDepth,
+                                             colorSpace, {});
+}
 
 std::unique_ptr<SkImageGenerator>
 SkImageGenerator::MakeFromPicture(const SkISize& size, sk_sp<SkPicture> picture,
@@ -102,7 +111,7 @@ bool SkPictureImageGenerator::onGetPixels(const SkImageInfo& info, void* pixels,
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
 #include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/SkGr.h"
@@ -135,11 +144,11 @@ GrSurfaceProxyView SkPictureImageGenerator::onGenerateTexture(GrRecordingContext
     return view;
 }
 
-#endif // SK_SUPPORT_GPU
+#endif // defined(SK_GANESH)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#if SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 #include "src/gpu/graphite/Log.h"
 
 sk_sp<SkImage> SkPictureImageGenerator::onMakeTextureImage(skgpu::graphite::Recorder* recorder,
@@ -158,4 +167,4 @@ sk_sp<SkImage> SkPictureImageGenerator::onMakeTextureImage(skgpu::graphite::Reco
     return surface->asImage();
 }
 
-#endif // SK_GRAPHITE_ENABLED
+#endif // SK_GRAPHITE

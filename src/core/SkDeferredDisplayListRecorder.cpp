@@ -12,7 +12,7 @@
 #include "include/core/SkSurfaceCharacterization.h"
 #include "src/core/SkMessageBus.h"
 
-#if !SK_SUPPORT_GPU
+#if !defined(SK_GANESH)
 SkDeferredDisplayListRecorder::SkDeferredDisplayListRecorder(const SkSurfaceCharacterization&) {}
 
 SkDeferredDisplayListRecorder::~SkDeferredDisplayListRecorder() {}
@@ -166,7 +166,7 @@ bool SkDeferredDisplayListRecorder::init() {
                                                 fCharacterization.refColorSpace(),
                                                 fCharacterization.origin(),
                                                 fCharacterization.surfaceProps(),
-                                                skgpu::v1::Device::InitContents::kUninit);
+                                                skgpu::ganesh::Device::InitContents::kUninit);
     if (!device) {
         return false;
     }

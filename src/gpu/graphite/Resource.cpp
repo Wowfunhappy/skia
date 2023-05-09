@@ -13,12 +13,14 @@ namespace skgpu::graphite {
 
 Resource::Resource(const SharedContext* sharedContext,
                    Ownership ownership,
-                   skgpu::Budgeted budgeted)
+                   skgpu::Budgeted budgeted,
+                   size_t gpuMemorySize)
         : fSharedContext(sharedContext)
         , fUsageRefCnt(1)
         , fCommandBufferRefCnt(0)
         , fCacheRefCnt(0)
         , fOwnership(ownership)
+        , fGpuMemorySize(gpuMemorySize)
         , fBudgeted(budgeted) {
     // If we don't own the resource that must mean its wrapped in a client object. Thus we should
     // not be budgeted
@@ -60,6 +62,7 @@ bool Resource::notifyARefIsZero(LastRemovedRef removedRef) const {
 
 void Resource::internalDispose() {
     SkASSERT(fSharedContext);
+    this->invokeReleaseProc();
     this->freeGpuData();
     fSharedContext = nullptr;
     // TODO: If we ever support freeing all the backend objects without deleting the object, we'll

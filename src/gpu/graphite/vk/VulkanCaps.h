@@ -41,6 +41,8 @@ public:
                                       const RenderPassDesc&) const override { return {}; }
     UniqueKey makeComputePipelineKey(const ComputePipelineDesc&) const override { return {}; }
 
+    uint32_t channelMask(const TextureInfo&) const override;
+
     bool isRenderable(const TextureInfo&) const override { return false; }
 
     void buildKeyForTexture(SkISize dimensions,
@@ -48,6 +50,8 @@ public:
                             ResourceType,
                             Shareable,
                             GraphiteResourceKey*) const override {}
+
+    size_t bytesPerPixel(const TextureInfo&) const override;
 
     bool shouldAlwaysUseDedicatedImageMemory() const {
         return fShouldAlwaysUseDedicatedImageMemory;

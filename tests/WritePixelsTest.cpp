@@ -23,13 +23,13 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
-#if defined(SK_GRAPHITE_ENABLED)
+#if defined(SK_GRAPHITE)
 #include "include/gpu/graphite/Context.h"
 #endif
 #include "include/private/SkColorData.h"
-#include "include/private/base/SkSafe32.h"
-#include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkCPUTypes.h"
+#include "include/private/base/SkMalloc.h"
+#include "include/private/base/SkSafe32.h"
 #include "include/private/base/SkTo.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/base/SkMathPriv.h"
@@ -489,7 +489,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(WritePixelsMSAA_Gpu,
     test_write_pixels(reporter, ctxInfo.directContext(), 1);
 }
 
-#if defined(SK_GRAPHITE_ENABLED)
+#if defined(SK_GRAPHITE)
 static void test_write_pixels(skiatest::Reporter* reporter,
                               skgpu::graphite::Recorder* recorder,
                               int sampleCnt) {

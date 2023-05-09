@@ -8,9 +8,9 @@
 #ifndef ToolUtils_DEFINED
 #define ToolUtils_DEFINED
 
+#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkColor.h"
 #include "include/core/SkData.h"
-#include "include/core/SkEncodedImageFormat.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontStyle.h"
 #include "include/core/SkFontTypes.h"
@@ -31,7 +31,7 @@
 #include "src/base/SkTInternalLList.h"
 #include "tools/SkMetaData.h"
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 #include "include/gpu/graphite/Recorder.h"
 #endif
 
@@ -223,7 +223,7 @@ public:
     static uint32_t      GetID(TopoTestNode* node) { return node->id(); }
 
     // Helper functions for TopoSortBench & TopoSortTest
-    static void AllocNodes(SkTArray<sk_sp<ToolUtils::TopoTestNode>>* graph, int num) {
+    static void AllocNodes(skia_private::TArray<sk_sp<ToolUtils::TopoTestNode>>* graph, int num) {
         graph->reserve_back(num);
 
         for (int i = 0; i < num; ++i) {
@@ -232,7 +232,7 @@ public:
     }
 
 #ifdef SK_DEBUG
-    static void Print(const SkTArray<TopoTestNode*>& graph) {
+    static void Print(const skia_private::TArray<TopoTestNode*>& graph) {
         for (int i = 0; i < graph.size(); ++i) {
             SkDebugf("%d, ", graph[i]->id());
         }
@@ -317,7 +317,7 @@ using PathSniffCallback = void(const SkMatrix&, const SkPath&, const SkPaint&);
 // Supported file formats are .svg and .skp.
 void sniff_paths(const char filepath[], std::function<PathSniffCallback>);
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
 sk_sp<SkImage> MakeTextureImage(SkCanvas* canvas, sk_sp<SkImage> orig);
 #endif
 
@@ -353,7 +353,7 @@ private:
     static constexpr size_t kAxisVarsSize = 3;
 };
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 skgpu::graphite::RecorderOptions CreateTestingRecorderOptions();
 #endif
 

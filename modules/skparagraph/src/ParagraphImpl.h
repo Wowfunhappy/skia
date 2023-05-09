@@ -140,11 +140,12 @@ public:
     sk_sp<FontCollection> fontCollection() const { return fFontCollection; }
     void formatLines(SkScalar maxWidth);
     void ensureUTF16Mapping();
-    TextIndex findNextGraphemeBoundary(TextIndex utf8);
-    TextIndex findPreviousGraphemeBoundary(TextIndex utf8);
-    TextIndex findNextGlyphClusterBoundary(TextIndex utf8);
-    TextIndex findPreviousGlyphClusterBoundary(TextIndex utf8);
-    size_t getUTF16Index(TextIndex index) {
+    SkTArray<TextIndex> countSurroundingGraphemes(TextRange textRange) const;
+    TextIndex findNextGraphemeBoundary(TextIndex utf8) const;
+    TextIndex findPreviousGraphemeBoundary(TextIndex utf8) const;
+    TextIndex findNextGlyphClusterBoundary(TextIndex utf8) const;
+    TextIndex findPreviousGlyphClusterBoundary(TextIndex utf8) const;
+    size_t getUTF16Index(TextIndex index) const {
         return fUTF16IndexForUTF8Index[index];
     }
 
@@ -205,6 +206,16 @@ public:
     void updateBackgroundPaint(size_t from, size_t to, SkPaint paint) override;
 
     void visit(const Visitor&) override;
+
+    int getLineNumberAt(TextIndex codeUnitIndex) const override;
+    bool getLineMetricsAt(int lineNumber, LineMetrics* lineMetrics) const override;
+    TextRange getActualTextRange(int lineNumber, bool includeSpaces) const override;
+    bool getGlyphClusterAt(TextIndex codeUnitIndex, GlyphClusterInfo* glyphInfo) override;
+    bool getClosestGlyphClusterAt(SkScalar dx,
+                                  SkScalar dy,
+                                  GlyphClusterInfo* glyphInfo) override;
+    SkFont getFontAt(TextIndex codeUnitIndex) const override;
+    std::vector<FontInfo> getFonts() const override;
 
     InternalLineMetrics getEmptyMetrics() const { return fEmptyMetrics; }
     InternalLineMetrics getStrutMetrics() const { return fStrutMetrics; }

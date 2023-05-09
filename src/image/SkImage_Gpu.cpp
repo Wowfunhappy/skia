@@ -67,6 +67,7 @@
 
 class SkMatrix;
 enum SkColorType : int;
+enum class SkTextureCompressionType;
 enum class SkTileMode;
 
 inline SkImage_Gpu::ProxyChooser::ProxyChooser(sk_sp<GrSurfaceProxy> stableProxy)
@@ -462,7 +463,7 @@ sk_sp<SkImage> SkImage::MakeFromCompressedTexture(GrRecordingContext* rContext,
         return nullptr;
     }
 
-    CompressionType type = GrBackendFormatToCompressionType(tex.getBackendFormat());
+    SkTextureCompressionType type = GrBackendFormatToCompressionType(tex.getBackendFormat());
     SkColorType ct = GrCompressionTypeToSkColorType(type);
 
     GrSurfaceProxyView view(std::move(proxy), origin, skgpu::Swizzle::RGBA());
@@ -539,7 +540,7 @@ sk_sp<SkImage> SkImage::MakeFromAdoptedTexture(GrRecordingContext* rContext,
 }
 
 sk_sp<SkImage> SkImage::MakeTextureFromCompressed(GrDirectContext* direct, sk_sp<SkData> data,
-                                                  int width, int height, CompressionType type,
+                                                  int width, int height, SkTextureCompressionType type,
                                                   GrMipmapped mipmapped,
                                                   GrProtected isProtected) {
     if (!direct || !data) {
@@ -721,105 +722,6 @@ sk_sp<SkImage> SkImage::MakeCrossContextFromPixmap(GrDirectContext* dContext,
                                                     pixmap->info().refColorSpace());
     return SkImage::MakeFromGenerator(std::move(gen));
 }
-
-#if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
-sk_sp<SkImage> SkImage::MakeFromAHardwareBuffer(AHardwareBuffer* graphicBuffer, SkAlphaType at) {
-    auto gen = GrAHardwareBufferImageGenerator::Make(graphicBuffer, at, nullptr,
-                                                     kTopLeft_GrSurfaceOrigin);
-    return SkImage::MakeFromGenerator(std::move(gen));
-}
-
-sk_sp<SkImage> SkImage::MakeFromAHardwareBuffer(AHardwareBuffer* graphicBuffer, SkAlphaType at,
-                                                sk_sp<SkColorSpace> cs,
-                                                GrSurfaceOrigin surfaceOrigin) {
-    auto gen = GrAHardwareBufferImageGenerator::Make(graphicBuffer, at, cs, surfaceOrigin);
-    return SkImage::MakeFromGenerator(std::move(gen));
-}
-
-sk_sp<SkImage> SkImage::MakeFromAHardwareBufferWithData(GrDirectContext* dContext,
-                                                        const SkPixmap& pixmap,
-                                                        AHardwareBuffer* hardwareBuffer,
-                                                        GrSurfaceOrigin surfaceOrigin) {
-    AHardwareBuffer_Desc bufferDesc;
-    AHardwareBuffer_describe(hardwareBuffer, &bufferDesc);
-
-    if (!SkToBool(bufferDesc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE)) {
-        return nullptr;
-    }
-
-
-    GrBackendFormat backendFormat = GrAHardwareBufferUtils::GetBackendFormat(dContext,
-                                                                             hardwareBuffer,
-                                                                             bufferDesc.format,
-                                                                             true);
-
-    if (!backendFormat.isValid()) {
-        return nullptr;
-    }
-
-    GrAHardwareBufferUtils::DeleteImageProc deleteImageProc = nullptr;
-    GrAHardwareBufferUtils::UpdateImageProc updateImageProc = nullptr;
-    GrAHardwareBufferUtils::TexImageCtx deleteImageCtx = nullptr;
-
-    const bool isRenderable = SkToBool(bufferDesc.usage & AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER);
-
-    GrBackendTexture backendTexture =
-            GrAHardwareBufferUtils::MakeBackendTexture(dContext, hardwareBuffer,
-                                                       bufferDesc.width, bufferDesc.height,
-                                                       &deleteImageProc, &updateImageProc,
-                                                       &deleteImageCtx, false, backendFormat,
-                                                       isRenderable);
-    if (!backendTexture.isValid()) {
-        return nullptr;
-    }
-    SkASSERT(deleteImageProc);
-
-    auto releaseHelper = skgpu::RefCntedCallback::Make(deleteImageProc, deleteImageCtx);
-
-    SkColorType colorType =
-            GrAHardwareBufferUtils::GetSkColorTypeFromBufferFormat(bufferDesc.format);
-
-    GrColorType grColorType = SkColorTypeToGrColorType(colorType);
-
-    GrProxyProvider* proxyProvider = dContext->priv().proxyProvider();
-    if (!proxyProvider) {
-        return nullptr;
-    }
-
-    sk_sp<GrTextureProxy> proxy = proxyProvider->wrapBackendTexture(
-            backendTexture, kBorrow_GrWrapOwnership, GrWrapCacheable::kNo, kRW_GrIOType,
-            std::move(releaseHelper));
-    if (!proxy) {
-        return nullptr;
-    }
-
-    skgpu::Swizzle swizzle = dContext->priv().caps()->getReadSwizzle(backendFormat, grColorType);
-    GrSurfaceProxyView framebufferView(std::move(proxy), surfaceOrigin, swizzle);
-    SkColorInfo colorInfo = pixmap.info().colorInfo().makeColorType(colorType);
-    sk_sp<SkImage> image = sk_make_sp<SkImage_Gpu>(sk_ref_sp(dContext),
-                                                   kNeedNewImageUniqueID,
-                                                   framebufferView,
-                                                   std::move(colorInfo));
-    if (!image) {
-        return nullptr;
-    }
-
-    GrDrawingManager* drawingManager = dContext->priv().drawingManager();
-    if (!drawingManager) {
-        return nullptr;
-    }
-
-    skgpu::v1::SurfaceContext surfaceContext(
-            dContext, std::move(framebufferView),image->imageInfo().colorInfo());
-
-    surfaceContext.writePixels(dContext, pixmap, {0, 0});
-
-    GrSurfaceProxy* p[1] = {surfaceContext.asSurfaceProxy()};
-    drawingManager->flush(p, SkSurface::BackendSurfaceAccess::kNoAccess, {}, nullptr);
-
-    return image;
-}
-#endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 

@@ -132,6 +132,7 @@ var CanvasKit = {
       seek: function() {},
       seekFrame: function() {},
       setColor: function() {},
+      setTransform: function() {},
       size: function() {},
     },
     _render: function() {},
@@ -165,7 +166,10 @@ var CanvasKit = {
   ParagraphBuilder: {
     Make: function() {},
     MakeFromFontProvider: function() {},
+    MakeFromFontCollection: function() {},
     ShapeText: function() {},
+    RequiresClientICU() {},
+
     addText: function() {},
     build: function() {},
 
@@ -189,6 +193,7 @@ var CanvasKit = {
     // private API
     _Make: function() {},
     _MakeFromFontProvider: function() {},
+    _MakeFromFontCollection: function() {},
     _ShapeText: function() {},
     _pushStyle: function() {},
     _pushPaintStyle: function() {},
@@ -429,6 +434,13 @@ var CanvasKit = {
     _registerFont: function() {},
   },
 
+  FontCollection: {
+    // public API (from C++ and JS bindings)
+    Make: function() {},
+    setDefaultFontManager: function() {},
+    enableFontFallback: function() {},
+  },
+
   Image: {
     // public API (from C++ bindings)
     encodeToBytes: function() {},
@@ -443,9 +455,10 @@ var CanvasKit = {
       makeShaderOptions: function() {},
     },
     // private API
+    _encodeToBytes: function() {},
+    _makeFromGenerator: function() {},
     _makeShaderCubic: function() {},
     _makeShaderOptions: function() {},
-    _makeFromGenerator: function() {},
   },
 
   ImageFilter: {
@@ -520,6 +533,7 @@ var CanvasKit = {
     setAntiAlias: function() {},
     setBlendMode: function() {},
     setColorInt: function() {},
+    setDither: function() {},
     setImageFilter: function() {},
     setMaskFilter: function() {},
     setPathEffect: function() {},

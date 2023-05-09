@@ -13,7 +13,8 @@
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/private/SkSLProgramKind.h"
-#include "src/core/SkConvertPixels.h"
+#include "src/base/SkRectMemcpy.h"
+#include "src/gpu/dawn/DawnUtilsPriv.h"
 #include "src/gpu/ganesh/GrDataUtils.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrGeometryProcessor.h"
@@ -425,7 +426,7 @@ bool GrDawnGpu::onClearBackendTexture(const GrBackendTexture& backendTexture,
         return false;
     }
 
-    size_t bpp = GrDawnBytesPerBlock(info.fFormat);
+    size_t bpp = skgpu::DawnFormatBytesPerBlock(info.fFormat);
     size_t baseLayerSize = bpp * backendTexture.width() * backendTexture.height();
     SkAutoMalloc defaultStorage(baseLayerSize);
     GrImageInfo imageInfo(colorType, kUnpremul_SkAlphaType, nullptr, backendTexture.dimensions());
@@ -1026,12 +1027,19 @@ std::string GrDawnGpu::SkSLToSPIRV(const char* shaderString,
 }
 
 wgpu::ShaderModule GrDawnGpu::createShaderModule(const std::string& spirvSource) {
-    wgpu::ShaderModuleSPIRVDescriptor desc;
-    desc.codeSize = spirvSource.size() / 4;
-    desc.code = reinterpret_cast<const uint32_t*>(spirvSource.c_str());
+    wgpu::ShaderModuleSPIRVDescriptor spirvDesc;
+    spirvDesc.codeSize = spirvSource.size() / 4;
+    spirvDesc.code = reinterpret_cast<const uint32_t*>(spirvSource.c_str());
 
-    wgpu::ShaderModuleDescriptor smDesc;
-    smDesc.nextInChain = &desc;
+    // Skia often generates shaders that select a texture/sampler conditionally based on an
+    // attribute (specifically in the case of texture atlas indexing). We disable derivative
+    // uniformity warnings as we expect Skia's behavior to result in well-defined values.
+    wgpu::DawnShaderModuleSPIRVOptionsDescriptor dawnSpirvOptions;
+    dawnSpirvOptions.allowNonUniformDerivatives = true;
 
-    return fDevice.CreateShaderModule(&smDesc);
+    wgpu::ShaderModuleDescriptor desc;
+    desc.nextInChain = &spirvDesc;
+    spirvDesc.nextInChain = &dawnSpirvOptions;
+
+    return fDevice.CreateShaderModule(&desc);
 }

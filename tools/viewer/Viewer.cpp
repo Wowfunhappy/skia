@@ -16,6 +16,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/private/base/SkTPin.h"
 #include "include/private/base/SkTo.h"
+#include "include/utils/SkBase64.h"
 #include "include/utils/SkPaintFilterCanvas.h"
 #include "src/base/SkTSort.h"
 #include "src/core/SkAutoPixmapStorage.h"
@@ -55,13 +56,14 @@
 #include "tools/viewer/SlideDir.h"
 #include "tools/viewer/SvgSlide.h"
 
-#if SK_GPU_V1
+#if defined(SK_GANESH)
 #include "src/gpu/ganesh/ops/AtlasPathRenderer.h"
 #include "src/gpu/ganesh/ops/TessellationPathRenderer.h"
 #endif
 
 #include <cstdlib>
 #include <map>
+#include <regex>
 
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"  // For ImGui support of std::string
@@ -78,6 +80,8 @@
 #include "modules/svg/include/SkSVGOpenTypeSVGDecoder.h"
 #endif
 
+using namespace skia_private;
+
 class CapturingShaderErrorHandler : public GrContextOptions::ShaderErrorHandler {
 public:
     void compileError(const char* shader, const char* errors) override {
@@ -90,8 +94,8 @@ public:
         fErrors.clear();
     }
 
-    SkTArray<SkString> fShaders;
-    SkTArray<SkString> fErrors;
+    TArray<SkString> fShaders;
+    TArray<SkString> fErrors;
 };
 
 static CapturingShaderErrorHandler gShaderErrorHandler;
@@ -201,7 +205,7 @@ const char* get_backend_string(sk_app::Window::BackendType type) {
 #endif
 #ifdef SK_DAWN
         case sk_app::Window::kDawn_BackendType: return "Dawn";
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
         case sk_app::Window::kGraphiteDawn_BackendType: return "Dawn (Graphite)";
 #endif
 #endif
@@ -210,7 +214,7 @@ const char* get_backend_string(sk_app::Window::BackendType type) {
 #endif
 #ifdef SK_METAL
         case sk_app::Window::kMetal_BackendType: return "Metal";
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
         case sk_app::Window::kGraphiteMetal_BackendType: return "Metal (Graphite)";
 #endif
 #endif
@@ -228,7 +232,7 @@ static sk_app::Window::BackendType get_backend_type(const char* str) {
     if (0 == strcmp(str, "dawn")) {
         return sk_app::Window::kDawn_BackendType;
     } else
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
     if (0 == strcmp(str, "grdawn")) {
         return sk_app::Window::kGraphiteDawn_BackendType;
     } else
@@ -248,7 +252,7 @@ static sk_app::Window::BackendType get_backend_type(const char* str) {
     if (0 == strcmp(str, "mtl")) {
         return sk_app::Window::kMetal_BackendType;
     } else
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
     if (0 == strcmp(str, "grmtl")) {
         return sk_app::Window::kGraphiteMetal_BackendType;
     } else
@@ -763,6 +767,52 @@ Viewer::Viewer(int argc, char** argv, void* platformData)
     this->setCurrentSlide(this->startupSlide());
 }
 
+static sk_sp<SkData> data_from_file(FILE* fp) {
+    SkDynamicMemoryWStream stream;
+    char buf[4096];
+    while (size_t bytesRead = fread(buf, 1, 4096, fp)) {
+        stream.write(buf, bytesRead);
+    }
+    return stream.detachAsData();
+}
+
+static sk_sp<SkData> base64_string_to_data(const std::string& s) {
+    size_t dataLen;
+    if (SkBase64::Decode(s.c_str(), s.size(), nullptr, &dataLen) != SkBase64::kNoError) {
+        return nullptr;
+    }
+
+    sk_sp<SkData> decodedData = SkData::MakeUninitialized(dataLen);
+    void* rawData = decodedData->writable_data();
+    if (SkBase64::Decode(s.c_str(), s.size(), rawData, &dataLen) != SkBase64::kNoError) {
+        return nullptr;
+    }
+
+    return decodedData;
+}
+
+static std::vector<sk_sp<SkImage>> find_data_uri_images(sk_sp<SkData> data) {
+    std::string str(reinterpret_cast<const char*>(data->data()), data->size());
+    std::regex re("data:image/png;base64,([a-zA-Z0-9+/=]+)");
+    std::sregex_iterator images_begin(str.begin(), str.end(), re);
+    std::sregex_iterator images_end;
+    std::vector<sk_sp<SkImage>> images;
+
+    for (auto iter = images_begin; iter != images_end; ++iter) {
+        const std::smatch& match = *iter;
+        auto raw = base64_string_to_data(match[1].str());
+        if (!raw) {
+            continue;
+        }
+        auto image = SkImage::MakeFromEncoded(std::move(raw));
+        if (image) {
+            images.push_back(std::move(image));
+        }
+    }
+
+    return images;
+}
+
 void Viewer::initSlides() {
     using SlideMaker = sk_sp<Slide> (*)(const SkString& name, const SkString& path);
     static const struct {
@@ -802,7 +852,7 @@ void Viewer::initSlides() {
 #endif
     };
 
-    SkTArray<sk_sp<Slide>> dirSlides;
+    TArray<sk_sp<Slide>> dirSlides;
 
     const auto addSlide = [&](const SkString& name, const SkString& path, const SlideMaker& fact) {
         if (CommandLineFlags::ShouldSkip(FLAGS_match, name.c_str())) {
@@ -818,6 +868,23 @@ void Viewer::initSlides() {
     if (!FLAGS_file.isEmpty()) {
         // single file mode
         const SkString file(FLAGS_file[0]);
+
+        // `--file stdin` parses stdin, looking for data URIs that encode images
+        if (file.equals("stdin")) {
+            sk_sp<SkData> data = data_from_file(stdin);
+            std::vector<sk_sp<SkImage>> images = find_data_uri_images(std::move(data));
+            // TODO: If there is an even number of images, create diff images from consecutive pairs
+            // (Maybe do this optionally? Or add a dedicated diff-slide that can show diff stats?)
+            for (auto image : images) {
+                char imageID = 'A' + fSlides.size();
+                fSlides.push_back(sk_make_sp<ImageSlide>(SkStringPrintf("Image %c", imageID),
+                                                         std::move(image)));
+            }
+            if (!fSlides.empty()) {
+                fShowZoomWindow = true;
+                return;
+            }
+        }
 
         if (sk_exists(file.c_str(), kRead_SkFILE_Flag)) {
             for (const auto& sinfo : gExternalSlidesInfo) {
@@ -899,7 +966,7 @@ void Viewer::initSlides() {
             } else {
                 // directory
                 SkString name;
-                SkTArray<SkString> sortedFilenames;
+                TArray<SkString> sortedFilenames;
                 SkOSFile::Iter it(flag.c_str(), info.fExtension);
                 while (it.next(&name)) {
                     sortedFilenames.push_back(name);
@@ -1952,7 +2019,7 @@ void Viewer::drawImGui() {
 #if defined(SK_METAL)
                 ImGui::SameLine();
                 ImGui::RadioButton("Metal", &newBackend, sk_app::Window::kMetal_BackendType);
-#if defined(SK_GRAPHITE_ENABLED)
+#if defined(SK_GRAPHITE)
                 ImGui::SameLine();
                 ImGui::RadioButton("Metal (Graphite)", &newBackend,
                                    sk_app::Window::kGraphiteMetal_BackendType);
@@ -2055,13 +2122,13 @@ void Viewer::drawImGui() {
                         ImGui::RadioButton("Software", true);
                     } else {
                         prButton(GpuPathRenderers::kDefault);
-#if SK_GPU_V1
+#if defined(SK_GANESH)
                         if (fWindow->sampleCount() > 1 || FLAGS_dmsaa) {
                             const auto* caps = ctx->priv().caps();
-                            if (skgpu::v1::AtlasPathRenderer::IsSupported(ctx)) {
+                            if (skgpu::ganesh::AtlasPathRenderer::IsSupported(ctx)) {
                                 prButton(GpuPathRenderers::kAtlas);
                             }
-                            if (skgpu::v1::TessellationPathRenderer::IsSupported(*caps)) {
+                            if (skgpu::ganesh::TessellationPathRenderer::IsSupported(*caps)) {
                                 prButton(GpuPathRenderers::kTessellation);
                             }
                         }
@@ -2921,7 +2988,7 @@ void Viewer::dumpShadersToResources() {
 }
 
 void Viewer::onIdle() {
-    SkTArray<std::function<void()>> actionsToRun;
+    TArray<std::function<void()>> actionsToRun;
     actionsToRun.swap(fDeferredActions);
 
     for (const auto& fn : actionsToRun) {
@@ -3015,13 +3082,13 @@ void Viewer::updateUIState() {
                 writer.appendNString("Software");
             } else {
                 writer.appendString(gPathRendererNames[GpuPathRenderers::kDefault]);
-#if SK_GPU_V1
+#if defined(SK_GANESH)
                 if (fWindow->sampleCount() > 1 || FLAGS_dmsaa) {
                     const auto* caps = ctx->priv().caps();
-                    if (skgpu::v1::AtlasPathRenderer::IsSupported(ctx)) {
+                    if (skgpu::ganesh::AtlasPathRenderer::IsSupported(ctx)) {
                         writer.appendString(gPathRendererNames[GpuPathRenderers::kAtlas]);
                     }
-                    if (skgpu::v1::TessellationPathRenderer::IsSupported(*caps)) {
+                    if (skgpu::ganesh::TessellationPathRenderer::IsSupported(*caps)) {
                         writer.appendString(gPathRendererNames[GpuPathRenderers::kTessellation]);
                     }
                 }

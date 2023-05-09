@@ -32,6 +32,10 @@
 
 class SkRuntimeEffect;
 
+namespace skgpu {
+class Swizzle;
+}
+
 namespace skgpu::graphite {
 
 class RenderStep;
@@ -54,7 +58,8 @@ enum class SnippetRequirementFlags : uint32_t {
     kNone = 0x0,
     kLocalCoords = 0x1,
     kPriorStageOutput = 0x2,  // AKA the "input" color, or the "source" color for a blender
-    kDestColor = 0x4,
+    kRuntimeShaderDstColor = 0x4,
+    kBlendAgainstPrimitiveColor = 0x8,
 };
 SK_MAKE_BITMASK_OPS(SnippetRequirementFlags);
 
@@ -66,7 +71,7 @@ struct ShaderSnippet {
 
     struct Args {
         std::string_view fPriorStageOutput;
-        std::string_view fDestColor;
+        std::string_view fRuntimeShaderDstColor;
         std::string_view fFragCoord;
     };
     using GenerateExpressionForSnippetFn = std::string (*)(const ShaderInfo& shaderInfo,
@@ -106,8 +111,11 @@ struct ShaderSnippet {
     bool needsPriorStageOutput() const {
         return fSnippetRequirementFlags & SnippetRequirementFlags::kPriorStageOutput;
     }
-    bool needsDestColor() const {
-        return fSnippetRequirementFlags & SnippetRequirementFlags::kDestColor;
+    bool needsRuntimeShaderDstColor() const {
+        return fSnippetRequirementFlags & SnippetRequirementFlags::kRuntimeShaderDstColor;
+    }
+    bool blendAgainstPrimitiveColor() const {
+        return fSnippetRequirementFlags & SnippetRequirementFlags::kBlendAgainstPrimitiveColor;
     }
 
     const char* fName = nullptr;
@@ -161,7 +169,8 @@ public:
                        const RenderStep* step,
                        const bool useStorageBuffers,
                        const bool defineLocalCoordsVarying,
-                       int* numTexturesAndSamplersUsed) const;
+                       int* numTexturesAndSamplersUsed,
+                       Swizzle writeSwizzle) const;
 
 private:
     std::vector<PaintParamsKey::BlockReader> fBlockReaders;

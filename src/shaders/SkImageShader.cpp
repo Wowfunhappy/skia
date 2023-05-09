@@ -24,13 +24,14 @@
 #include "src/shaders/SkLocalMatrixShader.h"
 #include "src/shaders/SkTransformShader.h"
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 #include "src/gpu/graphite/ImageUtils.h"
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/KeyContext.h"
 #include "src/gpu/graphite/KeyHelpers.h"
+#include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/PaintParamsKey.h"
-#include "src/gpu/graphite/ReadWriteSwizzle.h"
+#include "src/gpu/graphite/ReadSwizzle.h"
 #include "src/gpu/graphite/TextureProxyView.h"
 
 
@@ -46,7 +47,8 @@ static skgpu::graphite::ReadSwizzle swizzle_class_to_read_enum(const skgpu::Swiz
     } else if (swizzle == skgpu::Swizzle::BGRA()) {
         return skgpu::graphite::ReadSwizzle::kBGRA;
     } else {
-        SkDebugf("Encountered unsupported read swizzle. Defaulting to RGBA.");
+        SKGPU_LOG_W("%s is an unsupported read swizzle. Defaulting to RGBA.\n",
+                    swizzle.asString().data());
         return skgpu::graphite::ReadSwizzle::kRGBA;
     }
 }
@@ -364,7 +366,7 @@ sk_sp<SkShader> SkImageShader::MakeSubset(sk_sp<SkImage> image,
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-#if SK_SUPPORT_GPU
+#if defined(SK_GANESH)
 
 #include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrFPArgs.h"
@@ -406,7 +408,7 @@ SkImageShader::asFragmentProcessor(const GrFPArgs& args, const MatrixRec& mRec) 
 
 #endif
 
-#ifdef SK_GRAPHITE_ENABLED
+#if defined(SK_GRAPHITE)
 void SkImageShader::addToKey(const skgpu::graphite::KeyContext& keyContext,
                              skgpu::graphite::PaintParamsKeyBuilder* builder,
                              skgpu::graphite::PipelineDataGatherer* gatherer) const {
@@ -414,15 +416,6 @@ void SkImageShader::addToKey(const skgpu::graphite::KeyContext& keyContext,
 
     ImageShaderBlock::ImageData imgData(fSampling, fTileModeX, fTileModeY, fSubset,
                                         ReadSwizzle::kRGBA);
-
-    if (!fRaw) {
-        imgData.fSteps = SkColorSpaceXformSteps(fImage->colorSpace(),
-                                                fImage->alphaType(),
-                                                keyContext.dstColorInfo().colorSpace(),
-                                                keyContext.dstColorInfo().alphaType());
-
-        // TODO: add alpha-only image handling here
-    }
 
     auto [ imageToDraw, newSampling ] = skgpu::graphite::GetGraphiteBacked(keyContext.recorder(),
                                                                            fImage.get(),
@@ -435,7 +428,38 @@ void SkImageShader::addToKey(const skgpu::graphite::KeyContext& keyContext,
 
         auto [view, _] = as_IB(imageToDraw)->asView(keyContext.recorder(), mipmapped);
         imgData.fTextureProxy = view.refProxy();
-        imgData.fReadSwizzle = swizzle_class_to_read_enum(view.swizzle());
+        skgpu::Swizzle readSwizzle = view.swizzle();
+        // If the color type is alpha-only, propagate the alpha value to the other channels.
+        if (imageToDraw->isAlphaOnly()) {
+            readSwizzle = skgpu::Swizzle::Concat(readSwizzle, skgpu::Swizzle("aaaa"));
+        }
+        imgData.fReadSwizzle = swizzle_class_to_read_enum(readSwizzle);
+    }
+
+    if (!fRaw) {
+        imgData.fSteps = SkColorSpaceXformSteps(fImage->colorSpace(),
+                                                fImage->alphaType(),
+                                                keyContext.dstColorInfo().colorSpace(),
+                                                keyContext.dstColorInfo().alphaType());
+
+        if (fImage->isAlphaOnly()) {
+            SkSpan<const float> constants = skgpu::GetPorterDuffBlendConstants(SkBlendMode::kDstIn);
+            // expects dst, src
+            PorterDuffBlendShaderBlock::BeginBlock(keyContext, builder, gatherer,
+                                                   {constants});
+
+                // dst
+                SolidColorShaderBlock::BeginBlock(keyContext, builder, gatherer,
+                                                  keyContext.paintColor());
+                builder->endBlock();
+
+                // src
+                ImageShaderBlock::BeginBlock(keyContext, builder, gatherer, &imgData);
+                builder->endBlock();
+
+            builder->endBlock();
+            return;
+        }
     }
 
     ImageShaderBlock::BeginBlock(keyContext, builder, gatherer, &imgData);
@@ -714,12 +738,11 @@ bool SkImageShader::appendStages(const SkStageRec& rec, const MatrixRec& mRec) c
         SkColorSpace* cs = upper.pm.colorSpace();
         SkAlphaType   at = upper.pm.alphaType();
 
-        // Color for alpha-only images comes from the paint.
+        // Color for alpha-only images comes from the paint (already converted to dst color space).
         if (SkColorTypeIsAlphaOnly(upper.pm.colorType()) && !fRaw) {
-            SkColor4f rgb = rec.fPaint.getColor4f();
-            p->append_set_rgb(alloc, rgb);
+            p->append_set_rgb(alloc, rec.fPaintColor);
 
-            cs = sk_srgb_singleton();
+            cs = rec.fDstCS;
             at = kUnpremul_SkAlphaType;
         }
 

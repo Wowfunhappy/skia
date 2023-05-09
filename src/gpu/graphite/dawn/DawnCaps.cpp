@@ -10,12 +10,13 @@
 #include <algorithm>
 
 #include "include/gpu/graphite/TextureInfo.h"
+#include "src/gpu/dawn/DawnUtilsPriv.h"
 #include "src/gpu/graphite/AttachmentTypes.h"
 #include "src/gpu/graphite/ComputePipelineDesc.h"
 #include "src/gpu/graphite/GraphicsPipelineDesc.h"
 #include "src/gpu/graphite/GraphiteResourceKey.h"
 #include "src/gpu/graphite/UniformManager.h"
-#include "src/gpu/graphite/dawn/DawnUtilsPriv.h"
+#include "src/gpu/graphite/dawn/DawnGraphiteUtilsPriv.h"
 #include "src/sksl/SkSLUtil.h"
 
 namespace {
@@ -49,6 +50,10 @@ DawnCaps::DawnCaps(const wgpu::Device& device, const ContextOptions& options)
 }
 
 DawnCaps::~DawnCaps() = default;
+
+uint32_t DawnCaps::channelMask(const TextureInfo& info) const {
+    return skgpu::DawnFormatChannels(info.dawnTextureSpec().fFormat);
+}
 
 bool DawnCaps::onIsTexturable(const TextureInfo& info) const {
     if (!(info.dawnTextureSpec().fUsage & wgpu::TextureUsage::TextureBinding)) {
@@ -420,8 +425,8 @@ UniqueKey DawnCaps::makeGraphicsPipelineKey(const GraphicsPipelineDesc& pipeline
     UniqueKey pipelineKey;
     {
         static const skgpu::UniqueKey::Domain kGraphicsPipelineDomain = UniqueKey::GenerateDomain();
-        // 4 uint32_t's (render step id, paint id, uint64 RenderPass desc)
-        UniqueKey::Builder builder(&pipelineKey, kGraphicsPipelineDomain, 4, "GraphicsPipeline");
+        // 5 uint32_t's (render step id, paint id, uint64 RenderPass desc, uint16 write swizzle)
+        UniqueKey::Builder builder(&pipelineKey, kGraphicsPipelineDomain, 5, "GraphicsPipeline");
         // add GraphicsPipelineDesc key
         builder[0] = pipelineDesc.renderStepID();
         builder[1] = pipelineDesc.paintParamsID().asUInt();
@@ -430,6 +435,7 @@ UniqueKey DawnCaps::makeGraphicsPipelineKey(const GraphicsPipelineDesc& pipeline
         uint64_t renderPassKey = this->getRenderPassDescKey(renderPassDesc);
         builder[2] = renderPassKey & 0xFFFFFFFF;
         builder[3] = (renderPassKey >> 32) & 0xFFFFFFFF;
+        builder[4] = renderPassDesc.fWriteSwizzle.asKey();
         builder.finish();
     }
 
@@ -475,6 +481,10 @@ void DawnCaps::buildKeyForTexture(SkISize dimensions,
     builder[3] = (samplesKey                                   << 0) |
                  (static_cast<uint32_t>(isMipped)              << 3) |
                  (static_cast<uint32_t>(dawnSpec.fUsage)       << 4);
+}
+
+size_t DawnCaps::bytesPerPixel(const TextureInfo& info) const {
+    return DawnFormatBytesPerBlock(info.dawnTextureSpec().fFormat);
 }
 
 } // namespace skgpu::graphite
