@@ -83,17 +83,6 @@ skia_filegroup(
     visibility = ["//tools/skslc:__pkg__"],
 )
 
-## Tests in sksl_skvm_tests_sources will be compiled with --settings on, and are expected to
-## generate a .skvm output file.
-skia_filegroup(
-    name = "sksl_skvm_tests_sources",
-    srcs = [
-        ":sksl_rte_error_tests",
-        ":sksl_rte_tests",
-    ],
-    visibility = ["//tools/skslc:__pkg__"],
-)
-
 ## Tests in sksl_stage_tests_sources will be compiled with --settings on, and are expected to
 ## generate a .stage output file.
 skia_filegroup(
@@ -361,6 +350,7 @@ skia_filegroup(
         "errors/Ossfuzz50922.sksl",
         "errors/Ossfuzz56373.sksl",
         "errors/Ossfuzz58037.sksl",
+        "errors/Ossfuzz58375.sksl",
         "errors/OverflowFloatIntrinsic.sksl",
         "errors/OverflowFloatLiteral.rts",
         "errors/OverflowInlinedLiteral.sksl",
@@ -554,6 +544,7 @@ skia_filegroup(
         "inliner/InlinerManglesNames.sksl",
         "inliner/InlinerUsesTempVarForMultipleReturns.sksl",
         "inliner/InlinerUsesTempVarForReturnsInsideBlockWithVar.sksl",
+        "inliner/IntrinsicNameCollision.sksl",
         "inliner/NoInline.sksl",
         "inliner/Ossfuzz37994.sksl",
         "inliner/ShortCircuitEvaluationsCannotInlineRightHandSide.sksl",
@@ -667,18 +658,21 @@ skia_filegroup(
 skia_filegroup(
     name = "sksl_rte_tests",
     srcs = [
+        "realistic/BlueNeurons.rts",
+        "realistic/HSLColorFilter.rtcf",
+        "realistic/HighContrastFilter.rtcf",
         "runtime/AllowNarrowingConversions.rts",
         "runtime/ArrayIndexing.rts",
         "runtime/ArrayNarrowingConversions.rts",
         "runtime/Blend.rtb",
         "runtime/ChildEffects.rts",
+        "runtime/ColorConversion.rts",
         "runtime/Commutative.rts",
         "runtime/ConstPreservation.rts",
         "runtime/ConversionConstructors.rts",
         "runtime/DivideByZero.rts",
         "runtime/GLSLTypeNames.rts",
         "runtime/GlobalVariables.rts",
-        "runtime/HSLColorFilter.rtcf",
         "runtime/LargeProgram_BlocklessLoops.rts",
         "runtime/LargeProgram_FlatLoop.rts",
         "runtime/LargeProgram_Functions.rts",
@@ -843,6 +837,7 @@ skia_filegroup(
         "intrinsics/Trunc.sksl",
         "intrinsics/UintBitsToFloat.sksl",
         "intrinsics/Unpack.sksl",
+        "realistic/GaussianBlur.sksl",
         "shared/ArrayCast.sksl",
         "shared/ArrayComparison.sksl",
         "shared/ArrayConstructors.sksl",
@@ -890,7 +885,6 @@ skia_filegroup(
         "shared/FunctionPrototype.sksl",
         "shared/FunctionReturnTypeMatch.sksl",
         "shared/Functions.sksl",
-        "shared/GaussianBlur.sksl",
         "shared/GeometricIntrinsics.sksl",
         "shared/HelloWorld.sksl",
         "shared/Hex.sksl",
@@ -940,12 +934,14 @@ skia_filegroup(
         "shared/Ossfuzz37900.sksl",
         "shared/Ossfuzz41000.sksl",
         "shared/Ossfuzz50636.sksl",
+        "shared/Ossfuzz58483.sksl",
         "shared/OutParams.sksl",
         "shared/OutParamsAreDistinct.sksl",
         "shared/OutParamsAreDistinctFromGlobal.sksl",
         "shared/OutParamsFunctionCallInArgument.sksl",
         "shared/OutParamsTricky.sksl",
         "shared/Overflow.sksl",
+        "shared/PrefixExpressions.sksl",
         "shared/RectangleTexture.sksl",
         "shared/ResizeMatrix.sksl",
         "shared/ResizeMatrixNonsquare.sksl",
@@ -1077,10 +1073,13 @@ skia_filegroup(
         "shared/InstanceID.vert",
         "shared/MatrixConstructorsES2.sksl",
         "shared/MatrixConstructorsES3.sksl",
+        "shared/MatrixEquality.sksl",
         "shared/OutParamsAreDistinct.sksl",
         "shared/OutParamsFunctionCallInArgument.sksl",
+        "shared/PrefixExpressions.sksl",
         "shared/Structs.sksl",
         "shared/TernaryExpression.sksl",
+        "shared/UnaryPositiveNegative.sksl",
         "shared/UniformMatrixResize.sksl",
         "shared/VectorConstructors.sksl",
         "shared/VertexID.vert",

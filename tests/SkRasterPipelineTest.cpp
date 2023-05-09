@@ -104,6 +104,8 @@ DEF_TEST(SkRasterPipeline_PackBigContext, r) {
     REPORTER_ASSERT(r, unpacked.data == object.data);
 }
 
+#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
+
 DEF_TEST(SkRasterPipeline_LoadStoreConditionMask, reporter) {
     alignas(64) int32_t mask[]  = {~0, 0, ~0,  0, ~0, ~0, ~0,  0};
     alignas(64) int32_t maskCopy[SkRasterPipeline_kMaxStride_highp] = {};
@@ -342,12 +344,14 @@ DEF_TEST(SkRasterPipeline_CaseOp, reporter) {
     }
 
     SkRasterPipeline_CaseOpCtx ctx;
-    ctx.ptr = caseOpData;
+    ctx.offset = 0;
     ctx.expectedValue = 2;
 
-    SkRasterPipeline_<256> p;
+    SkArenaAlloc alloc(/*firstHeapAllocation=*/256);
+    SkRasterPipeline p(&alloc);
     p.append(SkRasterPipelineOp::load_src, initial);
-    p.append(SkRasterPipelineOp::case_op, &ctx);
+    p.append(SkRasterPipelineOp::set_base_pointer, &caseOpData[0]);
+    p.append(SkRasterPipelineOp::case_op, SkRPCtxUtils::Pack(ctx, &alloc));
     p.append(SkRasterPipelineOp::store_src, src);
     p.run(0,0,SkOpts::raster_pipeline_highp_stride,1);
 
@@ -2157,11 +2161,6 @@ DEF_TEST(SkRasterPipeline_UnaryIntOps, r) {
     };
 
     static const UnaryOp kUnaryOps[] = {
-        {SkRasterPipelineOp::bitwise_not_int,    1, [](int a) { return ~a; }},
-        {SkRasterPipelineOp::bitwise_not_2_ints, 2, [](int a) { return ~a; }},
-        {SkRasterPipelineOp::bitwise_not_3_ints, 3, [](int a) { return ~a; }},
-        {SkRasterPipelineOp::bitwise_not_4_ints, 4, [](int a) { return ~a; }},
-
         {SkRasterPipelineOp::cast_to_float_from_int,    1, to_float},
         {SkRasterPipelineOp::cast_to_float_from_2_ints, 2, to_float},
         {SkRasterPipelineOp::cast_to_float_from_3_ints, 3, to_float},
@@ -2226,11 +2225,6 @@ DEF_TEST(SkRasterPipeline_UnaryFloatOps, r) {
         {SkRasterPipelineOp::cast_to_uint_from_2_floats, 2, to_uint},
         {SkRasterPipelineOp::cast_to_uint_from_3_floats, 3, to_uint},
         {SkRasterPipelineOp::cast_to_uint_from_4_floats, 4, to_uint},
-
-        {SkRasterPipelineOp::abs_float,    1, [](float a) { return a < 0 ? -a : a; }},
-        {SkRasterPipelineOp::abs_2_floats, 2, [](float a) { return a < 0 ? -a : a; }},
-        {SkRasterPipelineOp::abs_3_floats, 3, [](float a) { return a < 0 ? -a : a; }},
-        {SkRasterPipelineOp::abs_4_floats, 4, [](float a) { return a < 0 ? -a : a; }},
 
         {SkRasterPipelineOp::floor_float,    1, [](float a) { return floorf(a); }},
         {SkRasterPipelineOp::floor_2_floats, 2, [](float a) { return floorf(a); }},
@@ -2315,11 +2309,10 @@ DEF_TEST(SkRasterPipeline_MixTest, r) {
                 p->append(SkRasterPipelineOp::mix_4_floats, slots);
             }},
         {5, [&](SkRasterPipeline* p, SkArenaAlloc* alloc) {
-                auto* ctx = alloc->make<SkRasterPipeline_TernaryOpCtx>();
-                ctx->dst = &slots[0];
-                ctx->src0 = &slots[5 * N];
-                ctx->src1 = &slots[10 * N];
-                p->append(SkRasterPipelineOp::mix_n_floats, ctx);
+                SkRasterPipeline_TernaryOpCtx ctx;
+                ctx.dst = 0;
+                ctx.delta = 5 * N * sizeof(float);
+                p->append(SkRasterPipelineOp::mix_n_floats, SkRPCtxUtils::Pack(ctx, alloc));
             }},
     };
 
@@ -2339,6 +2332,7 @@ DEF_TEST(SkRasterPipeline_MixTest, r) {
         // Run the mix op over our data.
         SkArenaAlloc alloc(/*firstHeapAllocation=*/256);
         SkRasterPipeline p(&alloc);
+        p.append(SkRasterPipelineOp::set_base_pointer, &slots[0]);
         op.append(&p, &alloc);
         p.run(0,0,1,1);
 
@@ -2751,6 +2745,8 @@ DEF_TEST(SkRasterPipeline_BranchIfActiveLanesEqual, r) {
         }
     }
 }
+
+#endif
 
 DEF_TEST(SkRasterPipeline_empty, r) {
     // No asserts... just a test that this is safe to run.

@@ -87,6 +87,9 @@ config("skia_public") {
   if (skia_use_legacy_layer_bounds) {
     defines += [ "SK_LEGACY_LAYER_BOUNDS_EXPANSION" ]
   }
+  if (skia_use_legacy_colorfilter_imagefilter) {
+    defines += [ "SK_USE_LEGACY_COLORFILTER_IMAGEFILTER" ]
+  }
 
   # Some older versions of the Clang toolchain change the visibility of
   # symbols decorated with API_AVAILABLE macro to be visible. Users of such
@@ -815,6 +818,7 @@ if (skia_compile_sksl_tests) {
       "SKSL_STANDALONE",
       "SK_DISABLE_TRACING",
       "SK_ENABLE_SKVM",
+      "SK_ENABLE_SKSL_IN_RASTER_PIPELINE",
       "SK_ENABLE_SPIRV_CROSS",
       "SK_ENABLE_SPIRV_VALIDATION",
       "SK_ENABLE_WGSL_VALIDATION",
@@ -940,12 +944,6 @@ if (skia_compile_sksl_tests) {
     lang = "--skrp"
     settings = "--settings"
   }
-  compile_sksl("skvm_tests") {
-    sources = sksl_skvm_tests_sources
-    outExtensions = [ ".skvm" ]
-    lang = "--skvm"
-    settings = "--settings"
-  }
   compile_sksl("stage_tests") {
     sources = sksl_stage_tests_sources
     outExtensions = [ ".stage" ]
@@ -974,8 +972,6 @@ if (skia_compile_sksl_tests) {
   group("compile_sksl_hlsl_tests") {
   }
   group("compile_sksl_skrp_tests") {
-  }
-  group("compile_sksl_skvm_tests") {
   }
   group("compile_sksl_spirv_tests") {
   }
@@ -1054,7 +1050,6 @@ optional("gpu") {
     ":compile_sksl_glsl_tests",
     ":compile_sksl_metal_tests",
     ":compile_sksl_skrp_tests",
-    ":compile_sksl_skvm_tests",
     ":compile_sksl_spirv_tests",
     ":gpu_shared",
     ":minify_sksl",
@@ -1175,13 +1170,6 @@ optional("gpu") {
   }
 }
 
-optional("piet") {
-  enabled = skia_use_piet
-  public_defines = [ "SK_ENABLE_PIET_GPU" ]
-  public_deps = [ "//third_party/piet-gpu" ]
-  sources = skia_piet_gpu_sources
-}
-
 optional("heif") {
   enabled = skia_use_libheif
   public_defines = [ "SK_HAS_HEIF_LIBRARY" ]
@@ -1276,16 +1264,9 @@ optional("graphite") {
   public_defines = []
 
   enabled = skia_enable_graphite
-  deps = [
-    ":gpu_shared",
-    ":piet",
-  ]
+  deps = [ ":gpu_shared" ]
   public = skia_graphite_public
   sources = skia_graphite_sources
-
-  if (skia_use_piet) {
-    sources += skia_graphite_piet_sources
-  }
 
   if (skia_use_dawn) {
     public += skia_graphite_dawn_public
@@ -1500,7 +1481,6 @@ skia_component("skia") {
     ":jpeg_decode",
     ":jpegxl_decode",
     ":ndk_images",
-    ":piet",
     ":png_decode",
     ":raw",
     ":skvm_jit",
@@ -2751,8 +2731,6 @@ if (skia_enable_tools) {
       sources = [
         "modules/jetski/src/Canvas.cpp",
         "modules/jetski/src/ColorFilters.cpp",
-        "modules/jetski/src/Font.cpp",
-        "modules/jetski/src/FontChainAdapter.cpp",
         "modules/jetski/src/Gradients.cpp",
         "modules/jetski/src/Image.cpp",
         "modules/jetski/src/ImageFilter.cpp",
@@ -2768,7 +2746,6 @@ if (skia_enable_tools) {
         "modules/jetski/src/Surface.h",
         "modules/jetski/src/SurfaceThread.cpp",
         "modules/jetski/src/SurfaceThread.h",
-        "modules/jetski/src/Text.cpp",
         "modules/jetski/src/Utils.cpp",
       ]
       libs = [
@@ -2777,10 +2754,9 @@ if (skia_enable_tools) {
       ]
 
       deps = [
-        ":sk_app",
         ":skia",
-        "experimental/sktext:sktext",
         "modules/skottie:skottie",
+        "tools/window:window",
       ]
     }
   }

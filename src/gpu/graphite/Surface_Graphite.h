@@ -30,9 +30,13 @@ public:
     Surface(sk_sp<Device>);
     ~Surface() override;
 
+    // From SkSurface.h
     SkImageInfo imageInfo() const override;
 
-    Recorder* onGetRecorder() override;
+    // From SkSurface_Base.h
+    SkSurface_Base::Type type() const override { return SkSurface_Base::Type::kGraphite; }
+
+    Recorder* onGetRecorder() const override;
     SkCanvas* onNewCanvas() override;
     sk_sp<SkSurface> onNewSurface(const SkImageInfo&) override;
     sk_sp<SkImage> onNewImageSnapshot(const SkIRect* subset) override;
@@ -55,7 +59,6 @@ public:
                                            ReadPixelsContext context) override;
     bool onCopyOnWrite(ContentChangeMode) override;
     sk_sp<const SkCapabilities> onCapabilities() override;
-    bool isGraphiteBacked() const override { return true; }
 
     TextureProxyView readSurfaceView() const;
 

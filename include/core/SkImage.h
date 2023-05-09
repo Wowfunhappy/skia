@@ -680,19 +680,27 @@ public:
         Returns nullptr if any of the following are true:
           - Subset is empty
           - Subset is not contained inside the image's bounds
-          - Pixels in the image could not be read or copied
+          - Pixels in the source image could not be read or copied
+          - This image is texture-backed and the provided context is null or does not match
+            the source image's context.
 
-        If this image is texture-backed, the context parameter is required and must match the
-        context of the source image. If the context parameter is provided, and the image is
-        raster-backed, the subset will be converted to texture-backed.
+        If the source image was texture-backed, the resulting image will be texture-backed also.
+        Otherwise, the returned image will be raster-backed.
 
+        @param direct  the GrDirectContext of the source image (nullptr is ok if the source image
+                       is not texture-backed).
         @param subset  bounds of returned SkImage
-        @param context the GrDirectContext in play, if it exists
         @return        the subsetted image, or nullptr
 
         example: https://fiddle.skia.org/c/@Image_makeSubset
     */
-    sk_sp<SkImage> makeSubset(const SkIRect& subset, GrDirectContext* direct = nullptr) const;
+    virtual sk_sp<SkImage> makeSubset(GrDirectContext* direct, const SkIRect& subset) const = 0;
+
+#if !defined(SK_DISABLE_LEGACY_IMAGE_SUBSET_METHODS)
+    sk_sp<SkImage> makeSubset(const SkIRect& subset, GrDirectContext* direct = nullptr) const {
+        return this->makeSubset(direct, subset);
+    }
+#endif
 
     /**
      *  Returns true if the image has mipmap levels.
@@ -882,20 +890,29 @@ public:
           - Subset is empty
           - Subset is not contained inside the image's bounds
           - Pixels in the image could not be read or copied
+          - This image is texture-backed and the provided context is null or does not match
+            the source image's context.
 
-        If this image is texture-backed, the recorder parameter is required.
-        If the recorder parameter is provided, and the image is raster-backed, the subset will
-        be converted to texture-backed.
+        If the source image was texture-backed, the resulting image will be texture-backed also.
+        Otherwise, the returned image will be raster-backed.
 
+        @param recorder                 the recorder of the source image (nullptr is ok if the
+                                        source image was texture-backed).
         @param subset                   bounds of returned SkImage
-        @param recorder                 the recorder in which to create the new image
-        @param RequiredImageProperties  properties the returned SkImage must possess (e.g.,
-                                        mipmaps)
+        @param RequiredImageProperties  properties the returned SkImage must possess (e.g. mipmaps)
         @return                         the subsetted image, or nullptr
     */
+    sk_sp<SkImage> makeSubset(skgpu::graphite::Recorder*,
+                              const SkIRect& subset,
+                              RequiredImageProperties) const;
+
+#if !defined(SK_DISABLE_LEGACY_IMAGE_SUBSET_METHODS)
     sk_sp<SkImage> makeSubset(const SkIRect& subset,
-                              skgpu::graphite::Recorder*,
-                              RequiredImageProperties = {}) const;
+                              skgpu::graphite::Recorder* r,
+                              RequiredImageProperties props = {}) const {
+        return this->makeSubset(r, subset, props);
+    }
+#endif
 
     /** Creates SkImage in target SkColorSpace.
         Returns nullptr if SkImage could not be created.
@@ -948,7 +965,7 @@ public:
 
         example: https://fiddle.skia.org/c/@Image_makeNonTextureImage
     */
-    sk_sp<SkImage> makeNonTextureImage() const;
+    sk_sp<SkImage> makeNonTextureImage(GrDirectContext* = nullptr) const;
 
     /** Returns raster image. Copies SkImage backed by GPU texture into CPU memory,
         or decodes SkImage from lazy image. Returns original SkImage if decoded in
@@ -963,7 +980,14 @@ public:
 
         example: https://fiddle.skia.org/c/@Image_makeRasterImage
     */
-    sk_sp<SkImage> makeRasterImage(CachingHint cachingHint = kDisallow_CachingHint) const;
+    sk_sp<SkImage> makeRasterImage(GrDirectContext*,
+                                   CachingHint cachingHint = kDisallow_CachingHint) const;
+
+#if !defined(SK_IMAGE_READ_PIXELS_DISABLE_LEGACY_API)
+    sk_sp<SkImage> makeRasterImage(CachingHint cachingHint = kDisallow_CachingHint) const {
+        return this->makeRasterImage(nullptr, cachingHint);
+    }
+#endif
 
     /** Creates filtered SkImage. filter processes original SkImage, potentially changing
         color, position, and size. subset is the bounds of original SkImage processed
@@ -989,10 +1013,12 @@ public:
         @param offset      storage for returned SkImage translation
         @return            filtered SkImage, or nullptr
     */
-    sk_sp<SkImage> makeWithFilter(GrRecordingContext* context,
-                                  const SkImageFilter* filter, const SkIRect& subset,
-                                  const SkIRect& clipBounds, SkIRect* outSubset,
-                                  SkIPoint* offset) const;
+    virtual sk_sp<SkImage> makeWithFilter(GrRecordingContext* context,
+                                          const SkImageFilter* filter,
+                                          const SkIRect& subset,
+                                          const SkIRect& clipBounds,
+                                          SkIRect* outSubset,
+                                          SkIPoint* offset) const = 0;
 
     /** Deprecated.
      */
@@ -1021,7 +1047,7 @@ public:
         example: https://fiddle.skia.org/c/@Image_isLazyGenerated_a
         example: https://fiddle.skia.org/c/@Image_isLazyGenerated_b
     */
-    bool isLazyGenerated() const;
+    virtual bool isLazyGenerated() const = 0;
 
     /** Creates SkImage in target SkColorSpace.
         Returns nullptr if SkImage could not be created.
@@ -1033,14 +1059,18 @@ public:
         If this image is texture-backed, the context parameter is required and must match the
         context of the source image.
 
-        @param target  SkColorSpace describing color range of returned SkImage
         @param direct  The GrDirectContext in play, if it exists
+        @param target  SkColorSpace describing color range of returned SkImage
         @return        created SkImage in target SkColorSpace
 
         example: https://fiddle.skia.org/c/@Image_makeColorSpace
     */
+    sk_sp<SkImage> makeColorSpace(GrDirectContext* direct, sk_sp<SkColorSpace> target) const;
+
+#if !defined(SK_DISABLE_LEGACY_IMAGE_COLORSPACE_METHODS)
     sk_sp<SkImage> makeColorSpace(sk_sp<SkColorSpace> target,
                                   GrDirectContext* direct = nullptr) const;
+#endif
 
     /** Experimental.
         Creates SkImage in target SkColorType and SkColorSpace.
@@ -1051,14 +1081,20 @@ public:
         If this image is texture-backed, the context parameter is required and must match the
         context of the source image.
 
+        @param direct           The GrDirectContext in play, if it exists
         @param targetColorType  SkColorType of returned SkImage
         @param targetColorSpace SkColorSpace of returned SkImage
-        @param direct           The GrDirectContext in play, if it exists
         @return                 created SkImage in target SkColorType and SkColorSpace
     */
+    virtual sk_sp<SkImage> makeColorTypeAndColorSpace(GrDirectContext* direct,
+                                                      SkColorType targetColorType,
+                                                      sk_sp<SkColorSpace> targetCS) const = 0;
+
+#if !defined(SK_DISABLE_LEGACY_IMAGE_COLORSPACE_METHODS)
     sk_sp<SkImage> makeColorTypeAndColorSpace(SkColorType targetColorType,
                                               sk_sp<SkColorSpace> targetColorSpace,
                                               GrDirectContext* direct = nullptr) const;
+#endif
 
     /** Creates a new SkImage identical to this one, but with a different SkColorSpace.
         This does not convert the underlying pixel data, so the resulting image will draw

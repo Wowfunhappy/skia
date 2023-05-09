@@ -74,6 +74,9 @@ class Recorder;
     surface->getCanvas() to use that canvas (but don't delete it, it is owned by the surface).
     SkSurface always has non-zero dimensions. If there is a request for a new surface, and either
     of the requested dimensions are zero, then nullptr will be returned.
+
+    Clients should *not* subclass SkSurface as there is a lot of internal machinery that is
+    not publicly accessible.
 */
 class SK_API SkSurface : public SkRefCnt {
 public:
@@ -281,6 +284,7 @@ public:
                                                 RenderTargetReleaseProc releaseProc = nullptr,
                                                 ReleaseContext releaseContext = nullptr);
 
+#if defined(SK_GANESH)
     /** Returns SkSurface on GPU indicated by context. Allocates memory for
         pixels, based on the width, height, and SkColorType in SkImageInfo.  budgeted
         selects whether allocation for pixels is tracked by context. imageInfo
@@ -341,13 +345,8 @@ public:
                                              const SkImageInfo& imageInfo,
                                              int sampleCount,
                                              const SkSurfaceProps* surfaceProps) {
-#if defined(SK_GANESH)
         return MakeRenderTarget(context, budgeted, imageInfo, sampleCount,
                                 kBottomLeft_GrSurfaceOrigin, surfaceProps);
-#else
-        // TODO(kjlubick, scroggo) Remove this once Android is updated.
-        return nullptr;
-#endif
     }
 
     /** Returns SkSurface on GPU indicated by context. Allocates memory for
@@ -366,16 +365,11 @@ public:
     static sk_sp<SkSurface> MakeRenderTarget(GrRecordingContext* context,
                                              skgpu::Budgeted budgeted,
                                              const SkImageInfo& imageInfo) {
-#if defined(SK_GANESH)
         if (!imageInfo.width() || !imageInfo.height()) {
             return nullptr;
         }
         return MakeRenderTarget(context, budgeted, imageInfo, 0, kBottomLeft_GrSurfaceOrigin,
                                 nullptr);
-#else
-        // TODO(kjlubick, scroggo) Remove this once Android is updated.
-        return nullptr;
-#endif
     }
 
     /** Returns SkSurface on GPU indicated by context that is compatible with the provided
@@ -388,6 +382,7 @@ public:
     static sk_sp<SkSurface> MakeRenderTarget(GrRecordingContext* context,
                                              const SkSurfaceCharacterization& characterization,
                                              skgpu::Budgeted budgeted);
+#endif
 
 #if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
     /** Private.
@@ -582,56 +577,32 @@ public:
 
         @return the recording context, if available; nullptr otherwise
      */
-    GrRecordingContext* recordingContext();
+    GrRecordingContext* recordingContext() const;
 
     /** Returns the recorder being used by the SkSurface.
 
         @return the recorder, if available; nullptr otherwise
      */
-    skgpu::graphite::Recorder* recorder();
+    skgpu::graphite::Recorder* recorder() const;
 
-#if defined(SK_GANESH)
-    enum BackendHandleAccess {
-        kFlushRead_BackendHandleAccess,    //!< back-end object is readable
-        kFlushWrite_BackendHandleAccess,   //!< back-end object is writable
-        kDiscardWrite_BackendHandleAccess, //!< back-end object must be overwritten
+    enum class BackendHandleAccess {
+        kFlushRead,     //!< back-end object is readable
+        kFlushWrite,    //!< back-end object is writable
+        kDiscardWrite,  //!< back-end object must be overwritten
+
+        // Legacy names, remove when clients are migrated
+        kFlushRead_BackendHandleAccess = kFlushRead,
+        kFlushWrite_BackendHandleAccess = kFlushWrite,
+        kDiscardWrite_BackendHandleAccess = kDiscardWrite,
     };
 
-    /** Deprecated.
-    */
-    static const BackendHandleAccess kFlushRead_TextureHandleAccess =
-            kFlushRead_BackendHandleAccess;
-
-    /** Deprecated.
-    */
-    static const BackendHandleAccess kFlushWrite_TextureHandleAccess =
-            kFlushWrite_BackendHandleAccess;
-
-    /** Deprecated.
-    */
-    static const BackendHandleAccess kDiscardWrite_TextureHandleAccess =
-            kDiscardWrite_BackendHandleAccess;
-
-    /** Retrieves the back-end texture. If SkSurface has no back-end texture, an invalid
-        object is returned. Call GrBackendTexture::isValid to determine if the result
-        is valid.
-
-        The returned GrBackendTexture should be discarded if the SkSurface is drawn to or deleted.
-
-        @return                     GPU texture reference; invalid on failure
-    */
-    GrBackendTexture getBackendTexture(BackendHandleAccess backendHandleAccess);
-
-    /** Retrieves the back-end render target. If SkSurface has no back-end render target, an invalid
-        object is returned. Call GrBackendRenderTarget::isValid to determine if the result
-        is valid.
-
-        The returned GrBackendRenderTarget should be discarded if the SkSurface is drawn to
-        or deleted.
-
-        @return                     GPU render target reference; invalid on failure
-    */
-    GrBackendRenderTarget getBackendRenderTarget(BackendHandleAccess backendHandleAccess);
+    // Legacy names, remove when clients are migrated
+    static constexpr BackendHandleAccess kFlushRead_BackendHandleAccess =
+            BackendHandleAccess::kFlushRead;
+    static constexpr BackendHandleAccess kFlushWrite_BackendHandleAccess =
+            BackendHandleAccess::kFlushWrite;
+    static constexpr BackendHandleAccess kDiscardWrite_BackendHandleAccess =
+            BackendHandleAccess::kDiscardWrite;
 
     /** If the surface was made via MakeFromBackendTexture then it's backing texture may be
         substituted with a different texture. The contents of the previous backing texture are
@@ -648,12 +619,11 @@ public:
         @param textureReleaseProc  function called when texture can be released
         @param releaseContext      state passed to textureReleaseProc
      */
-    bool replaceBackendTexture(const GrBackendTexture& backendTexture,
-                               GrSurfaceOrigin origin,
-                               ContentChangeMode mode = kRetain_ContentChangeMode,
-                               TextureReleaseProc textureReleaseProc = nullptr,
-                               ReleaseContext releaseContext = nullptr);
-#endif
+    virtual bool replaceBackendTexture(const GrBackendTexture& backendTexture,
+                                       GrSurfaceOrigin origin,
+                                       ContentChangeMode mode = kRetain_ContentChangeMode,
+                                       TextureReleaseProc textureReleaseProc = nullptr,
+                                       ReleaseContext releaseContext = nullptr) = 0;
 
     /** Returns SkCanvas that draws into SkSurface. Subsequent calls return the same SkCanvas.
         SkCanvas returned is managed and owned by SkSurface, and is deleted when SkSurface
@@ -1194,6 +1164,12 @@ private:
     uint32_t             fGenerationID;
 
     using INHERITED = SkRefCnt;
+
+public:
+#if !defined(SK_DISABLE_LEGACY_SKSURFACE_METHODS) && defined(SK_GANESH)
+    GrBackendTexture getBackendTexture(BackendHandleAccess backendHandleAccess);
+    GrBackendRenderTarget getBackendRenderTarget(BackendHandleAccess backendHandleAccess);
+#endif
 };
 
 #endif

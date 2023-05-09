@@ -26,7 +26,7 @@ def git_repos_from_deps(ws = "@"):
     new_git_repository(
         name = "dawn",
         build_file = ws + "//bazel/external/dawn:BUILD.bazel",
-        commit = "c1b3c7431680e8e67bfde55ae6dd9ff3b13a235c",
+        commit = "53e721afe0c58f2e38e0671ac0c6524a80f4c1ae",
         remote = "https://dawn.googlesource.com/dawn.git",
     )
 
@@ -157,33 +157,33 @@ def git_repos_from_deps(ws = "@"):
     new_git_repository(
         name = "spirv_cross",
         build_file = ws + "//bazel/external/spirv_cross:BUILD.bazel",
-        commit = "fc9bee27f445644635e83ef111ef54944bb6e3af",
+        commit = "4faeb81f3fb489248a6b633ed2662271777756e3",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Cross",
     )
 
     git_repository(
         name = "spirv_headers",
-        commit = "cfbe4feef20c3c0628712c2792624f0221e378ac",
+        commit = "268a061764ee69f09a477a695bf6a11ffe311b8d",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers.git",
     )
 
     git_repository(
         name = "spirv_tools",
-        commit = "25ad5e19f193429b737433d5f6151062ddbc1680",
+        commit = "01055c60cfc0cddd2724dc674ed73d09df992360",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git",
     )
 
     new_git_repository(
         name = "vulkan_headers",
         build_file = ws + "//bazel/external/vulkan_headers:BUILD.bazel",
-        commit = "8a397558c4d2a4bf9e64e900c45a7e65664c32b2",
+        commit = "bae9700cd9425541a0f6029957f005e5ad3ef660",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Headers",
     )
 
     new_git_repository(
         name = "vulkan_tools",
         build_file = ws + "//bazel/external/vulkan_tools:BUILD.bazel",
-        commit = "df10a2759b4b60d59b735882217a749d8e5be660",
+        commit = "fec27a3f6e3bae96a8f3e784d6d643afb41989d6",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Tools",
     )
 
