@@ -25,6 +25,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/gl/GrGLFunctions.h"
 #include "include/gpu/gl/GrGLInterface.h"
 #include "include/gpu/gl/GrGLTypes.h"
@@ -126,7 +127,7 @@ DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
     // Test drawing and then resetting bindings. This should force a MIP regeneration if MIP
     // maps are supported as well.
     auto info = SkImageInfo::Make(10, 10, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
-    auto surf = SkSurface::MakeRenderTarget(dContext, skgpu::Budgeted::kYes, info, 1, nullptr);
+    auto surf = SkSurfaces::RenderTarget(dContext, skgpu::Budgeted::kYes, info, 1, nullptr);
     surf->getCanvas()->clear(0x80FF0000);
     auto img = surf->makeImageSnapshot();
     surf->getCanvas()->clear(SK_ColorBLUE);
@@ -134,7 +135,7 @@ DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
     surf->getCanvas()->scale(0.25, 0.25);
     surf->getCanvas()->drawImage(img.get(), 0, 0, SkSamplingOptions({1.0f/3, 1.0f/3}), nullptr);
     surf->getCanvas()->restore();
-    surf->flushAndSubmit();
+    dContext->flushAndSubmit(surf);
     dContext->resetGLTextureBindings();
     checkBindings();
     resetBindings();
@@ -157,6 +158,7 @@ DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
         infoExternal.fTarget = GR_GL_TEXTURE_EXTERNAL;
         infoExternal.fFormat = info2D.fFormat;
         REPORTER_ASSERT(reporter, infoExternal.fID);
+        infoExternal.fProtected = info2D.fProtected;
         GrBackendTexture backendTexture(10, 10, GrMipmapped::kNo, infoExternal);
         // Above texture creation will have messed with GL state and bindings.
         resetBindings();
@@ -170,7 +172,7 @@ DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
         REPORTER_ASSERT(reporter, img);
         surf->getCanvas()->drawImage(img, 0, 0);
         img.reset();
-        surf->flushAndSubmit();
+        dContext->flushAndSubmit(surf);
         dContext->resetGLTextureBindings();
         checkBindings();
         resetBindings();
@@ -194,7 +196,7 @@ DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(TextureBindingsResetTest,
             REPORTER_ASSERT(reporter, img);
             surf->getCanvas()->drawImage(img, 0, 0);
             img.reset();
-            surf->flushAndSubmit();
+            dContext->flushAndSubmit(surf);
             dContext->resetGLTextureBindings();
             checkBindings();
             resetBindings();

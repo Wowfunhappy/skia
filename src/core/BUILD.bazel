@@ -7,6 +7,8 @@ exports_files_legacy()
 # In separate file list because these files are exported to
 # core.gni:skia_core_sources as well as sksl.gni:skslc_deps.
 CORE_SKSLC_FILES = [
+    "SkChecksum.cpp",
+    "SkChecksum.h",
     "SkCpu.cpp",
     "SkCpu.h",
     "SkData.cpp",
@@ -55,7 +57,7 @@ CORE_FILES = [
     "SkBlendModeBlender.h",
     "SkBlendModePriv.h",
     "SkBlenderBase.h",
-    "SkBlitBWMaskTemplate.h",
+    "SkBlitBWMaskTemplate.h",  # TODO(kjlubick) should this be a textual header?
     "SkBlitRow.h",
     "SkBlitRow_D32.cpp",
     "SkBlitter.cpp",
@@ -64,9 +66,10 @@ CORE_FILES = [
     "SkBlitter_A8.h",
     "SkBlitter_ARGB32.cpp",
     "SkBlitter_Sprite.cpp",
-    "SkBlurMF.cpp",
     "SkBlurMask.cpp",
     "SkBlurMask.h",
+    "SkBlurMaskFilterImpl.cpp",
+    "SkBlurMaskFilterImpl.h",
     "SkCachedData.cpp",
     "SkCachedData.h",
     "SkCanvas.cpp",
@@ -365,6 +368,8 @@ SKSL_FILES = [
     "SkFilterColorProgram.cpp",
     "SkFilterColorProgram.h",
     "SkRuntimeEffect.cpp",
+    "SkRuntimeBlender.cpp",
+    "SkRuntimeBlender.h",
     "SkSLTypeShared.cpp",
     "SkSLTypeShared.h",
 ]

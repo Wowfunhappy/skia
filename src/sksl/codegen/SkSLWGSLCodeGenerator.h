@@ -14,7 +14,6 @@
 #include "src/core/SkTHash.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/codegen/SkSLCodeGenerator.h"
-#include "src/sksl/ir/SkSLType.h"
 
 #include <cstdint>
 #include <initializer_list>
@@ -37,6 +36,7 @@ class ConstructorDiagonalMatrix;
 class ConstructorMatrixResize;
 class Expression;
 class ExpressionStatement;
+struct Field;
 class FieldAccess;
 class FunctionCall;
 class FunctionDeclaration;
@@ -55,6 +55,7 @@ class Statement;
 class StructDefinition;
 class Swizzle;
 class TernaryExpression;
+class Type;
 class VarDeclaration;
 class Variable;
 class VariableReference;
@@ -152,7 +153,6 @@ private:
     void write(std::string_view s);
     void writeLine(std::string_view s = std::string_view());
     void finishLine();
-    void writeName(std::string_view name);
     void writeVariableDecl(const Type& type, std::string_view name, Delimiter delimiter);
 
     // Helpers to declare a pipeline stage IO parameter declaration.
@@ -185,27 +185,32 @@ private:
     void writeReturnStatement(const ReturnStatement& s);
     void writeVarDeclaration(const VarDeclaration& varDecl);
 
-    // Writers for expressions.
-    void writeExpression(const Expression& e, Precedence parentPrecedence);
-    void writeBinaryExpression(const BinaryExpression& b, Precedence parentPrecedence);
-    void writeFieldAccess(const FieldAccess& f);
-    void writeFunctionCall(const FunctionCall&);
-    void writeIndexExpression(const IndexExpression& i);
-    void writeLiteral(const Literal& l);
-    void writePrefixExpression(const PrefixExpression& p, Precedence parentPrecedence);
-    void writeSwizzle(const Swizzle& swizzle);
-    void writeTernaryExpression(const TernaryExpression& t, Precedence parentPrecedence);
-    void writeVariableReference(const VariableReference& r);
+    // Writers for expressions. These return the final expression text as a string, and emit any
+    // necessary setup code directly into the program as necessary.
+    std::string assembleExpression(const Expression& e, Precedence parentPrecedence);
+    std::string assembleBinaryExpression(const BinaryExpression& b, Precedence parentPrecedence);
+    std::string assembleFieldAccess(const FieldAccess& f);
+    std::string assembleFunctionCall(const FunctionCall&);
+    std::string assembleIndexExpression(const IndexExpression& i);
+    std::string assembleLiteral(const Literal& l);
+    std::string assemblePrefixExpression(const PrefixExpression& p, Precedence parentPrecedence);
+    std::string assembleSwizzle(const Swizzle& swizzle);
+    std::string assembleTernaryExpression(const TernaryExpression& t, Precedence parentPrecedence);
+    std::string assembleVariableReference(const VariableReference& r);
+    std::string assembleName(std::string_view name);
 
     // Constructor expressions
-    void writeAnyConstructor(const AnyConstructor& c, Precedence parentPrecedence);
-    void writeConstructorCompound(const ConstructorCompound& c, Precedence parentPrecedence);
-    void writeConstructorCompoundVector(const ConstructorCompound& c, Precedence parentPrecedence);
-    void writeConstructorCompoundMatrix(const ConstructorCompound& c, Precedence parentPrecedence);
-    void writeConstructorDiagonalMatrix(const ConstructorDiagonalMatrix& c,
-                                        Precedence parentPrecedence);
-    void writeConstructorMatrixResize(const ConstructorMatrixResize& c,
-                                      Precedence parentPrecedence);
+    std::string assembleAnyConstructor(const AnyConstructor& c, Precedence parentPrecedence);
+    std::string assembleConstructorCompound(const ConstructorCompound& c,
+                                            Precedence parentPrecedence);
+    std::string assembleConstructorCompoundVector(const ConstructorCompound& c,
+                                                  Precedence parentPrecedence);
+    std::string assembleConstructorCompoundMatrix(const ConstructorCompound& c,
+                                                  Precedence parentPrecedence);
+    std::string assembleConstructorDiagonalMatrix(const ConstructorDiagonalMatrix& c,
+                                                  Precedence parentPrecedence);
+    std::string assembleConstructorMatrixResize(const ConstructorMatrixResize& c,
+                                                Precedence parentPrecedence);
 
     // Matrix constructor helpers.
     bool isMatrixConstructorHelperNeeded(const ConstructorCompound& c);
@@ -214,7 +219,10 @@ private:
     void writeMatrixFromScalarAndVectorArgs(const AnyConstructor& ctor, int columns, int rows);
 
     // Synthesized helper functions for comparison operators that are not supported by WGSL.
-    void writeMatrixEquality(const Expression& left, const Expression& right);
+    std::string assembleMatrixEqualityExpression(const Expression& left, const Expression& right);
+
+    // Writes a scratch variable into the program and returns its name (e.g. `_skTemp123`).
+    std::string writeScratchVar(const Type& type);
 
     // Generic recursive ProgramElement visitor.
     void writeProgramElement(const ProgramElement& e);
@@ -225,7 +233,7 @@ private:
     // space layout constraints
     // (https://www.w3.org/TR/WGSL/#address-space-layout-constraints) if a `layout` is
     // provided. A struct that does not need to be host-shareable does not require a `layout`.
-    void writeFields(SkSpan<const Type::Field> fields,
+    void writeFields(SkSpan<const Field> fields,
                      Position parentPos,
                      const MemoryLayout* layout = nullptr);
 
@@ -250,7 +258,7 @@ private:
     // based on the function's pre-determined dependencies. These are expected to be written out as
     // the first parameters for a function that requires them. Returns true if any arguments were
     // written.
-    bool writeFunctionDependencyArgs(const FunctionDeclaration&);
+    std::string functionDependencyArgs(const FunctionDeclaration&);
     bool writeFunctionDependencyParams(const FunctionDeclaration&);
 
     // Generate an out-parameter helper function for the given call and return its name.
@@ -276,7 +284,7 @@ private:
     int fIndentation = 0;
     bool fAtLineStart = false;
 
-    int fSwizzleHelperCount = 0;
+    int fScratchCount = 0;
     StringStream fExtraFunctions;      // all internally synthesized helpers are written here
     skia_private::THashSet<std::string> fHelpers;  // all synthesized helper functions, by name
 };

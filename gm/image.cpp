@@ -32,14 +32,23 @@
 #include "include/encode/SkPngEncoder.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/base/SkMalloc.h"
 #include "src/core/SkAutoPixmapStorage.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
 #include "tools/ToolUtils.h"
 
+#if defined(SK_GRAPHITE)
+#include "include/gpu/graphite/Surface.h"
+#endif
+
 #include <functional>
 #include <utility>
+
+#if defined(SK_GRAPHITE)
+#include "include/gpu/graphite/Image.h"
+#endif
 
 const SkSamplingOptions gSamplings[] = {
     SkSamplingOptions(SkFilterMode::kNearest),
@@ -167,10 +176,10 @@ protected:
         sk_bzero(fBuffer, fBufferSize);
 
         SkImageInfo info = SkImageInfo::MakeN32Premul(W, H);
-        sk_sp<SkSurface> surf0(SkSurface::MakeRasterDirect(info, fBuffer, RB));
-        sk_sp<SkSurface> surf1(SkSurface::MakeRaster(info));
-        sk_sp<SkSurface> surf2(SkSurface::MakeRenderTarget(
-                canvas->recordingContext(), skgpu::Budgeted::kNo, info));
+        sk_sp<SkSurface> surf0(SkSurfaces::WrapPixels(info, fBuffer, RB));
+        sk_sp<SkSurface> surf1(SkSurfaces::Raster(info));
+        sk_sp<SkSurface> surf2(
+                SkSurfaces::RenderTarget(canvas->recordingContext(), skgpu::Budgeted::kNo, info));
 
         test_surface(canvas, surf0.get(), true);
         canvas->translate(80, 0);
@@ -231,7 +240,7 @@ static void draw_contents(SkCanvas* canvas) {
 static sk_sp<SkImage> make_raster(const SkImageInfo& info,
                                   GrRecordingContext*,
                                   void (*draw)(SkCanvas*)) {
-    auto surface(SkSurface::MakeRaster(info));
+    auto surface(SkSurfaces::Raster(info));
     draw(surface->getCanvas());
     return surface->makeImageSnapshot();
 }
@@ -263,7 +272,7 @@ static sk_sp<SkImage> make_gpu(const SkImageInfo& info,
         return nullptr;
     }
 
-    auto surface(SkSurface::MakeRenderTarget(ctx, skgpu::Budgeted::kNo, info));
+    auto surface(SkSurfaces::RenderTarget(ctx, skgpu::Budgeted::kNo, info));
     if (!surface) {
         return nullptr;
     }
@@ -381,10 +390,10 @@ DEF_SIMPLE_GM_CAN_FAIL(new_texture_image, canvas, errorMsg, 280, 115) {
             [&]() -> sk_sp<SkImage> {
                 sk_sp<SkSurface> surface;
                 if (dContext) {
-                    surface = SkSurface::MakeRenderTarget(dContext, skgpu::Budgeted::kYes, ii);
+                    surface = SkSurfaces::RenderTarget(dContext, skgpu::Budgeted::kYes, ii);
                 } else {
 #if defined(SK_GRAPHITE)
-                    surface = SkSurface::MakeGraphite(recorder, ii);
+                    surface = SkSurfaces::RenderTarget(recorder, ii);
 #endif
                 }
 
@@ -409,10 +418,8 @@ DEF_SIMPLE_GM_CAN_FAIL(new_texture_image, canvas, errorMsg, 280, 115) {
                                                              : skgpu::Mipmapped::kNo);
                 } else {
 #if defined(SK_GRAPHITE)
-                    texImage = image->makeTextureImage(recorder,
-                                                       { mm ? skgpu::Mipmapped::kYes
-                                                            : skgpu::Mipmapped::kNo });
- #endif
+                    texImage = SkImages::TextureFromImage(recorder, image, {mm});
+#endif
                 }
                 if (texImage) {
                     canvas->drawImage(texImage, 0, mm ? kSize + kPad : 0);

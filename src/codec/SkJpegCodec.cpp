@@ -7,9 +7,6 @@
 
 #include "src/codec/SkJpegCodec.h"
 
-#include "include/core/SkTypes.h"
-
-#ifdef SK_CODEC_DECODES_JPEG
 #include "include/codec/SkCodec.h"
 #include "include/core/SkAlphaType.h"
 #include "include/core/SkColorType.h"
@@ -18,11 +15,11 @@
 #include "include/core/SkPixmap.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkStream.h"
+#include "include/core/SkTypes.h"
 #include "include/core/SkYUVAInfo.h"
 #include "include/private/base/SkAlign.h"
 #include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkTemplates.h"
-#include "include/private/base/SkTo.h"
 #include "modules/skcms/skcms.h"
 #include "src/codec/SkCodecPriv.h"
 #include "src/codec/SkJpegConstants.h"
@@ -79,7 +76,8 @@ static bool is_orientation_marker(jpeg_marker_struct* marker, SkEncodedOrigin* o
             orientation);
 }
 
-static SkEncodedOrigin get_exif_orientation(jpeg_decompress_struct* dinfo) {
+namespace SkJpegPriv {
+SkEncodedOrigin get_exif_orientation(jpeg_decompress_struct* dinfo) {
     SkEncodedOrigin orientation;
     for (jpeg_marker_struct* marker = dinfo->marker_list; marker; marker = marker->next) {
         if (is_orientation_marker(marker, &orientation)) {
@@ -88,6 +86,7 @@ static SkEncodedOrigin get_exif_orientation(jpeg_decompress_struct* dinfo) {
     }
 
     return kDefault_SkEncodedOrigin;
+}
 }
 
 // A helper structure to convert jpeg_marker_struct (and similar representations) to.
@@ -299,7 +298,7 @@ SkCodec::Result SkJpegCodec::ReadHeader(SkStream* stream, SkCodec** codecOut,
             return kInvalidInput;
         }
 
-        SkEncodedOrigin orientation = get_exif_orientation(dinfo);
+        SkEncodedOrigin orientation = SkJpegPriv::get_exif_orientation(dinfo);
         auto profile = read_color_profile(dinfo);
         if (profile) {
             auto type = profile->profile()->data_color_space;
@@ -351,6 +350,11 @@ std::unique_ptr<SkCodec> SkJpegCodec::MakeFromStream(std::unique_ptr<SkStream> s
 
 std::unique_ptr<SkCodec> SkJpegCodec::MakeFromStream(std::unique_ptr<SkStream> stream,
         Result* result, std::unique_ptr<SkEncodedInfo::ICCProfile> defaultColorProfile) {
+    SkASSERT(result);
+    if (!stream) {
+        *result = SkCodec::kInvalidInput;
+        return nullptr;
+    }
     SkCodec* codec = nullptr;
     *result = ReadHeader(stream.get(), &codec, nullptr, std::move(defaultColorProfile));
     if (kSuccess == *result) {
@@ -1072,47 +1076,6 @@ SkCodec::Result SkJpegCodec::onGetYUVAPlanes(const SkYUVAPixmaps& yuvaPixmaps) {
     return kSuccess;
 }
 
-// This function is declared in SkJpegInfo.h, used by SkPDF.
-bool SkGetJpegInfo(const void* data, size_t len,
-                   SkISize* size,
-                   SkEncodedInfo::Color* colorType,
-                   SkEncodedOrigin* orientation) {
-    if (!SkJpegCodec::IsJpeg(data, len)) {
-        return false;
-    }
-
-    SkMemoryStream stream(data, len);
-    JpegDecoderMgr decoderMgr(&stream);
-    // libjpeg errors will be caught and reported here
-    skjpeg_error_mgr::AutoPushJmpBuf jmp(decoderMgr.errorMgr());
-    if (setjmp(jmp)) {
-        return false;
-    }
-    decoderMgr.init();
-    jpeg_decompress_struct* dinfo = decoderMgr.dinfo();
-    jpeg_save_markers(dinfo, kExifMarker, 0xFFFF);
-    jpeg_save_markers(dinfo, kICCMarker, 0xFFFF);
-    jpeg_save_markers(dinfo, kMpfMarker, 0xFFFF);
-    jpeg_save_markers(dinfo, kGainmapMarker, 0xFFFF);
-    if (JPEG_HEADER_OK != jpeg_read_header(dinfo, true)) {
-        return false;
-    }
-    SkEncodedInfo::Color encodedColorType;
-    if (!decoderMgr.getEncodedColor(&encodedColorType)) {
-        return false;  // Unable to interpret the color channels as colors.
-    }
-    if (colorType) {
-        *colorType = encodedColorType;
-    }
-    if (orientation) {
-        *orientation = get_exif_orientation(dinfo);
-    }
-    if (size) {
-        *size = {SkToS32(dinfo->image_width), SkToS32(dinfo->image_height)};
-    }
-    return true;
-}
-
 #ifdef SK_CODEC_DECODES_JPEG_GAINMAPS
 // Collect and parse the primary and extended XMP metadata.
 static std::unique_ptr<SkJpegXmp> get_xmp_metadata(const SkJpegMarkerList& markerList) {
@@ -1169,6 +1132,7 @@ static std::unique_ptr<SkJpegMultiPictureParameters> find_mp_params(
 static bool extract_gainmap(SkJpegSourceMgr* decoderSource,
                             size_t offset,
                             size_t size,
+                            bool base_image_has_hdrgm,
                             SkGainmapInfo* outInfo,
                             std::unique_ptr<SkStream>* outGainmapImageStream) {
     // Extract the SkData for this image.
@@ -1205,8 +1169,19 @@ static bool extract_gainmap(SkJpegSourceMgr* decoderSource,
     }
 
     // Check if this image identifies itself as a gainmap.
+    bool did_populate_info = false;
     SkGainmapInfo info;
-    if (!xmp->getGainmapInfoHDRGM(&info) && !xmp->getGainmapInfoHDRGainMap(&info)) {
+
+    // Check for HDRGM only if the base image specified hdrgm:Version="1.0".
+    did_populate_info = base_image_has_hdrgm && xmp->getGainmapInfoHDRGM(&info);
+
+    // Next, check HDRGainMap. This does not require anything specific from the base image.
+    if (!did_populate_info) {
+        did_populate_info = xmp->getGainmapInfoHDRGainMap(&info);
+    }
+
+    // If none of the formats identified itself as a gainmap and populated |info| then fail.
+    if (!did_populate_info) {
         return false;
     }
 
@@ -1228,6 +1203,13 @@ static bool get_gainmap_info(const SkJpegMarkerList& markerList,
                              std::unique_ptr<SkStream>* gainmapImageStream) {
     // The GContainer and APP15-based HDRGM formats require XMP metadata. Extract it now.
     std::unique_ptr<SkJpegXmp> xmp = get_xmp_metadata(markerList);
+
+    // Let |base_image_info| be the HDRGM gainmap information found in the base image (if any).
+    SkGainmapInfo base_image_info;
+
+    // Set |base_image_has_hdrgm| to be true if the base image has HDRGM XMP metadata that includes
+    // the a Version 1.0 attribute.
+    const bool base_image_has_hdrgm = xmp && xmp->getGainmapInfoHDRGM(&base_image_info);
 
     // Attempt to locate the gainmap from the container XMP.
     size_t containerGainmapOffset = 0;
@@ -1253,7 +1235,12 @@ static bool get_gainmap_info(const SkJpegMarkerList& markerList,
                     mpParams->images[mpImageIndex].dataOffset, mpParamsSegment.offset);
             size_t mpImageSize = mpParams->images[mpImageIndex].size;
 
-            if (extract_gainmap(sourceMgr, mpImageOffset, mpImageSize, info, gainmapImageStream)) {
+            if (extract_gainmap(sourceMgr,
+                                mpImageOffset,
+                                mpImageSize,
+                                base_image_has_hdrgm,
+                                info,
+                                gainmapImageStream)) {
                 // If the GContainer also suggested an offset and size, assert that we found the
                 // image that the GContainer suggested.
                 if (containerGainmapOffset) {
@@ -1270,6 +1257,7 @@ static bool get_gainmap_info(const SkJpegMarkerList& markerList,
         if (extract_gainmap(sourceMgr,
                             containerGainmapOffset,
                             containerGainmapSize,
+                            base_image_has_hdrgm,
                             info,
                             gainmapImageStream)) {
             return true;
@@ -1279,7 +1267,7 @@ static bool get_gainmap_info(const SkJpegMarkerList& markerList,
 
     // Finally, attempt to extract SkGainmapInfo from the primary image's XMP and extract the
     // gainmap from APP15 segments.
-    if (xmp && xmp->getGainmapInfoHDRGM(info)) {
+    if (xmp && base_image_has_hdrgm) {
         auto gainmapData = read_metadata(markerList,
                                          kGainmapMarker,
                                          kGainmapSig,
@@ -1289,6 +1277,7 @@ static bool get_gainmap_info(const SkJpegMarkerList& markerList,
         if (gainmapData) {
             *gainmapImageStream = SkMemoryStream::Make(std::move(gainmapData));
             if (*gainmapImageStream) {
+                *info = base_image_info;
                 return true;
             }
         } else {
@@ -1347,4 +1336,31 @@ bool SkJpegCodec::onGetGainmapInfo(SkGainmapInfo* info,
 }
 #endif  // SK_CODEC_DECODES_JPEG_GAINMAPS
 
-#endif // SK_CODEC_DECODES_JPEG
+
+namespace SkJpegDecoder {
+bool IsJpeg(const void* data, size_t len) {
+    return SkJpegCodec::IsJpeg(data, len);
+}
+
+std::unique_ptr<SkCodec> Decode(std::unique_ptr<SkStream> stream,
+                                SkCodec::Result* outResult,
+                                SkCodecs::DecodeContext) {
+    SkCodec::Result resultStorage;
+    if (!outResult) {
+        outResult = &resultStorage;
+    }
+    return SkJpegCodec::MakeFromStream(std::move(stream), outResult);
+}
+
+std::unique_ptr<SkCodec> Decode(sk_sp<SkData> data,
+                                SkCodec::Result* outResult,
+                                SkCodecs::DecodeContext) {
+    if (!data) {
+        if (outResult) {
+            *outResult = SkCodec::kInvalidInput;
+        }
+        return nullptr;
+    }
+    return Decode(SkMemoryStream::Make(std::move(data)), outResult, nullptr);
+}
+}  // namespace SkJpegDecoder

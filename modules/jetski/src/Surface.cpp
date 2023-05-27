@@ -9,6 +9,7 @@
 #include <android/bitmap.h>
 #include <android/log.h>
 
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "tools/window/DisplayParams.h"
 #include "tools/window/android/WindowContextFactory_android.h"
 
@@ -35,7 +36,7 @@ SkCanvas* WindowSurface::getCanvas() {
 }
 
 void WindowSurface::flushAndSubmit() {
-    fSurface->flushAndSubmit();
+    skgpu::ganesh::FlushAndSubmit(fSurface);
     fWindowContext->swapBuffers();
     fSurface = fWindowContext->getBackbufferSurface();
 }
@@ -92,7 +93,7 @@ public:
             return;
         }
 
-        fSurface = SkSurface::MakeRasterDirect(info, pixels, bm_info.stride);
+        fSurface = SkSurfaces::WrapPixels(info, pixels, bm_info.stride);
         if (!fSurface) {
             AndroidBitmap_unlockPixels(env, bitmap);
             return;

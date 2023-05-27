@@ -77,13 +77,13 @@ void SolidColorShaderBlock::BeginBlock(const KeyContext& keyContext,
 
 namespace {
 
-void add_dst_read_uniform_data(const ShaderCodeDictionary* dict,
-                               PipelineDataGatherer* gatherer,
-                               sk_sp<TextureProxy> dstTexture) {
+void add_dst_read_sample_uniform_data(const ShaderCodeDictionary* dict,
+                                       PipelineDataGatherer* gatherer,
+                                       sk_sp<TextureProxy> dstTexture) {
     static const SkTileMode kTileModes[2] = {SkTileMode::kClamp, SkTileMode::kClamp};
     gatherer->add(SkSamplingOptions(), kTileModes, dstTexture);
 
-    VALIDATE_UNIFORMS(gatherer, dict, BuiltInCodeSnippetID::kDstRead)
+    VALIDATE_UNIFORMS(gatherer, dict, BuiltInCodeSnippetID::kDstReadSample)
 
     SkV4 coords{0.0f,
                 0.0f,
@@ -94,14 +94,23 @@ void add_dst_read_uniform_data(const ShaderCodeDictionary* dict,
 
 } // anonymous namespace
 
-void DstReadBlock::BeginBlock(const KeyContext& keyContext,
-                              PaintParamsKeyBuilder* builder,
-                              PipelineDataGatherer* gatherer,
-                              sk_sp<TextureProxy> dstTexture) {
+void DstReadSampleBlock::BeginBlock(const KeyContext& keyContext,
+                                    PaintParamsKeyBuilder* builder,
+                                    PipelineDataGatherer* gatherer,
+                                    sk_sp<TextureProxy> dstTexture) {
     if (gatherer) {
-        add_dst_read_uniform_data(keyContext.dict(), gatherer, std::move(dstTexture));
+        add_dst_read_sample_uniform_data(keyContext.dict(), gatherer, std::move(dstTexture));
     }
-    builder->beginBlock(BuiltInCodeSnippetID::kDstRead);
+    builder->beginBlock(BuiltInCodeSnippetID::kDstReadSample);
+}
+
+void DstReadFetchBlock::BeginBlock(const KeyContext& keyContext,
+                                   PaintParamsKeyBuilder* builder,
+                                   PipelineDataGatherer* gatherer) {
+    if (gatherer) {
+        VALIDATE_UNIFORMS(gatherer, keyContext.dict(), BuiltInCodeSnippetID::kDstReadFetch)
+    }
+    builder->beginBlock(BuiltInCodeSnippetID::kDstReadFetch);
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -453,6 +462,80 @@ void ImageShaderBlock::BeginBlock(const KeyContext& keyContext,
     }
 
     builder->beginBlock(BuiltInCodeSnippetID::kImageShader);
+}
+
+//--------------------------------------------------------------------------------------------------
+
+// makes use of ImageShader functions, above
+namespace {
+
+void add_yuv_image_uniform_data(const ShaderCodeDictionary* dict,
+                                const YUVImageShaderBlock::ImageData& imgData,
+                                PipelineDataGatherer* gatherer) {
+    VALIDATE_UNIFORMS(gatherer, dict, BuiltInCodeSnippetID::kYUVImageShader)
+
+    gatherer->write(imgData.fImgSize);
+    gatherer->write(imgData.fSubset);
+    gatherer->write(SkTo<int>(imgData.fTileModes[0]));
+    gatherer->write(SkTo<int>(imgData.fTileModes[1]));
+    gatherer->write(SkTo<int>(imgData.fSampling.filter));
+    gatherer->write(imgData.fSampling.useCubic);
+    if (imgData.fSampling.useCubic) {
+        const SkCubicResampler& cubic = imgData.fSampling.cubic;
+        gatherer->write(SkImageShader::CubicResamplerMatrix(cubic.B, cubic.C));
+    } else {
+        gatherer->write(SkM44());
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        gatherer->writeHalf(imgData.fChannelSelect[i]);
+    }
+    gatherer->writeHalf(imgData.fYUVtoRGBMatrix);
+    gatherer->write(imgData.fYUVtoRGBTranslate);
+
+    add_color_space_uniforms(imgData.fSteps, gatherer);
+}
+
+} // anonymous namespace
+
+YUVImageShaderBlock::ImageData::ImageData(const SkSamplingOptions& sampling,
+                                          SkTileMode tileModeX,
+                                          SkTileMode tileModeY,
+                                          SkRect subset)
+        : fSampling(sampling)
+        , fTileModes{tileModeX, tileModeY}
+        , fSubset(subset) {
+    SkASSERT(fSteps.flags.mask() == 0);   // By default, the colorspace should have no effect
+}
+
+void YUVImageShaderBlock::BeginBlock(const KeyContext& keyContext,
+                                     PaintParamsKeyBuilder* builder,
+                                     PipelineDataGatherer* gatherer,
+                                     const ImageData* imgData) {
+    SkASSERT(!gatherer == !imgData);
+
+    // TODO: allow through lazy proxies
+    if (gatherer &&
+        (!imgData->fTextureProxies[0] || !imgData->fTextureProxies[1] ||
+         !imgData->fTextureProxies[2] || !imgData->fTextureProxies[3])) {
+        // TODO: At some point the pre-compile path should also be creating a texture
+        // proxy (i.e., we can remove the 'pipelineData' in the above test).
+        SolidColorShaderBlock::BeginBlock(keyContext, builder, gatherer, kErrorColor);
+        return;
+    }
+
+    auto dict = keyContext.dict();
+    if (gatherer) {
+        for (int i = 0; i < 4; ++i) {
+            gatherer->add(imgData->fSampling,
+                          imgData->fTileModes,
+                          imgData->fTextureProxies[i]);
+        }
+
+        add_yuv_image_uniform_data(dict, *imgData, gatherer);
+    }
+
+    builder->beginBlock(BuiltInCodeSnippetID::kYUVImageShader);
 }
 
 //--------------------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkM44.h"
+#include "include/core/SkPoint3.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkSpan.h"
@@ -57,11 +58,17 @@ struct PriorOutputBlock {
                            PipelineDataGatherer*);
 };
 
-struct DstReadBlock {
+struct DstReadSampleBlock {
     static void BeginBlock(const KeyContext&,
                            PaintParamsKeyBuilder*,
                            PipelineDataGatherer*,
                            sk_sp<TextureProxy> dst);
+};
+
+struct DstReadFetchBlock {
+    static void BeginBlock(const KeyContext&,
+                           PaintParamsKeyBuilder*,
+                           PipelineDataGatherer*);
 };
 
 struct SolidColorShaderBlock {
@@ -159,6 +166,36 @@ struct ImageShaderBlock {
         // SkImageShader. In the pre-compile case we will need to create a Graphite promise
         // image which holds the appropriate data.
         sk_sp<TextureProxy> fTextureProxy;
+    };
+
+    // The gatherer and imageData should be null or non-null together
+    static void BeginBlock(const KeyContext&,
+                           PaintParamsKeyBuilder*,
+                           PipelineDataGatherer*,
+                           const ImageData*);
+};
+
+struct YUVImageShaderBlock {
+    struct ImageData {
+        ImageData(const SkSamplingOptions& sampling,
+                  SkTileMode tileModeX,
+                  SkTileMode tileModeY,
+                  SkRect subset);
+
+        SkPoint fImgSize;
+        SkSamplingOptions fSampling;
+        SkTileMode fTileModes[2];
+        SkRect fSubset;
+        SkColor4f fChannelSelect[4];
+        SkMatrix fYUVtoRGBMatrix;
+        SkPoint3 fYUVtoRGBTranslate;
+
+        SkColorSpaceXformSteps fSteps;
+
+        // TODO: Currently these are only filled in when we're generating the key from an actual
+        // SkImageShader. In the pre-compile case we will need to create Graphite promise
+        // images which hold the appropriate data.
+        sk_sp<TextureProxy> fTextureProxies[4];
     };
 
     // The gatherer and imageData should be null or non-null together

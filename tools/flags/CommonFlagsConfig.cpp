@@ -123,6 +123,7 @@ static const struct {
     { "mtlf16norm",            "gpu", "api=metal,color=f16norm" },
     { "mtlsrgba",              "gpu", "api=metal,color=srgba"},
     { "mtl1010102",            "gpu", "api=metal,color=1010102" },
+    { "mtl_dmsaa",             "gpu", "api=metal,dmsaa=true" },
     { "mtlmsaa4",              "gpu", "api=metal,samples=4" },
     { "mtlmsaa8",              "gpu", "api=metal,samples=8" },
     { "mtlddl",                "gpu", "api=metal,useDDLSink=true" },
@@ -568,24 +569,24 @@ private:
     THashMap<SkString, SkString> fOptionsMap;
 };
 
-SkCommandLineConfigGpu::SkCommandLineConfigGpu(const SkString&           tag,
+SkCommandLineConfigGpu::SkCommandLineConfigGpu(const SkString&         tag,
                                                const TArray<SkString>& viaParts,
-                                               ContextType               contextType,
-                                               bool                      fakeGLESVersion2,
-                                               uint32_t                  surfaceFlags,
-                                               int                       samples,
-                                               SkColorType               colorType,
-                                               SkAlphaType               alphaType,
-                                               bool                      useStencilBuffers,
-                                               bool                      testThreading,
-                                               int                       testPersistentCache,
-                                               bool                      testPrecompile,
-                                               bool                      useDDLSink,
-                                               bool                      slug,
-                                               bool                      serializeSlug,
-                                               bool                      remoteSlug,
-                                               bool                      reducedShaders,
-                                               SurfType                  surfType)
+                                               ContextType             contextType,
+                                               bool                    fakeGLESVersion2,
+                                               uint32_t                surfaceFlags,
+                                               int                     samples,
+                                               SkColorType             colorType,
+                                               SkAlphaType             alphaType,
+                                               bool                    useStencilBuffers,
+                                               bool                    testThreading,
+                                               int                     testPersistentCache,
+                                               bool                    testPrecompile,
+                                               bool                    useDDLSink,
+                                               bool                    slug,
+                                               bool                    serializeSlug,
+                                               bool                    remoteSlug,
+                                               bool                    reducedShaders,
+                                               SurfType                surfType)
         : SkCommandLineConfig(tag, SkString("gpu"), viaParts)
         , fContextType(contextType)
         , fContextOverrides(ContextOverrides::kNone)
@@ -609,13 +610,13 @@ SkCommandLineConfigGpu::SkCommandLineConfigGpu(const SkString&           tag,
         fContextOverrides |= ContextOverrides::kFakeGLESVersionAs2;
     }
     if (reducedShaders) {
-        fContextOverrides |= ContextOverrides ::kReducedShaders;
+        fContextOverrides |= ContextOverrides::kReducedShaders;
     }
 }
 
-SkCommandLineConfigGpu* parse_command_line_config_gpu(const SkString&           tag,
+SkCommandLineConfigGpu* parse_command_line_config_gpu(const SkString&         tag,
                                                       const TArray<SkString>& vias,
-                                                      const SkString&           options) {
+                                                      const SkString&         options) {
     // Defaults for GPU backend.
     SkCommandLineConfigGpu::ContextType contextType         = GrContextFactory::kGL_ContextType;
     bool                                useDIText           = false;

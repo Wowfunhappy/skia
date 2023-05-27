@@ -33,7 +33,9 @@
 #include <cstring>
 
 #if defined(SK_GRAPHITE)
+#include "include/gpu/graphite/Image.h"
 #include "include/gpu/graphite/ImageProvider.h"
+
 #include <unordered_map>
 #endif
 
@@ -169,7 +171,7 @@ SkBitmap create_checkerboard_bitmap(int w, int h, SkColor c1, SkColor c2, int ch
 }
 
 sk_sp<SkImage> create_checkerboard_image(int w, int h, SkColor c1, SkColor c2, int checkSize) {
-    auto surf = SkSurface::MakeRasterN32Premul(w, h);
+    auto surf = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(w, h));
     ToolUtils::draw_checkerboard(surf->getCanvas(), c1, c2, checkSize);
     return surf->makeImageSnapshot();
 }
@@ -523,7 +525,7 @@ sk_sp<SkSurface> makeSurface(SkCanvas*             canvas,
                              const SkSurfaceProps* props) {
     auto surf = canvas->makeSurface(info, props);
     if (!surf) {
-        surf = SkSurface::MakeRaster(info, props);
+        surf = SkSurfaces::Raster(info, props);
     }
     return surf;
 }
@@ -568,12 +570,12 @@ void sniff_paths(const char filepath[], std::function<PathSniffCallback> callbac
     }
 }
 
-#if defined(SK_GANESH)
 sk_sp<SkImage> MakeTextureImage(SkCanvas* canvas, sk_sp<SkImage> orig) {
     if (!orig) {
         return nullptr;
     }
 
+#if defined(SK_GANESH)
     if (canvas->recordingContext() && canvas->recordingContext()->asDirectContext()) {
         GrDirectContext* dContext = canvas->recordingContext()->asDirectContext();
         const GrCaps* caps = dContext->priv().caps();
@@ -587,15 +589,14 @@ sk_sp<SkImage> MakeTextureImage(SkCanvas* canvas, sk_sp<SkImage> orig) {
 
         return SkImages::TextureFromImage(dContext, orig);
     }
+#endif
 #if defined(SK_GRAPHITE)
-    else if (canvas->recorder()) {
-        return orig->makeTextureImage(canvas->recorder());
+    if (canvas->recorder()) {
+        return SkImages::TextureFromImage(canvas->recorder(), orig, {false});
     }
 #endif
-
     return orig;
 }
-#endif
 
 VariationSliders::VariationSliders(SkTypeface* typeface,
                                    SkFontArguments::VariationPosition variationPosition) {
@@ -693,8 +694,8 @@ public:
 
     sk_sp<SkImage> findOrCreate(skgpu::graphite::Recorder* recorder,
                                 const SkImage* image,
-                                SkImage::RequiredImageProperties requiredProps) override {
-        if (requiredProps.fMipmapped == skgpu::Mipmapped::kNo) {
+                                SkImage::RequiredProperties requiredProps) override {
+        if (!requiredProps.fMipmapped) {
             // If no mipmaps are required, check to see if we have a mipmapped version anyway -
             // since it can be used in that case.
             // TODO: we could get fancy and, if ever a mipmapped key eclipsed a non-mipmapped
@@ -706,15 +707,14 @@ public:
             }
         }
 
-        uint64_t key = ((uint64_t)image->uniqueID() << 32) |
-                       (requiredProps.fMipmapped == skgpu::Mipmapped::kYes ? 0x1 : 0x0);
+        uint64_t key = ((uint64_t)image->uniqueID() << 32) | (requiredProps.fMipmapped ? 0x1 : 0x0);
 
         auto result = fCache.find(key);
         if (result != fCache.end()) {
             return result->second;
         }
 
-        sk_sp<SkImage> newImage = image->makeTextureImage(recorder, requiredProps);
+        sk_sp<SkImage> newImage = SkImages::TextureFromImage(recorder, image, requiredProps);
         if (!newImage) {
             return nullptr;
         }

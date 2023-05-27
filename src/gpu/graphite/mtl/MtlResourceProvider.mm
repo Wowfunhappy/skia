@@ -105,7 +105,7 @@ sk_sp<GraphicsPipeline> MtlResourceProvider::createGraphicsPipeline(
         const GraphicsPipelineDesc& pipelineDesc,
         const RenderPassDesc& renderPassDesc) {
     std::string vsMSL, fsMSL;
-    SkSL::Program::Inputs vsInputs, fsInputs;
+    SkSL::Program::Interface vsInterface, fsInterface;
     SkSL::ProgramSettings settings;
 
     settings.fForceNoRTFlip = true;
@@ -119,7 +119,7 @@ sk_sp<GraphicsPipeline> MtlResourceProvider::createGraphicsPipeline(
     bool useShadingSsboIndex =
             fSharedContext->caps()->storageBufferPreferred() && step->performsShading();
 
-    const FragSkSLInfo fsSkSLInfo = GetSkSLFS(fSharedContext->caps()->resourceBindingRequirements(),
+    const FragSkSLInfo fsSkSLInfo = GetSkSLFS(fSharedContext->caps(),
                                               fSharedContext->shaderCodeDictionary(),
                                               runtimeDict,
                                               step,
@@ -134,7 +134,7 @@ sk_sp<GraphicsPipeline> MtlResourceProvider::createGraphicsPipeline(
                    SkSL::ProgramKind::kGraphiteFragment,
                    settings,
                    &fsMSL,
-                   &fsInputs,
+                   &fsInterface,
                    errorHandler)) {
         return nullptr;
     }
@@ -147,7 +147,7 @@ sk_sp<GraphicsPipeline> MtlResourceProvider::createGraphicsPipeline(
                    SkSL::ProgramKind::kGraphiteVertex,
                    settings,
                    &vsMSL,
-                   &vsInputs,
+                   &vsInterface,
                    errorHandler)) {
         return nullptr;
     }
@@ -178,15 +178,15 @@ sk_sp<ComputePipeline> MtlResourceProvider::createComputePipeline(
     if (pipelineDesc.computeStep()->supportsNativeShader()) {
         auto nativeShader = pipelineDesc.computeStep()->nativeShaderSource(
                 ComputeStep::NativeShaderFormat::kMSL);
-        library =
-                MtlCompileShaderLibrary(this->mtlSharedContext(),
-                                        {reinterpret_cast<const char*>(nativeShader.fSource.data()),
-                                         nativeShader.fSource.size()},
-                                        errorHandler);
+        library = MtlCompileShaderLibrary(
+                this->mtlSharedContext(), nativeShader.fSource, errorHandler);
+        if (library == nil) {
+            return nullptr;
+        }
         entryPointName = std::move(nativeShader.fEntryPoint);
     } else {
         std::string msl;
-        SkSL::Program::Inputs inputs;
+        SkSL::Program::Interface interface;
         SkSL::ProgramSettings settings;
 
         auto skslCompiler = this->skslCompiler();
@@ -198,7 +198,7 @@ sk_sp<ComputePipeline> MtlResourceProvider::createComputePipeline(
                        SkSL::ProgramKind::kCompute,
                        settings,
                        &msl,
-                       &inputs,
+                       &interface,
                        errorHandler)) {
             return nullptr;
         }

@@ -20,7 +20,9 @@
 #include "include/effects/SkColorMatrix.h"
 #include "include/effects/SkGradientShader.h"
 #include "include/effects/SkRuntimeEffect.h"
+#include "include/gpu/graphite/Image.h"
 #include "include/gpu/graphite/Recorder.h"
+#include "include/gpu/graphite/Surface.h"
 #include "src/base/SkRandom.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkRuntimeEffectPriv.h"
@@ -208,7 +210,7 @@ sk_sp<SkImage> make_image(SkRandom* rand, Recorder* recorder) {
     sk_sp<SkImage> img = bitmap.asImage();
 
     // TODO: fuzz mipmappedness
-    return img->makeTextureImage(recorder, { skgpu::Mipmapped::kNo });
+    return SkImages::TextureFromImage(recorder, img, {false});
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -594,7 +596,7 @@ void check_draw(skiatest::Reporter* reporter,
                                            kRGBA_8888_SkColorType,
                                            kPremul_SkAlphaType);
 
-        sk_sp<SkSurface> surf = SkSurface::MakeGraphite(recorder, ii);
+        sk_sp<SkSurface> surf = SkSurfaces::RenderTarget(recorder, ii);
         SkCanvas* canvas = surf->getCanvas();
 
         switch (dt) {
@@ -703,10 +705,14 @@ DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(PaintParamsKeyTest, reporter, context) {
                             primitiveBlender = SkBlender::Mode(SkBlendMode::kSrcOver);
                         }
 
+                        bool hasCoverage = rand.nextBool();
+
                         DstReadRequirement dstReadReq = DstReadRequirement::kNone;
                         const SkBlenderBase* blender = as_BB(paint.getBlender());
                         if (blender) {
-                            dstReadReq = GetDstReadRequirement(recorder->priv().caps(), blender->asBlendMode());
+                            dstReadReq = GetDstReadRequirement(recorder->priv().caps(),
+                                                               blender->asBlendMode(),
+                                                               hasCoverage);
                         }
                         bool needsDstSample = dstReadReq == DstReadRequirement::kTextureCopy ||
                                               dstReadReq == DstReadRequirement::kTextureSample;
@@ -723,6 +729,7 @@ DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(PaintParamsKeyTest, reporter, context) {
                         std::vector<UniquePaintParamsID> precompileIDs;
                         paintOptions.priv().buildCombinations(precompileKeyContext,
                                                               withPrimitiveBlender,
+                                                              hasCoverage,
                                                               [&](UniquePaintParamsID id) {
                                                                   precompileIDs.push_back(id);
                                                               });

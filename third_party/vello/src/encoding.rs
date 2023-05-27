@@ -7,7 +7,7 @@ use crate::ffi;
 use {
     peniko::{kurbo::Affine, Brush, Color, Mix},
     std::pin::Pin,
-    vello_encoding::{Encoding as VelloEncoding, RenderConfig, Resolver, Transform},
+    vello_encoding::{Encoding as VelloEncoding, RenderConfig, Transform},
 };
 
 pub(crate) struct Encoding {
@@ -27,6 +27,10 @@ impl Encoding {
         let mut encoding = VelloEncoding::new();
         encoding.reset(/*is_fragment=*/ false);
         Encoding { encoding }
+    }
+
+    pub fn is_empty(self: &Encoding) -> bool {
+        self.encoding.is_empty()
     }
 
     pub fn fill(
@@ -83,8 +87,7 @@ impl Encoding {
         background: &ffi::Color,
     ) -> Box<RenderConfiguration> {
         let mut packed_scene = Vec::new();
-        let mut resolver = Resolver::new();
-        let (layout, _ramps, _images) = resolver.resolve(&self.encoding, &mut packed_scene);
+        let layout = vello_encoding::resolve_solid_paths_only(&self.encoding, &mut packed_scene);
         let config = RenderConfig::new(&layout, width, height, &background.into());
         Box::new(RenderConfiguration {
             packed_scene,
@@ -112,9 +115,9 @@ impl Encoding {
                         path_encoder.quad_to(p0.x, p0.y, p1.x, p1.y);
                     }
                     ffi::PathVerb::CurveTo => {
-                        let p0 = &path_el.points[2];
-                        let p1 = &path_el.points[3];
-                        let p2 = &path_el.points[4];
+                        let p0 = &path_el.points[1];
+                        let p1 = &path_el.points[2];
+                        let p2 = &path_el.points[3];
                         path_encoder.cubic_to(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y);
                     }
                     ffi::PathVerb::Close => path_encoder.close(),

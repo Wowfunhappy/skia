@@ -75,7 +75,7 @@ skia_gpu_public = [
   "$_include/gpu/GrYUVABackendTextures.h",
   "$_include/gpu/MutableTextureState.h",
   "$_include/gpu/ShaderErrorHandler.h",
-  "$_include/gpu/ganesh/GrTextureGenerator.h",
+  "$_include/gpu/ganesh/GrExternalTextureGenerator.h",
   "$_include/gpu/ganesh/SkImageGanesh.h",
   "$_include/gpu/ganesh/SkSurfaceGanesh.h",
   "$_include/gpu/mock/GrMockTypes.h",
@@ -99,6 +99,7 @@ skia_gpu_public = [
 #  //src/gpu/ganesh/ops:ops_srcs
 #  //src/gpu/ganesh/surface:surface_srcs
 #  //src/gpu/ganesh/surface:surface_srcs
+#  //src/gpu/ganesh/surface:android_srcs
 #  //src/gpu/ganesh/tessellate:tessellate_hdrs
 #  //src/gpu/ganesh/tessellate:tessellate_srcs
 #  //src/gpu/ganesh/text:private_hdrs
@@ -114,6 +115,7 @@ skia_ganesh_private = [
   "$_include/private/gpu/ganesh/GrImageContext.h",
   "$_include/private/gpu/ganesh/GrMockTypesPriv.h",
   "$_include/private/gpu/ganesh/GrMtlTypesPriv.h",
+  "$_include/private/gpu/ganesh/GrTextureGenerator.h",
   "$_include/private/gpu/ganesh/GrTypesPriv.h",
   "$_src/gpu/ganesh/ClipStack.cpp",
   "$_src/gpu/ganesh/ClipStack.h",
@@ -196,6 +198,8 @@ skia_ganesh_private = [
   "$_src/gpu/ganesh/GrFixedClip.h",
   "$_src/gpu/ganesh/GrFragmentProcessor.cpp",
   "$_src/gpu/ganesh/GrFragmentProcessor.h",
+  "$_src/gpu/ganesh/GrFragmentProcessors.cpp",
+  "$_src/gpu/ganesh/GrFragmentProcessors.h",
   "$_src/gpu/ganesh/GrGeometryProcessor.cpp",
   "$_src/gpu/ganesh/GrGeometryProcessor.h",
   "$_src/gpu/ganesh/GrGpu.cpp",
@@ -539,6 +543,7 @@ skia_ganesh_private = [
   "$_src/gpu/ganesh/ops/TextureOp.h",
   "$_src/gpu/ganesh/ops/TriangulatingPathRenderer.cpp",
   "$_src/gpu/ganesh/ops/TriangulatingPathRenderer.h",
+  "$_src/gpu/ganesh/surface/SkSurface_AndroidFactories.cpp",
   "$_src/gpu/ganesh/surface/SkSurface_Ganesh.cpp",
   "$_src/gpu/ganesh/tessellate/GrPathTessellationShader.cpp",
   "$_src/gpu/ganesh/tessellate/GrPathTessellationShader.h",
@@ -1016,6 +1021,8 @@ skia_shared_gpu_sources = [
   "$_src/gpu/AtlasTypes.h",
   "$_src/gpu/Blend.cpp",
   "$_src/gpu/Blend.h",
+  "$_src/gpu/BlendFormula.cpp",
+  "$_src/gpu/BlendFormula.h",
   "$_src/gpu/BufferWriter.h",
   "$_src/gpu/DitherUtils.cpp",
   "$_src/gpu/DitherUtils.h",
@@ -1037,6 +1044,8 @@ skia_shared_gpu_sources = [
   "$_src/gpu/SkRenderEngineAbortf.h",
   "$_src/gpu/Swizzle.cpp",
   "$_src/gpu/Swizzle.h",
+  "$_src/gpu/TiledTextureUtils.cpp",
+  "$_src/gpu/TiledTextureUtils.h",
   "$_src/gpu/tessellate/AffineMatrix.h",
   "$_src/gpu/tessellate/CullTest.h",
   "$_src/gpu/tessellate/FixedCountBufferUtils.cpp",

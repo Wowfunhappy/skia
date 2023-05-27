@@ -163,6 +163,13 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		threadLimit = MAIN_THREAD_ONLY
 	}
 
+	if b.model("GalaxyS9", "GalaxyS20", "Pixel6", "Pixel7") {
+		// Only these four devices/gpus (MaliG72, MaliG77, MaliG78, MaliG720) seem
+		// to have functional EXT_protected_content implementations (please see
+		// skbug.com/14298#c6 for more details).
+		args = append(args, "--createProtected")
+	}
+
 	// Avoid issues with dynamically exceeding resource cache limits.
 	if b.matchExtraConfig("DISCARDABLE") {
 		threadLimit = MAIN_THREAD_ONLY
@@ -277,7 +284,8 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip("gltestthreading", "gm", ALL, "stroketext")
 			skip("gltestthreading", "gm", ALL, "draw_image_set")
 
-			// Fail on Iris Xe.
+			// Fail on Iris Xe (skbug:13921)
+			skip("gltestthreading", "gm", ALL, "circular_arcs_stroke_and_fill_round")
 			skip("gltestthreading", "gm", ALL, "degeneratesegments")
 			skip("gltestthreading", "gm", ALL, "ovals")
 			skip("gltestthreading", "gm", ALL, "persp_images")
@@ -288,6 +296,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip("gltestthreading", "gm", ALL, "yuv420_odd_dim_repeat")
 
 			skip("gltestthreading", "svg", ALL, "filters-conv-01-f.svg")
+			skip("gltestthreading", "svg", ALL, "filters-displace-01-f.svg")
 			skip("gltestthreading", "svg", ALL, "filters-offset-01-b.svg")
 			skip("gltestthreading", "svg", ALL, "gallardo.svg")
 			skip("gltestthreading", "svg", ALL, "masking-filter-01-f.svg")
@@ -334,6 +343,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 				// https://skbug.com/14105
 				skip(ALL, "test", ALL, "BackendTextureTest")
 				skip(ALL, "test", ALL, "GraphitePurgeNotUsedSinceResourcesTest")
+				skip(ALL, "test", ALL, "MakeColorSpace_Test")
 				skip(ALL, "test", ALL, "PaintParamsKeyTest")
 				if b.matchOs("Win") {
 					// Async read call failed
@@ -736,8 +746,8 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		//   Test-Debian11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-TSAN_Vulkan
 		//   Test-Debian11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-DDL3_TSAN_Vulkan
 		if b.Name == "Test-Ubuntu18-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-TSAN_Vulkan" ||
-		   b.Name == "Test-Debian11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-TSAN_Vulkan" ||
-		   b.Name == "Test-Debian11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-DDL3_TSAN_Vulkan" {
+			b.Name == "Test-Debian11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-TSAN_Vulkan" ||
+			b.Name == "Test-Debian11-Clang-NUC11TZi5-GPU-IntelIrisXe-x86_64-Release-All-DDL3_TSAN_Vulkan" {
 			skip("_", "test", "_", "_")
 		}
 	}
@@ -1002,18 +1012,6 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		}
 	}
 
-	// Skip memory intensive tests on 32-bit bots.
-	if b.os("Win8") && b.arch("x86") {
-		skip(ALL, "image", "f16", ALL)
-		skip(ALL, "image", ALL, "abnormal.wbmp")
-		skip(ALL, "image", ALL, "interlaced1.png")
-		skip(ALL, "image", ALL, "interlaced2.png")
-		skip(ALL, "image", ALL, "interlaced3.png")
-		for _, rawExt := range r {
-			skip(ALL, "image", ALL, "."+rawExt)
-		}
-	}
-
 	if b.model("Nexus5", "Nexus5x", "JioNext") && b.gpu() {
 		// skia:5876
 		skip(ALL, "gm", ALL, "encode-platform")
@@ -1078,6 +1076,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLOutParams_GPU")         // skia:11919
 		skip(ALL, "tests", ALL, "SkSLOutParamsTricky_GPU")   // skia:11919
 		skip(ALL, "tests", ALL, "SkSLOutParamsNoInline_GPU") // skia:11919
+		skip(ALL, "tests", ALL, "SkSLOutParamsFunctionCallInArgument")
 	}
 
 	if (b.matchGpu("Adreno3") || b.matchGpu("Mali400")) && !b.extraConfig("Vulkan") {
@@ -1105,7 +1104,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 
 	if b.matchOs("Mac") && b.extraConfig("Metal") && (b.gpu("IntelIrisPlus") ||
-                                                      b.gpu("IntelHD6000")) {
+		b.gpu("IntelHD6000")) {
 		skip(ALL, "tests", ALL, "SkSLIntrinsicNot_GPU")         // skia:14025
 		skip(ALL, "tests", ALL, "SkSLIntrinsicMixFloatES3_GPU") // skia:14025
 	}
@@ -1117,10 +1116,10 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 
 	if b.gpu("IntelIris6100", "IntelHD4400") && b.matchOs("Win") && !b.extraConfig("Vulkan") {
-		skip(ALL, "tests", ALL, "SkSLMatrixFoldingES2_GPU")               // skia:11919
-		skip(ALL, "tests", ALL, "SkSLMatrixEquality_GPU")                 // skia:11919
-		skip(ALL, "tests", ALL, "SkSLTemporaryIndexLookup_GPU")           // skia:14151
-		skip(ALL, "tests", ALL, "SkSLSwizzleIndexLookup_GPU")             // skia:14177
+		skip(ALL, "tests", ALL, "SkSLMatrixFoldingES2_GPU")     // skia:11919
+		skip(ALL, "tests", ALL, "SkSLMatrixEquality_GPU")       // skia:11919
+		skip(ALL, "tests", ALL, "SkSLTemporaryIndexLookup_GPU") // skia:14151
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexLookup_GPU")   // skia:14177
 	}
 
 	if b.matchGpu("Intel") && b.matchOs("Win") && !b.extraConfig("Vulkan") {
@@ -1169,25 +1168,25 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 
 	if !b.extraConfig("Vulkan") && (b.gpu("RTX3060") ||
-									b.gpu("QuadroP400") ||
-									b.matchGpu("GTX[6-9]60") ||
-									b.matchGpu("Mali400") ||
-									b.matchGpu("Tegra3") ||
-									b.matchGpu("Radeon(R9|HD)")) {
-		skip(ALL, "tests", ALL, "SkSLMatrixScalarNoOpFolding_GPU")  // skia:13556
+		b.gpu("QuadroP400") ||
+		b.matchGpu("GTX[6-9]60") ||
+		b.matchGpu("Mali400") ||
+		b.matchGpu("Tegra3") ||
+		b.matchGpu("Radeon(R9|HD)")) {
+		skip(ALL, "tests", ALL, "SkSLMatrixScalarNoOpFolding_GPU") // skia:13556
 	}
 
 	if b.matchOs("Mac") && b.extraConfig("ANGLE") {
-		skip(ALL, "tests", ALL, "SkSLMatrixScalarNoOpFolding_GPU")  // https://anglebug.com/7525
-		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")        // Apple bug FB12055941
+		skip(ALL, "tests", ALL, "SkSLMatrixScalarNoOpFolding_GPU") // https://anglebug.com/7525
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")       // Apple bug FB12055941
 	}
 
 	if b.matchOs("Mac") && b.matchGpu("Intel") && !b.extraConfig("Metal") {
-		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")        // skia:14177
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU") // skia:14177
 	}
 
 	if b.matchOs("Win10") && b.gpu("IntelIris655") {
-		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")        // skia:14177
+		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU") // skia:14177
 	}
 
 	if b.gpu("RTX3060") && b.extraConfig("Vulkan") && b.matchOs("Win") {
@@ -1226,6 +1225,13 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		// Accessing an indexed swizzle can be trouble. (skia:14177)
 		skip(ALL, "tests", ALL, "SkSLSwizzleIndexLookup_GPU")
 		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")
+	}
+
+	if (b.gpu("RadeonR9M470X") && b.extraConfig("ANGLE")) {
+		// skbug:14293 - ANGLE D3D9 ES2 has flaky texture sampling that leads to fuzzy diff errors
+		skip(ALL, "tests", ALL, "FilterResult")
+		// skbug:13815 - Flaky failures on ANGLE D3D9 ES2
+		skip(ALL, "tests", ALL, "SkRuntimeEffectSimple_GPU")
 	}
 
 	if b.extraConfig("Vulkan") && b.gpu("RadeonVega6") {

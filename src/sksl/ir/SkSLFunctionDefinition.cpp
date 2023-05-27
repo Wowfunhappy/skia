@@ -7,28 +7,30 @@
 
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 
+#include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/SkSLDefines.h"
 #include "src/base/SkSafeMath.h"
 #include "src/sksl/SkSLAnalysis.h"
+#include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLErrorReporter.h"
 #include "src/sksl/SkSLOperator.h"
 #include "src/sksl/SkSLProgramSettings.h"
+#include "src/sksl/SkSLString.h"
 #include "src/sksl/SkSLThreadContext.h"
-#include "src/sksl/dsl/DSLCore.h"
-#include "src/sksl/dsl/DSLExpression.h"
-#include "src/sksl/dsl/DSLStatement.h"
-#include "src/sksl/dsl/DSLType.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
 #include "src/sksl/ir/SkSLBlock.h"
+#include "src/sksl/ir/SkSLConstructorCompound.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
-#include "src/sksl/ir/SkSLField.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
+#include "src/sksl/ir/SkSLFieldSymbol.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLNop.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
+#include "src/sksl/ir/SkSLSwizzle.h"
 #include "src/sksl/ir/SkSLSymbol.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"  // IWYU pragma: keep
 #include "src/sksl/ir/SkSLType.h"
@@ -42,23 +44,20 @@
 #include <forward_list>
 #include <string_view>
 #include <type_traits>
-#include <vector>
 
 namespace SkSL {
 
 static void append_rtadjust_fixup_to_vertex_main(const Context& context,
                                                  const FunctionDeclaration& decl,
                                                  Block& body) {
-    using namespace SkSL::dsl;
-    using SkSL::dsl::Swizzle;  // disambiguate from SkSL::Swizzle
     using OwnerKind = SkSL::FieldAccess::OwnerKind;
 
     // If this program uses RTAdjust...
     ThreadContext::RTAdjustData& rtAdjust = ThreadContext::RTAdjustState();
     if (rtAdjust.fVar || rtAdjust.fInterfaceBlock) {
         // ...append a line to the end of the function body which fixes up sk_Position.
-        const Field& skPositionField = context.fSymbolTable->find(Compiler::POSITION_NAME)
-                                                           ->as<Field>();
+        const FieldSymbol& skPositionField = context.fSymbolTable->find(Compiler::POSITION_NAME)
+                                                                 ->as<FieldSymbol>();
 
         auto Ref = [](const Variable* var) -> std::unique_ptr<Expression> {
             return VariableReference::Make(Position(), var);
@@ -67,23 +66,54 @@ static void append_rtadjust_fixup_to_vertex_main(const Context& context,
             return FieldAccess::Make(context, Position(), Ref(var), idx,
                                      OwnerKind::kAnonymousInterfaceBlock);
         };
-        auto Pos = [&]() -> DSLExpression {
-            return DSLExpression(Field(&skPositionField.owner(), skPositionField.fieldIndex()));
+        auto Pos = [&]() -> std::unique_ptr<Expression> {
+            return Field(&skPositionField.owner(), skPositionField.fieldIndex());
         };
-        auto Adjust = [&]() -> DSLExpression {
-            return DSLExpression(rtAdjust.fInterfaceBlock
-                                         ? Field(rtAdjust.fInterfaceBlock, rtAdjust.fFieldIndex)
-                                         : Ref(rtAdjust.fVar));
+        auto Adjust = [&]() -> std::unique_ptr<Expression> {
+            return rtAdjust.fInterfaceBlock ? Field(rtAdjust.fInterfaceBlock, rtAdjust.fFieldIndex)
+                                            : Ref(rtAdjust.fVar);
+        };
+        auto Swizzle = [&](std::unique_ptr<Expression> base,
+                           ComponentArray c) -> std::unique_ptr<Expression> {
+            return Swizzle::Make(context, Position(), std::move(base), std::move(c));
+        };
+        auto Binary = [&](std::unique_ptr<Expression> l,
+                          Operator op,
+                          std::unique_ptr<Expression> r) -> std::unique_ptr<Expression> {
+            return BinaryExpression::Make(context, Position(), std::move(l), op, std::move(r));
+        };
+        auto Mul = [&](std::unique_ptr<Expression> l, std::unique_ptr<Expression> r) {
+            return Binary(std::move(l), OperatorKind::STAR, std::move(r));
+        };
+        auto Add = [&](std::unique_ptr<Expression> l, std::unique_ptr<Expression> r) {
+            return Binary(std::move(l), OperatorKind::PLUS, std::move(r));
+        };
+        auto Assign = [&](std::unique_ptr<Expression> l, std::unique_ptr<Expression> r) {
+            SkAssertResult(Analysis::UpdateVariableRefKind(l.get(), VariableRefKind::kWrite));
+            return ExpressionStatement::Make(context,
+                                             Binary(std::move(l), OperatorKind::EQ, std::move(r)));
+        };
+        auto CtorXY0W = [&](std::unique_ptr<Expression> xy, std::unique_ptr<Expression> w) {
+            ExpressionArray args;
+            args.push_back(std::move(xy));
+            args.push_back(Literal::MakeFloat(Position(), 0.0f, context.fTypes.fFloat.get()));
+            args.push_back(std::move(w));
+            return ConstructorCompound::Make(context, Position(), *context.fTypes.fFloat4,
+                                             std::move(args));
         };
 
-        auto fixupStmt = DSLStatement(
-            Pos().assign(Float4(Swizzle(Pos(), X, Y) * Swizzle(Adjust(), X, Z) +
-                                Swizzle(Pos(), W, W) * Swizzle(Adjust(), Y, W),
-                                0,
-                                Pos().w()))
-        );
+        // sk_Position = float4(sk_Position.xy * rtAdjust.xz + sk_Position.ww * rtAdjust.yw,
+        //                      0,
+        //                      sk_Position.w);
+        auto fixupStmt = Assign(
+                Pos(),
+                CtorXY0W(Add(Mul(Swizzle(Pos(),    {SwizzleComponent::X, SwizzleComponent::Y}),
+                                 Swizzle(Adjust(), {SwizzleComponent::X, SwizzleComponent::Z})),
+                             Mul(Swizzle(Pos(),    {SwizzleComponent::W, SwizzleComponent::W}),
+                                 Swizzle(Adjust(), {SwizzleComponent::Y, SwizzleComponent::W}))),
+                         Swizzle(Pos(), {SwizzleComponent::W})));
 
-        body.children().push_back(fixupStmt.release());
+        body.children().push_back(std::move(fixupStmt));
     }
 }
 
@@ -312,6 +342,27 @@ std::unique_ptr<FunctionDefinition> FunctionDefinition::Convert(const Context& c
         using INHERITED = ProgramWriter;
     };
 
+    // We don't allow modules to define actual functions with intrinsic names. (Those should be
+    // reserved for actual intrinsics.)
+    if (function.isIntrinsic()) {
+        context.fErrors->error(function.fPosition,
+                               SkSL::String::printf("Intrinsic function '%.*s' should not have "
+                                                    "a definition",
+                                                    (int)function.name().size(),
+                                                    function.name().data()));
+        return nullptr;
+    }
+
+    // A function can't have more than one definition.
+    if (function.definition()) {
+        context.fErrors->error(function.fPosition,
+                               SkSL::String::printf("function '%s' was already defined",
+                                                    function.description().c_str()));
+        return nullptr;
+    }
+
+    // Run the function finalizer. This checks for illegal constructs and missing return statements,
+    // and also performs some simple code cleanup.
     Finalizer(context, function, pos).visitStatementPtr(body);
     if (function.isMain() && ProgramConfig::IsVertex(context.fConfig->fKind)) {
         append_rtadjust_fixup_to_vertex_main(context, function, body->as<Block>());
@@ -322,8 +373,6 @@ std::unique_ptr<FunctionDefinition> FunctionDefinition::Convert(const Context& c
                                                 "' can exit without returning a value");
     }
 
-    SkASSERTF(!function.isIntrinsic(), "Intrinsic function '%.*s' should not have a definition",
-              (int)function.name().size(), function.name().data());
     return std::make_unique<FunctionDefinition>(pos, &function, builtin, std::move(body));
 }
 

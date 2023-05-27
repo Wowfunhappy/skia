@@ -20,7 +20,7 @@ namespace skgpu::graphite {
 namespace {
 wgpu::ShaderModule create_shader_module(const wgpu::Device& device, const char* source) {
     wgpu::ShaderModuleWGSLDescriptor wgslDesc;
-    wgslDesc.source = source;
+    wgslDesc.code = source;
     wgpu::ShaderModuleDescriptor descriptor;
     descriptor.nextInChain = &wgslDesc;
     return device.CreateShaderModule(&descriptor);
@@ -218,7 +218,7 @@ BackendTexture DawnResourceProvider::onCreateBackendTexture(SkISize dimensions,
         return {};
     }
 
-    return BackendTexture(texture.Release());
+    return BackendTexture(texture.MoveToCHandle());
 }
 
 void DawnResourceProvider::onDeleteBackendTexture(BackendTexture& texture) {

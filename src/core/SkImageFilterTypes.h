@@ -15,14 +15,20 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkTypes.h"
+#include "include/private/base/SkTArray.h"
+#include "src/core/SkEnumBitMask.h"
 #include "src/core/SkSpecialImage.h"
 
 class GrRecordingContext;
 enum GrSurfaceOrigin : int;
+class SkImage;
 class SkImageFilter;
 class SkImageFilterCache;
+class SkPicture;
 class SkSpecialSurface;
 class SkSurfaceProps;
+
+class FilterResultImageResolver; // for testing
 
 namespace skgpu::graphite { class Recorder; }
 
@@ -450,6 +456,11 @@ public:
     explicit LayerSpace(SkMatrix&& m) : fData(std::move(m)) {}
     explicit operator const SkMatrix&() const { return fData; }
 
+    static LayerSpace<SkMatrix> RectToRect(const LayerSpace<SkRect>& from,
+                                           const LayerSpace<SkRect>& to) {
+        return LayerSpace<SkMatrix>(SkMatrix::RectToRect(SkRect(from), SkRect(to)));
+    }
+
     // Parrot a limited selection of the SkMatrix API while preserving coordinate space.
     LayerSpace<SkRect> mapRect(const LayerSpace<SkRect>& r) const;
 
@@ -648,6 +659,30 @@ public:
                     fTransform.mapRect(LayerSpace<SkIRect>(fImage ? fImage->dimensions()
                                                                   : SkISize{0, 0}))) {}
 
+    // Renders the 'pic', clipped by 'cullRect', into an optimally sized surface (depending on
+    // picture bounds and 'ctx's desired output). The picture is transformed by the context's
+    // layer matrix. Treats null pictures as fully transparent.
+    static FilterResult MakeFromPicture(const Context& ctx,
+                                        sk_sp<SkPicture> pic,
+                                        ParameterSpace<SkRect> cullRect);
+
+    // Renders 'shader' into a surface that fills the context's desired output bounds. Treats null
+    // shaders as fully transparent.
+    // TODO: Update 'dither' to SkImageFilters::Dither, but that cannot be forward declared at the
+    // moment because SkImageFilters is a class and not a namespace.
+    static FilterResult MakeFromShader(const Context& ctx,
+                                       sk_sp<SkShader> shader,
+                                       bool dither);
+
+    // Converts image to a FilterResult. If 'srcRect' is pixel-aligned it does so without rendering.
+    // Otherwise it draws the src->dst sampling of 'image' into an optimally sized surface based
+    // on the context's desired output.
+    static FilterResult MakeFromImage(const Context& ctx,
+                                      sk_sp<SkImage> image,
+                                      const SkRect& srcRect,
+                                      const ParameterSpace<SkRect>& dstRect,
+                                      const SkSamplingOptions& sampling);
+
     // Bilinear is used as the default because it can be downgraded to nearest-neighbor when the
     // final transform is pixel-aligned, and chaining multiple bilinear samples and transforms is
     // assumed to be visually close enough to sampling once at highest quality and final transform.
@@ -702,7 +737,21 @@ public:
     // tagging needs to be added).
     sk_sp<SkSpecialImage> imageAndOffset(const Context& ctx, SkIPoint* offset) const;
 
+    class Builder;
+
+    enum class ShaderFlags : int {
+        kNone = 0,
+        kSampleInParameterSpace = 1 << 0,
+        kForceResolveInputs     = 1 << 1,
+        kNonLinearSampling      = 1 << 2,
+        kOutputFillsInputUnion  = 1 << 3
+        // TODO: Add options for input intersection, first input only, and explicitly provided.
+    };
+    SK_DECL_BITMASK_OPS_FRIENDS(ShaderFlags)
+
 private:
+    friend class ::FilterResultImageResolver; // For testing draw() and asShader()
+
     // Renders this FilterResult into a new, but visually equivalent, image that fills 'dstBounds',
     // has default sampling, no color filter, and a transform that translates by only 'dstBounds's
     // top-left corner. 'dstBounds' is always intersected with 'fLayerBounds'.
@@ -713,6 +762,16 @@ private:
     // with 'xtraTransform' restricted to 'dstBounds'.
     bool isCropped(const LayerSpace<SkMatrix>& xtraTransform,
                    const LayerSpace<SkIRect>& dstBounds) const;
+
+    // Draw directly to the canvas, which draws the same image as produced by resolve() but can be
+    // useful if multiple operations need to be performed on the canvas.
+    void draw(SkCanvas* canvas) const;
+
+    // Returns the FilterResult as a shader, ideally without resolving to an axis-aligned image.
+    // 'xtraSampling' is the sampling that any parent shader applies to the FilterResult.
+    sk_sp<SkShader> asShader(const Context& ctx,
+                             const SkSamplingOptions& xtraSampling,
+                             SkEnumBitMask<ShaderFlags> flags) const;
 
     // The effective image of a FilterResult is 'fImage' sampled by 'fSamplingOptions' and
     // respecting 'fTileMode' (on the SkSpecialImage's subset), transformed by 'fTransform',
@@ -732,6 +791,62 @@ private:
     // is processed by the image filter DAG, it can be further restricted by crop rects or the
     // implicit desired output at each node.
     LayerSpace<SkIRect>   fLayerBounds;
+};
+SK_MAKE_BITMASK_OPS(FilterResult::ShaderFlags)
+
+// A FilterResult::Builder is used to render one or more FilterResults or other sources into
+// a new FilterResult. It automatically aggregates the incoming bounds to minimize the output's
+// layer bounds.
+class FilterResult::Builder {
+public:
+    Builder(const Context& context);
+    ~Builder();
+
+    Builder& add(const FilterResult& input) {
+        fInputs.push_back(input);
+        return *this;
+    }
+
+    // Combine all added inputs by merging them with src-over blending into a single output.
+    FilterResult merge();
+
+    // Combine all added inputs by transforming them into equivalent SkShaders and invoking the
+    // shader factory that binds them together into a single shader that fills the output surface.
+    // 'flags' and 'xtraSampling' control how the input FilterResults are converted to shaders, as
+    // well as defining the final output bounds.
+    //
+    // 'ShaderFn' should be an invokable type with the signature
+    //     (SkSpan<sk_sp<SkShader>>)->sk_sp<SkShader>
+    // The length of the span will equal the number of FilterResults added to the builder. If an
+    // input FilterResult was fully transparent, its corresponding shader will be null. 'ShaderFn'
+    // should return a null shader its output would be fully transparent.
+    template <typename ShaderFn>
+    FilterResult eval(ShaderFn shaderFn,
+                      SkEnumBitMask<ShaderFlags> flags,
+                      const SkSamplingOptions& xtraSampling = kDefaultSampling) {
+        auto outputBounds = this->outputBounds(flags);
+        if (outputBounds.isEmpty()) {
+            return {};
+        }
+
+        auto inputShaders = this->createInputShaders(flags, xtraSampling);
+        return this->drawShader(shaderFn(inputShaders), flags, outputBounds);
+    }
+
+private:
+    SkSpan<sk_sp<SkShader>> createInputShaders(SkEnumBitMask<ShaderFlags> flags,
+                                               const SkSamplingOptions& sampling);
+
+    LayerSpace<SkIRect> outputBounds(SkEnumBitMask<ShaderFlags> flags) const;
+
+    FilterResult drawShader(sk_sp<SkShader> shader,
+                            SkEnumBitMask<ShaderFlags> flags,
+                            const LayerSpace<SkIRect>& outputBounds) const;
+
+    const Context& fContext; // Must outlive the builder
+    skia_private::STArray<1, FilterResult> fInputs;
+    // Lazily created once all inputs are collected, but parallels fInputs.
+    skia_private::STArray<1, sk_sp<SkShader>> fInputShaders;
 };
 
 // The context contains all necessary information to describe how the image filter should be

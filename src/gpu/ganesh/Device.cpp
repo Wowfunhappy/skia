@@ -41,6 +41,7 @@
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/SkColorData.h"
 #include "include/private/base/SingleOwner.h"
 #include "include/private/base/SkAssert.h"
@@ -55,7 +56,6 @@
 #include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkLatticeIter.h"
-#include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkMeshPriv.h"
 #include "src/core/SkRasterClip.h"
@@ -72,6 +72,7 @@
 #include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrColorSpaceXform.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
+#include "src/gpu/ganesh/GrFragmentProcessors.h"
 #include "src/gpu/ganesh/GrImageInfo.h"
 #include "src/gpu/ganesh/GrPaint.h"
 #include "src/gpu/ganesh/GrProxyProvider.h"
@@ -607,9 +608,9 @@ void Device::drawRRect(const SkRRect& rrect, const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
     GR_CREATE_TRACE_MARKER_CONTEXT("skgpu::ganesh::Device", "drawRRect", fContext.get());
 
-    SkMaskFilterBase* mf = as_MFB(paint.getMaskFilter());
+    auto mf = paint.getMaskFilter();
     if (mf) {
-        if (mf->hasFragmentProcessor()) {
+        if (GrFragmentProcessors::IsSupported(mf)) {
             mf = nullptr; // already handled in SkPaintToGrPaint
         }
     }
@@ -951,8 +952,10 @@ void Device::drawImageRect(const SkImage* image,
                            SkCanvas::SrcRectConstraint constraint) {
     ASSERT_SINGLE_OWNER
     GrAA aa = fSurfaceDrawContext->chooseAA(paint);
-    GrQuadAAFlags aaFlags = (aa == GrAA::kYes) ? GrQuadAAFlags::kAll : GrQuadAAFlags::kNone;
-    this->drawImageQuad(image, src, &dst, nullptr, aaFlags, nullptr, sampling, paint, constraint);
+    SkCanvas::QuadAAFlags aaFlags = (aa == GrAA::kYes) ? SkCanvas::kAll_QuadAAFlags
+                                                       : SkCanvas::kNone_QuadAAFlags;
+    this->drawImageQuad(image, src, &dst, /* dstClip= */ nullptr, aaFlags,
+                        /* preViewMatrix= */ nullptr, sampling, paint, constraint);
 }
 
 void Device::drawViewLattice(GrSurfaceProxyView view,
@@ -1346,9 +1349,12 @@ sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& info, const SkSurfacePro
     ASSERT_SINGLE_OWNER
     // TODO: Change the signature of newSurface to take a budgeted parameter.
     static const skgpu::Budgeted kBudgeted = skgpu::Budgeted::kNo;
-    return SkSurface::MakeRenderTarget(fContext.get(), kBudgeted, info,
-                                       fSurfaceDrawContext->numSamples(),
-                                       fSurfaceDrawContext->origin(), &props);
+    return SkSurfaces::RenderTarget(fContext.get(),
+                                    kBudgeted,
+                                    info,
+                                    fSurfaceDrawContext->numSamples(),
+                                    fSurfaceDrawContext->origin(),
+                                    &props);
 }
 
 SkImageFilterCache* Device::getImageFilterCache() {

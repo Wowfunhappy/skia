@@ -19,6 +19,7 @@
 #include "include/gpu/GrBackendSemaphore.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/vk/GrVkBackendContext.h"
 #include "include/gpu/vk/VulkanExtensions.h"
 #include "src/base/SkAutoMalloc.h"
@@ -300,12 +301,13 @@ sk_sp<SkSurface> EGLTestHelper::importHardwareBufferForWrite(skiatest::Reporter*
     GrBackendTexture backendTex(DEV_W, DEV_H, GrMipmapped::kNo, textureInfo);
     REPORTER_ASSERT(reporter, backendTex.isValid());
 
-    sk_sp<SkSurface> surface = SkSurface::MakeFromBackendTexture(fDirectContext,
-                                                                 backendTex,
-                                                                 kTopLeft_GrSurfaceOrigin,
-                                                                 0,
-                                                                 kRGBA_8888_SkColorType,
-                                                                 nullptr, nullptr);
+    sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(fDirectContext,
+                                                              backendTex,
+                                                              kTopLeft_GrSurfaceOrigin,
+                                                              0,
+                                                              kRGBA_8888_SkColorType,
+                                                              nullptr,
+                                                              nullptr);
 
     if (!surface) {
         ERRORF(reporter, "Failed to make wrapped GL SkSurface");
@@ -316,8 +318,8 @@ sk_sp<SkSurface> EGLTestHelper::importHardwareBufferForWrite(skiatest::Reporter*
 }
 
 bool EGLTestHelper::flushSurfaceAndSignalSemaphore(skiatest::Reporter* reporter,
-                                                      sk_sp<SkSurface> surface) {
-    surface->flushAndSubmit();
+                                                   sk_sp<SkSurface> surface) {
+    skgpu::ganesh::FlushAndSubmit(surface);
 
     EGLDisplay eglDisplay = eglGetCurrentDisplay();
     EGLSyncKHR eglsync = fEGLCreateSyncKHR(eglDisplay, EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
@@ -414,7 +416,7 @@ public:
 
     void releaseSurfaceToExternal(SkSurface* surface) override {
         skgpu::MutableTextureState newState(VK_IMAGE_LAYOUT_UNDEFINED, VK_QUEUE_FAMILY_EXTERNAL);
-        surface->flush({}, &newState);
+        fDirectContext->flush(surface, {}, &newState);
     }
 
     void cleanup() override {
@@ -979,12 +981,13 @@ sk_sp<SkSurface> VulkanTestHelper::importHardwareBufferForWrite(skiatest::Report
 
     GrBackendTexture backendTex(DEV_W, DEV_H, imageInfo);
 
-    sk_sp<SkSurface> surface = SkSurface::MakeFromBackendTexture(fDirectContext.get(),
-                                                                 backendTex,
-                                                                 kTopLeft_GrSurfaceOrigin,
-                                                                 0,
-                                                                 kRGBA_8888_SkColorType,
-                                                                 nullptr, nullptr);
+    sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(fDirectContext.get(),
+                                                              backendTex,
+                                                              kTopLeft_GrSurfaceOrigin,
+                                                              0,
+                                                              kRGBA_8888_SkColorType,
+                                                              nullptr,
+                                                              nullptr);
 
     if (!surface.get()) {
         ERRORF(reporter, "Failed to create wrapped Vulkan SkSurface");
@@ -1261,7 +1264,7 @@ void run_test(skiatest::Reporter* reporter, const GrContextOptions& options,
     SkImageInfo imageInfo = SkImageInfo::Make(DEV_W, DEV_H, kRGBA_8888_SkColorType,
                                               kPremul_SkAlphaType, nullptr);
 
-    sk_sp<SkSurface> dstSurf = SkSurface::MakeRenderTarget(
+    sk_sp<SkSurface> dstSurf = SkSurfaces::RenderTarget(
             direct, skgpu::Budgeted::kNo, imageInfo, 0, kTopLeft_GrSurfaceOrigin, nullptr, false);
     if (!dstSurf.get()) {
         ERRORF(reporter, "Failed to create destination SkSurface");

@@ -27,10 +27,11 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrTypes.h"
-#include "include/gpu/ganesh/GrTextureGenerator.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/gpu/mock/GrMockTypes.h"
 #include "include/private/SkColorData.h"
+#include "include/private/gpu/ganesh/GrTextureGenerator.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/SkBackingFit.h"
 #include "src/gpu/Swizzle.h"
@@ -117,7 +118,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrWrappedMipMappedTest,
             sk_sp<GrTextureProxy> proxy;
             sk_sp<SkImage> image;
             if (renderable == GrRenderable::kYes) {
-                sk_sp<SkSurface> surface = SkSurface::MakeFromBackendTexture(
+                sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(
                         dContext,
                         mbet->texture(),
                         kTopLeft_GrSurfaceOrigin,
@@ -358,13 +359,13 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrImageSnapshotMipMappedTest,
                                                                  /* sample count */ 1,
                                                                  mipmapped);
             } else {
-                surface = SkSurface::MakeRenderTarget(dContext,
-                                                      skgpu::Budgeted::kYes,
-                                                      info,
-                                                      /* sample count */ 1,
-                                                      kTopLeft_GrSurfaceOrigin,
-                                                      nullptr,
-                                                      willUseMips);
+                surface = SkSurfaces::RenderTarget(dContext,
+                                                   skgpu::Budgeted::kYes,
+                                                   info,
+                                                   /* sample count */ 1,
+                                                   kTopLeft_GrSurfaceOrigin,
+                                                   nullptr,
+                                                   willUseMips);
             }
             REPORTER_ASSERT(reporter, surface);
             auto device = ((SkSurface_Ganesh*)surface.get())->getDevice();
@@ -401,7 +402,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(Gr1x1TextureMipMappedTest,
 
     // Make surface to draw into
     SkImageInfo info = SkImageInfo::MakeN32(16, 16, kPremul_SkAlphaType);
-    sk_sp<SkSurface> surface = SkSurface::MakeRenderTarget(dContext, skgpu::Budgeted::kNo, info);
+    sk_sp<SkSurface> surface = SkSurfaces::RenderTarget(dContext, skgpu::Budgeted::kNo, info);
 
     // Make 1x1 raster bitmap
     SkBitmap bmp;
@@ -416,13 +417,13 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(Gr1x1TextureMipMappedTest,
 
     // This should upload the image to a non mipped GrTextureProxy.
     surface->getCanvas()->drawImage(bmpImage, 0, 0);
-    surface->flushAndSubmit();
+    dContext->flushAndSubmit(surface);
 
     // Now set the filter quality to high so we use mip maps. We should find the non mipped texture
     // in the cache for the SkImage. Since the texture is 1x1 we should just use that texture
     // instead of trying to do a copy to a mipped texture.
     surface->getCanvas()->drawImage(bmpImage, 0, 0, SkSamplingOptions({1.0f/3, 1.0f/3}));
-    surface->flushAndSubmit();
+    dContext->flushAndSubmit(surface);
 }
 
 // Create a new render target and draw 'mipmapView' into it using the provided 'filter'.

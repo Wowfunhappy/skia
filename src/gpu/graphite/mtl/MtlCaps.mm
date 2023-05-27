@@ -273,6 +273,11 @@ void MtlCaps::initCaps(const id<MTLDevice> device) {
 void MtlCaps::initShaderCaps() {
     SkSL::ShaderCaps* shaderCaps = fShaderCaps.get();
 
+    // Dual source blending requires Metal 1.2.
+    if (@available(macOS 10.12, iOS 10.0, *)) {
+        shaderCaps->fDualSourceBlendingSupport = true;
+    }
+
     // Setting this true with the assumption that this cap will eventually mean we support varying
     // precisions and not just via modifiers.
     shaderCaps->fUsesPrecisionModifiers = true;
@@ -281,14 +286,12 @@ void MtlCaps::initShaderCaps() {
     shaderCaps->fShaderDerivativeSupport = true;
     shaderCaps->fInfinitySupport = true;
 
-    // TODO(skia:8270): Re-enable this once bug 8270 is fixed
-#if 0
-    if (this->isApple()) {
-        shaderCaps->fFBFetchSupport = true;
-        shaderCaps->fFBFetchNeedsCustomOutput = true; // ??
-        shaderCaps->fFBFetchColorName = ""; // Somehow add [[color(0)]] to arguments to frag shader
+    if (@available(macOS 11.0, *)) {
+        if (this->isApple()) {
+            shaderCaps->fFBFetchSupport = true;
+            shaderCaps->fFBFetchColorName = "sk_LastFragColor";
+        }
     }
-#endif
 
     shaderCaps->fIntegerSupport = true;
     shaderCaps->fNonsquareMatrixSupport = true;

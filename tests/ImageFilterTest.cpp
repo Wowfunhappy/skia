@@ -42,11 +42,13 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/base/SkTArray.h"
 #include "include/private/base/SkTo.h"
 #include "src/core/SkColorFilterBase.h"
 #include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
+#include "src/core/SkRectPriv.h"
 #include "src/core/SkSpecialImage.h"
 #include "src/core/SkSpecialSurface.h"
 #include "src/gpu/ganesh/GrCaps.h"
@@ -335,7 +337,7 @@ static skif::Context make_context(int outWidth, int outHeight, const SkSpecialIm
 }
 
 static sk_sp<SkImage> make_small_image() {
-    auto surface(SkSurface::MakeRasterN32Premul(kBitmapSize, kBitmapSize));
+    auto surface(SkSurfaces::Raster(SkImageInfo::MakeN32Premul(kBitmapSize, kBitmapSize)));
     SkCanvas* canvas = surface->getCanvas();
     canvas->clear(0x00000000);
     SkPaint darkPaint;
@@ -409,10 +411,10 @@ static sk_sp<SkSpecialSurface> create_empty_special_surface(GrRecordingContext* 
 static sk_sp<SkSurface> create_surface(GrRecordingContext* rContext, int width, int height) {
     const SkImageInfo info = SkImageInfo::MakeN32(width, height, kOpaque_SkAlphaType);
     if (rContext) {
-        return SkSurface::MakeRenderTarget(
+        return SkSurfaces::RenderTarget(
                 rContext, skgpu::Budgeted::kNo, info, 0, kTestSurfaceOrigin, nullptr);
     } else {
-        return SkSurface::MakeRaster(info);
+        return SkSurfaces::Raster(info);
     }
 }
 
@@ -1538,7 +1540,8 @@ DEF_TEST(ImageFilterNestedSaveLayer, reporter) {
 }
 
 DEF_TEST(XfermodeImageFilterCroppedInput, reporter) {
-    test_xfermode_cropped_input(SkSurface::MakeRasterN32Premul(100, 100).get(), reporter);
+    test_xfermode_cropped_input(SkSurfaces::Raster(SkImageInfo::MakeN32Premul(100, 100)).get(),
+                                reporter);
 }
 
 static void test_composed_imagefilter_offset(skiatest::Reporter* reporter,
@@ -1679,7 +1682,7 @@ DEF_TEST(ImageFilterCanComputeFastBounds, reporter) {
 
 // Verify that SkImageSource survives serialization
 DEF_TEST(ImageFilterImageSourceSerialization, reporter) {
-    auto surface(SkSurface::MakeRasterN32Premul(10, 10));
+    auto surface(SkSurfaces::Raster(SkImageInfo::MakeN32Premul(10, 10)));
     surface->getCanvas()->clear(SK_ColorGREEN);
     sk_sp<SkImage> image(surface->makeImageSnapshot());
     sk_sp<SkImageFilter> filter(SkImageFilters::Image(std::move(image)));
@@ -1753,7 +1756,7 @@ static void test_large_blur_input(skiatest::Reporter* reporter, SkCanvas* canvas
 }
 
 DEF_TEST(ImageFilterBlurLargeImage, reporter) {
-    auto surface(SkSurface::MakeRaster(SkImageInfo::MakeN32Premul(100, 100)));
+    auto surface(SkSurfaces::Raster(SkImageInfo::MakeN32Premul(100, 100)));
     test_large_blur_input(reporter, surface->getCanvas());
 }
 
@@ -1847,7 +1850,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(ImageFilterHugeBlur_Gpu,
                                        reporter,
                                        ctxInfo,
                                        CtsEnforcement::kNever) {
-    sk_sp<SkSurface> surf(SkSurface::MakeRenderTarget(
+    sk_sp<SkSurface> surf(SkSurfaces::RenderTarget(
             ctxInfo.directContext(), skgpu::Budgeted::kNo, SkImageInfo::MakeN32Premul(100, 100)));
 
     SkCanvas* canvas = surf->getCanvas();
@@ -1859,7 +1862,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(XfermodeImageFilterCroppedInput_Gpu,
                                        reporter,
                                        ctxInfo,
                                        CtsEnforcement::kNever) {
-    sk_sp<SkSurface> surf(SkSurface::MakeRenderTarget(
+    sk_sp<SkSurface> surf(SkSurfaces::RenderTarget(
             ctxInfo.directContext(),
             skgpu::Budgeted::kNo,
             SkImageInfo::Make(1, 1, kRGBA_8888_SkColorType, kPremul_SkAlphaType)));
@@ -1871,7 +1874,7 @@ DEF_GANESH_TEST_FOR_ALL_CONTEXTS(ImageFilterBlurLargeImage_Gpu,
                                  reporter,
                                  ctxInfo,
                                  CtsEnforcement::kNever) {
-    auto surface(SkSurface::MakeRenderTarget(
+    auto surface(SkSurfaces::RenderTarget(
             ctxInfo.directContext(),
             skgpu::Budgeted::kYes,
             SkImageInfo::Make(100, 100, kRGBA_8888_SkColorType, kPremul_SkAlphaType)));
@@ -1968,6 +1971,14 @@ DEF_TEST(OffsetImageFilterBounds, reporter) {
     REPORTER_ASSERT(reporter, boundsForward == expectedForward);
 
     SkIRect expectedReverse = SkRect::Make(src).makeOffset(-srcOffset.fX, -srcOffset.fY).roundOut();
+
+    // TODO (skbug:10984) - Enable this intersection after content bounds propagate
+    // Intersect 'expectedReverse' with the source because we are passing &src in as the known
+    // input bounds, which is the bounds of non-transparent pixels that can be moved by the offset.
+    // While the ::Offset filter could show all pixels inside 'expectedReverse' given that 'src'
+    // is also the target device output of the filter, the required input can be made tighter.
+    // SkAssertResult(expectedReverse.intersect(src));
+
     SkIRect boundsReverse = offset->filterBounds(src, SkMatrix::I(),
                                                  SkImageFilter::kReverse_MapDirection, &src);
     REPORTER_ASSERT(reporter, boundsReverse == expectedReverse);
@@ -2017,26 +2028,28 @@ static void test_arithmetic_combinations(skiatest::Reporter* reporter, float v) 
     SkIRect intersection = bgRect;
     intersection.intersect(fgRect);
 
+    // Test with crop. When k4 is non-zero, the result is expected to be cropRect
+    // regardless of inputs because the filter affects the whole crop area. When there is no crop
+    // rect, it should report an effectively infinite output.
+    static const SkIRect kInf = SkRectPriv::MakeILarge();
     test_arithmetic_bounds(reporter, 0, 0, 0, 0, background, foreground, nullptr,
                            SkIRect::MakeEmpty());
-    test_arithmetic_bounds(reporter, 0, 0, 0, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, 0, 0, 0, v, background, foreground, nullptr, kInf);
     test_arithmetic_bounds(reporter, 0, 0, v, 0, background, foreground, nullptr, bgRect);
-    test_arithmetic_bounds(reporter, 0, 0, v, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, 0, 0, v, v, background, foreground, nullptr, kInf);
     test_arithmetic_bounds(reporter, 0, v, 0, 0, background, foreground, nullptr, fgRect);
-    test_arithmetic_bounds(reporter, 0, v, 0, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, 0, v, 0, v, background, foreground, nullptr, kInf);
     test_arithmetic_bounds(reporter, 0, v, v, 0, background, foreground, nullptr, unionRect);
-    test_arithmetic_bounds(reporter, 0, v, v, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, 0, v, v, v, background, foreground, nullptr, kInf);
     test_arithmetic_bounds(reporter, v, 0, 0, 0, background, foreground, nullptr, intersection);
-    test_arithmetic_bounds(reporter, v, 0, 0, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, v, 0, 0, v, background, foreground, nullptr, kInf);
     test_arithmetic_bounds(reporter, v, 0, v, 0, background, foreground, nullptr, bgRect);
-    test_arithmetic_bounds(reporter, v, 0, v, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, v, 0, v, v, background, foreground, nullptr, kInf);
     test_arithmetic_bounds(reporter, v, v, 0, 0, background, foreground, nullptr, fgRect);
-    test_arithmetic_bounds(reporter, v, v, 0, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, v, v, 0, v, background, foreground, nullptr, kInf);
     test_arithmetic_bounds(reporter, v, v, v, 0, background, foreground, nullptr, unionRect);
-    test_arithmetic_bounds(reporter, v, v, v, v, background, foreground, nullptr, unionRect);
+    test_arithmetic_bounds(reporter, v, v, v, v, background, foreground, nullptr, kInf);
 
-    // Test with crop. When k4 is non-zero, the result is expected to be cropRect
-    // regardless of inputs because the filter affects the whole crop area.
     SkIRect cropRect = SkIRect::MakeXYWH(-111, -222, 333, 444);
     test_arithmetic_bounds(reporter, 0, 0, 0, 0, background, foreground, &cropRect,
                            SkIRect::MakeEmpty());
@@ -2095,40 +2108,45 @@ DEF_TEST(ImageSourceBounds, reporter) {
                                                          SkImageFilter::kForward_MapDirection,
                                                          nullptr));
     REPORTER_ASSERT(reporter,
-                    input == source1->filterBounds(input, SkMatrix::I(),
-                                                   SkImageFilter::kReverse_MapDirection, &input));
+                    source1->filterBounds(input, SkMatrix::I(),
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
     SkMatrix scale(SkMatrix::Scale(2, 2));
     SkIRect scaledBounds = SkIRect::MakeWH(128, 128);
     REPORTER_ASSERT(reporter,
                     scaledBounds == source1->filterBounds(input, scale,
                                                           SkImageFilter::kForward_MapDirection,
                                                           nullptr));
-    REPORTER_ASSERT(reporter, input == source1->filterBounds(input, scale,
-                                                             SkImageFilter::kReverse_MapDirection,
-                                                             &input));
+    REPORTER_ASSERT(reporter,
+                    source1->filterBounds(input, scale,
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
 
-    // Specified src and dst rects.
+    // Specified src and dst rects (which are outside available pixels).
     SkRect src(SkRect::MakeXYWH(0.5, 0.5, 100.5, 100.5));
     SkRect dst(SkRect::MakeXYWH(-10.5, -10.5, 120.5, 120.5));
     sk_sp<SkImageFilter> source2(SkImageFilters::Image(image, src, dst,
                                                        SkSamplingOptions(SkFilterMode::kLinear,
                                                                          SkMipmapMode::kLinear)));
+
+    SkRect clippedSrc = src;
+    SkAssertResult(clippedSrc.intersect(SkRect::Make(image->dimensions())));
+    SkRect clippedDst = SkMatrix::RectToRect(src, dst).mapRect(clippedSrc);
+
     REPORTER_ASSERT(reporter,
-                    dst.roundOut() == source2->filterBounds(input, SkMatrix::I(),
-                                                            SkImageFilter::kForward_MapDirection,
-                                                            nullptr));
+                    clippedDst.roundOut() ==
+                    source2->filterBounds(input, SkMatrix::I(),
+                                          SkImageFilter::kForward_MapDirection, nullptr));
     REPORTER_ASSERT(reporter,
-                    input == source2->filterBounds(input, SkMatrix::I(),
-                                                   SkImageFilter::kReverse_MapDirection, &input));
-    scale.mapRect(&dst);
-    scale.mapRect(&src);
+                    source2->filterBounds(input, SkMatrix::I(),
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
+    scale.mapRect(&clippedDst);
+    scale.mapRect(&clippedSrc);
     REPORTER_ASSERT(reporter,
-                    dst.roundOut() == source2->filterBounds(input, scale,
-                                                            SkImageFilter::kForward_MapDirection,
-                                                            nullptr));
-    REPORTER_ASSERT(reporter, input == source2->filterBounds(input, scale,
-                                                             SkImageFilter::kReverse_MapDirection,
-                                                             &input));
+                    clippedDst.roundOut() ==
+                    source2->filterBounds(input, scale,
+                                          SkImageFilter::kForward_MapDirection, nullptr));
+    REPORTER_ASSERT(reporter,
+                    source2->filterBounds(input, scale,
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
 }
 
 // Test SkPictureImageFilter::filterBounds.
@@ -2150,17 +2168,17 @@ DEF_TEST(PictureImageSourceBounds, reporter) {
                                                            SkImageFilter::kForward_MapDirection,
                                                            nullptr));
     REPORTER_ASSERT(reporter,
-                    input == source1->filterBounds(input, SkMatrix::I(),
-                                                   SkImageFilter::kReverse_MapDirection, &input));
+                    source1->filterBounds(input, SkMatrix::I(),
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
     SkMatrix scale(SkMatrix::Scale(2, 2));
     SkIRect scaledPictureBounds = SkIRect::MakeWH(128, 128);
     REPORTER_ASSERT(reporter,
                     scaledPictureBounds == source1->filterBounds(input, scale,
                                                                  SkImageFilter::kForward_MapDirection,
                                                                  nullptr));
-    REPORTER_ASSERT(reporter, input == source1->filterBounds(input, scale,
-                                                             SkImageFilter::kReverse_MapDirection,
-                                                             &input));
+    REPORTER_ASSERT(reporter,
+                    source1->filterBounds(input, scale,
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
 
     // Specified target rect.
     SkRect targetRect(SkRect::MakeXYWH(9.5, 9.5, 31, 21));
@@ -2170,21 +2188,21 @@ DEF_TEST(PictureImageSourceBounds, reporter) {
                                                                    SkImageFilter::kForward_MapDirection,
                                                                    nullptr));
     REPORTER_ASSERT(reporter,
-                    input == source2->filterBounds(input, SkMatrix::I(),
-                                                   SkImageFilter::kReverse_MapDirection, &input));
+                    source2->filterBounds(input, SkMatrix::I(),
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
     scale.mapRect(&targetRect);
     REPORTER_ASSERT(reporter,
                     targetRect.roundOut() == source2->filterBounds(input, scale,
                                                                    SkImageFilter::kForward_MapDirection,
                                                                    nullptr));
-    REPORTER_ASSERT(reporter, input == source2->filterBounds(input, scale,
-                                                             SkImageFilter::kReverse_MapDirection,
-                                                             &input));
+    REPORTER_ASSERT(reporter,
+                    source2->filterBounds(input, scale,
+                                          SkImageFilter::kReverse_MapDirection, &input).isEmpty());
 }
 
 DEF_TEST(DropShadowImageFilter_Huge, reporter) {
     // Successful if it doesn't crash or trigger ASAN. (crbug.com/1264705)
-    auto surf = SkSurface::MakeRasterN32Premul(300, 150);
+    auto surf = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(300, 150));
 
     SkPaint paint;
     paint.setImageFilter(SkImageFilters::DropShadowOnly(

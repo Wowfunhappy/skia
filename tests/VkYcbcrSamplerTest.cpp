@@ -21,6 +21,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
 #include "tools/gpu/vk/VkTestHelper.h"
@@ -76,8 +77,9 @@ DEF_GANESH_TEST_FOR_VULKAN_CONTEXT(VkYCbcrSampler_DrawImageWithYcbcrSampler,
         return;
     }
 
-    sk_sp<SkSurface> surface = SkSurface::MakeRenderTarget(
-            testHelper.directContext(),
+    auto dContext = testHelper.directContext();
+    sk_sp<SkSurface> surface = SkSurfaces::RenderTarget(
+            dContext,
             skgpu::Budgeted::kNo,
             SkImageInfo::Make(kImageWidth, kImageHeight, kN32_SkColorType, kPremul_SkAlphaType));
     if (!surface) {
@@ -85,7 +87,7 @@ DEF_GANESH_TEST_FOR_VULKAN_CONTEXT(VkYCbcrSampler_DrawImageWithYcbcrSampler,
         return;
     }
     surface->getCanvas()->drawImage(srcImage, 0, 0);
-    surface->flushAndSubmit();
+    dContext->flushAndSubmit(surface);
 
     std::vector<uint8_t> readbackData(kImageWidth * kImageHeight * 4);
     if (!surface->readPixels(SkImageInfo::Make(kImageWidth, kImageHeight, kRGBA_8888_SkColorType,

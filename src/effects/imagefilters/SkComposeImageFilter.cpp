@@ -16,6 +16,7 @@
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkSpecialImage.h"
 
+#include <optional>
 #include <utility>
 
 class SkMatrix;
@@ -26,7 +27,10 @@ namespace {
 class SkComposeImageFilter final : public SkImageFilter_Base {
 public:
     explicit SkComposeImageFilter(sk_sp<SkImageFilter> inputs[2])
-            : INHERITED(inputs, 2, nullptr) {
+            : INHERITED(inputs, 2, nullptr,
+                        // Compose only uses the source if the inner filter uses the source image.
+                        // Any outer reference to source is rebound to the result of the inner.
+                        inputs[1] ? as_IFB(inputs[1])->usesSource() : false) {
         SkASSERT(inputs[0].get());
         SkASSERT(inputs[1].get());
     }
@@ -84,10 +88,13 @@ sk_sp<SkSpecialImage> SkComposeImageFilter::onFilterImage(const Context& ctx,
                                                           SkIPoint* offset) const {
     // The bounds passed to the inner filter must be filtered by the outer
     // filter, so that the inner filter produces the pixels that the outer
-    // filter requires as input. This matters if the outer filter moves pixels.
+    // filter requires as input. This matters if the outer filter moves pixels. The content
+    // bounds of the outer filter is the expected output bounds of the inner filter.
+    SkIRect innerOutputBounds = this->getInput(1)->filterBounds(SkIRect(ctx.source().layerBounds()),
+                                                                ctx.ctm(), kForward_MapDirection);
     SkIRect innerClipBounds;
     innerClipBounds = this->getInput(0)->filterBounds(ctx.clipBounds(), ctx.ctm(),
-                                                      kReverse_MapDirection, &ctx.clipBounds());
+                                                      kReverse_MapDirection, &innerOutputBounds);
     Context innerContext = ctx.withNewDesiredOutput(skif::LayerSpace<SkIRect>(innerClipBounds));
     SkIPoint innerOffset = SkIPoint::Make(0, 0);
     sk_sp<SkSpecialImage> inner(this->filterInput(1, innerContext, &innerOffset));

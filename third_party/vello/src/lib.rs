@@ -167,17 +167,20 @@ mod ffi {
     }
 
     extern "Rust" {
-        type Shaders;
-        fn wgsl() -> &'static Shaders;
-        fn msl() -> &'static Shaders;
-        fn name(self: &Shaders, stage: ShaderStage) -> &str;
-        fn code(self: &Shaders, stage: ShaderStage) -> &[u8];
-        fn workgroup_size(self: &Shaders, stage: ShaderStage) -> WorkgroupSize;
-        fn bindings(self: &Shaders, stage: ShaderStage) -> Vec<BindType>;
-        fn workgroup_buffers(self: &Shaders, stage: ShaderStage) -> Vec<WorkgroupBufferInfo>;
+        type Shader;
+        fn shader(stage: ShaderStage) -> &'static Shader;
+        fn name(self: &Shader) -> &str;
+        fn workgroup_size(self: &Shader) -> WorkgroupSize;
+        fn bindings(self: &Shader) -> Vec<BindType>;
+        fn workgroup_buffers(self: &Shader) -> Vec<WorkgroupBufferInfo>;
+        #[cfg(feature = "wgsl")]
+        fn wgsl(self: &Shader) -> &str;
+        #[cfg(feature = "msl")]
+        fn msl(self: &Shader) -> &str;
 
         type Encoding;
         fn new_encoding() -> Box<Encoding>;
+        fn is_empty(self: &Encoding) -> bool;
         fn fill(
             self: &mut Encoding,
             style: Fill,
@@ -212,7 +215,7 @@ mod ffi {
     }
 
     unsafe extern "C++" {
-        include!("vello_cpp/path_iterator.h");
+        include!("third_party/vello/cpp/path_iterator.h");
 
         type PathIterator;
         unsafe fn next_element(self: Pin<&mut PathIterator>, out_elem: *mut PathElement) -> bool;
@@ -224,5 +227,5 @@ mod shaders;
 
 use {
     encoding::{new_encoding, Encoding, RenderConfiguration},
-    shaders::{msl, wgsl, Shaders},
+    shaders::{shader, Shader},
 };

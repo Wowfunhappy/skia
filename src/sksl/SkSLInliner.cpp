@@ -451,16 +451,16 @@ std::unique_ptr<Statement> Inliner::inlineStatement(Position pos,
                                                variable->modifiersPosition(),
                                                variableModifiers(*variable, initialValue.get()),
                                                name->c_str(),
-                                               /*mangledName=*/nullptr,
                                                variable->type().clone(symbolTableForStatement),
                                                isBuiltinCode,
                                                variable->storage());
             varMap->set(variable, VariableReference::Make(pos, clonedVar.get()));
-            auto result = VarDeclaration::Make(*fContext,
-                                               clonedVar.get(),
-                                               decl.baseType().clone(symbolTableForStatement),
-                                               decl.arraySize(),
-                                               std::move(initialValue));
+            std::unique_ptr<Statement> result =
+                    VarDeclaration::Make(*fContext,
+                                         clonedVar.get(),
+                                         decl.baseType().clone(symbolTableForStatement),
+                                         decl.arraySize(),
+                                         std::move(initialValue));
             symbolTableForStatement->takeOwnershipOfSymbol(std::move(clonedVar));
             return result;
         }

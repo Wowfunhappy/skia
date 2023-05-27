@@ -23,6 +23,7 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/SkColorData.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/gpu/SkBackingFit.h"
@@ -64,12 +65,13 @@ bool check_pixels(skiatest::Reporter* reporter,
     // We have to do the readback of the backend texture wrapped in a different Skia surface than
     // the one used in the main body of the test or else the readPixels call will trigger resolves
     // itself.
-    sk_sp<SkSurface> surface = SkSurface::MakeFromBackendTexture(dContext,
-                                                                 tex,
-                                                                 kTopLeft_GrSurfaceOrigin,
-                                                                 /*sampleCnt=*/4,
-                                                                 kRGBA_8888_SkColorType,
-                                                                 nullptr, nullptr);
+    sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(dContext,
+                                                              tex,
+                                                              kTopLeft_GrSurfaceOrigin,
+                                                              /*sampleCnt=*/4,
+                                                              kRGBA_8888_SkColorType,
+                                                              nullptr,
+                                                              nullptr);
     SkBitmap actual;
     actual.allocPixels(info);
     if (!surface->readPixels(actual, 0, 0)) {
@@ -112,12 +114,13 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfaceResolveTest,
     auto tex = managedTex->texture();
     // Wrap the backend surface but tell it rendering with MSAA so that the wrapped texture is the
     // resolve.
-    sk_sp<SkSurface> surface = SkSurface::MakeFromBackendTexture(dContext,
-                                                                 tex,
-                                                                 kTopLeft_GrSurfaceOrigin,
-                                                                 /*sampleCnt=*/4,
-                                                                 kRGBA_8888_SkColorType,
-                                                                 nullptr, nullptr);
+    sk_sp<SkSurface> surface = SkSurfaces::WrapBackendTexture(dContext,
+                                                              tex,
+                                                              kTopLeft_GrSurfaceOrigin,
+                                                              /*sampleCnt=*/4,
+                                                              kRGBA_8888_SkColorType,
+                                                              nullptr,
+                                                              nullptr);
 
     if (!surface) {
         return;
@@ -133,12 +136,12 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfaceResolveTest,
     // First do a simple test where we clear the surface than flush with SkSurface::flush. This
     // should trigger the resolve and the texture should have the correct data.
     surface->getCanvas()->clear(SK_ColorRED);
-    surface->flush();
+    dContext->flush(surface);
     dContext->submit();
     REPORTER_ASSERT(reporter, check_pixels(reporter, dContext, tex, info, SK_ColorRED));
 
-    // Next try doing a GrDirectContext::flush which will not trigger a resolve on gpus without
-    // automatic msaa resolves.
+    // Next try doing a GrDirectContext::flush without the surface which will not trigger a resolve
+    // on gpus without automatic msaa resolves.
     surface->getCanvas()->clear(SK_ColorBLUE);
     dContext->flush();
     dContext->submit();
@@ -150,20 +153,20 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfaceResolveTest,
 
     // Now doing a surface flush (even without any queued up normal work) should still resolve the
     // surface.
-    surface->flush();
+    dContext->flush(surface);
     dContext->submit();
     REPORTER_ASSERT(reporter, check_pixels(reporter, dContext, tex, info, SK_ColorBLUE));
 
     // Test using SkSurface::resolve with a GrDirectContext::flush
     surface->getCanvas()->clear(SK_ColorRED);
-    surface->resolveMSAA();
+    SkSurfaces::ResolveMSAA(surface);
     dContext->flush();
     dContext->submit();
     REPORTER_ASSERT(reporter, check_pixels(reporter, dContext, tex, info, SK_ColorRED));
 
     // Calling resolve again should cause no issues as it is a no-op (there is an assert in the
     // resolve op that the surface's msaa is dirty, we shouldn't hit that assert).
-    surface->resolveMSAA();
+    SkSurfaces::ResolveMSAA(surface);
     dContext->flush();
     dContext->submit();
     REPORTER_ASSERT(reporter, check_pixels(reporter, dContext, tex, info, SK_ColorRED));
@@ -171,7 +174,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfaceResolveTest,
     // Try resolving in the middle of draw calls. Non automatic resolve gpus should only see the
     // results of the first draw.
     surface->getCanvas()->clear(SK_ColorGREEN);
-    surface->resolveMSAA();
+    SkSurfaces::ResolveMSAA(surface);
     surface->getCanvas()->clear(SK_ColorBLUE);
     dContext->flush();
     dContext->submit();
@@ -184,12 +187,12 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfaceResolveTest,
     // Test that a resolve between draws to a different surface doesn't cause the OpsTasks for that
     // surface to be split. Fails if we hit validation asserts in GrDrawingManager.
     // First clear out dirty msaa from previous test
-    surface->flush();
+    dContext->flush(surface);
 
-    auto otherSurface = SkSurface::MakeRenderTarget(dContext, skgpu::Budgeted::kYes, info);
+    auto otherSurface = SkSurfaces::RenderTarget(dContext, skgpu::Budgeted::kYes, info);
     REPORTER_ASSERT(reporter, otherSurface);
     otherSurface->getCanvas()->clear(SK_ColorRED);
-    surface->resolveMSAA();
+    SkSurfaces::ResolveMSAA(surface);
     otherSurface->getCanvas()->clear(SK_ColorBLUE);
     dContext->flush();
     dContext->submit();
@@ -198,7 +201,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfaceResolveTest,
     // that the msaa is not dirty if it does.
     REPORTER_ASSERT(reporter, otherSurface);
     otherSurface->getCanvas()->clear(SK_ColorRED);
-    otherSurface->resolveMSAA();
+    SkSurfaces::ResolveMSAA(otherSurface);
     dContext->flush();
     dContext->submit();
 }
