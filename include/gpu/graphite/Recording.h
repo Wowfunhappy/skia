@@ -31,7 +31,7 @@ class Texture;
 class TextureInfo;
 class TextureProxy;
 
-class Recording final {
+class SK_API Recording final {
 public:
     ~Recording();
 
@@ -71,7 +71,7 @@ private:
               std::unordered_set<sk_sp<TextureProxy>, ProxyHash>&& nonVolatileLazyProxies,
               std::unordered_set<sk_sp<TextureProxy>, ProxyHash>&& volatileLazyProxies,
               std::unique_ptr<LazyProxyData> targetProxyData,
-              SkTArray<sk_sp<RefCntedCallback>>&& finishedProcs);
+              skia_private::TArray<sk_sp<RefCntedCallback>>&& finishedProcs);
 
     bool addCommands(CommandBuffer*, ResourceProvider*);
     void addResourceRef(sk_sp<Resource>);
@@ -88,7 +88,7 @@ private:
 
     std::unique_ptr<LazyProxyData> fTargetProxyData;
 
-    SkTArray<sk_sp<RefCntedCallback>> fFinishedProcs;
+    skia_private::TArray<sk_sp<RefCntedCallback>> fFinishedProcs;
 };
 
 } // namespace skgpu::graphite

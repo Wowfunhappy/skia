@@ -1,5 +1,26 @@
 load("//bazel:skia_rules.bzl", "skia_filegroup")
 
+# Necessary to give the //resources:resources skia_filegroup visibility to files in this directory.
+skia_filegroup(
+    name = "sksl",
+    srcs = [
+        ":sksl_blend_tests",
+        ":sksl_error_tests",
+        ":sksl_folding_tests",
+        ":sksl_glsl_tests",
+        ":sksl_inliner_tests",
+        ":sksl_inverse_hyperbolic_intrinsics_tests",
+        ":sksl_metal_tests",
+        ":sksl_rte_error_tests",
+        ":sksl_rte_tests",
+        ":sksl_settings_tests",
+        ":sksl_shared_tests",
+        ":sksl_spirv_tests",
+        ":sksl_wgsl_tests",
+    ],
+    visibility = ["//resources:__pkg__"],
+)
+
 ## Tests in sksl_minify_tests_sources will be compiled with sksl-minify, and are expected to
 ## generate a .minified.sksl file.
 skia_filegroup(
@@ -197,7 +218,7 @@ skia_filegroup(
         "errors/ArrayTypeTooManyDimensionsInStructUnsized2.rts",
         "errors/ArrayTypeTooManyDimensionsUnsized1.rts",
         "errors/ArrayTypeTooManyDimensionsUnsized2.rts",
-        "errors/ArrayUnspecifiedDimensions.rts",
+        "errors/ArrayUnspecifiedDimensions.sksl",
         "errors/AssignmentTypeMismatch.rts",
         "errors/BadCaps.sksl",
         "errors/BadConstInitializers.rts",
@@ -252,6 +273,8 @@ skia_filegroup(
         "errors/InterfaceBlockReservedName.sksl",
         "errors/InterfaceBlockScope.sksl",
         "errors/InterfaceBlockStorageModifiers.sksl",
+        "errors/InterfaceBlockWithInvalidNestedStruct.sksl",
+        "errors/InterfaceBlockWithInvalidStruct.sksl",
         "errors/InterfaceBlockWithNoMembers.sksl",
         "errors/IntrinsicInGlobalVariable.sksl",
         "errors/InvalidAssignment.rts",
@@ -337,6 +360,7 @@ skia_filegroup(
         "errors/Ossfuzz50798.sksl",
         "errors/Ossfuzz50922.sksl",
         "errors/Ossfuzz56373.sksl",
+        "errors/Ossfuzz58037.sksl",
         "errors/OverflowFloatIntrinsic.sksl",
         "errors/OverflowFloatLiteral.rts",
         "errors/OverflowInlinedLiteral.sksl",
@@ -351,6 +375,7 @@ skia_filegroup(
         "errors/PrivateTypes.rts",
         "errors/PrivateVariables.rts",
         "errors/ProgramTooLarge_Globals.rts",
+        "errors/ProgramTooLarge_InterfaceBlock.sksl",
         "errors/ProgramTooLarge_Parameters.rts",
         "errors/ProgramTooLarge_Stack.rts",
         "errors/ProgramTooLarge_Struct.rts",
@@ -562,6 +587,7 @@ skia_filegroup(
         "compute/Raytrace.compute",
         "compute/Uniforms.compute",
         "compute/Workgroup.compute",
+        "errors/ArrayUnspecifiedDimensions.sksl",
         "errors/InvalidInOutType.compute",
         "errors/InvalidMainParameters.compute",
         "errors/InvalidMainReturn.compute",
@@ -987,6 +1013,7 @@ skia_filegroup(
 skia_filegroup(
     name = "sksl_spirv_tests",
     srcs = [
+        "errors/ArrayUnspecifiedDimensions.sksl",
         "errors/LayoutInInterfaceBlock.sksl",
         "errors/LayoutInStruct.sksl",
         "errors/Ossfuzz36850.sksl",

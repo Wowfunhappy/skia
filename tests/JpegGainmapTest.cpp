@@ -10,7 +10,6 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkImageEncoder.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkStream.h"
@@ -408,8 +407,8 @@ SkBitmap render_gainmap(const SkImageInfo& renderInfo,
 
     SkRect dstRect = SkRect::Make(renderInfo.dimensions());
 
-    sk_sp<SkImage> baseImage = SkImage::MakeFromBitmap(baseBitmap);
-    sk_sp<SkImage> gainmapImage = SkImage::MakeFromBitmap(gainmapBitmap);
+    sk_sp<SkImage> baseImage = SkImages::RasterFromBitmap(baseBitmap);
+    sk_sp<SkImage> gainmapImage = SkImages::RasterFromBitmap(gainmapBitmap);
     sk_sp<SkShader> shader = SkGainmapShader::Make(baseImage,
                                                    baseRect,
                                                    SkSamplingOptions(),
@@ -486,6 +485,72 @@ DEF_TEST(AndroidCodec_xmpHdrgmAsDescriptionPropertyAttributes, r) {
     REPORTER_ASSERT(r, info.fDisplayRatioHdr == 16.f);
 }
 
+// Test mixed list and non-list entries.
+DEF_TEST(AndroidCodec_xmpHdrgmList, r) {
+    const char xmpData[] =
+            "http://ns.adobe.com/xap/1.0/\0"
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"XMP Core 6.0.0\">\n"
+            "   <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"\n"
+            "            xmlns:hdrgm=\"http://ns.adobe.com/hdr-gain-map/1.0/\">\n"
+            "      <rdf:Description rdf:about=\"\"\n"
+            "         hdrgm:Version=\"1.0\"\n"
+            "         hdrgm:GainMapMin=\"2.0\"\n"
+            "         hdrgm:OffsetSDR=\"0.1\">\n"
+            "         <hdrgm:GainMapMax>\n"
+            "           <rdf:Seq>\n"
+            "             <rdf:li>3</rdf:li>\n"
+            "             <rdf:li>4</rdf:li>\n"
+            "             <rdf:li>5</rdf:li>\n"
+            "           </rdf:Seq>\n"
+            "         </hdrgm:GainMapMax>\n"
+            "         <hdrgm:Gamma>\n"
+            "           1.2\n"
+            "         </hdrgm:Gamma>\n"
+            "         <hdrgm:OffsetHDR>\n"
+            "           <rdf:Seq>\n"
+            "             <rdf:li>\n"
+            "               0.2\n"
+            "             </rdf:li>\n"
+            "             <rdf:li>\n"
+            "               0.3\n"
+            "             </rdf:li>\n"
+            "             <rdf:li>\n"
+            "               0.4\n"
+            "             </rdf:li>\n"
+            "           </rdf:Seq>\n"
+            "         </hdrgm:OffsetHDR>\n"
+            "      </rdf:Description>\n"
+            "   </rdf:RDF>\n"
+            "</x:xmpmeta>\n";
+
+    std::vector<sk_sp<SkData>> app1Params;
+    app1Params.push_back(SkData::MakeWithoutCopy(xmpData, sizeof(xmpData) - 1));
+
+    auto xmp = SkJpegXmp::Make(app1Params);
+    REPORTER_ASSERT(r, xmp);
+
+    SkGainmapInfo info;
+    REPORTER_ASSERT(r, xmp->getGainmapInfoHDRGM(&info));
+    REPORTER_ASSERT(r, info.fGainmapRatioMin.fR == 4.f);
+    REPORTER_ASSERT(r, info.fGainmapRatioMin.fG == 4.f);
+    REPORTER_ASSERT(r, info.fGainmapRatioMin.fB == 4.f);
+    REPORTER_ASSERT(r, info.fGainmapRatioMax.fR == 8.f);
+    REPORTER_ASSERT(r, info.fGainmapRatioMax.fG == 16.f);
+    REPORTER_ASSERT(r, info.fGainmapRatioMax.fB == 32.f);
+
+    REPORTER_ASSERT(r, info.fGainmapGamma.fR == 1.f/1.2f);
+    REPORTER_ASSERT(r, info.fGainmapGamma.fG == 1.f/1.2f);
+    REPORTER_ASSERT(r, info.fGainmapGamma.fB == 1.f/1.2f);
+
+    REPORTER_ASSERT(r, info.fEpsilonSdr.fR == 0.1f);
+    REPORTER_ASSERT(r, info.fEpsilonSdr.fG == 0.1f);
+    REPORTER_ASSERT(r, info.fEpsilonSdr.fB == 0.1f);
+
+    REPORTER_ASSERT(r, info.fEpsilonHdr.fR == 0.2f);
+    REPORTER_ASSERT(r, info.fEpsilonHdr.fG == 0.3f);
+    REPORTER_ASSERT(r, info.fEpsilonHdr.fB == 0.4f);
+}
+
 DEF_TEST(AndroidCodec_xmpContainerTypedNode, r) {
     // Container and Item using a node of type Container:Item.
     const char xmpData[] =
@@ -505,7 +570,7 @@ DEF_TEST(AndroidCodec_xmpContainerTypedNode, r) {
             "     </rdf:li>\n"
             "     <rdf:li rdf:parseType=\"Resource\">\n"
             "      <Container:Item\n"
-            "         Item:Semantic=\"RecoveryMap\"\n"
+            "         Item:Semantic=\"GainMap\"\n"
             "         Item:Mime=\"image/jpeg\"\n"
             "         Item:Length=\"49035\"/>\n"
             "     </rdf:li>\n"
@@ -546,7 +611,7 @@ DEF_TEST(AndroidCodec_xmpContainerTypedNodeRdfEquivalent, r) {
             "     </rdf:li>\n"
             "     <rdf:li rdf:parseType=\"Resource\">\n"
             "      <rdf:value rdf:parseType=\"Resource\">\n"
-            "       <Item:Semantic>RecoveryMap</Item:Semantic>\n"
+            "       <Item:Semantic>GainMap</Item:Semantic>\n"
             "       <Item:Mime>image/jpeg</Item:Mime>\n"
             "       <Item:Length>49035</Item:Length>\n"
             "      </rdf:value>\n"
@@ -584,11 +649,6 @@ SkColor4f render_gainmap_pixel(float renderHdrRatio,
 }
 
 static bool approx_eq(float x, float y, float epsilon) { return std::abs(x - y) < epsilon; }
-
-static bool approx_eq_rgb(const SkColor4f& x, const SkColor4f& y, float epsilon) {
-    return approx_eq(x.fR, y.fR, epsilon) && approx_eq(x.fG, y.fG, epsilon) &&
-           approx_eq(x.fB, y.fB, epsilon);
-}
 
 DEF_TEST(AndroidCodec_jpegGainmapDecode, r) {
     const struct Rec {
@@ -704,7 +764,71 @@ DEF_TEST(AndroidCodec_jpegNoGainmap, r) {
     }
 }
 
-#ifdef SK_ENCODE_JPEG
+#if !defined(SK_ENABLE_NDK_IMAGES)
+
+static bool approx_eq_rgb(const SkColor4f& x, const SkColor4f& y, float epsilon) {
+    return approx_eq(x.fR, y.fR, epsilon) && approx_eq(x.fG, y.fG, epsilon) &&
+           approx_eq(x.fB, y.fB, epsilon);
+}
+
+DEF_TEST(AndroidCodec_gainmapInfoEncode, r) {
+    SkDynamicMemoryWStream encodeStream;
+    SkGainmapInfo gainmapInfo;
+
+    SkBitmap baseBitmap;
+    baseBitmap.allocPixels(SkImageInfo::MakeN32Premul(8, 8));
+
+    SkBitmap gainmapBitmap;
+    gainmapBitmap.allocPixels(SkImageInfo::MakeN32Premul(8, 8));
+
+    gainmapInfo.fGainmapRatioMin.fR = 1.f;
+    gainmapInfo.fGainmapRatioMin.fG = 2.f;
+    gainmapInfo.fGainmapRatioMin.fB = 4.f;
+    gainmapInfo.fGainmapRatioMax.fR = 8.f;
+    gainmapInfo.fGainmapRatioMax.fG = 16.f;
+    gainmapInfo.fGainmapRatioMax.fB = 32.f;
+    gainmapInfo.fGainmapGamma.fR = 64.f;
+    gainmapInfo.fGainmapGamma.fG = 128.f;
+    gainmapInfo.fGainmapGamma.fB = 256.f;
+    gainmapInfo.fEpsilonSdr.fR = 1 / 10.f;
+    gainmapInfo.fEpsilonSdr.fG = 1 / 11.f;
+    gainmapInfo.fEpsilonSdr.fB = 1 / 12.f;
+    gainmapInfo.fEpsilonHdr.fR = 1 / 13.f;
+    gainmapInfo.fEpsilonHdr.fG = 1 / 14.f;
+    gainmapInfo.fEpsilonHdr.fB = 1 / 15.f;
+    gainmapInfo.fDisplayRatioSdr = 4.f;
+    gainmapInfo.fDisplayRatioHdr = 32.f;
+
+    for (int i = 0; i < 2; ++i) {
+        // In the second iteration, change some of the lists to scalars.
+        if (i == 1) {
+            gainmapInfo.fGainmapRatioMax.fR = 32.f;
+            gainmapInfo.fGainmapRatioMax.fG = 32.f;
+            gainmapInfo.fGainmapRatioMax.fB = 32.f;
+            gainmapInfo.fEpsilonSdr.fR = 1 / 10.f;
+            gainmapInfo.fEpsilonSdr.fG = 1 / 10.f;
+            gainmapInfo.fEpsilonSdr.fB = 1 / 10.f;
+        }
+
+        // Encode |gainmapInfo|.
+        bool encodeResult = SkJpegGainmapEncoder::EncodeJpegR(&encodeStream,
+                                                              baseBitmap.pixmap(),
+                                                              SkJpegEncoder::Options(),
+                                                              gainmapBitmap.pixmap(),
+                                                              SkJpegEncoder::Options(),
+                                                              gainmapInfo);
+        REPORTER_ASSERT(r, encodeResult);
+
+        // Decode into |decodedGainmapInfo|.
+        SkGainmapInfo decodedGainmapInfo;
+        auto decodeStream = std::make_unique<SkMemoryStream>(encodeStream.detachAsData());
+        decode_all(r, std::move(decodeStream), baseBitmap, gainmapBitmap, decodedGainmapInfo);
+
+        // Verify they are |gainmapInfo| matches |decodedGainmapInfo|.
+        REPORTER_ASSERT(r, gainmapInfo == decodedGainmapInfo);
+    }
+}
+
 DEF_TEST(AndroidCodec_jpegGainmapTranscode, r) {
     const char* path = "images/iphone_13_pro.jpeg";
     SkBitmap baseBitmap[2];
@@ -765,7 +889,7 @@ DEF_TEST(AndroidCodec_jpegGainmapTranscode, r) {
         REPORTER_ASSERT(
                 r, approx_eq(gainmapInfo[0].fHdrRatioMax, gainmapInfo[1].fHdrRatioMax, kEpsilon));
 
-#ifdef SK_ENABLE_SKSL
+#if defined(SK_ENABLE_SKSL)
         // Render a few pixels and verify that they come out the same. Rendering requires SkSL.
         const struct Rec {
             int x;
@@ -805,7 +929,7 @@ DEF_TEST(AndroidCodec_jpegGainmapTranscode, r) {
 
             REPORTER_ASSERT(r, approx_eq_rgb(p0, p1, kEpsilon));
         }
-#endif  // SK_ENABLE_SKSL
+#endif  // !defined(SK_ENABLE_SKSL)
     }
 }
-#endif  // SK_ENCODE_JPEG
+#endif  // !defined(SK_ENABLE_NDK_IMAGES)

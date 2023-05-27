@@ -53,6 +53,9 @@
 #include "include/effects/SkPerlinNoiseShader.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/effects/SkTrimPathEffect.h"
+#include "include/encode/SkJpegEncoder.h"
+#include "include/encode/SkPngEncoder.h"
+#include "include/encode/SkWebpEncoder.h"
 #include "include/private/SkShadowFlags.h"
 #include "include/utils/SkParsePath.h"
 #include "include/utils/SkShadowUtils.h"
@@ -72,6 +75,8 @@
 
 #ifdef ENABLE_GPU
 #include "include/gpu/GrDirectContext.h"
+#include "include/gpu/ganesh/GrTextureGenerator.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #endif // ENABLE_GPU
 
@@ -836,16 +841,16 @@ struct TextureReleaseContext {
     uint32_t texHandle;
 };
 
-void deleteJSTexture(SkImage::ReleaseContext rc) {
+void deleteJSTexture(SkImages::ReleaseContext rc) {
     auto ctx = reinterpret_cast<TextureReleaseContext*>(rc);
     textureCleanup.call<void>("deleteTexture", ctx->webglHandle, ctx->texHandle);
     delete ctx;
 }
 
-class WebGLTextureImageGenerator : public SkImageGenerator {
+class WebGLTextureImageGenerator : public GrTextureGenerator {
 public:
     WebGLTextureImageGenerator(SkImageInfo ii, JSObject callbackObj):
-            SkImageGenerator(ii),
+            GrTextureGenerator(ii),
             fCallback(callbackObj) {}
 
     ~WebGLTextureImageGenerator() override {
@@ -912,9 +917,38 @@ private:
 // surface/WebGLContext that the image is used on (we cannot share WebGLTextures across contexts).
 sk_sp<SkImage> MakeImageFromGenerator(SimpleImageInfo ii, JSObject callbackObj) {
     auto gen = std::make_unique<WebGLTextureImageGenerator>(toSkImageInfo(ii), callbackObj);
-    return SkImage::MakeFromGenerator(std::move(gen));
+    return SkImages::DeferredFromTextureGenerator(std::move(gen));
 }
 #endif // CK_ENABLE_WEBGL
+
+
+static Uint8Array encodeImage(GrDirectContext* dContext,
+                              sk_sp<SkImage> img,
+                              SkEncodedImageFormat fmt,
+                              int quality) {
+    sk_sp<SkData> data = nullptr;
+    if (fmt == SkEncodedImageFormat::kJPEG) {
+        SkJpegEncoder::Options opts;
+        opts.fQuality = quality;
+        data = SkJpegEncoder::Encode(dContext, img.get(), opts);
+    } else if (fmt == SkEncodedImageFormat::kPNG) {
+        data = SkPngEncoder::Encode(dContext, img.get(), {});
+    } else {
+        SkWebpEncoder::Options opts;
+        if (quality >= 100) {
+            opts.fCompression = SkWebpEncoder::Compression::kLossless;
+            opts.fQuality = 75; // This is effort to compress
+        } else {
+            opts.fCompression = SkWebpEncoder::Compression::kLossy;
+            opts.fQuality = quality;
+        }
+        data = SkWebpEncoder::Encode(dContext, img.get(), opts);
+    }
+    if (!data) {
+        return emscripten::val::null();
+    }
+    return toBytes(data);
+}
 
 EMSCRIPTEN_BINDINGS(Skia) {
 #ifdef ENABLE_GPU
@@ -955,7 +989,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                   size_t length)->sk_sp<SkImage> {
         uint8_t* imgData = reinterpret_cast<uint8_t*>(iptr);
         sk_sp<SkData> bytes = SkData::MakeFromMalloc(imgData, length);
-        return SkImage::MakeFromEncoded(std::move(bytes));
+        return SkImages::DeferredFromEncodedData(std::move(bytes));
     }), allow_raw_pointers());
 
     // These won't be called directly, there are corresponding JS helpers to deal with arrays.
@@ -966,7 +1000,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         SkImageInfo info = toSkImageInfo(ii);
         sk_sp<SkData> pixelData = SkData::MakeFromMalloc(pixels, plen);
 
-        return SkImage::MakeRasterData(info, pixelData, rowBytes);
+        return SkImages::RasterFromData(info, pixelData, rowBytes);
     }), allow_raw_pointers());
 
     function("_getShadowLocalBounds", optional_override([](
@@ -1501,22 +1535,14 @@ EMSCRIPTEN_BINDINGS(Skia) {
        .function("_encodeToBytes", optional_override([](sk_sp<SkImage> self,
                                                         SkEncodedImageFormat fmt,
                                                         int quality) -> Uint8Array {
-            sk_sp<SkData> data = self->encodeToData(fmt, quality);
-            if (!data) {
-                return emscripten::val::null();
-            }
-            return toBytes(data);
+            return encodeImage(nullptr, self, fmt, quality);
         }))
 #if defined(ENABLE_GPU)
         .function("_encodeToBytes", optional_override([](sk_sp<SkImage> self,
                                                          SkEncodedImageFormat fmt,
                                                          int quality,
                                                          GrDirectContext* dContext) -> Uint8Array {
-            sk_sp<SkData> data = self->encodeToData(dContext, fmt, quality);
-            if (!data) {
-                return emscripten::val::null();
-            }
-            return toBytes(data);
+            return encodeImage(dContext, self, fmt, quality);
         }), allow_raw_pointers())
 #endif
         .function("makeCopyWithDefaultMipmaps", optional_override([](sk_sp<SkImage> self)->sk_sp<SkImage> {
@@ -2152,15 +2178,14 @@ EMSCRIPTEN_BINDINGS(Skia) {
             GrBackendTexture gbt(ii.width, ii.height, GrMipmapped::kNo, gti);
             auto dContext = GrAsDirectContext(self.getCanvas()->recordingContext());
 
-            return SkImage::MakeFromTexture(
-                             dContext,
-                             gbt,
-                             GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin,
-                             ii.colorType,
-                             ii.alphaType,
-                             ii.colorSpace,
-                             deleteJSTexture,
-                             releaseCtx);
+            return SkImages::BorrowTextureFrom(dContext,
+                                               gbt,
+                                               GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin,
+                                               ii.colorType,
+                                               ii.alphaType,
+                                               ii.colorSpace,
+                                               deleteJSTexture,
+                                               releaseCtx);
          }))
 #endif  // CK_ENABLE_WEBGL
 #ifdef CK_ENABLE_WEBGPU

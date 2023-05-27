@@ -26,6 +26,7 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
 #include "include/private/base/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/core/SkAutoPixmapStorage.h"
@@ -45,6 +46,8 @@
 #include <initializer_list>
 #include <memory>
 #include <utility>
+
+using namespace skia_private;
 
 class GrRecordingContext;
 class SkPixmap;
@@ -75,11 +78,8 @@ sk_sp<SkImage> create_image(GrDirectContext* dContext, const GrBackendTexture& b
     SkAlphaType at = SkTextureCompressionTypeIsOpaque(compression) ? kOpaque_SkAlphaType
                                                             : kPremul_SkAlphaType;
 
-    return SkImage::MakeFromCompressedTexture(dContext,
-                                              backendTex,
-                                              kTopLeft_GrSurfaceOrigin,
-                                              at,
-                                              nullptr);
+    return SkImages::TextureFromCompressedTexture(
+            dContext, backendTex, kTopLeft_GrSurfaceOrigin, at, nullptr);
 }
 
 // Draw the compressed backend texture (wrapped in an SkImage) into an RGBA surface, attempting
@@ -226,7 +226,7 @@ static std::unique_ptr<const char[]> make_compressed_data(SkTextureCompressionTy
         numMipLevels = SkMipmap::ComputeLevelCount(dimensions.width(), dimensions.height()) + 1;
     }
 
-    SkTArray<size_t> mipMapOffsets(numMipLevels);
+    TArray<size_t> mipMapOffsets(numMipLevels);
 
     size_t dataSize = SkCompressedDataSize(compression, dimensions, &mipMapOffsets,
                                            mipmapped == GrMipmapped::kYes);

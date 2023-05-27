@@ -95,7 +95,7 @@ private:
 
     // A collection of all atlases we've created and used since the last flush. We instantiate these
     // at flush time during preFlush().
-    SkSTArray<4, sk_sp<AtlasRenderTask>> fAtlasRenderTasks;
+    skia_private::STArray<4, sk_sp<AtlasRenderTask>> fAtlasRenderTasks;
 
     // This simple cache remembers the locations of cacheable path masks in the most recent atlas.
     // Its main motivation is for clip paths.
@@ -108,8 +108,11 @@ private:
         uint32_t fPathGenID;
         float fAffineMatrix[6];
         uint32_t fFillRule;
+
+        using Hash = SkForceDirectHash<AtlasPathKey>;
     };
-    SkTHashMap<AtlasPathKey, SkIPoint16> fAtlasPathCache;
+
+    skia_private::THashMap<AtlasPathKey, SkIPoint16, AtlasPathKey::Hash> fAtlasPathCache;
 };
 
 }  // namespace skgpu::ganesh

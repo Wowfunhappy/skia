@@ -338,10 +338,15 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
             depthStencil.depthWriteEnabled = depthStencilSettings.fDepthWriteEnabled;
         }
         depthStencil.depthCompare = compare_op_to_dawn(depthStencilSettings.fDepthCompareOp);
-        depthStencil.stencilFront = stencil_face_to_dawn(depthStencilSettings.fFrontStencil);
-        depthStencil.stencilBack = stencil_face_to_dawn(depthStencilSettings.fBackStencil);
-        depthStencil.stencilReadMask = depthStencilSettings.fFrontStencil.fReadMask;
-        depthStencil.stencilWriteMask = depthStencilSettings.fFrontStencil.fWriteMask;
+
+        // Dawn validation fails if the stencil state is non-default and the
+        // format doesn't have the stencil aspect.
+        if (DawnFormatIsStencil(dsFormat) && depthStencilSettings.fStencilTestEnabled) {
+            depthStencil.stencilFront = stencil_face_to_dawn(depthStencilSettings.fFrontStencil);
+            depthStencil.stencilBack = stencil_face_to_dawn(depthStencilSettings.fBackStencil);
+            depthStencil.stencilReadMask = depthStencilSettings.fFrontStencil.fReadMask;
+            depthStencil.stencilWriteMask = depthStencilSettings.fFrontStencil.fWriteMask;
+        }
 
         descriptor.depthStencil = &depthStencil;
     }
@@ -492,12 +497,12 @@ sk_sp<DawnGraphicsPipeline> DawnGraphicsPipeline::Make(const DawnSharedContext* 
             break;
         case PrimitiveType::kTriangleStrip:
             descriptor.primitive.topology = wgpu::PrimitiveTopology::TriangleStrip;
+            descriptor.primitive.stripIndexFormat = wgpu::IndexFormat::Uint16;
             break;
         case PrimitiveType::kPoints:
             descriptor.primitive.topology = wgpu::PrimitiveTopology::PointList;
             break;
     }
-    descriptor.primitive.stripIndexFormat = wgpu::IndexFormat::Uint16;
 
     descriptor.multisample.count = renderPassDesc.fColorAttachment.fTextureInfo.numSamples();
     descriptor.multisample.mask = 0xFFFFFFFF;

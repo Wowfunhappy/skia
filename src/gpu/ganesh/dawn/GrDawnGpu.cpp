@@ -12,7 +12,6 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrDirectContext.h"
-#include "include/private/SkSLProgramKind.h"
 #include "src/base/SkRectMemcpy.h"
 #include "src/gpu/dawn/DawnUtilsPriv.h"
 #include "src/gpu/ganesh/GrDataUtils.h"
@@ -34,6 +33,7 @@
 #include "src/gpu/ganesh/dawn/GrDawnRenderTarget.h"
 #include "src/gpu/ganesh/dawn/GrDawnTexture.h"
 #include "src/gpu/ganesh/dawn/GrDawnUtil.h"
+#include "src/sksl/SkSLProgramKind.h"
 #include "src/sksl/SkSLProgramSettings.h"
 
 #include "src/base/SkAutoMalloc.h"
@@ -44,6 +44,8 @@
 #include <unistd.h>
 #endif // !defined(SK_BUILD_FOR_WIN)
 
+using namespace skia_private;
+
 static const int kMaxRenderPipelineEntries = 1024;
 
 static wgpu::FilterMode to_dawn_filter_mode(GrSamplerState::Filter filter) {
@@ -53,7 +55,7 @@ static wgpu::FilterMode to_dawn_filter_mode(GrSamplerState::Filter filter) {
         case GrSamplerState::Filter::kLinear:
             return wgpu::FilterMode::Linear;
         default:
-            SkASSERT(!"unsupported filter mode");
+            SkDEBUGFAIL("unsupported filter mode");
             return wgpu::FilterMode::Nearest;
     }
 }
@@ -67,7 +69,7 @@ static wgpu::FilterMode to_dawn_mipmap_mode(GrSamplerState::MipmapMode mode) {
         case GrSamplerState::MipmapMode::kLinear:
             return wgpu::FilterMode::Linear;
         default:
-            SkASSERT(!"unsupported filter mode");
+            SkDEBUGFAIL("unsupported filter mode");
             return wgpu::FilterMode::Nearest;
     }
 }
@@ -81,9 +83,9 @@ static wgpu::AddressMode to_dawn_address_mode(GrSamplerState::WrapMode wrapMode)
         case GrSamplerState::WrapMode::kMirrorRepeat:
             return wgpu::AddressMode::MirrorRepeat;
         case GrSamplerState::WrapMode::kClampToBorder:
-            SkASSERT(!"unsupported address mode");
+            SkDEBUGFAIL("unsupported address mode");
     }
-    SkASSERT(!"unsupported address mode");
+    SkDEBUGFAIL("unsupported address mode");
     return wgpu::AddressMode::ClampToEdge;
 }
 
@@ -174,7 +176,7 @@ GrOpsRenderPass* GrDawnGpu::onGetOpsRenderPass(
         const SkIRect& bounds,
         const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
         const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
-        const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+        const TArray<GrSurfaceProxy*, true>& sampledProxies,
         GrXferBarrierFlags renderPassXferBarriers) {
     fOpsRenderPass.reset(new GrDawnOpsRenderPass(this, rt, origin, colorInfo, stencilInfo));
     return fOpsRenderPass.get();
@@ -213,7 +215,7 @@ bool GrDawnGpu::onTransferFromBufferToBuffer(sk_sp<GrGpuBuffer> src,
                                              size_t dstOffset,
                                              size_t size) {
     // skbug.com/13453
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
     return false;
 }
 
@@ -225,7 +227,7 @@ bool GrDawnGpu::onTransferPixelsTo(GrTexture* texture,
                                    size_t bufferOffset,
                                    size_t rowBytes) {
     // skbug.com/13453
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
     return false;
 }
 
@@ -236,7 +238,7 @@ bool GrDawnGpu::onTransferPixelsFrom(GrSurface* surface,
                                      sk_sp<GrGpuBuffer> transferBuffer,
                                      size_t offset) {
     // skbug.com/13453
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
     return false;
 }
 
@@ -273,7 +275,7 @@ sk_sp<GrTexture> GrDawnGpu::onCreateCompressedTexture(SkISize dimensions,
                                                       GrProtected,
                                                       const void* data,
                                                       size_t dataSize) {
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
     return nullptr;
 }
 
@@ -886,23 +888,23 @@ void GrDawnGpu::deleteFence(GrFence fence) {
 }
 
 std::unique_ptr<GrSemaphore> SK_WARN_UNUSED_RESULT GrDawnGpu::makeSemaphore(bool isOwned) {
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
     return nullptr;
 }
 
 std::unique_ptr<GrSemaphore> GrDawnGpu::wrapBackendSemaphore(const GrBackendSemaphore& /* sema */,
                                                              GrSemaphoreWrapType /* wrapType */,
                                                              GrWrapOwnership /* ownership */) {
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
     return nullptr;
 }
 
 void GrDawnGpu::insertSemaphore(GrSemaphore* semaphore) {
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
 }
 
 void GrDawnGpu::waitSemaphore(GrSemaphore* semaphore) {
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
 }
 
 void GrDawnGpu::checkFinishProcs() {
@@ -923,7 +925,7 @@ void GrDawnGpu::finishOutstandingGpuWork() {
 }
 
 std::unique_ptr<GrSemaphore> GrDawnGpu::prepareTextureForCrossContextUsage(GrTexture* texture) {
-    SkASSERT(!"unimplemented");
+    SkDEBUGFAIL("unimplemented");
     return nullptr;
 }
 

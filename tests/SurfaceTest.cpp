@@ -38,6 +38,7 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
 #include "include/private/SkColorData.h"
 #include "include/private/base/SkDebug.h"
 #include "include/private/base/SkFloatingPoint.h"
@@ -57,9 +58,9 @@
 #include "src/gpu/ganesh/GrTextureProxy.h"
 #include "src/gpu/ganesh/SurfaceContext.h"
 #include "src/gpu/ganesh/SurfaceFillContext.h"
+#include "src/gpu/ganesh/image/GrImageUtils.h"
+#include "src/gpu/ganesh/surface/SkSurface_Ganesh.h"
 #include "src/image/SkImage_Base.h"
-#include "src/image/SkImage_Gpu.h"
-#include "src/image/SkSurface_Gpu.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
 #include "tests/TestHarness.h"
@@ -255,8 +256,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrContext_maxSurfaceSamplesForColorType,
             ERRORF(reporter, "Could not make surface of color type %d.", colorType);
             continue;
         }
-        int sampleCnt =
-            ((SkSurface_Gpu*)(surf.get()))->getDevice()->targetProxy()->numSamples();
+        int sampleCnt = ((SkSurface_Ganesh*)(surf.get()))->getDevice()->targetProxy()->numSamples();
         REPORTER_ASSERT(reporter, sampleCnt == maxSampleCnt, "Exected: %d, actual: %d",
                         maxSampleCnt, sampleCnt);
     }
@@ -576,7 +576,7 @@ static void test_crbug263329(skiatest::Reporter* reporter,
     // This is a regression test for crbug.com/263329
     // Bug was caused by onCopyOnWrite releasing the old surface texture
     // back to the scratch texture pool even though the texture is used
-    // by and active SkImage_Gpu.
+    // by and active SkImage_Ganesh.
     SkCanvas* canvas1 = surface1->getCanvas();
     SkCanvas* canvas2 = surface2->getCanvas();
     canvas1->clear(1);
@@ -636,17 +636,21 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfacepeekTexture_Gpu,
         sk_sp<SkImage> image(surface->makeImageSnapshot());
 
         REPORTER_ASSERT(reporter, as_IB(image)->isTextureBacked());
-        GrBackendTexture backendTex = image->getBackendTexture(false);
+        GrBackendTexture backendTex;
+        bool ok = SkImages::GetBackendTextureFromImage(image, &backendTex, false);
+        REPORTER_ASSERT(reporter, ok);
         REPORTER_ASSERT(reporter, backendTex.isValid());
         surface->notifyContentWillChange(SkSurface::kDiscard_ContentChangeMode);
         REPORTER_ASSERT(reporter, as_IB(image)->isTextureBacked());
-        GrBackendTexture backendTex2 = image->getBackendTexture(false);
+        GrBackendTexture backendTex2;
+        ok = SkImages::GetBackendTextureFromImage(image, &backendTex2, false);
+        REPORTER_ASSERT(reporter, ok);
         REPORTER_ASSERT(reporter, GrBackendTexture::TestingOnly_Equals(backendTex, backendTex2));
     }
 }
 
 static skgpu::Budgeted is_budgeted(const sk_sp<SkSurface>& surf) {
-    SkSurface_Gpu* gsurf = (SkSurface_Gpu*)surf.get();
+    SkSurface_Ganesh* gsurf = (SkSurface_Ganesh*)surf.get();
 
     GrRenderTargetProxy* proxy = gsurf->getDevice()->targetProxy();
     return proxy->isBudgeted();
@@ -808,7 +812,7 @@ static sk_sp<SkSurface> create_gpu_surface_backend_texture(GrDirectContext* dCon
 }
 
 static bool supports_readpixels(const GrCaps* caps, SkSurface* surface) {
-    auto surfaceGpu = static_cast<SkSurface_Gpu*>(surface);
+    auto surfaceGpu = static_cast<SkSurface_Ganesh*>(surface);
     GrRenderTarget* rt = surfaceGpu->getDevice()->targetProxy()->peekRenderTarget();
     if (!rt) {
         return false;
@@ -875,8 +879,7 @@ DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(SurfaceClear_Gpu,
     // Snaps an image from a surface and then makes a SurfaceContext from the image's texture.
     auto makeImageSurfaceContext = [dContext](SkSurface* surface) {
         sk_sp<SkImage> i(surface->makeImageSnapshot());
-        auto gpuImage = static_cast<SkImage_Gpu*>(as_IB(i));
-        auto [view, ct] = gpuImage->asView(dContext, GrMipmapped::kNo);
+        auto [view, ct] = skgpu::ganesh::AsView(dContext, i, GrMipmapped::kNo);
         GrColorInfo colorInfo(ct, i->alphaType(), i->refColorSpace());
         return dContext->priv().makeSC(view, std::move(colorInfo));
     };
@@ -1268,7 +1271,7 @@ DEF_TEST(surface_image_unity, reporter) {
 
             char tempPixel = 0;    // just need a valid address (not a valid size)
             SkPixmap pmap = { info, &tempPixel, rowBytes };
-            img = SkImage::MakeFromRaster(pmap, nullptr, nullptr);
+            img = SkImages::RasterFromPixmap(pmap, nullptr, nullptr);
             REPORTER_ASSERT(reporter, img != nullptr);
         }
     };

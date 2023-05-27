@@ -89,7 +89,7 @@ private:
         uint32_t fID;
         // Current clients don't generate multiple GrAtlasTextBlobs per SkTextBlob, so an array w/
         // linear search is acceptable.  If usage changes, we should re-evaluate this structure.
-        SkSTArray<1, sk_sp<TextBlob>> fBlobs;
+        skia_private::STArray<1, sk_sp<TextBlob>> fBlobs;
     };
 
     sk_sp<TextBlob> findOrCreateBlob(const SkMatrixProvider& viewMatrix,
@@ -118,7 +118,7 @@ private:
 
     mutable SkSpinlock fSpinLock;
     TextBlobList fBlobList SK_GUARDED_BY(fSpinLock);
-    SkTHashMap<uint32_t, BlobIDCacheEntry> fBlobIDCache SK_GUARDED_BY(fSpinLock);
+    skia_private::THashMap<uint32_t, BlobIDCacheEntry> fBlobIDCache SK_GUARDED_BY(fSpinLock);
     size_t fSizeBudget SK_GUARDED_BY(fSpinLock);
     size_t fCurrentSize SK_GUARDED_BY(fSpinLock) {0};
 

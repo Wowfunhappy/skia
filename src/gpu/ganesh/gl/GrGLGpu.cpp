@@ -15,7 +15,6 @@
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
-#include "include/private/SkSLProgramKind.h"
 #include "include/private/base/SkTemplates.h"
 #include "include/private/base/SkTo.h"
 #include "src/base/SkAutoMalloc.h"
@@ -46,10 +45,13 @@
 #include "src/gpu/ganesh/gl/GrGLTextureRenderTarget.h"
 #include "src/gpu/ganesh/gl/builders/GrGLShaderStringBuilder.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLProgramKind.h"
 #include "src/sksl/SkSLProgramSettings.h"
 
 #include <cmath>
 #include <memory>
+
+using namespace skia_private;
 
 #define GL_CALL(X) GR_GL_CALL(this->glInterface(), X)
 #define GL_CALL_RET(RET, X) GR_GL_CALL_RET(this->glInterface(), RET, X)
@@ -1109,7 +1111,7 @@ bool GrGLGpu::uploadColorToTex(GrGLFormat textureFormat,
     std::unique_ptr<char[]> pixelStorage;
     size_t bpp = 0;
     int numLevels = SkMipmap::ComputeLevelCount(texDims) + 1;
-    SkSTArray<16, GrMipLevel> levels;
+    STArray<16, GrMipLevel> levels;
     levels.resize(numLevels);
     SkISize levelDims = texDims;
     for (int i = 0; i < numLevels; ++i, levelDims = {std::max(levelDims.width()  >> 1, 1),
@@ -2191,7 +2193,7 @@ void GrGLGpu::endCommandBuffer(GrGLRenderTarget* rt, bool useMultisampleFBO,
     }
 
     if (GrGLCaps::kNone_InvalidateFBType != this->glCaps().invalidateFBType()) {
-        SkSTArray<2, GrGLenum> discardAttachments;
+        STArray<2, GrGLenum> discardAttachments;
         if (GrStoreOp::kDiscard == colorLoadStore.fStoreOp) {
             discardAttachments.push_back(
                     rt->isFBO0(useMultisampleFBO) ? GR_GL_COLOR : GR_GL_COLOR_ATTACHMENT0);
@@ -2368,7 +2370,7 @@ GrOpsRenderPass* GrGLGpu::onGetOpsRenderPass(
         const SkIRect& bounds,
         const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
         const GrOpsRenderPass::StencilLoadAndStoreInfo& stencilInfo,
-        const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+        const TArray<GrSurfaceProxy*, true>& sampledProxies,
         GrXferBarrierFlags renderPassXferBarriers) {
     if (!fCachedOpsRenderPass) {
         fCachedOpsRenderPass = std::make_unique<GrGLOpsRenderPass>(this);

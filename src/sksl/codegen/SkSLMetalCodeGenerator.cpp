@@ -9,25 +9,20 @@
 
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkSLIRNode.h"
-#include "include/private/SkSLLayout.h"
-#include "include/private/SkSLModifiers.h"
-#include "include/private/SkSLProgramElement.h"
-#include "include/private/SkSLStatement.h"
-#include "include/private/SkSLString.h"
 #include "include/private/base/SkTo.h"
-#include "include/sksl/SkSLErrorReporter.h"
-#include "include/sksl/SkSLOperator.h"
-#include "include/sksl/SkSLPosition.h"
 #include "src/base/SkScopeExit.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
 #include "src/sksl/SkSLContext.h"
+#include "src/sksl/SkSLErrorReporter.h"
 #include "src/sksl/SkSLIntrinsicList.h"
 #include "src/sksl/SkSLMemoryLayout.h"
+#include "src/sksl/SkSLOperator.h"
 #include "src/sksl/SkSLOutputStream.h"
+#include "src/sksl/SkSLPosition.h"
 #include "src/sksl/SkSLProgramSettings.h"
+#include "src/sksl/SkSLString.h"
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/analysis/SkSLProgramVisitor.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
@@ -46,17 +41,22 @@
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLFunctionPrototype.h"
+#include "src/sksl/ir/SkSLIRNode.h"
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
+#include "src/sksl/ir/SkSLLayout.h"
 #include "src/sksl/ir/SkSLLiteral.h"
+#include "src/sksl/ir/SkSLModifiers.h"
 #include "src/sksl/ir/SkSLModifiersDeclaration.h"
 #include "src/sksl/ir/SkSLNop.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
 #include "src/sksl/ir/SkSLProgram.h"
+#include "src/sksl/ir/SkSLProgramElement.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
 #include "src/sksl/ir/SkSLSetting.h"
+#include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLStructDefinition.h"
 #include "src/sksl/ir/SkSLSwitchCase.h"
 #include "src/sksl/ir/SkSLSwitchStatement.h"
@@ -72,6 +72,9 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <vector>
+
+using namespace skia_private;
 
 namespace SkSL {
 
@@ -266,7 +269,7 @@ static bool is_readonly(const InterfaceBlock& block) {
 
 std::string MetalCodeGenerator::getOutParamHelper(const FunctionCall& call,
                                                   const ExpressionArray& arguments,
-                                                  const SkTArray<VariableReference*>& outVars) {
+                                                  const TArray<VariableReference*>& outVars) {
     // It's possible for out-param function arguments to contain an out-param function call
     // expression. Emit the function into a temporary stream to prevent the nested helper from
     // clobbering the current helper as we recursively evaluate argument expressions.
@@ -301,7 +304,7 @@ std::string MetalCodeGenerator::getOutParamHelper(const FunctionCall& call,
     // We need to detect cases where the caller passes the same variable as an out-param more than
     // once, and avoid reusing the variable name. (In those cases we can actually just ignore the
     // redundant input parameter entirely, and not give it any name.)
-    SkTHashSet<const Variable*> writtenVars;
+    THashSet<const Variable*> writtenVars;
 
     for (int index = 0; index < arguments.size(); ++index) {
         this->write(separator);
@@ -424,7 +427,7 @@ void MetalCodeGenerator::writeFunctionCall(const FunctionCall& c) {
     SkASSERT(SkToSizeT(arguments.size()) == parameters.size());
 
     bool foundOutParam = false;
-    SkSTArray<16, VariableReference*> outVars;
+    STArray<16, VariableReference*> outVars;
     outVars.push_back_n(arguments.size(), (VariableReference*)nullptr);
 
     for (int index = 0; index < arguments.size(); ++index) {
@@ -2363,8 +2366,9 @@ void MetalCodeGenerator::writeInterfaceBlock(const InterfaceBlock& intf) {
     this->writeLine(";");
 }
 
-void MetalCodeGenerator::writeFields(const std::vector<Type::Field>& fields, Position parentPos,
-        const InterfaceBlock* parentIntf) {
+void MetalCodeGenerator::writeFields(SkSpan<const Type::Field> fields,
+                                     Position parentPos,
+                                     const InterfaceBlock* parentIntf) {
     MemoryLayout memoryLayout(MemoryLayout::Standard::kMetal);
     int currentOffset = 0;
     for (const Type::Field& field : fields) {

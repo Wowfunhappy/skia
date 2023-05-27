@@ -1778,6 +1778,24 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
         }
     }
 
+    // Do we support the lumincance and luminance_alpha formats
+    bool lum8Supported = false;
+    bool lum8SizedFormatSupported = false;
+    if (GR_IS_GR_GL(standard) && !fIsCoreProfile) {
+        lum8Supported = true;
+        lum8SizedFormatSupported = true;
+    } else if (GR_IS_GR_GL_ES(standard)) {
+        lum8Supported = true;
+        // Even on ES3 this extension is required to define LUMINANCE8. GL_LUMINANCE8 is not a
+        // valid internal format for TexImage2D so we need to be using texture storage to use
+        // it. Even though we check the extension for texture storage here, we also check to see
+        // if texStorageSupported may have been disabled for a workaround.
+        lum8SizedFormatSupported =
+                texStorageSupported && ctxInfo.hasExtension("GL_EXT_texture_storage");
+    } else if (GR_IS_GR_WEBGL(standard)) {
+        lum8Supported = true;
+    }
+
     // Format: LUMINANCE8
     {
         FormatInfo& info = this->getFormatInfo(GrGLFormat::kLUMINANCE8);
@@ -1786,18 +1804,7 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
         info.fDefaultExternalFormat = GR_GL_LUMINANCE;
         info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         info.fDefaultColorType = GrColorType::kGray_8;
-        bool lum8Supported = false;
-        bool lum8SizedFormatSupported = false;
-        if (GR_IS_GR_GL(standard) && !fIsCoreProfile) {
-            lum8Supported = true;
-            lum8SizedFormatSupported = true;
-        } else if (GR_IS_GR_GL_ES(standard)) {
-            lum8Supported = true;
-            // Even on ES3 this extension is required to define LUMINANCE8.
-            lum8SizedFormatSupported = ctxInfo.hasExtension("GL_EXT_texture_storage");
-        } else if (GR_IS_GR_WEBGL(standard)) {
-            lum8Supported = true;
-        }
+
         if (lum8Supported) {
             info.fFlags = FormatInfo::kTexturable_Flag | FormatInfo::kTransfers_Flag;
         }
@@ -1866,32 +1873,20 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
         info.fDefaultExternalFormat = GR_GL_LUMINANCE_ALPHA;
         info.fDefaultExternalType = GR_GL_UNSIGNED_BYTE;
         info.fDefaultColorType = GrColorType::kGrayAlpha_88;
-        bool la8Supported = false;
-        bool la8SizedFormatSupported = false;
-        if (GR_IS_GR_GL(standard) && !fIsCoreProfile) {
-            la8Supported = true;
-            la8SizedFormatSupported = true;
-        } else if (GR_IS_GR_GL_ES(standard)) {
-            la8Supported = true;
-            // Even on ES3 this extension is required to define LUMINANCE8_ALPHA8.
-            la8SizedFormatSupported = ctxInfo.hasExtension("GL_EXT_texture_storage");
-        } else if (GR_IS_GR_WEBGL(standard)) {
-            la8Supported = true;
-        }
-        if (la8Supported) {
+        if (lum8Supported) {
             info.fFlags = FormatInfo::kTexturable_Flag | FormatInfo::kTransfers_Flag;
         }
-        if (texStorageSupported && la8SizedFormatSupported) {
+        if (texStorageSupported && lum8SizedFormatSupported) {
             info.fFlags |= FormatInfo::kUseTexStorage_Flag;
             info.fInternalFormatForTexImageOrStorage = GR_GL_LUMINANCE8_ALPHA8;
-        } else if (texImageSupportsSizedInternalFormat && la8SizedFormatSupported) {
+        } else if (texImageSupportsSizedInternalFormat && lum8SizedFormatSupported) {
             info.fInternalFormatForTexImageOrStorage = GR_GL_LUMINANCE8_ALPHA8;
         } else {
             info.fInternalFormatForTexImageOrStorage = GR_GL_LUMINANCE_ALPHA;
         }
         // See note in LUMINANCE8 section about not attaching to framebuffers.
 
-        if (la8Supported) {
+        if (lum8Supported) {
             info.fColorTypeInfoCount = 1;
             info.fColorTypeInfos = std::make_unique<ColorTypeInfo[]>(info.fColorTypeInfoCount);
             int ctIdx = 0;
@@ -4102,12 +4097,13 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         shaderCaps->fMustObfuscateUniformColor = true;
     }
 
-    // On Mali G series GPUs, applying transfer functions in the fragment shader with half-floats
-    // produces answers that are much less accurate than expected/required. This forces full floats
-    // for some intermediate values to get acceptable results.
-    if (ctxInfo.renderer() == GrGLRenderer::kMaliG) {
-        fShaderCaps->fColorSpaceMathNeedsFloat = true;
-    }
+#if defined(SK_BUILD_FOR_ANDROID)
+    // On the following GPUs, the Perlin noise code needs to aggressively snap to multiples
+    // of 1/255 to avoid artifacts in the double table lookup:
+    //    Tegra3, PowerVRGE8320 (Wembley), MaliG76, and Adreno308
+    // Given the range of vendors we're just blanket enabling it on Android for OpenGL.
+    fShaderCaps->fPerlinNoiseRoundingFix = true;
+#endif
 
     // On Mali 400 there is a bug using dFd* in the x direction. So we avoid using it when possible.
     if (ctxInfo.renderer() == GrGLRenderer::kMali4xx) {
@@ -4423,14 +4419,19 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         formatWorkarounds->fDisallowBGRA8ReadPixels = true;
     }
 
-    // We disable MSAA for all Intel GPUs. Before Gen9, performance was very bad. Even with Gen9,
-    // we've seen driver crashes in the wild. We don't have data on Gen11 yet.
+    // We disable MSAA for older Intel GPUs. Before Gen9, performance was very bad. Even with Gen9,
+    // we've seen driver crashes in the wild.
     // (crbug.com/527565, crbug.com/983926)
-    if ((ctxInfo.vendor() == GrGLVendor::kIntel ||
-         ctxInfo.angleVendor() == GrGLVendor::kIntel) &&
-         (ctxInfo.renderer() < GrGLRenderer::kIntelIceLake ||
-          !contextOptions.fAllowMSAAOnNewIntel)) {
-         fMSFBOType = kNone_MSFBOType;
+    if (ctxInfo.vendor() == GrGLVendor::kIntel || ctxInfo.angleVendor() == GrGLVendor::kIntel) {
+        // Gen11 seems mostly ok, except we avoid drawing lines with MSAA. (anglebug.com/7796)
+        if (ctxInfo.renderer() >= GrGLRenderer::kIntelIceLake &&
+            contextOptions.fAllowMSAAOnNewIntel) {
+            if (fMSFBOType != kNone_MSFBOType) {
+                fAvoidLineDraws = true;
+            }
+        } else {
+            fMSFBOType = kNone_MSFBOType;
+        }
     }
 
     // ANGLE's D3D9 backend + AMD GPUs are flaky with program binary caching (skbug.com/10395)

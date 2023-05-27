@@ -35,6 +35,7 @@
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/effects/GrTextureEffect.h"
+#include "src/gpu/ganesh/image/GrImageUtils.h"
 #include "src/image/SkImage_Base.h"
 #include "src/shaders/SkLocalMatrixShader.h"
 #endif
@@ -321,6 +322,7 @@ bool SkPictureShader::appendStages(const SkStageRec& rec, const MatrixRec& mRec)
     return as_SB(bitmapShader)->appendStages(rec, mRec);
 }
 
+#if defined(SK_ENABLE_SKVM)
 skvm::Color SkPictureShader::program(skvm::Builder* p,
                                      skvm::Coord device,
                                      skvm::Coord local,
@@ -341,6 +343,7 @@ skvm::Color SkPictureShader::program(skvm::Builder* p,
 
     return as_SB(bitmapShader)->program(p, device, local, paint, mRec, dst, uniforms, alloc);
 }
+#endif
 
 /////////////////////////////////////////////////////////////////////////////////////////
 
@@ -425,7 +428,8 @@ std::unique_ptr<GrFragmentProcessor> SkPictureShader::asFragmentProcessor(
         if (!image) {
             return nullptr;
         }
-        auto [v, ct] = as_IB(image)->asView(ctx, GrMipmapped::kNo);
+
+        auto [v, ct] = skgpu::ganesh::AsView(ctx, image, GrMipmapped::kNo);
         view = std::move(v);
         provider->assignUniqueKeyToProxy(key, view.asTextureProxy());
     }

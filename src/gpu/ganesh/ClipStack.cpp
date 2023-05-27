@@ -33,6 +33,8 @@
 #include "src/gpu/ganesh/ops/AtlasPathRenderer.h"
 #include "src/gpu/ganesh/ops/GrDrawOp.h"
 
+using namespace skia_private;
+
 namespace {
 
 // This captures which of the two elements in (A op B) would be required when they are combined,
@@ -340,7 +342,7 @@ GrSurfaceProxyView render_sw_mask(GrRecordingContext* context,
 
         // Since this will be rendered on another thread, make a copy of the elements in case
         // the clip stack is modified on the main thread
-        using Uploader = GrTDeferredProxyUploader<SkTArray<skgpu::ganesh::ClipStack::Element>>;
+        using Uploader = GrTDeferredProxyUploader<TArray<skgpu::ganesh::ClipStack::Element>>;
         std::unique_ptr<Uploader> uploader = std::make_unique<Uploader>(count);
         for (int i = 0; i < count; ++i) {
             uploader->data().push_back(*(elements[i]));
@@ -1362,7 +1364,7 @@ GrClip::Effect ClipStack::apply(GrRecordingContext* rContext,
 
     // Elements not represented as an analytic FP or skipped will be collected here and later
     // applied by using the stencil buffer or a cached SW mask.
-    SkSTArray<kNumStackMasks, const Element*> elementsForMask;
+    STArray<kNumStackMasks, const Element*> elementsForMask;
 
     bool maskRequiresAA = false;
     auto atlasPathRenderer = rContext->priv().drawingManager()->getAtlasPathRenderer();

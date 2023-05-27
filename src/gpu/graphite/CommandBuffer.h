@@ -41,8 +41,8 @@ class TextureProxy;
 
 class CommandBuffer {
 public:
-    using DrawPassList = SkTArray<std::unique_ptr<DrawPass>>;
-    using DispatchGroupList = SkTArray<std::unique_ptr<DispatchGroup>>;
+    using DrawPassList = skia_private::TArray<std::unique_ptr<DrawPass>>;
+    using DispatchGroupList = skia_private::TArray<std::unique_ptr<DispatchGroup>>;
 
     virtual ~CommandBuffer();
 
@@ -153,8 +153,8 @@ private:
 #endif
 
     inline static constexpr int kInitialTrackedResourcesCount = 32;
-    SkSTArray<kInitialTrackedResourcesCount, sk_sp<Resource>> fTrackedResources;
-    SkTArray<sk_sp<RefCntedCallback>> fFinishedProcs;
+    skia_private::STArray<kInitialTrackedResourcesCount, sk_sp<Resource>> fTrackedResources;
+    skia_private::TArray<sk_sp<RefCntedCallback>> fFinishedProcs;
 };
 
 } // namespace skgpu::graphite

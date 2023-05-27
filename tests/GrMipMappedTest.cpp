@@ -13,7 +13,6 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkImage.h"
-#include "include/core/SkImageGenerator.h"
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkRect.h"
@@ -28,6 +27,8 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/GrTextureGenerator.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
 #include "include/gpu/mock/GrMockTypes.h"
 #include "include/private/SkColorData.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
@@ -51,7 +52,7 @@
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/SurfaceDrawContext.h"
 #include "src/gpu/ganesh/ops/OpsTask.h"
-#include "src/image/SkSurface_Gpu.h"
+#include "src/gpu/ganesh/surface/SkSurface_Ganesh.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
 #include "tools/gpu/BackendSurfaceFactory.h"
@@ -127,17 +128,17 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrWrappedMipMappedTest,
                         sk_gpu_test::ManagedBackendTexture::ReleaseProc,
                         mbet->releaseContext());
 
-                auto device = ((SkSurface_Gpu*)surface.get())->getDevice();
+                auto device = ((SkSurface_Ganesh*)surface.get())->getDevice();
                 proxy = device->readSurfaceView().asTextureProxyRef();
             } else {
-                image = SkImage::MakeFromTexture(dContext,
-                                                 mbet->texture(),
-                                                 kTopLeft_GrSurfaceOrigin,
-                                                 kRGBA_8888_SkColorType,
-                                                 kPremul_SkAlphaType,
-                                                 /* color space */ nullptr,
-                                                 sk_gpu_test::ManagedBackendTexture::ReleaseProc,
-                                                 mbet->releaseContext());
+                image = SkImages::BorrowTextureFrom(dContext,
+                                                    mbet->texture(),
+                                                    kTopLeft_GrSurfaceOrigin,
+                                                    kRGBA_8888_SkColorType,
+                                                    kPremul_SkAlphaType,
+                                                    /* color space */ nullptr,
+                                                    sk_gpu_test::ManagedBackendTexture::ReleaseProc,
+                                                    mbet->releaseContext());
                 REPORTER_ASSERT(reporter, (mipmapped == GrMipmapped::kYes) == image->hasMipmaps());
                 proxy = sk_ref_sp(sk_gpu_test::GetTextureImageProxy(image.get(), dContext));
             }
@@ -201,17 +202,17 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrBackendTextureImageMipMappedTest,
                 return;
             }
 
-            std::unique_ptr<SkImageGenerator> imageGen = GrBackendTextureImageGenerator::Make(
+            std::unique_ptr<GrTextureGenerator> textureGen = GrBackendTextureImageGenerator::Make(
                     texture, kTopLeft_GrSurfaceOrigin, nullptr, kRGBA_8888_SkColorType,
                     kPremul_SkAlphaType, nullptr);
-            REPORTER_ASSERT(reporter, imageGen);
-            if (!imageGen) {
+            REPORTER_ASSERT(reporter, textureGen);
+            if (!textureGen) {
                 return;
             }
 
             SkImageInfo imageInfo = SkImageInfo::Make(kSize, kSize, kRGBA_8888_SkColorType,
                                                       kPremul_SkAlphaType);
-            GrSurfaceProxyView genView = imageGen->generateTexture(
+            GrSurfaceProxyView genView = textureGen->generateTexture(
                     dContext, imageInfo, requestMipmapped, GrImageTexGenPolicy::kDraw);
             GrSurfaceProxy* genProxy = genView.proxy();
 
@@ -366,7 +367,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(GrImageSnapshotMipMappedTest,
                                                       willUseMips);
             }
             REPORTER_ASSERT(reporter, surface);
-            auto device = ((SkSurface_Gpu*)surface.get())->getDevice();
+            auto device = ((SkSurface_Ganesh*)surface.get())->getDevice();
             GrTextureProxy* texProxy = device->readSurfaceView().asTextureProxy();
             REPORTER_ASSERT(reporter, mipmapped == texProxy->mipmapped());
 

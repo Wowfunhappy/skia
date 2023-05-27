@@ -7,15 +7,11 @@
 
 #include "include/core/SkImage.h"
 
-#include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkBitmap.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkColorType.h"
 #include "include/core/SkData.h"
-#include "include/core/SkImageEncoder.h"
-#include "include/core/SkImageGenerator.h"
 #include "include/core/SkMatrix.h"
-#include "include/core/SkPicture.h"
 #include "include/core/SkPixmap.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkSurfaceProps.h"
@@ -26,19 +22,13 @@
 #include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkImageInfoPriv.h"
-#include "src/core/SkImagePriv.h"
 #include "src/core/SkMipmap.h"
 #include "src/core/SkNextID.h"
 #include "src/core/SkSpecialImage.h"
 #include "src/image/SkImage_Base.h"
 #include "src/shaders/SkImageShader.h"
 
-#include <utility>
-
-class SkShader;
-
 #if defined(SK_GANESH)
-#include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/private/gpu/ganesh/GrImageContext.h"
@@ -49,6 +39,10 @@ class SkShader;
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/Log.h"
 #endif
+
+#include <utility>
+
+class SkShader;
 
 SkImage::SkImage(const SkImageInfo& info, uint32_t uniqueID)
         : fInfo(info)
@@ -203,46 +197,8 @@ sk_sp<SkShader> SkImage::makeRawShader(SkTileMode tmx, SkTileMode tmy,
                                   sampling, localMatrix);
 }
 
-sk_sp<SkData> SkImage::encodeToData(GrDirectContext* context, SkEncodedImageFormat type,
-                                    int quality) const {
-    SkBitmap bm;
-    if (as_IB(this)->getROPixels(context, &bm)) {
-        return SkEncodeBitmap(bm, type, quality);
-    }
-    return nullptr;
-}
-
-sk_sp<SkData> SkImage::encodeToData(GrDirectContext* context) const {
-    if (auto encoded = this->refEncodedData()) {
-        return encoded;
-    }
-
-    return this->encodeToData(context, SkEncodedImageFormat::kPNG, 100);
-}
-
-#ifndef SK_IMAGE_READ_PIXELS_DISABLE_LEGACY_API
-sk_sp<SkData> SkImage::encodeToData(SkEncodedImageFormat type, int quality) const {
-    auto dContext = as_IB(this)->directContext();
-    return this->encodeToData(dContext, type, quality);
-}
-
-sk_sp<SkData> SkImage::encodeToData() const {
-    auto dContext = as_IB(this)->directContext();
-    return this->encodeToData(dContext);
-}
-#endif
-
 sk_sp<SkData> SkImage::refEncodedData() const {
     return sk_sp<SkData>(as_IB(this)->onRefEncoded());
-}
-
-sk_sp<SkImage> SkImage::MakeFromEncoded(sk_sp<SkData> encoded,
-                                        std::optional<SkAlphaType> alphaType) {
-    if (nullptr == encoded || 0 == encoded->size()) {
-        return nullptr;
-    }
-    return SkImage::MakeFromGenerator(
-            SkImageGenerator::MakeFromEncoded(std::move(encoded), alphaType));
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -273,49 +229,6 @@ sk_sp<SkImage> SkImage::makeSubset(const SkIRect& subset, GrDirectContext* direc
     return as_IB(this)->onMakeSubset(subset, direct);
 }
 
-#if defined(SK_GANESH)
-
-bool SkImage::isTextureBacked() const {
-    return as_IB(this)->isGaneshBacked() || as_IB(this)->isGraphiteBacked();
-}
-
-size_t SkImage::textureSize() const { return as_IB(this)->onTextureSize(); }
-
-GrBackendTexture SkImage::getBackendTexture(bool flushPendingGrContextIO,
-                                            GrSurfaceOrigin* origin) const {
-    return as_IB(this)->onGetBackendTexture(flushPendingGrContextIO, origin);
-}
-
-bool SkImage::isValid(GrRecordingContext* rContext) const {
-    if (rContext && rContext->abandoned()) {
-        return false;
-    }
-    return as_IB(this)->onIsValid(rContext);
-}
-
-GrSemaphoresSubmitted SkImage::flush(GrDirectContext* dContext,
-                                     const GrFlushInfo& flushInfo) const {
-    return as_IB(this)->onFlush(dContext, flushInfo);
-}
-
-void SkImage::flushAndSubmit(GrDirectContext* dContext) const {
-    this->flush(dContext, {});
-    dContext->submit();
-}
-
-#else
-
-bool SkImage::isTextureBacked() const { return false; }
-
-bool SkImage::isValid(GrRecordingContext* rContext) const {
-    if (rContext) {
-        return false;
-    }
-    return as_IB(this)->onIsValid(nullptr);
-}
-
-#endif
-
 bool SkImage::readPixels(GrDirectContext* dContext, const SkPixmap& pmap, int srcX, int srcY,
                          CachingHint chint) const {
     return this->readPixels(dContext, pmap.info(), pmap.writable_addr(), pmap.rowBytes(), srcX,
@@ -329,35 +242,10 @@ bool SkImage::readPixels(const SkPixmap& pmap, int srcX, int srcY, CachingHint c
 }
 #endif
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-
-sk_sp<SkImage> SkImage::MakeFromBitmap(const SkBitmap& bm) {
-    if (!bm.pixelRef()) {
-        return nullptr;
-    }
-
-    return SkMakeImageFromRasterBitmap(bm, kIfMutable_SkCopyPixelsMode);
-}
-
 bool SkImage::asLegacyBitmap(SkBitmap* bitmap, LegacyBitmapMode ) const {
     // Context TODO: Elevate GrDirectContext requirement to public API.
     auto dContext = as_IB(this)->directContext();
     return as_IB(this)->onAsLegacyBitmap(dContext, bitmap);
-}
-
-sk_sp<SkImage> SkImage::MakeFromPicture(sk_sp<SkPicture> picture, const SkISize& dimensions,
-                                        const SkMatrix* matrix, const SkPaint* paint,
-                                        BitDepth bitDepth, sk_sp<SkColorSpace> colorSpace) {
-    return SkImage::MakeFromPicture(picture, dimensions, matrix, paint, bitDepth, colorSpace, {});
-}
-
-sk_sp<SkImage> SkImage::MakeFromPicture(sk_sp<SkPicture> picture, const SkISize& dimensions,
-                                        const SkMatrix* matrix, const SkPaint* paint,
-                                        BitDepth bitDepth, sk_sp<SkColorSpace> colorSpace,
-                                        SkSurfaceProps props) {
-    return MakeFromGenerator(SkImageGenerator::MakeFromPicture(dimensions, std::move(picture),
-                                                               matrix, paint, bitDepth,
-                                                               std::move(colorSpace), props));
 }
 
 sk_sp<SkImage> SkImage::makeWithFilter(GrRecordingContext* rContext, const SkImageFilter* filter,
@@ -509,19 +397,7 @@ sk_sp<SkImage> SkImage::makeRasterImage(CachingHint chint) const {
         return nullptr;
     }
 
-    return SkImage::MakeRasterData(fInfo, std::move(data), rowBytes);
-}
-
-bool SkImage_pinAsTexture(const SkImage* image, GrRecordingContext* rContext) {
-    SkASSERT(image);
-    SkASSERT(rContext);
-    return as_IB(image)->onPinAsTexture(rContext);
-}
-
-void SkImage_unpinAsTexture(const SkImage* image, GrRecordingContext* rContext) {
-    SkASSERT(image);
-    SkASSERT(rContext);
-    as_IB(image)->onUnpinAsTexture(rContext);
+    return SkImages::RasterFromData(fInfo, std::move(data), rowBytes);
 }
 
 bool SkImage::hasMipmaps() const { return as_IB(this)->onHasMipmaps(); }
@@ -538,3 +414,4 @@ sk_sp<SkImage> SkImage::withMipmaps(sk_sp<SkMipmap> mips) const {
 sk_sp<SkImage> SkImage::withDefaultMipmaps() const {
     return this->withMipmaps(nullptr);
 }
+

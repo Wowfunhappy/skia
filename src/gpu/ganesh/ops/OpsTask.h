@@ -288,14 +288,14 @@ private:
     GrXferBarrierFlags fRenderPassXferBarriers = GrXferBarrierFlags::kNone;
 
     // For ops/opsTask we have mean: 5 stdDev: 28
-    SkSTArray<25, OpChain> fOpChains;
+    skia_private::STArray<25, OpChain> fOpChains;
 
     sk_sp<GrArenas> fArenas;
     SkDEBUGCODE(int fNumClips;)
 
     // TODO: We could look into this being a set if we find we're adding a lot of duplicates that is
     // causing slow downs.
-    SkTArray<GrSurfaceProxy*, true> fSampledProxies;
+    skia_private::TArray<GrSurfaceProxy*, true> fSampledProxies;
 
     SkRect fTotalBounds = SkRect::MakeEmpty();
     SkIRect fClippedContentBounds = SkIRect::MakeEmpty();

@@ -75,6 +75,7 @@ tests_sources = [
   "$_tests/F16StagesTest.cpp",
   "$_tests/FakeStreams.h",
   "$_tests/FillPathTest.cpp",
+  "$_tests/FilterResultTest.cpp",
   "$_tests/FindCubicConvex180ChopsTest.cpp",
   "$_tests/FitsInTest.cpp",
   "$_tests/FlattenDrawableTest.cpp",
@@ -257,6 +258,8 @@ tests_sources = [
   "$_tests/SkSLDSLOnlyTest.cpp",
   "$_tests/SkSLDSLTest.cpp",
   "$_tests/SkSLDSLUtil.cpp",
+  "$_tests/SkSLDebugTracePlayerTest.cpp",
+  "$_tests/SkSLDebugTraceTest.cpp",
   "$_tests/SkSLES2ConformanceTest.cpp",
   "$_tests/SkSLErrorTest.cpp",
   "$_tests/SkSLGLSLTestbed.cpp",
@@ -272,8 +275,6 @@ tests_sources = [
   "$_tests/SkStringViewTest.cpp",
   "$_tests/SkTBlockListTest.cpp",
   "$_tests/SkUTFTest.cpp",
-  "$_tests/SkVMDebugTracePlayerTest.cpp",
-  "$_tests/SkVMDebugTraceTest.cpp",
   "$_tests/SkVMTest.cpp",
   "$_tests/SkVxTest.cpp",
   "$_tests/Skbug12214.cpp",
@@ -356,6 +357,7 @@ graphite_tests_sources = [
   "$_tests/graphite/MultisampleTest.cpp",
   "$_tests/graphite/MutableImagesTest.cpp",
   "$_tests/graphite/PipelineDataCacheTest.cpp",
+  "$_tests/graphite/ProxyCacheTest.cpp",
   "$_tests/graphite/RTEffectTest.cpp",
   "$_tests/graphite/ReadWritePixelsGraphiteTest.cpp",
   "$_tests/graphite/RecorderTest.cpp",
@@ -376,6 +378,7 @@ precompile_tests_sources = [
   "$_tests/graphite/PaintParamsKeyTest.cpp",
 ]
 
+graphite_dawn_tests_sources = [ "$_tests/graphite/DawnBackendTextureTest.cpp" ]
 graphite_metal_tests_sources = [ "$_tests/graphite/MtlBackendTextureTest.mm" ]
 
 pathops_tests_sources = [

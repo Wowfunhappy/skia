@@ -32,6 +32,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkImageGanesh.h"
 #include "include/private/base/SkTArray.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/base/SkRectMemcpy.h"
@@ -64,6 +65,8 @@
 #include <memory>
 #include <utility>
 #include <vector>
+
+using namespace skia_private;
 
 struct GrContextOptions;
 
@@ -1192,7 +1195,7 @@ DEF_GANESH_TEST_FOR_RENDERING_CONTEXTS(SurfaceContextWritePixelsMipped,
         }
         SkAlphaType at = GrColorTypeHasAlpha(ct) ? kPremul_SkAlphaType : kOpaque_SkAlphaType;
         GrImageInfo info(ct, at, nullptr, kW, kH);
-        SkTArray<GrCPixmap> levels;
+        TArray<GrCPixmap> levels;
         const auto& ref = at == kPremul_SkAlphaType ? refP : refO;
         for (int w = kW, h = kH; w || h; w/=2, h/=2) {
             auto level = GrPixmap::Allocate(info.makeWH(std::max(w, 1), std::max(h, 1)));
@@ -1319,8 +1322,8 @@ DEF_GANESH_TEST_FOR_GL_RENDERING_CONTEXTS(GLReadPixelsUnbindPBO,
     // Start with a async read so that we bind to GL_PIXEL_PACK_BUFFER.
     auto info = SkImageInfo::Make(16, 16, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
     SkAutoPixmapStorage pmap = make_ref_data(info, /*forceOpaque=*/false);
-    auto image = SkImage::MakeFromRaster(pmap, nullptr, nullptr);
-    image = image->makeTextureImage(ctxInfo.directContext());
+    auto image = SkImages::RasterFromPixmap(pmap, nullptr, nullptr);
+    image = SkImages::TextureFromImage(ctxInfo.directContext(), image);
     if (!image) {
         ERRORF(reporter, "Couldn't make texture image.");
         return;

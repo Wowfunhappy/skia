@@ -167,8 +167,8 @@ CPU_ONLY_TESTS = [
     "SkStringViewTest.cpp",
     "SkTBlockListTest.cpp",
     "SkUTFTest.cpp",
-    "SkVMDebugTracePlayerTest.cpp",
-    "SkVMDebugTraceTest.cpp",
+    "SkSLDebugTracePlayerTest.cpp",
+    "SkSLDebugTraceTest.cpp",
     "SkVMTest.cpp",
     "SkVxTest.cpp",
     "Skbug6389.cpp",
@@ -225,24 +225,25 @@ GANESH_TESTS = [
     "DMSAATest.cpp",
     "DefaultPathRendererTest.cpp",
     "DeviceTest.cpp",
-    "DrawOpAtlasTest.cpp",
+    # "DrawOpAtlasTest.cpp",  # TODO(b/277938020): Linux - Causes SkRefCnt error after all tests finish.
     "EGLImageTest.cpp",
     "ExtendedSkColorTypeTests.cpp",
     "FindCubicConvex180ChopsTest.cpp",
+    "FilterResultTest.cpp",
     "FloatingPointTextureTest.cpp",
     "GLBackendSurfaceTest.cpp",
     "GainmapShaderTest.cpp",
     "GpuDrawPathTest.cpp",
     "GpuRectanizerTest.cpp",
     "GrAHardwareBufferTest.cpp",
-    "GrClipStackTest.cpp",
+    # "GrClipStackTest.cpp",  # TODO(b/277938020): Linux - Fails at a Skia library assertion.
     "GrContextAbandonTest.cpp",
     "GrContextFactoryTest.cpp",
     "GrContextOOM.cpp",
     "GrDDLImageTest.cpp",
     "GrFinishedFlushTest.cpp",
     "GrGLExtensionsTest.cpp",
-    "GrGlyphVectorTest.cpp",
+    # "GrGlyphVectorTest.cpp",  # TODO(b/277938020): Linux - Causes SkRefCnt error after all tests finish.
     "GrGpuBufferTest.cpp",
     "GrMemoryPoolTest.cpp",
     "GrMeshTest.cpp",
@@ -258,15 +259,15 @@ GANESH_TESTS = [
     "GrSubmittedFlushTest.cpp",
     "GrSurfaceResolveTest.cpp",
     "GrSurfaceTest.cpp",
-    "GrTextBlobTest.cpp",
+    # "GrTextBlobTest.cpp",  # TODO(b/277938020): Linux - Causes SkRefCnt error after all tests finish.
     "GrTextureMipMapInvalidationTest.cpp",
     "GrThreadSafeCacheTest.cpp",
     "GradientTest.cpp",
     "ImageFilterCacheTest.cpp",
-    "ImageFilterTest.cpp",
-    "ImageIsOpaqueTest.cpp",
-    "ImageNewShaderTest.cpp",
-    "ImageTest.cpp",
+    # "ImageFilterTest.cpp",  # TODO(b/277938020): Linux - Fails at a Skia library assertion.
+    # "ImageIsOpaqueTest.cpp",  # TODO(b/277938020): Linux - Fails with segmentation fault.
+    # "ImageNewShaderTest.cpp",  # TODO(b/277938020): Linux - Fails at a test assertion.
+    # "ImageTest.cpp",  # TODO(b/277938020): Linux - Fails with segmentation fault.
     "LazyProxyTest.cpp",
     "LazyStencilAttachmentTest.cpp",
     "MatrixColorFilterTest.cpp",
@@ -277,8 +278,8 @@ GANESH_TESTS = [
     "PreChopPathCurvesTest.cpp",
     "PremulAlphaRoundTripTest.cpp",
     "PrimitiveProcessorTest.cpp",
-    "ProcessorTest.cpp",
-    "ProgramsTest.cpp",
+    # "ProcessorTest.cpp",  # TODO(b/277938020): Linux - Fails at a test assertion.
+    # "ProgramsTest.cpp",  # TODO(b/277938020): Linux - Causes SkRefCnt error after all tests finish.
     "PromiseImageTest.cpp",
     "ProxyConversionTest.cpp",
     "ProxyRefTest.cpp",
@@ -288,25 +289,25 @@ GANESH_TESTS = [
     "RepeatedClippedBlurTest.cpp",
     "ResourceAllocatorTest.cpp",
     "ResourceCacheTest.cpp",
-    "RuntimeBlendTest.cpp",
+    # "RuntimeBlendTest.cpp",  # TODO(b/277938020): Linux - Fails at a test assertion.
     "SRGBReadWritePixelsTest.cpp",
     "SaveLayerOriginTest.cpp",
     "ShaderImageFilterTest.cpp",
-    "SkRemoteGlyphCacheTest.cpp",
-    "SkRuntimeEffectTest.cpp",
+    # "SkRemoteGlyphCacheTest.cpp",  # TODO(b/277938020): Linux - Fails with SkRefCnt error.
+    # "SkRuntimeEffectTest.cpp",  # TODO(b/277938020): Linux - Fails at a test assertion.
     "SkSLCross.cpp",
     "SkSLDSLTest.cpp",
     "SkSLES2ConformanceTest.cpp",
-    "SkSLTest.cpp",
+    # "SkSLTest.cpp",  # TODO(b/27793802): Pixel 5 - Fails at a test assertion.
     "Skbug12214.cpp",
-    "Skbug5221.cpp",
+    # "Skbug5221.cpp",  # TODO(b/277938020): Linux - Causes SkRefCnt error after all tests finish.
     "Skbug6653.cpp",
     "SpecialImageTest.cpp",
     "SpecialSurfaceTest.cpp",
     "SrcSrcOverBatchTest.cpp",
     "SurfaceDrawContextTest.cpp",
     "SurfaceSemaphoreTest.cpp",
-    "SurfaceTest.cpp",
+    # "SurfaceTest.cpp",  # TODO(b/277938020): Linux - Fails at a test assertion.
     "TestTest.cpp",
     "TextureBindingsResetTest.cpp",
     "TextureOpTest.cpp",
@@ -541,6 +542,11 @@ skia_cpu_tests(
 skia_ganesh_tests(
     name = "debugger_tests",
     extra_deps = ["//tools/debugger"],
+    flags = {
+        "include_encoder": [
+            "png_encode_codec",
+        ],
+    },
     harness = ":tests_base",
     tests = DEBUGGER_TESTS,
 )
@@ -554,6 +560,11 @@ skia_ganesh_tests(
 
 skia_ganesh_tests(
     name = "ganesh_tests",
+    flags = {
+        "include_encoder": [
+            "png_encode_codec",
+        ],
+    },
     harness = ":tests_base",
     resources = ["//resources"],
     tests = GANESH_TESTS,
@@ -672,4 +683,26 @@ selects.config_setting_group(
         "//src/gpu:has_gpu_backend",
         ":force_cpu_tests_false",
     ],
+)
+
+# This target is known to build successfully for Android with the following Bazel invocations:
+#
+#     # For 64-bit ARM.
+#     $ bazel build //tests:known_good_android_ganesh_test \
+#           --config=for_android_arm64_with_rbe \
+#           --gpu_backend=gl_backend \
+#           --enable_gpu_test_utils
+#
+#     # For 32-bit ARM.
+#     $ bazel build //tests:known_good_android_ganesh_test \
+#           --config=for_android_arm32_with_rbe \
+#           --gpu_backend=gl_backend \
+#           --enable_gpu_test_utils
+#
+# lovisolo@ has yet to test the resulting binaries on a physical Android device.
+#
+# Building this alias is equivalent to building //tests:text_blob_cache_test.
+alias(
+    name = "known_good_android_ganesh_test",
+    actual = ":TextBlobCacheTest",
 )

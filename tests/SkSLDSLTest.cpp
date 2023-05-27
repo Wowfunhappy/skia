@@ -7,33 +7,33 @@
 
 #include "include/gpu/GrDirectContext.h"
 #include "include/private/SkSLDefines.h"
-#include "include/private/SkSLIRNode.h"
-#include "include/private/SkSLModifiers.h"
-#include "include/private/SkSLProgramElement.h"
-#include "include/private/SkSLProgramKind.h"
-#include "include/private/SkSLStatement.h"
 #include "include/private/base/SkTArray.h"
-#include "include/sksl/DSL.h"
-#include "include/sksl/DSLBlock.h"
-#include "include/sksl/DSLCore.h"
-#include "include/sksl/DSLExpression.h"
-#include "include/sksl/DSLFunction.h"
-#include "include/sksl/DSLLayout.h"
-#include "include/sksl/DSLModifiers.h"
-#include "include/sksl/DSLStatement.h"
-#include "include/sksl/DSLType.h"
-#include "include/sksl/DSLVar.h"
-#include "include/sksl/SkSLErrorReporter.h"
-#include "include/sksl/SkSLPosition.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrGpu.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLErrorReporter.h"
+#include "src/sksl/SkSLPosition.h"
+#include "src/sksl/SkSLProgramKind.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLThreadContext.h"
+#include "src/sksl/dsl/DSL.h"
+#include "src/sksl/dsl/DSLBlock.h"
+#include "src/sksl/dsl/DSLCore.h"
+#include "src/sksl/dsl/DSLExpression.h"
+#include "src/sksl/dsl/DSLFunction.h"
+#include "src/sksl/dsl/DSLLayout.h"
+#include "src/sksl/dsl/DSLModifiers.h"
+#include "src/sksl/dsl/DSLStatement.h"
+#include "src/sksl/dsl/DSLType.h"
+#include "src/sksl/dsl/DSLVar.h"
 #include "src/sksl/dsl/priv/DSLWriter.h"
 #include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLExpression.h"
+#include "src/sksl/ir/SkSLIRNode.h"
+#include "src/sksl/ir/SkSLModifiers.h"
 #include "src/sksl/ir/SkSLProgram.h"
+#include "src/sksl/ir/SkSLProgramElement.h"
+#include "src/sksl/ir/SkSLStatement.h"
 #include "tests/Test.h"
 
 #include <ctype.h>
@@ -45,6 +45,8 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+
+using namespace skia_private;
 
 struct GrContextOptions;
 
@@ -1269,7 +1271,7 @@ DEF_GANESH_TEST_FOR_MOCK_CONTEXT(DSLCall, r, ctxInfo) {
     {
         DSLExpression sqrt(SkSL::ThreadContext::Compiler().convertIdentifier(SkSL::Position(),
                 "sqrt"));
-        SkTArray<DSLExpression> args;
+        TArray<DSLExpression> args;
         args.emplace_back(16);
         EXPECT_EQUAL(sqrt(std::move(args)), "4.0");  // sqrt(16) gets optimized to 4
     }
@@ -1279,7 +1281,7 @@ DEF_GANESH_TEST_FOR_MOCK_CONTEXT(DSLCall, r, ctxInfo) {
                 "pow"));
         DSLVar a(kFloat_Type, "a");
         DSLVar b(kFloat_Type, "b");
-        SkTArray<DSLExpression> args;
+        TArray<DSLExpression> args;
         args.emplace_back(a);
         args.emplace_back(b);
         EXPECT_EQUAL(pow(std::move(args)), "pow(a, b)");
@@ -1294,7 +1296,7 @@ DEF_GANESH_TEST_FOR_MOCK_CONTEXT(DSLBlock, r, ctxInfo) {
 
     EXPECT_EQUAL((If(a > 0, --a), ++b), "if (a > 0) --a; ++b;");
 
-    SkTArray<DSLStatement> statements;
+    TArray<DSLStatement> statements;
     statements.push_back(a.assign(0));
     statements.push_back(++a);
     EXPECT_EQUAL(Block(std::move(statements)), "{ a = 0; ++a; }");
@@ -1350,7 +1352,7 @@ DEF_GANESH_TEST_FOR_MOCK_CONTEXT(DSLDeclare, r, ctxInfo) {
 
     {
         DSLWriter::Reset();
-        SkTArray<Var> vars;
+        TArray<Var> vars;
         vars.push_back(Var(kBool_Type, "a", true));
         vars.push_back(Var(kFloat_Type, "b"));
         EXPECT_EQUAL(Declare(vars), "bool a = true; float b;");
@@ -1370,7 +1372,7 @@ DEF_GANESH_TEST_FOR_MOCK_CONTEXT(DSLDeclare, r, ctxInfo) {
     {
         DSLWriter::Reset();
         REPORTER_ASSERT(r, SkSL::ThreadContext::ProgramElements().empty());
-        SkTArray<GlobalVar> vars;
+        TArray<GlobalVar> vars;
         vars.push_back(GlobalVar(kHalf4_Type, "a"));
         vars.push_back(GlobalVar(kHalf4_Type, "b", Half4(1)));
         Declare(vars);
@@ -1624,7 +1626,7 @@ DEF_GANESH_TEST_FOR_MOCK_CONTEXT(DSLSwitch, r, ctxInfo) {
 
     Var a(kFloat_Type, "a"), b(kInt_Type, "b");
 
-    SkTArray<DSLStatement> caseStatements;
+    TArray<DSLStatement> caseStatements;
     caseStatements.push_back(a.assign(1));
     caseStatements.push_back(Continue());
     Statement x = Switch(b,

@@ -21,10 +21,7 @@
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/GrDirectContext.h"
-#include "include/private/SkSLProgramElement.h"
-#include "include/private/SkSLProgramKind.h"
 #include "include/private/base/SkTArray.h"
-#include "include/sksl/DSLCore.h"
 #include "include/sksl/SkSLVersion.h"
 #include "src/base/SkArenaAlloc.h"
 #include "src/core/SkRasterPipeline.h"
@@ -35,26 +32,35 @@
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrShaderCaps.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLProgramKind.h"
 #include "src/sksl/SkSLProgramSettings.h"
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
 #include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
+#include "src/sksl/dsl/DSLCore.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
+#include "src/sksl/ir/SkSLModifiers.h"
 #include "src/sksl/ir/SkSLProgram.h"
-#include "src/sksl/tracing/SkRPDebugTrace.h"
+#include "src/sksl/ir/SkSLProgramElement.h"
+#include "src/sksl/ir/SkSLStatement.h"
+#include "src/sksl/ir/SkSLType.h"
+#include "src/sksl/ir/SkSLVarDeclarations.h"
+#include "src/sksl/ir/SkSLVariable.h"
+#include "src/sksl/tracing/SkSLDebugTracePriv.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
 #include "tools/Resources.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
-// This debugging toggle enables extra logging in `test_raster_pipeline`.
-//#define DUMP_RP_PROGRAMS 1
+using namespace skia_private;
 
+namespace SkSL { class Context; }
 struct GrContextOptions;
 
 static constexpr int kWidth = 2;
@@ -81,7 +87,12 @@ namespace SkSLTestFlags {
 }
 
 static constexpr bool is_skvm(int flags) {
+#if defined(SK_ENABLE_SKSL_IN_RASTER_PIPELINE)
+    // We aren't using SkVM to execute our SkSL, so there's nothing to test.
+    return false;
+#else
     return flags & SkSLTestFlags::VM;
+#endif
 }
 
 static constexpr bool is_gpu(int flags) {
@@ -340,10 +351,6 @@ static void test_clone(skiatest::Reporter* r, const char* testFile, int flags) {
     SkSL::dsl::End();
 }
 
-#if defined(DUMP_RP_PROGRAMS)
-#include "src/core/SkStreamPriv.h"
-#endif
-
 static void report_rp_pass(skiatest::Reporter* r, const char* testFile, int flags) {
     if (!(flags & SkSLTestFlags::RP)) {
         ERRORF(r, "NEW: %s", testFile);
@@ -383,15 +390,35 @@ static void test_raster_pipeline(skiatest::Reporter* r, const char* testFile, in
     }
 
     // Match up uniforms from the program against our list of test uniforms, and build up a data
-    // buffer of uniform floats. TODO: this approach doesn't work for complex types (arrays and
-    // structs), but the RP backend doesn't support those yet regardless.
-    std::unique_ptr<SkSL::UniformInfo> uniformInfo = program->getUniformInfo();
-    SkTArray<float> uniformValues;
-    for (const SkSL::UniformInfo::Uniform& programUniform : uniformInfo->fUniforms) {
+    // buffer of uniform floats.
+    size_t offset = 0;
+    TArray<SkRuntimeEffect::Uniform> uniforms;
+    const SkSL::Context& ctx(compiler.context());
+
+    for (const SkSL::ProgramElement* elem : program->elements()) {
+        // Variables (uniform, etc.)
+        if (elem->is<SkSL::GlobalVarDeclaration>()) {
+            const SkSL::GlobalVarDeclaration& global = elem->as<SkSL::GlobalVarDeclaration>();
+            const SkSL::VarDeclaration& varDecl = global.declaration()->as<SkSL::VarDeclaration>();
+            const SkSL::Variable& var = *varDecl.var();
+
+            if (var.type().isEffectChild()) {
+                ERRORF(r, "%s: Test program cannot contain child effects", testFile);
+                return;
+            }
+            // 'uniform' variables
+            if (var.modifiers().fFlags & SkSL::Modifiers::kUniform_Flag) {
+                uniforms.push_back(SkRuntimeEffectPriv::VarAsUniform(var, ctx, &offset));
+            }
+        }
+    }
+
+    TArray<float> uniformValues;
+    for (const SkRuntimeEffect::Uniform& programUniform : uniforms) {
         bool foundMatch = false;
         for (const UniformData& data : kUniformData) {
-            if (data.name == programUniform.fName) {
-                SkASSERT((int)data.span.size() == programUniform.fColumns * programUniform.fRows);
+            if (data.name == programUniform.name) {
+                SkASSERT(data.span.size() * sizeof(float) == programUniform.sizeInBytes());
                 foundMatch = true;
                 uniformValues.push_back_n(data.span.size(), data.span.data());
                 break;
@@ -406,7 +433,7 @@ static void test_raster_pipeline(skiatest::Reporter* r, const char* testFile, in
     // Compile our program.
     SkArenaAlloc alloc(/*firstHeapAllocation=*/1000);
     SkRasterPipeline pipeline(&alloc);
-    SkSL::SkRPDebugTrace debugTrace;
+    SkSL::DebugTracePriv debugTrace;
     std::unique_ptr<SkSL::RP::Program> rasterProg =
             SkSL::MakeRasterPipelineProgram(*program,
                                             *main->definition(),
@@ -415,14 +442,6 @@ static void test_raster_pipeline(skiatest::Reporter* r, const char* testFile, in
         report_rp_fail(r, testFile, flags, "code is not supported");
         return;
     }
-
-#if defined(DUMP_RP_PROGRAMS)
-    // Dump the program instructions via SkDebugf.
-    SkDebugf("----- %s -----\n\n", testFile);
-    SkDebugfStream stream;
-    rasterProg->dump(&stream);
-    SkDebugf("\n-----\n\n");
-#endif
 
     // Append the SkSL program to the raster pipeline.
     pipeline.append_constant_color(&alloc, SkColors::kTransparent);
@@ -450,9 +469,6 @@ static void test_raster_pipeline(skiatest::Reporter* r, const char* testFile, in
     // Success!
     report_rp_pass(r, testFile, flags);
 }
-
-#undef DUMP_RP_PROGRAMS
-#undef REPORT_RP_PASS_FAIL
 
 #define SKSL_TEST(flags, ctsEnforcement, name, path)                                         \
     DEF_CONDITIONAL_TEST(SkSL##name##_CPU, r, is_skvm(flags)) { test_skvm(r, path, flags); } \
@@ -609,7 +625,7 @@ SKSL_TEST(RP + GPU_ES3 + UsesNaN, kNever, RecursiveComparison_Types,   "runtime/
 SKSL_TEST(RP + GPU_ES3 + UsesNaN, kNever, RecursiveComparison_Vectors, "runtime/RecursiveComparison_Vectors.rts")
 
 SKSL_TEST(RP + GPU_ES3,      kNever,      ArrayCast,                       "shared/ArrayCast.sksl")
-SKSL_TEST(GPU_ES3,           kNever,      ArrayComparison,                 "shared/ArrayComparison.sksl")
+SKSL_TEST(RP + GPU_ES3,      kNever,      ArrayComparison,                 "shared/ArrayComparison.sksl")
 SKSL_TEST(RP + GPU_ES3,      kNever,      ArrayConstructors,               "shared/ArrayConstructors.sksl")
 SKSL_TEST(RP + VM + GPU_ES3, kNever,      ArrayFollowedByScalar,           "shared/ArrayFollowedByScalar.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, ArrayTypes,                      "shared/ArrayTypes.sksl")
@@ -618,7 +634,7 @@ SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CastsRoundTowardZero,            "shar
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CommaMixedTypes,                 "shared/CommaMixedTypes.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CommaSideEffects,                "shared/CommaSideEffects.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, CompileTimeConstantVariables,    "shared/CompileTimeConstantVariables.sksl")
-SKSL_TEST(GPU_ES3,           kNever,      ConstantCompositeAccessViaConstantIndex, "shared/ConstantCompositeAccessViaConstantIndex.sksl")
+SKSL_TEST(RP + GPU_ES3,      kNever,      ConstantCompositeAccessViaConstantIndex, "shared/ConstantCompositeAccessViaConstantIndex.sksl")
 SKSL_TEST(RP + GPU_ES3,      kNever,      ConstantCompositeAccessViaDynamicIndex,  "shared/ConstantCompositeAccessViaDynamicIndex.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, ConstantIf,                      "shared/ConstantIf.sksl")
 SKSL_TEST(RP + GPU_ES3,      kNever,      ConstArray,                      "shared/ConstArray.sksl")
@@ -712,7 +728,7 @@ SKSL_TEST(RP + VM + GPU,     kApiLevel_T, TernaryAsLValueFoldableTest,     "shar
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, TernaryExpression,               "shared/TernaryExpression.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_U, TernarySideEffects,              "shared/TernarySideEffects.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UnaryPositiveNegative,           "shared/UnaryPositiveNegative.sksl")
-SKSL_TEST(VM + GPU,          kApiLevel_T, UniformArray,                    "shared/UniformArray.sksl")
+SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UniformArray,                    "shared/UniformArray.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UniformMatrixResize,             "shared/UniformMatrixResize.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, UnusedVariables,                 "shared/UnusedVariables.sksl")
 SKSL_TEST(RP + VM + GPU,     kApiLevel_T, VectorConstructors,              "shared/VectorConstructors.sksl")

@@ -25,7 +25,7 @@ CORE_FILES = [
     "SkMasks.cpp",
     "SkMasks.h",
     "SkPixmapUtils.cpp",
-    "SkPixmapUtils.h",
+    "SkPixmapUtilsPriv.h",
     "SkSampler.cpp",
     "SkSampler.h",
     "SkSwizzler.cpp",
@@ -99,6 +99,14 @@ DECODE_JPEG_FILES = [
 split_srcs_and_hdrs(
     name = "decode_jpeg",
     files = DECODE_JPEG_FILES,
+)
+
+filegroup(
+    name = "jpeg_xmp",
+    srcs = [
+        "SkJpegXmp.cpp",
+        "SkJpegXmp.h",
+    ],
 )
 
 DECODE_PNG_FILES = [

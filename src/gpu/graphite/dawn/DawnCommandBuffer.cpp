@@ -114,7 +114,14 @@ bool DawnCommandBuffer::onAddComputePass(const DispatchGroupList& groups) {
         for (const auto& dispatch : group->dispatches()) {
             this->bindComputePipeline(group->getPipeline(dispatch.fPipelineIndex));
             for (const ResourceBinding& binding : dispatch.fBindings) {
-                this->bindBuffer(binding.fBuffer.fBuffer, binding.fBuffer.fOffset, binding.fIndex);
+                if (const BindBufferInfo* buffer =
+                            std::get_if<BindBufferInfo>(&binding.fResource)) {
+                    this->bindBuffer(buffer->fBuffer, buffer->fOffset, binding.fIndex);
+                } else {
+                    const TextureIndex* texIdx = std::get_if<TextureIndex>(&binding.fResource);
+                    SkASSERT(texIdx);
+                    this->bindTexture(group->getTexture(*texIdx), binding.fIndex);
+                }
             }
             this->dispatchThreadgroups(dispatch.fParams.fGlobalDispatchSize,
                                        dispatch.fParams.fLocalDispatchSize);
@@ -584,15 +591,21 @@ void DawnCommandBuffer::setScissor(unsigned int left,
                                    unsigned int width,
                                    unsigned int height) {
     SkASSERT(fActiveRenderPassEncoder);
-    fActiveRenderPassEncoder.SetScissorRect(left, top, width, height);
+    SkIRect scissor = SkIRect::MakeXYWH(
+            left + fReplayTranslation.x(), top + fReplayTranslation.y(), width, height);
+    if (!scissor.intersect(SkIRect::MakeSize(fRenderPassSize))) {
+        scissor.setEmpty();
+    }
+    fActiveRenderPassEncoder.SetScissorRect(
+            scissor.x(), scissor.y(), scissor.width(), scissor.height());
 }
 
 void DawnCommandBuffer::preprocessViewport(const SkRect& viewport) {
     // Dawn's framebuffer space has (0, 0) at the top left. This agrees with Skia's device coords.
     // However, in NDC (-1, -1) is the bottom left. So we flip the origin here (assuming all
     // surfaces we have are TopLeft origin).
-    const float x = viewport.x();
-    const float y = viewport.y();
+    const float x = viewport.x() - fReplayTranslation.x();
+    const float y = viewport.y() - fReplayTranslation.y();
     const float invTwoW = 2.f / viewport.width();
     const float invTwoH = 2.f / viewport.height();
     const IntrinsicConstant rtAdjust = {invTwoW, -invTwoH, -1.f - x * invTwoW, 1.f + y * invTwoH};
@@ -720,6 +733,11 @@ void DawnCommandBuffer::bindBuffer(const Buffer* buffer, unsigned int offset, un
     SkASSERT(false);
 }
 
+void DawnCommandBuffer::bindTexture(const Texture* texture, unsigned int index) {
+    // TODO: https://b.corp.google.com/issues/260341543
+    SkASSERT(false);
+}
+
 void DawnCommandBuffer::dispatchThreadgroups(const WorkgroupSize& globalSize,
                                              const WorkgroupSize& localSize) {
     // TODO: https://b.corp.google.com/issues/260341543
@@ -802,6 +820,7 @@ bool DawnCommandBuffer::onCopyBufferToTexture(const Buffer* buffer,
 
         dst.origin.x = copyData[i].fRect.x();
         dst.origin.y = copyData[i].fRect.y();
+        dst.mipLevel = copyData[i].fMipLevel;
 
         wgpu::Extent3D copySize = {static_cast<uint32_t>(copyData[i].fRect.width()),
                                    static_cast<uint32_t>(copyData[i].fRect.height()),

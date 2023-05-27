@@ -30,8 +30,8 @@
 #include "src/gpu/ganesh/GrDataUtils.h"
 #include "src/gpu/ganesh/GrImageContextPriv.h"
 #include "src/gpu/ganesh/GrRecordingContextPriv.h"
+#include "src/gpu/ganesh/image/SkImage_GaneshBase.h"
 #include "src/image/SkImage_Base.h"
-#include "src/image/SkImage_GpuBase.h"
 #include "third_party/etc1/etc1.h"
 #include "tools/gpu/ProxyUtils.h"
 
@@ -149,15 +149,15 @@ static sk_sp<SkImage> make_compressed_image(GrDirectContext* dContext,
 
     sk_sp<SkImage> image;
     if (dContext) {
-        image = SkImage::MakeTextureFromCompressed(dContext, std::move(tmp),
-                                                   dimensions.width(),
-                                                   dimensions.height(),
-                                                   compression, GrMipmapped::kYes);
+        image = SkImages::TextureFromCompressedTextureData(dContext,
+                                                           std::move(tmp),
+                                                           dimensions.width(),
+                                                           dimensions.height(),
+                                                           compression,
+                                                           GrMipmapped::kYes);
     } else {
-        image = SkImage::MakeRasterFromCompressed(std::move(tmp),
-                                                  dimensions.width(),
-                                                  dimensions.height(),
-                                                  compression);
+        image = SkImages::RasterFromCompressedTextureData(
+                std::move(tmp), dimensions.width(), dimensions.height(), compression);
     }
     return image;
 }

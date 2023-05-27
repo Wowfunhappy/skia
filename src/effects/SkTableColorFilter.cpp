@@ -68,7 +68,7 @@ namespace skgpu { class KeyBuilder; }
 class SkSurfaceProps;
 #endif
 
-#if defined(SK_ENABLE_SKSL)
+#if defined(SK_ENABLE_SKSL) && defined(SK_ENABLE_SKVM)
 #include "src/core/SkVM.h"
 #endif
 
@@ -122,6 +122,7 @@ public:
         return true;
     }
 
+#if defined(SK_ENABLE_SKVM)
     skvm::Color onProgram(skvm::Builder* p, skvm::Color c,
                           const SkColorInfo& dst,
                           skvm::Uniforms* uniforms, SkArenaAlloc*) const override {
@@ -139,6 +140,7 @@ public:
         c.b = apply_table_to_component(c.b, fBitmap.getAddr8(0,3));
         return premul(c);
     }
+#endif
 
     void flatten(SkWriteBuffer& buffer) const override {
         buffer.writeByteArray(fBitmap.getAddr8(0,0), 4*256);
@@ -301,20 +303,17 @@ void SkTable_ColorFilter::addToKey(const skgpu::graphite::KeyContext& keyContext
                                    skgpu::graphite::PipelineDataGatherer* gatherer) const {
     using namespace skgpu::graphite;
 
-    sk_sp<SkImage> image = RecorderPriv::CreateCachedImage(keyContext.recorder(), fBitmap);
-    if (!image) {
+    sk_sp<TextureProxy> proxy = RecorderPriv::CreateCachedProxy(keyContext.recorder(), fBitmap);
+    if (!proxy) {
         SKGPU_LOG_W("Couldn't create TableColorFilter's table");
 
         // Return the input color as-is.
-        PassthroughShaderBlock::BeginBlock(keyContext, builder, gatherer);
+        PriorOutputBlock::BeginBlock(keyContext, builder, gatherer);
         builder->endBlock();
         return;
     }
 
-    TableColorFilterBlock::TableColorFilterData data;
-
-    auto [view, _] = as_IB(image)->asView(keyContext.recorder(), skgpu::Mipmapped::kNo);
-    data.fTextureProxy = view.refProxy();
+    TableColorFilterBlock::TableColorFilterData data(std::move(proxy));
 
     TableColorFilterBlock::BeginBlock(keyContext, builder, gatherer, data);
     builder->endBlock();

@@ -49,6 +49,7 @@ using AtlasTextOp = skgpu::ganesh::AtlasTextOp;
 #include <cmath>
 #include <optional>
 
+using namespace skia_private;
 using namespace skglyph;
 
 // -- GPU Text -------------------------------------------------------------------------------------
@@ -1249,7 +1250,7 @@ public:
     }
 #endif  // defined(SK_GANESH)
 
-#ifdef SK_GRAPHITE
+#if defined(SK_GRAPHITE)
     void draw(SkCanvas*,
               SkPoint drawOrigin,
               const SkPaint& paint,
@@ -2261,18 +2262,18 @@ SubRunContainerOwner SubRunContainer::MakeInAlloc(
     const int maxGlyphRunSize = glyphRunList.maxGlyphRunSize();
 
     // Accepted buffers.
-    SkSTArray<64, SkPackedGlyphID> acceptedPackedGlyphIDs;
-    SkSTArray<64, SkGlyphID> acceptedGlyphIDs;
-    SkSTArray<64, SkPoint> acceptedPositions;
-    SkSTArray<64, SkMask::Format> acceptedFormats;
+    STArray<64, SkPackedGlyphID> acceptedPackedGlyphIDs;
+    STArray<64, SkGlyphID> acceptedGlyphIDs;
+    STArray<64, SkPoint> acceptedPositions;
+    STArray<64, SkMask::Format> acceptedFormats;
     acceptedPackedGlyphIDs.resize(maxGlyphRunSize);
     acceptedGlyphIDs.resize(maxGlyphRunSize);
     acceptedPositions.resize(maxGlyphRunSize);
     acceptedFormats.resize(maxGlyphRunSize);
 
     // Rejected buffers.
-    SkSTArray<64, SkGlyphID> rejectedGlyphIDs;
-    SkSTArray<64, SkPoint> rejectedPositions;
+    STArray<64, SkGlyphID> rejectedGlyphIDs;
+    STArray<64, SkPoint> rejectedPositions;
     rejectedGlyphIDs.resize(maxGlyphRunSize);
     rejectedPositions.resize(maxGlyphRunSize);
     const auto rejectedBuffer = SkMakeZip(rejectedGlyphIDs, rejectedPositions);

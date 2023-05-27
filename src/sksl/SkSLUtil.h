@@ -143,6 +143,9 @@ struct ShaderCaps {
     bool fRewriteMatrixComparisons = false;
     // Strips const from function parameters in the GLSL code generator. (skia:13858)
     bool fRemoveConstFromFunctionParameters = false;
+    // On some Android devices colors aren't accurate enough for the double lookup in the
+    // Perlin noise shader. This workaround aggressively snaps colors to multiples of 1/255.
+    bool fPerlinNoiseRoundingFix = false;
 
     const char* fVersionDeclString = "";
 

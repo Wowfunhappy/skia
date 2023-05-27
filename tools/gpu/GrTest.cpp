@@ -11,6 +11,7 @@
 #include "include/gpu/GrRecordingContext.h"
 #include "include/private/base/SkTo.h"
 #include "src/base/SkMathPriv.h"
+#include "src/base/SkRandom.h"
 #include "src/gpu/ganesh/GrClip.h"
 #include "src/gpu/ganesh/GrDirectContextPriv.h"
 #include "src/gpu/ganesh/GrDrawOpAtlas.h"
@@ -25,7 +26,7 @@
 #include "src/gpu/ganesh/GrTexture.h"
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/SurfaceDrawContext.h"
-#include "src/image/SkImage_Gpu.h"
+#include "src/gpu/ganesh/image/SkImage_Ganesh.h"
 #include "src/text/gpu/StrikeCache.h"
 #include "src/text/gpu/TextBlobRedrawCoordinator.h"
 

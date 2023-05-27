@@ -32,7 +32,7 @@ static constexpr wgpu::TextureFormat kFormats[] = {
 
     wgpu::TextureFormat::Stencil8,
     wgpu::TextureFormat::Depth32Float,
-    wgpu::TextureFormat::Depth32FloatStencil8,
+    wgpu::TextureFormat::Depth24PlusStencil8,
 
     wgpu::TextureFormat::Undefined,
 };
@@ -70,6 +70,14 @@ bool DawnCaps::isTexturable(wgpu::TextureFormat format) const {
 bool DawnCaps::isRenderable(const TextureInfo& info) const {
     return info.dawnTextureSpec().fUsage & wgpu::TextureUsage::RenderAttachment &&
     this->isRenderable(info.dawnTextureSpec().fFormat, info.numSamples());
+}
+
+bool DawnCaps::isStorage(const TextureInfo& info) const {
+    if (!(info.dawnTextureSpec().fUsage & wgpu::TextureUsage::StorageBinding)) {
+        return false;
+    }
+    const FormatInfo& formatInfo = this->getFormatInfo(info.dawnTextureSpec().fFormat);
+    return info.numSamples() == 1 && SkToBool(FormatInfo::kStorage_Flag & formatInfo.fFlags);
 }
 
 uint32_t DawnCaps::maxRenderTargetSampleCount(wgpu::TextureFormat format) const {
@@ -138,6 +146,26 @@ TextureInfo DawnCaps::getDefaultDepthStencilTextureInfo(
     return info;
 }
 
+TextureInfo DawnCaps::getDefaultStorageTextureInfo(SkColorType colorType) const {
+    // Storage textures are currently always sampleable from a shader.
+    wgpu::TextureUsage usage = wgpu::TextureUsage::StorageBinding |
+                               wgpu::TextureUsage::TextureBinding |
+                               wgpu::TextureUsage::CopySrc;
+    wgpu::TextureFormat format = this->getFormatFromColorType(colorType);
+    if (format == wgpu::TextureFormat::Undefined) {
+        SkDebugf("colorType=%d is not supported\n", static_cast<int>(colorType));
+        return {};
+    }
+
+    DawnTextureInfo info;
+    info.fSampleCount = 1;
+    info.fMipmapped = Mipmapped::kNo;
+    info.fFormat = format;
+    info.fUsage = usage;
+
+    return info;
+}
+
 const Caps::ColorTypeInfo* DawnCaps::getColorTypeInfo(SkColorType colorType,
                                                       const TextureInfo& textureInfo) const {
     auto dawnFormat = textureInfo.dawnTextureSpec().fFormat;
@@ -154,7 +182,6 @@ const Caps::ColorTypeInfo* DawnCaps::getColorTypeInfo(SkColorType colorType,
         }
     }
 
-    SkASSERT(false);
     return nullptr;
 }
 
@@ -223,6 +250,9 @@ void DawnCaps::initShaderCaps() {
     // WGSL does not support infinities regardless of hardware support. There are discussions around
     // enabling it using an extension in the future.
     shaderCaps->fInfinitySupport = false;
+
+    // WGSL supports shader derivatives in the fragment shader
+    shaderCaps->fShaderDerivativeSupport = true;
 }
 
 void DawnCaps::initFormatTable(const wgpu::Device& device) {
@@ -328,9 +358,9 @@ void DawnCaps::initFormatTable(const wgpu::Device& device) {
         info->fColorTypeInfoCount = 0;
     }
 
-    // Format: Depth32Float_Stencil8
+    // Format: Depth24PlusStencil8
     {
-        info = &fFormatTable[GetFormatIndex(wgpu::TextureFormat::Depth32FloatStencil8)];
+        info = &fFormatTable[GetFormatIndex(wgpu::TextureFormat::Depth24PlusStencil8)];
         info->fFlags = FormatInfo::kMSAA_Flag;
         info->fColorTypeInfoCount = 0;
     }

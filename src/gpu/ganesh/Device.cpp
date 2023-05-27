@@ -91,8 +91,9 @@
 #include "src/gpu/ganesh/effects/GrRRectEffect.h"
 #include "src/gpu/ganesh/geometry/GrShape.h"
 #include "src/gpu/ganesh/geometry/GrStyledShape.h"
-#include "src/image/SkImage_Base.h"
+#include "src/gpu/ganesh/image/GrImageUtils.h"
 #include "src/text/GlyphRun.h"
+
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -485,10 +486,18 @@ void Device::drawPoints(SkCanvas::PointMode mode,
         }
     }
 
+    const GrCaps* caps = fContext->priv().caps();
     SkScalar scales[2];
-    bool isHairline = (0 == width) ||
-                       (1 == width && this->localToDevice().getMinMaxScales(scales) &&
-                        SkScalarNearlyEqual(scales[0], 1.f) && SkScalarNearlyEqual(scales[1], 1.f));
+    bool isHairline =
+            ((0 == width) ||
+             (1 == width && this->localToDevice().getMinMaxScales(scales) &&
+              SkScalarNearlyEqual(scales[0], 1.f) && SkScalarNearlyEqual(scales[1], 1.f))) &&
+
+            // Don't do this as a hairline draw, which will emit line primitives, if
+            // lines are not permitted by caps.
+            !((mode == SkCanvas::kLines_PointMode || mode == SkCanvas::kPolygon_PointMode) &&
+              caps->avoidLineDraws());
+
     // we only handle non-coverage-aa hairlines and paints without path effects or mask filters,
     // else we let the SkDraw call our drawPath()
     if (!isHairline ||
@@ -505,19 +514,7 @@ void Device::drawPoints(SkCanvas::PointMode mode,
         return;
     }
 
-    GrPrimitiveType primitiveType = point_mode_to_primitive_type(mode);
-
     const SkMatrixProvider* matrixProvider = this;
-#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-    SkTLazy<SkPostTranslateMatrixProvider> postTranslateMatrixProvider;
-    // This offsetting in device space matches the expectations of the Android framework for non-AA
-    // points and lines.
-    if (GrIsPrimTypeLines(primitiveType) || GrPrimitiveType::kPoints == primitiveType) {
-        static const SkScalar kOffset = 0.063f; // Just greater than 1/16.
-        matrixProvider = postTranslateMatrixProvider.init(*matrixProvider, kOffset, kOffset);
-    }
-#endif
-
     GrPaint grPaint;
     if (!SkPaintToGrPaint(this->recordingContext(),
                           fSurfaceDrawContext->colorInfo(),
@@ -532,6 +529,7 @@ void Device::drawPoints(SkCanvas::PointMode mode,
     sk_sp<SkVertices> vertices = SkVertices::MakeCopy(kIgnoredMode, SkToS32(count), pts, nullptr,
                                                       nullptr);
 
+    GrPrimitiveType primitiveType = point_mode_to_primitive_type(mode);
     fSurfaceDrawContext->drawVertices(this->clip(), std::move(grPaint), *matrixProvider,
                                       std::move(vertices), &primitiveType);
 }
@@ -836,7 +834,7 @@ sk_sp<SkSpecialImage> Device::makeSpecial(const SkImage* image) {
 
     SkPixmap pm;
     if (image->isTextureBacked()) {
-        auto [view, ct] = as_IB(image)->asView(this->recordingContext(), GrMipmapped::kNo);
+        auto [view, ct] = skgpu::ganesh::AsView(this->recordingContext(), image, GrMipmapped::kNo);
         SkASSERT(view);
 
         return SkSpecialImage::MakeDeferredFromGpu(fContext.get(),
@@ -997,7 +995,9 @@ void Device::drawImageLattice(const SkImage* image,
                               const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
     auto iter = std::make_unique<SkLatticeIter>(lattice, dst);
-    if (auto [view, ct] = as_IB(image)->asView(this->recordingContext(), GrMipmapped::kNo); view) {
+
+    auto [view, ct] = skgpu::ganesh::AsView(this->recordingContext(), image, GrMipmapped::kNo);
+    if (view) {
         GrColorInfo colorInfo(ct, image->alphaType(), image->refColorSpace());
         this->drawViewLattice(std::move(view),
                               std::move(colorInfo),
@@ -1239,7 +1239,7 @@ bool Device::replaceBackingProxy(SkSurface::ContentChangeMode mode) {
     }
 
     GrProxyProvider* proxyProvider = fContext->priv().proxyProvider();
-    // This entry point is used by SkSurface_Gpu::onCopyOnWrite so it must create a
+    // This entry point is used by SkSurface_Ganesh::onCopyOnWrite so it must create a
     // kExact-backed render target proxy
     sk_sp<GrTextureProxy> proxy =
             proxyProvider->createProxy(format,

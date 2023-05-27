@@ -13,6 +13,8 @@
 #include "src/gpu/graphite/vk/VulkanSharedContext.h"
 #include "src/gpu/graphite/vk/VulkanTexture.h"
 
+using namespace skia_private;
+
 namespace skgpu::graphite {
 
 std::unique_ptr<VulkanCommandBuffer> VulkanCommandBuffer::Make(
@@ -80,7 +82,23 @@ VulkanCommandBuffer::VulkanCommandBuffer(VkCommandPool pool,
     this->begin();
 }
 
-VulkanCommandBuffer::~VulkanCommandBuffer() {}
+VulkanCommandBuffer::~VulkanCommandBuffer() {
+    if (fActive) {
+        // Need to end command buffer before deleting it
+        VULKAN_CALL(fSharedContext->interface(), EndCommandBuffer(fPrimaryCommandBuffer));
+        fActive = false;
+    }
+
+    if (VK_NULL_HANDLE != fSubmitFence) {
+        VULKAN_CALL(fSharedContext->interface(), DestroyFence(fSharedContext->device(),
+                                                              fSubmitFence,
+                                                              nullptr));
+    }
+    // This should delete any command buffers as well.
+    VULKAN_CALL(fSharedContext->interface(), DestroyCommandPool(fSharedContext->device(),
+                                                                fPool,
+                                                                nullptr));
+}
 
 void VulkanCommandBuffer::onResetCommandBuffer() {
     SkASSERT(!fActive);
@@ -105,7 +123,7 @@ void VulkanCommandBuffer::begin() {
 
     VULKAN_CALL_ERRCHECK(fSharedContext->interface(), BeginCommandBuffer(fPrimaryCommandBuffer,
                                                                          &cmdBufferBeginInfo));
-    SkDEBUGCODE(fActive = true;)
+    fActive = true;
 }
 
 void VulkanCommandBuffer::end() {
@@ -115,7 +133,7 @@ void VulkanCommandBuffer::end() {
 
     VULKAN_CALL_ERRCHECK(fSharedContext->interface(), EndCommandBuffer(fPrimaryCommandBuffer));
 
-    SkDEBUGCODE(fActive = false;)
+    fActive = false;
 }
 
 static bool submit_to_queue(const VulkanInterface* interface,
@@ -244,7 +262,10 @@ bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc&,
                                           const Texture* depthStencilTexture,
                                           SkRect viewport,
                                           const DrawPassList& drawPasses) {
-    return false;
+    // TODO: fill this in
+
+    // return true despite doing nothing to allow dm to run
+    return true;
 }
 
 bool VulkanCommandBuffer::onAddComputePass(const DispatchGroupList&) { return false; }
@@ -338,7 +359,7 @@ bool VulkanCommandBuffer::onCopyBufferToTexture(const Buffer* buffer,
     size_t bytesPerBlock = VkFormatBytesPerBlock(dstTextureInfo.fFormat);
 
     // Set up copy regions.
-    SkTArray<VkBufferImageCopy> regions(count);
+    TArray<VkBufferImageCopy> regions(count);
     for (int i = 0; i < count; ++i) {
         VkBufferImageCopy& region = regions.push_back();
         memset(&region, 0, sizeof(VkBufferImageCopy));

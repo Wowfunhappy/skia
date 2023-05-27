@@ -110,6 +110,9 @@ private:
     const VulkanSharedContext* fSharedContext;
     VulkanResourceProvider* fResourceProvider;
 
+    // begin() has been called, but not end()
+    bool fActive = false;
+
     // Stores a pointer to the current active render pass (i.e. begin has been called but not
     // end). A nullptr means there is no active render pass. The VulkanCommandBuffer does not own
     // the render pass.
@@ -119,15 +122,12 @@ private:
     VkFence fSubmitFence = VK_NULL_HANDLE;
 
     // Tracking of memory barriers so that we can submit them all in a batch together.
-    SkSTArray<1, VkBufferMemoryBarrier> fBufferBarriers;
-    SkSTArray<2, VkImageMemoryBarrier> fImageBarriers;
+    skia_private::STArray<1, VkBufferMemoryBarrier> fBufferBarriers;
+    skia_private::STArray<2, VkImageMemoryBarrier> fImageBarriers;
     bool fBarriersByRegion = false;
     VkPipelineStageFlags fSrcStageMask = 0;
     VkPipelineStageFlags fDstStageMask = 0;
 
-#ifdef SK_DEBUG
-    bool fActive = false;
-#endif
 };
 
 } // namespace skgpu::graphite

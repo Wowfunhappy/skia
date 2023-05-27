@@ -330,7 +330,7 @@ private:
                                         const SkIRect&,
                                         const GrOpsRenderPass::LoadAndStoreInfo&,
                                         const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-                                        const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
+                                        const skia_private::TArray<GrSurfaceProxy*, true>& sampledProxies,
                                         GrXferBarrierFlags renderPassXferBarriers) override;
 
     void prepareSurfacesForBackendAccessAndStateUpdates(
@@ -414,10 +414,10 @@ private:
     // just a raw pointer; object's lifespan is managed by fCmdPool
     GrVkPrimaryCommandBuffer*                             fMainCmdBuffer;
 
-    SkSTArray<1, GrVkSemaphore::Resource*>                fSemaphoresToWaitOn;
-    SkSTArray<1, GrVkSemaphore::Resource*>                fSemaphoresToSignal;
+    skia_private::STArray<1, GrVkSemaphore::Resource*>    fSemaphoresToWaitOn;
+    skia_private::STArray<1, GrVkSemaphore::Resource*>    fSemaphoresToSignal;
 
-    SkTArray<std::unique_ptr<SkDrawable::GpuDrawHandler>> fDrawables;
+    skia_private::TArray<std::unique_ptr<SkDrawable::GpuDrawHandler>> fDrawables;
 
     VkPhysicalDeviceProperties                            fPhysDevProps;
     VkPhysicalDeviceMemoryProperties                      fPhysDevMemProps;
