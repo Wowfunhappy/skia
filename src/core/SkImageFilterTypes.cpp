@@ -11,11 +11,11 @@
 #include "include/core/SkPicture.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkTileMode.h"
-#include "src/core/SkColorFilterBase.h"
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkSpecialSurface.h"
+#include "src/effects/colorfilters/SkColorFilterBase.h"
 
 namespace skif {
 
@@ -27,87 +27,6 @@ namespace {
 // near integer CTM and uses integer crop rects that would grab an extra row/column of the
 // input image when using a strict roundOut.
 static constexpr float kRoundEpsilon = 1e-3f;
-
-// Both [I]Vectors and Sk[I]Sizes are transformed as non-positioned values, i.e. go through
-// mapVectors() not mapPoints().
-SkIVector map_as_vector(int32_t x, int32_t y, const SkMatrix& matrix) {
-    SkVector v = SkVector::Make(SkIntToScalar(x), SkIntToScalar(y));
-    matrix.mapVectors(&v, 1);
-    return SkIVector::Make(SkScalarRoundToInt(v.fX), SkScalarRoundToInt(v.fY));
-}
-
-SkVector map_as_vector(SkScalar x, SkScalar y, const SkMatrix& matrix) {
-    SkVector v = SkVector::Make(x, y);
-    matrix.mapVectors(&v, 1);
-    return v;
-}
-
-SkRect map_rect(const SkMatrix& matrix, const SkRect& rect) {
-    return rect.isEmpty() ? SkRect::MakeEmpty() : matrix.mapRect(rect);
-}
-
-SkIRect map_rect(const SkMatrix& matrix, const SkIRect& rect) {
-    if (rect.isEmpty()) {
-        return SkIRect::MakeEmpty();
-    }
-    // Unfortunately, there is a range of integer values such that we have 1px precision as an int,
-    // but less precision as a float. This can lead to non-empty SkIRects becoming empty simply
-    // because of float casting. If we're already dealing with a float rect or having a float
-    // output, that's what we're stuck with; but if we are starting form an irect and desiring an
-    // SkIRect output, we go through efforts to preserve the 1px precision for simple transforms.
-    if (matrix.isScaleTranslate()) {
-        double l = (double)matrix.getScaleX()*rect.fLeft   + (double)matrix.getTranslateX();
-        double r = (double)matrix.getScaleX()*rect.fRight  + (double)matrix.getTranslateX();
-        double t = (double)matrix.getScaleY()*rect.fTop    + (double)matrix.getTranslateY();
-        double b = (double)matrix.getScaleY()*rect.fBottom + (double)matrix.getTranslateY();
-        return {sk_double_saturate2int(sk_double_floor(std::min(l, r) + kRoundEpsilon)),
-                sk_double_saturate2int(sk_double_floor(std::min(t, b) + kRoundEpsilon)),
-                sk_double_saturate2int(sk_double_ceil(std::max(l, r)  - kRoundEpsilon)),
-                sk_double_saturate2int(sk_double_ceil(std::max(t, b)  - kRoundEpsilon))};
-    } else {
-        return skif::RoundOut(matrix.mapRect(SkRect::Make(rect)));
-    }
-}
-
-bool inverse_map_rect(const SkMatrix& matrix, const SkRect& rect, SkRect* out) {
-    if (rect.isEmpty()) {
-        *out = SkRect::MakeEmpty();
-        return true;
-    }
-    return SkMatrixPriv::InverseMapRect(matrix, out, rect);
-}
-
-bool inverse_map_rect(const SkMatrix& matrix, const SkIRect& rect, SkIRect* out) {
-    if (rect.isEmpty()) {
-        *out = SkIRect::MakeEmpty();
-        return true;
-    }
-    // This is a specialized inverse equivalent to the 1px precision preserving map_rect above.
-    if (matrix.isScaleTranslate()) {
-        // A scale-translate matrix with a 0 scale factor is not invertible.
-        if (matrix.getScaleX() == 0.f || matrix.getScaleY() == 0.f) {
-            return false;
-        }
-        double l = (rect.fLeft   - (double)matrix.getTranslateX()) / (double)matrix.getScaleX();
-        double r = (rect.fRight  - (double)matrix.getTranslateX()) / (double)matrix.getScaleX();
-        double t = (rect.fTop    - (double)matrix.getTranslateY()) / (double)matrix.getScaleY();
-        double b = (rect.fBottom - (double)matrix.getTranslateY()) / (double)matrix.getScaleY();
-
-        *out = {sk_double_saturate2int(sk_double_floor(std::min(l, r) + kRoundEpsilon)),
-                sk_double_saturate2int(sk_double_floor(std::min(t, b) + kRoundEpsilon)),
-                sk_double_saturate2int(sk_double_ceil(std::max(l, r)  - kRoundEpsilon)),
-                sk_double_saturate2int(sk_double_ceil(std::max(t, b)  - kRoundEpsilon))};
-        return true;
-    } else {
-        SkRect mapped;
-        if (inverse_map_rect(matrix, SkRect::Make(rect), &mapped)) {
-            *out = skif::RoundOut(mapped);
-            return true;
-        } else {
-            return false;
-        }
-    }
-}
 
 // If m is epsilon within the form [1 0 tx], this returns true and sets out to [tx, ty]
 //                                 [0 1 ty]
@@ -223,10 +142,6 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
-SkIRect RoundOut(SkRect r) { return r.makeInset(kRoundEpsilon, kRoundEpsilon).roundOut(); }
-
-SkIRect RoundIn(SkRect r) { return r.makeOutset(kRoundEpsilon, kRoundEpsilon).roundIn(); }
-
 sk_sp<SkSpecialSurface> Context::makeSurface(const SkISize& size,
                                              const SkSurfaceProps* props) const {
     if (!props) {
@@ -259,6 +174,10 @@ sk_sp<SkSpecialSurface> Context::makeSurface(const SkISize& size,
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Mapping
+
+SkIRect RoundOut(SkRect r) { return r.makeInset(kRoundEpsilon, kRoundEpsilon).roundOut(); }
+
+SkIRect RoundIn(SkRect r) { return r.makeOutset(kRoundEpsilon, kRoundEpsilon).roundIn(); }
 
 bool Mapping::decomposeCTM(const SkMatrix& ctm, const SkImageFilter* filter,
                            const skif::ParameterSpace<SkPoint>& representativePt) {
@@ -328,12 +247,31 @@ bool Mapping::adjustLayerSpace(const SkMatrix& layer) {
 // Instantiate map specializations for the 6 geometric types used during filtering
 template<>
 SkRect Mapping::map<SkRect>(const SkRect& geom, const SkMatrix& matrix) {
-    return map_rect(matrix, geom);
+    return geom.isEmpty() ? SkRect::MakeEmpty() : matrix.mapRect(geom);
 }
 
 template<>
 SkIRect Mapping::map<SkIRect>(const SkIRect& geom, const SkMatrix& matrix) {
-    return map_rect(matrix, geom);
+    if (geom.isEmpty()) {
+        return SkIRect::MakeEmpty();
+    }
+    // Unfortunately, there is a range of integer values such that we have 1px precision as an int,
+    // but less precision as a float. This can lead to non-empty SkIRects becoming empty simply
+    // because of float casting. If we're already dealing with a float rect or having a float
+    // output, that's what we're stuck with; but if we are starting form an irect and desiring an
+    // SkIRect output, we go through efforts to preserve the 1px precision for simple transforms.
+    if (matrix.isScaleTranslate()) {
+        double l = (double)matrix.getScaleX()*geom.fLeft   + (double)matrix.getTranslateX();
+        double r = (double)matrix.getScaleX()*geom.fRight  + (double)matrix.getTranslateX();
+        double t = (double)matrix.getScaleY()*geom.fTop    + (double)matrix.getTranslateY();
+        double b = (double)matrix.getScaleY()*geom.fBottom + (double)matrix.getTranslateY();
+        return {sk_double_saturate2int(sk_double_floor(std::min(l, r) + kRoundEpsilon)),
+                sk_double_saturate2int(sk_double_floor(std::min(t, b) + kRoundEpsilon)),
+                sk_double_saturate2int(sk_double_ceil(std::max(l, r)  - kRoundEpsilon)),
+                sk_double_saturate2int(sk_double_ceil(std::max(t, b)  - kRoundEpsilon))};
+    } else {
+        return RoundOut(matrix.mapRect(SkRect::Make(geom)));
+    }
 }
 
 template<>
@@ -351,25 +289,40 @@ SkPoint Mapping::map<SkPoint>(const SkPoint& geom, const SkMatrix& matrix) {
 }
 
 template<>
-IVector Mapping::map<IVector>(const IVector& geom, const SkMatrix& matrix) {
-    return IVector(map_as_vector(geom.fX, geom.fY, matrix));
+Vector Mapping::map<Vector>(const Vector& geom, const SkMatrix& matrix) {
+    SkVector v = SkVector::Make(geom.fX, geom.fY);
+    matrix.mapVectors(&v, 1);
+    return Vector{v};
 }
 
 template<>
-Vector Mapping::map<Vector>(const Vector& geom, const SkMatrix& matrix) {
-    return Vector(map_as_vector(geom.fX, geom.fY, matrix));
+IVector Mapping::map<IVector>(const IVector& geom, const SkMatrix& matrix) {
+    SkVector v = SkVector::Make(SkIntToScalar(geom.fX), SkIntToScalar(geom.fY));
+    matrix.mapVectors(&v, 1);
+    return IVector(SkScalarRoundToInt(v.fX), SkScalarRoundToInt(v.fY));
+}
+
+// Sizes are also treated as non-positioned values (although this assumption breaks down if there's
+// perspective). Unlike vectors, we treat input sizes as specifying lengths of the local X and Y
+// axes and return the lengths of those mapped axes.
+template<>
+SkSize Mapping::map<SkSize>(const SkSize& geom, const SkMatrix& matrix) {
+    if (matrix.isScaleTranslate()) {
+        // This is equivalent to mapping the two basis vectors and calculating their lengths.
+        SkVector sizes = matrix.mapVector(geom.fWidth, geom.fHeight);
+        return {SkScalarAbs(sizes.fX), SkScalarAbs(sizes.fY)};
+    }
+
+    SkVector xAxis = matrix.mapVector(geom.fWidth, 0.f);
+    SkVector yAxis = matrix.mapVector(0.f, geom.fHeight);
+    return {xAxis.length(), yAxis.length()};
 }
 
 template<>
 SkISize Mapping::map<SkISize>(const SkISize& geom, const SkMatrix& matrix) {
-    SkIVector v = map_as_vector(geom.fWidth, geom.fHeight, matrix);
-    return SkISize::Make(v.fX, v.fY);
-}
-
-template<>
-SkSize Mapping::map<SkSize>(const SkSize& geom, const SkMatrix& matrix) {
-    SkVector v = map_as_vector(geom.fWidth, geom.fHeight, matrix);
-    return SkSize::Make(v.fX, v.fY);
+    SkSize size = map(SkSize::Make(geom), matrix);
+    return SkISize::Make(SkScalarCeilToInt(size.fWidth - kRoundEpsilon),
+                         SkScalarCeilToInt(size.fHeight - kRoundEpsilon));
 }
 
 template<>
@@ -388,18 +341,49 @@ SkMatrix Mapping::map<SkMatrix>(const SkMatrix& m, const SkMatrix& matrix) {
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // LayerSpace<T>
 
-LayerSpace<SkRect> LayerSpace<SkMatrix>::mapRect(const LayerSpace<SkRect>& r) const {
-    return LayerSpace<SkRect>(map_rect(fData, SkRect(r)));
+// Match rounding tolerances of SkRects to SkIRects
+LayerSpace<SkISize> LayerSpace<SkSize>::round() const {
+    return LayerSpace<SkISize>(fData.toRound());
+}
+LayerSpace<SkISize> LayerSpace<SkSize>::ceil() const {
+    return LayerSpace<SkISize>({SkScalarCeilToInt(fData.fWidth - kRoundEpsilon),
+                                SkScalarCeilToInt(fData.fHeight - kRoundEpsilon)});
+}
+LayerSpace<SkISize> LayerSpace<SkSize>::floor() const {
+    return LayerSpace<SkISize>({SkScalarFloorToInt(fData.fWidth + kRoundEpsilon),
+                                SkScalarFloorToInt(fData.fHeight + kRoundEpsilon)});
 }
 
+LayerSpace<SkRect> LayerSpace<SkMatrix>::mapRect(const LayerSpace<SkRect>& r) const {
+    return LayerSpace<SkRect>(Mapping::map(SkRect(r), fData));
+}
+
+// Effectively mapRect(SkRect).roundOut() but more accurate when the underlying matrix or
+// SkIRect has large floating point values.
 LayerSpace<SkIRect> LayerSpace<SkMatrix>::mapRect(const LayerSpace<SkIRect>& r) const {
-    return LayerSpace<SkIRect>(map_rect(fData, SkIRect(r)));
+    return LayerSpace<SkIRect>(Mapping::map(SkIRect(r), fData));
+}
+
+LayerSpace<SkPoint> LayerSpace<SkMatrix>::mapPoint(const LayerSpace<SkPoint>& p) const {
+    return LayerSpace<SkPoint>(Mapping::map(SkPoint(p), fData));
+}
+
+LayerSpace<Vector> LayerSpace<SkMatrix>::mapVector(const LayerSpace<Vector>& v) const {
+    return LayerSpace<Vector>(Mapping::map(Vector(v), fData));
+}
+
+LayerSpace<SkSize> LayerSpace<SkMatrix>::mapSize(const LayerSpace<SkSize>& s) const {
+    return LayerSpace<SkSize>(Mapping::map(SkSize(s), fData));
 }
 
 bool LayerSpace<SkMatrix>::inverseMapRect(const LayerSpace<SkRect>& r,
                                           LayerSpace<SkRect>* out) const {
     SkRect mapped;
-    if (inverse_map_rect(fData, SkRect(r), &mapped)) {
+    if (r.isEmpty()) {
+        // An empty input always inverse maps to an empty rect "successfully"
+        *out = LayerSpace<SkRect>::Empty();
+        return true;
+    } else if (SkMatrixPriv::InverseMapRect(fData, &mapped, SkRect(r))) {
         *out = LayerSpace<SkRect>(mapped);
         return true;
     } else {
@@ -407,15 +391,37 @@ bool LayerSpace<SkMatrix>::inverseMapRect(const LayerSpace<SkRect>& r,
     }
 }
 
-bool LayerSpace<SkMatrix>::inverseMapRect(const LayerSpace<SkIRect>& r,
+bool LayerSpace<SkMatrix>::inverseMapRect(const LayerSpace<SkIRect>& rect,
                                           LayerSpace<SkIRect>* out) const {
-    SkIRect mapped;
-    if (inverse_map_rect(fData, SkIRect(r), &mapped)) {
+    if (rect.isEmpty()) {
+        // An empty input always inverse maps to an empty rect "successfully"
+        *out = LayerSpace<SkIRect>::Empty();
+        return true;
+    } else if (fData.isScaleTranslate()) { // Specialized inverse of 1px-preserving map<SkIRect>
+        // A scale-translate matrix with a 0 scale factor is not invertible.
+        if (fData.getScaleX() == 0.f || fData.getScaleY() == 0.f) {
+            return false;
+        }
+        double l = (rect.left()   - (double)fData.getTranslateX()) / (double)fData.getScaleX();
+        double r = (rect.right()  - (double)fData.getTranslateX()) / (double)fData.getScaleX();
+        double t = (rect.top()    - (double)fData.getTranslateY()) / (double)fData.getScaleY();
+        double b = (rect.bottom() - (double)fData.getTranslateY()) / (double)fData.getScaleY();
+
+        SkIRect mapped{sk_double_saturate2int(sk_double_floor(std::min(l, r) + kRoundEpsilon)),
+                       sk_double_saturate2int(sk_double_floor(std::min(t, b) + kRoundEpsilon)),
+                       sk_double_saturate2int(sk_double_ceil(std::max(l, r)  - kRoundEpsilon)),
+                       sk_double_saturate2int(sk_double_ceil(std::max(t, b)  - kRoundEpsilon))};
         *out = LayerSpace<SkIRect>(mapped);
         return true;
     } else {
-        return false;
+        SkRect mapped;
+        if (SkMatrixPriv::InverseMapRect(fData, &mapped, SkRect::Make(SkIRect(rect)))) {
+            *out = LayerSpace<SkRect>(mapped).roundOut();
+            return true;
+        }
     }
+
+    return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -731,7 +737,8 @@ void FilterResult::draw(SkCanvas* canvas) const {
 
 sk_sp<SkShader> FilterResult::asShader(const Context& ctx,
                                        const SkSamplingOptions& xtraSampling,
-                                       SkEnumBitMask<ShaderFlags> flags) const {
+                                       SkEnumBitMask<ShaderFlags> flags,
+                                       const LayerSpace<SkIRect>& sampleBounds) const {
     if (!fImage) {
         return nullptr;
     }
@@ -752,7 +759,7 @@ sk_sp<SkShader> FilterResult::asShader(const Context& ctx,
             flags & ShaderFlags::kForceResolveInputs ||
             !compatible_sampling(fSamplingOptions, currentXformIsInteger,
                                  &sampling, nextXformIsInteger) ||
-            this->isCropped(LayerSpace<SkMatrix>(SkMatrix::I()), fLayerBounds);
+            this->isCropped(LayerSpace<SkMatrix>(SkMatrix::I()), sampleBounds);
 
     // Downgrade to nearest-neighbor if the sequence of sampling doesn't do anything
     if (sampling == kDefaultSampling && nextXformIsInteger &&
@@ -886,22 +893,33 @@ FilterResult::Builder::~Builder() = default;
 
 SkSpan<sk_sp<SkShader>> FilterResult::Builder::createInputShaders(
         SkEnumBitMask<ShaderFlags> flags,
-        const SkSamplingOptions& sampling) {
+        const SkSamplingOptions& sampling,
+        const LayerSpace<SkIRect>& outputBounds) {
     fInputShaders.reserve(fInputs.size());
-    for (const FilterResult& input : fInputs) {
-        fInputShaders.push_back(input.asShader(fContext, sampling, flags));
+    for (const SampledFilterResult& input : fInputs) {
+        // Assume the input shader will be evaluated once per pixel in the output unless otherwise
+        // specified when the FilterResult was added to the builder.
+        auto sampleBounds = input.fSampleBounds ? *input.fSampleBounds : outputBounds;
+        fInputShaders.push_back(input.fImage.asShader(fContext, sampling, flags, sampleBounds));
     }
     return SkSpan<sk_sp<SkShader>>(fInputShaders);
 }
 
-LayerSpace<SkIRect> FilterResult::Builder::outputBounds(SkEnumBitMask<ShaderFlags> flags) const {
+LayerSpace<SkIRect> FilterResult::Builder::outputBounds(
+        SkEnumBitMask<ShaderFlags> flags,
+        std::optional<LayerSpace<SkIRect>> explicitOutput) const {
+    // Explicit bounds should only be provided if-and-only-if kExplicitOutputBounds flag is set.
+    SkASSERT(explicitOutput.has_value() == (flags & ShaderFlags::kExplicitOutputBounds));
+
     LayerSpace<SkIRect> output = LayerSpace<SkIRect>::Empty();
-    if (flags & ShaderFlags::kOutputFillsInputUnion) {
+    if (flags & ShaderFlags::kExplicitOutputBounds) {
+        output = *explicitOutput;
+    } else if (flags & ShaderFlags::kOutputFillsInputUnion) {
         // The union of all inputs' layer bounds
         if (fInputs.size() > 0) {
-            output = fInputs[0].layerBounds();
+            output = fInputs[0].fImage.layerBounds();
             for (int i = 1; i < fInputs.size(); ++i) {
-                output.join(fInputs[i].layerBounds());
+                output.join(fInputs[i].fImage.layerBounds());
             }
         }
     } else {
@@ -938,16 +956,18 @@ FilterResult FilterResult::Builder::merge() {
     if (fInputs.empty()) {
         return {};
     } else if (fInputs.size() == 1) {
-        return fInputs[0];
+        SkASSERT(!fInputs[0].fSampleBounds.has_value());
+        return fInputs[0].fImage;
     }
 
     const LayerSpace<SkIRect> outputBounds =
-            this->outputBounds(ShaderFlags::kOutputFillsInputUnion);
+            this->outputBounds(ShaderFlags::kOutputFillsInputUnion, std::nullopt);
     AutoSurface surface{fContext, outputBounds, /*renderInParameterSpace=*/false};
     if (surface) {
-        for (const FilterResult& input : fInputs) {
+        for (const SampledFilterResult& input : fInputs) {
+            SkASSERT(!input.fSampleBounds.has_value());
             surface->save();
-            input.draw(surface.canvas());
+            input.fImage.draw(surface.canvas());
             surface->restore();
         }
     }

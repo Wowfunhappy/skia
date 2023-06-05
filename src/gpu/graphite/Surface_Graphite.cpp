@@ -64,7 +64,9 @@ sk_sp<SkImage> Surface::asImage() const {
         return nullptr;
     }
 
-    return sk_sp<Image>(new Image(std::move(srcView), this->imageInfo().colorInfo()));
+    return sk_sp<Image>(new Image(kNeedNewImageUniqueID,
+                                  std::move(srcView),
+                                  this->imageInfo().colorInfo()));
 }
 
 sk_sp<SkImage> Surface::makeImageCopy(const SkIRect* subset, Mipmapped mipmapped) const {
@@ -78,7 +80,9 @@ sk_sp<SkImage> Surface::makeImageCopy(const SkIRect* subset, Mipmapped mipmapped
         return nullptr;
     }
 
-    return sk_sp<Image>(new Image(std::move(srcView), this->imageInfo().colorInfo()));
+    return sk_sp<Image>(new Image(kNeedNewImageUniqueID,
+                                  std::move(srcView),
+                                  this->imageInfo().colorInfo()));
 }
 
 void Surface::onWritePixels(const SkPixmap& pixmap, int x, int y) {
@@ -237,6 +241,9 @@ sk_sp<SkSurface> WrapBackendTexture(Recorder* recorder,
     SkColorInfo info(ct, kPremul_SkAlphaType, std::move(cs));
 
     if (!validate_backend_texture(caps, backendTex, info)) {
+        SKGPU_LOG_E("validate_backend_texture failed: backendTex.info = %s; colorType = %d",
+                    backendTex.info().toString().c_str(),
+                    info.colorType());
         return nullptr;
     }
 

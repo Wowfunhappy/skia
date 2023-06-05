@@ -12,11 +12,13 @@
 #include "include/private/SkSLDefines.h"
 #include "include/private/base/SkTArray.h"
 #include "src/core/SkTHash.h"
+#include "src/sksl/SkSLOperator.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/codegen/SkSLCodeGenerator.h"
 
 #include <cstdint>
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -35,9 +37,9 @@ class ConstructorCompound;
 class ConstructorDiagonalMatrix;
 class ConstructorMatrixResize;
 class Expression;
-class ExpressionStatement;
 struct Field;
 class FieldAccess;
+class ForStatement;
 class FunctionCall;
 class FunctionDeclaration;
 class FunctionDefinition;
@@ -48,6 +50,7 @@ class Literal;
 class MemoryLayout;
 class OutputStream;
 class Position;
+class PostfixExpression;
 class PrefixExpression;
 class ProgramElement;
 class ReturnStatement;
@@ -59,7 +62,6 @@ class Type;
 class VarDeclaration;
 class Variable;
 class VariableReference;
-enum class OperatorPrecedence : uint8_t;
 struct Modifiers;
 struct Program;
 
@@ -180,19 +182,35 @@ private:
     void writeStatement(const Statement& s);
     void writeStatements(const StatementArray& statements);
     void writeBlock(const Block& b);
-    void writeExpressionStatement(const ExpressionStatement& s);
+    void writeExpressionStatement(const Expression& expr);
+    void writeForStatement(const ForStatement& s);
     void writeIfStatement(const IfStatement& s);
     void writeReturnStatement(const ReturnStatement& s);
     void writeVarDeclaration(const VarDeclaration& varDecl);
 
+    // Synthesizes an LValue for an expression.
+    class LValue;
+    class PointerLValue;
+    class VectorComponentLValue;
+    std::unique_ptr<LValue> makeLValue(const Expression& e);
+
+    std::string variableReferenceNameForLValue(const VariableReference& r);
+
     // Writers for expressions. These return the final expression text as a string, and emit any
-    // necessary setup code directly into the program as necessary.
+    // necessary setup code directly into the program as necessary. The returned expression may be
+    // a `let`-alias that cannot be assigned-into; use `makeLValue` for an assignable expression.
     std::string assembleExpression(const Expression& e, Precedence parentPrecedence);
     std::string assembleBinaryExpression(const BinaryExpression& b, Precedence parentPrecedence);
+    std::string assembleBinaryExpression(const Expression& left,
+                                         Operator op,
+                                         const Expression& right,
+                                         const Type& resultType,
+                                         Precedence parentPrecedence);
     std::string assembleFieldAccess(const FieldAccess& f);
-    std::string assembleFunctionCall(const FunctionCall&);
+    std::string assembleFunctionCall(const FunctionCall& c, Precedence parentPrecedence);
     std::string assembleIndexExpression(const IndexExpression& i);
     std::string assembleLiteral(const Literal& l);
+    std::string assemblePostfixExpression(const PostfixExpression& p, Precedence parentPrecedence);
     std::string assemblePrefixExpression(const PrefixExpression& p, Precedence parentPrecedence);
     std::string assembleSwizzle(const Swizzle& swizzle);
     std::string assembleTernaryExpression(const TernaryExpression& t, Precedence parentPrecedence);
@@ -223,6 +241,10 @@ private:
 
     // Writes a scratch variable into the program and returns its name (e.g. `_skTemp123`).
     std::string writeScratchVar(const Type& type);
+
+    // Writes a scratch let-variable into the program, gives it the value of `expr`, and returns its
+    // name (e.g. `_skTemp123`).
+    std::string writeScratchLet(const std::string& expr);
 
     // Generic recursive ProgramElement visitor.
     void writeProgramElement(const ProgramElement& e);

@@ -6,6 +6,7 @@
  */
 #include "src/base/SkQuads.h"
 
+#include "include/private/base/SkAssert.h"
 #include "include/private/base/SkFloatingPoint.h"
 
 #include <cmath>
@@ -27,17 +28,18 @@ static int solve_linear(const double M, const double B, double solution[2]) {
     return 1;
 }
 
-// When the A coefficient of a quadratic is close to 0, there can be floating point error
-// that arises from computing a very large root. In those cases, we would rather be
-// precise about the one smaller root, so we have this arbitrary cutoff for when A is
-// really small or small compared to B.
+// When B >> A, then the x^2 component doesn't contribute much to the output, so the second root
+// will be very large, but have massive round off error. Because of the round off error, the
+// second root will not evaluate to zero when substituted back into the quadratic equation. In
+// the situation when B >> A, then just treat the quadratic as a linear equation.
 static bool close_to_linear(double A, double B) {
-    if (sk_double_nearly_zero(B)) {
-        return sk_double_nearly_zero(A);
+    if (A != 0) {
+        // Return if B is much bigger than A.
+        return std::abs(B / A) >= 1.0e+16;
     }
-    // This is a different threshold (tighter) than the close_to_a_quadratic in SkCubics.cpp
-    // because the SkQuads::RootsReal gives better answers for longer as A/B -> 0.
-    return std::abs(A / B) < 1.0e-16;
+
+    // Otherwise A is zero, and the quadratic is linear.
+    return true;
 }
 
 double SkQuads::Discriminant(const double a, const double b, const double c) {
@@ -48,12 +50,36 @@ double SkQuads::Discriminant(const double a, const double b, const double c) {
     // ac being too close.
     const double roughDiscriminant = b2 - ac;
 
-    // Check if b2 and ac were too close, and caused catastrophic cancellation. The
-    // roughDiscriminant should be good enough most of the time. If b2 and ac are very close to
-    // each other, then roughDiscriminant will be very small with most of the bits canceled
-    // making much smaller than roundOffCheck.
-    const double roundOffCheck = b2 + ac;
-    if (3 * std::abs(roughDiscriminant) >= roundOffCheck) {
+    // We would like the calculated discriminant to have a relative error of 2-bits or less. For
+    // doubles, this means the relative error is <= E = 3*2^-53. This gives a relative error
+    // bounds of:
+    //
+    //     |D - D~| / |D| <= E,
+    //
+    // where D = B*B - AC, and D~ is the floating point approximation of D.
+    // Define the following equations
+    //     B2 = B*B,
+    //     B2~ = B2(1 + eB2), where eB2 is the floating point round off,
+    //     AC = A*C,
+    //     AC~ = AC(1 + eAC), where eAC is the floating point round off, and
+    //     D~ = B2~ - AC~.
+    //  We can now rewrite the above bounds as
+    //
+    //     |B2 - AC - (B2~ - AC~)| / |B2 - AC| = |B2 - AC - B2~ + AC~| / |B2 - AC| <= E.
+    //
+    //  Substituting B2~ and AC~, and canceling terms gives
+    //
+    //     |eAC * AC - eB2 * B2| / |B2 - AC| <= max(|eAC|, |eBC|) * (|AC| + |B2|) / |B2 - AC|.
+    //
+    //  We know that B2 is always positive, if AC is negative, then there is no cancellation
+    //  problem, and max(|eAC|, |eBC|) <= 2^-53, thus
+    //
+    //     2^-53 * (AC + B2) / |B2 - AC| <= 3 * 2^-53. Leading to
+    //     AC + B2 <= 3 * |B2 - AC|.
+    //
+    // If 3 * |B2 - AC| >= AC + B2 holds, then the roughDiscriminant has 2-bits of rounding error
+    // or less and can be used.
+    if (3 * std::abs(roughDiscriminant) >= b2 + ac) {
         return roughDiscriminant;
     }
 
@@ -65,6 +91,26 @@ double SkQuads::Discriminant(const double a, const double b, const double c) {
     // Add the total rounding error back into the discriminant guess.
     const double discriminant = (b2 - ac) + (b2RoundingError - acRoundingError);
     return discriminant;
+}
+
+SkQuads::RootResult SkQuads::Roots(double A, double B, double C) {
+    SkASSERT(A != 0);
+
+    const double discriminant = Discriminant(A, B, C);
+
+    if (discriminant == 0) {
+        const double root = B / A;
+        return {discriminant, root, root};
+    }
+
+    if (discriminant > 0) {
+        const double D = sqrt(discriminant);
+        const double R = B > 0 ? B + D : B - D;
+        return {discriminant, R / A, C / R};
+    }
+
+    // The discriminant is negative or is not finite.
+    return {discriminant, NAN, NAN};
 }
 
 int SkQuads::RootsReal(const double A, const double B, const double C, double solution[2]) {

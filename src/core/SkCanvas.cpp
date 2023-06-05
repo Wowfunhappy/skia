@@ -42,7 +42,6 @@
 #include "include/utils/SkNoDrawCanvas.h"
 #include "src/base/SkMSAN.h"
 #include "src/core/SkCanvasPriv.h"
-#include "src/core/SkColorFilterBase.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
@@ -55,6 +54,7 @@
 #include "src/core/SkTextBlobPriv.h"
 #include "src/core/SkTraceEvent.h"
 #include "src/core/SkVerticesPriv.h"
+#include "src/effects/colorfilters/SkColorFilterBase.h"
 #include "src/image/SkSurface_Base.h"
 #include "src/text/GlyphRun.h"
 #include "src/utils/SkPatchUtils.h"
@@ -940,7 +940,7 @@ void SkCanvas::internalDrawDeviceWithFilter(SkBaseDevice* src,
             // infect blurs and other filters with large kernels.
             SkPaint imageFill;
             imageFill.setShader(srcImage->asShader(SkTileMode::kClamp,
-                                                   SkSamplingOptions{SkFilterMode::kLinear},
+                                                   SkFilterMode::kLinear,
                                                    SkMatrix::Translate(srcSubset.topLeft())));
             intermediateDevice->drawPaint(imageFill);
             filterInput = intermediateDevice->snapSpecial();
