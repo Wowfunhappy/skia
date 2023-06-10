@@ -25,13 +25,11 @@ fn test3x3_b() -> bool {
         }
         continuing {
           index = index + i32(1);
-          break if !(index < 3);
+          break if index >= 3;
         }
       }
     }
-    let _skTemp0 = matrix;
-    let _skTemp1 = _globalUniforms.testMatrix3x3;
-    return (all(_skTemp0[0] == _skTemp1[0]) && all(_skTemp0[1] == _skTemp1[1]) && all(_skTemp0[2] == _skTemp1[2]));
+    return (all(matrix[0] == _globalUniforms.testMatrix3x3[0]) && all(matrix[1] == _globalUniforms.testMatrix3x3[1]) && all(matrix[2] == _globalUniforms.testMatrix3x3[2]));
   }
 }
 fn test4x4_b() -> bool {
@@ -47,33 +45,31 @@ fn test4x4_b() -> bool {
         }
         continuing {
           index = index + i32(1);
-          break if !(index < 4);
+          break if index >= 4;
         }
       }
     }
-    let _skTemp2 = matrix;
-    let _skTemp3 = _globalUniforms.testMatrix4x4;
-    return (all(_skTemp2[0] == _skTemp3[0]) && all(_skTemp2[1] == _skTemp3[1]) && all(_skTemp2[2] == _skTemp3[2]) && all(_skTemp2[3] == _skTemp3[3]));
+    return (all(matrix[0] == _globalUniforms.testMatrix4x4[0]) && all(matrix[1] == _globalUniforms.testMatrix4x4[1]) && all(matrix[2] == _globalUniforms.testMatrix4x4[2]) && all(matrix[3] == _globalUniforms.testMatrix4x4[3]));
   }
 }
 fn main(_skParam0: vec2<f32>) -> vec4<f32> {
   let coords = _skParam0;
   {
-    var _skTemp4: vec4<f32>;
-    var _skTemp5: bool;
-    let _skTemp6 = test3x3_b();
-    if _skTemp6 {
-      let _skTemp7 = test4x4_b();
-      _skTemp5 = _skTemp7;
+    var _skTemp0: vec4<f32>;
+    var _skTemp1: bool;
+    let _skTemp2 = test3x3_b();
+    if _skTemp2 {
+      let _skTemp3 = test4x4_b();
+      _skTemp1 = _skTemp3;
     } else {
-      _skTemp5 = false;
+      _skTemp1 = false;
     }
-    if _skTemp5 {
-      _skTemp4 = _globalUniforms.colorGreen;
+    if _skTemp1 {
+      _skTemp0 = _globalUniforms.colorGreen;
     } else {
-      _skTemp4 = _globalUniforms.colorRed;
+      _skTemp0 = _globalUniforms.colorRed;
     }
-    return _skTemp4;
+    return _skTemp0;
   }
 }
 @fragment fn fragmentMain(_stageIn: FSIn) -> FSOut {
