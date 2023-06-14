@@ -261,3 +261,25 @@ void SkTypeface_Fontations::onGetFontDescriptor(SkFontDescriptor* desc, bool* se
     desc->setFactoryId(FactoryId);
     *serialize = true;
 }
+
+size_t SkTypeface_Fontations::onGetTableData(SkFontTableTag tag,
+                                             size_t offset,
+                                             size_t length,
+                                             void* data) const {
+    rust::Slice<uint8_t> dataSlice;
+    if (data) {
+        dataSlice = rust::Slice<uint8_t>(reinterpret_cast<uint8_t*>(data), length);
+    }
+    size_t copied = fontations_ffi::table_data(*fBridgeFontRef, tag, offset, dataSlice);
+    // If data is nullptr, the Rust side doesn't see a length limit.
+    return std::min(copied, length);
+}
+
+int SkTypeface_Fontations::onGetTableTags(SkFontTableTag tags[]) const {
+    uint16_t numTables = fontations_ffi::table_tags(*fBridgeFontRef, rust::Slice<uint32_t>());
+    if (!tags) {
+      return numTables;
+    }
+    rust::Slice<uint32_t> copyToTags(tags, numTables);
+    return fontations_ffi::table_tags(*fBridgeFontRef, copyToTags);
+}
