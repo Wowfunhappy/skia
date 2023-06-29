@@ -15,17 +15,24 @@
 #include "src/gpu/graphite/DrawTypes.h"
 #include "src/gpu/graphite/GraphicsPipeline.h"
 
+namespace SkSL {
+    class Compiler;
+}
+
 namespace skgpu::graphite {
 
 class Attribute;
-struct RenderPassDesc;
+class GraphicsPipelineDesc;
+class RuntimeEffectDictionary;
 class VulkanSharedContext;
+struct RenderPassDesc;
 
 class VulkanGraphicsPipeline final : public GraphicsPipeline {
 public:
     inline static constexpr unsigned int kIntrinsicUniformBufferIndex = 0;
     inline static constexpr unsigned int kRenderStepUniformBufferIndex = 1;
     inline static constexpr unsigned int kPaintUniformBufferIndex = 2;
+    inline static constexpr unsigned int kNumUniformBuffers = 3;
 
     // For now, rigidly assign all uniform buffer descriptors to be in one descriptor set in binding
     // 0 and all texture/samplers to be in binding 1.
@@ -37,14 +44,10 @@ public:
     inline static constexpr unsigned int kInstanceBufferIndex = 1;
     inline static constexpr unsigned int kNumInputBuffers = 2;
 
-    static sk_sp<VulkanGraphicsPipeline> Make(const VulkanSharedContext* sharedContext,
-                                              VkShaderModule vertexShader,
-                                              SkSpan<const Attribute> vertexAttrs,
-                                              SkSpan<const Attribute> instanceAttrs,
-                                              VkShaderModule fragShader,
-                                              DepthStencilSettings,
-                                              PrimitiveType,
-                                              const BlendInfo&,
+    static sk_sp<VulkanGraphicsPipeline> Make(const VulkanSharedContext*,
+                                              SkSL::Compiler* compiler,
+                                              const RuntimeEffectDictionary*,
+                                              const GraphicsPipelineDesc&,
                                               const RenderPassDesc&);
 
     ~VulkanGraphicsPipeline() override {}
@@ -54,9 +57,9 @@ public:
         return fPipelineLayout;
     }
 
-    // TODO: Implement.
+    // TODO: Implement. For now, simply return whatever bool value enables us to run more dm tests.
     bool hasStepUniforms() const { return false; }
-    bool hasFragment() const { return false; }
+    bool hasFragment() const { return true; }
 
 private:
     VulkanGraphicsPipeline(const skgpu::graphite::SharedContext* sharedContext
@@ -65,7 +68,7 @@ private:
 
     void freeGpuData() override;
 
-    VkPipelineLayout  fPipelineLayout;
+    VkPipelineLayout  fPipelineLayout = VK_NULL_HANDLE;
 };
 
 } // namespace skgpu::graphite

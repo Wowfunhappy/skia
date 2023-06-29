@@ -118,6 +118,8 @@ var gniExportDescs = []exporter.GNIExportDesc{
 			Rules: []string{"//src/encode:no_webp_encode_srcs"}},
 		{Var: "skia_discardable_memory_chromium",
 			Rules: []string{"//include/private/chromium:discardable_memory_hdrs"}},
+		{Var: "skia_no_slug_srcs",
+			Rules: []string{"//src/text:no_slug_srcs"}},
 	},
 	},
 	{GNI: "gn/effects.gni", Vars: []exporter.GNIFileListExportDesc{
@@ -249,7 +251,13 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/utils/mac:core_srcs",
 				"//src/utils/win:core_hdrs",
 				"//src/utils/win:core_srcs",
-			}}},
+			}},
+		{Var: "skia_utils_gpu",
+			Rules: []string{
+				"//src/utils:gpu_hdrs",
+				"//src/utils:gpu_srcs",
+			}},
+	},
 	},
 	{GNI: "gn/xps.gni", Vars: []exporter.GNIFileListExportDesc{
 		{Var: "skia_xps_public",
@@ -278,6 +286,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 		{Var: "skia_ganesh_private",
 			Rules: []string{
 				"//include/private/gpu/ganesh:private_hdrs",
+				"//include/private/gpu/ganesh:gl_private_hdrs",
 				"//src/gpu/ganesh/effects:effects_hdrs",
 				"//src/gpu/ganesh/effects:effects_srcs",
 				"//src/gpu/ganesh/geometry:geometry_hdrs",

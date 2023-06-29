@@ -326,12 +326,18 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 
 			// Could not readback from surface.
 			skip(ALL, "gm", ALL, "hugebitmapshader")
-			skip(ALL, "gm", ALL, "path_huge_aa")
-			skip(ALL, "gm", ALL, "verylargebitmap")
-			skip(ALL, "gm", ALL, "verylarge_picture_image")
+			skip(ALL, "gm", ALL, "async_rescale_and_read_no_bleed")
+			skip(ALL, "gm", ALL, "async_rescale_and_read_text_up")
+			skip(ALL, "gm", ALL, "async_rescale_and_read_dog_down")
+			skip(ALL, "gm", ALL, "async_rescale_and_read_rose")
 
 			if b.extraConfig("Metal") {
 				configs = []string{"grmtl"}
+				if b.gpu("IntelIrisPlus") {
+					// We get some 27/255 RGB diffs on the 45 degree
+					// rotation case on this device (skbug.com/14408)
+					skip(ALL, "test", ALL, "BigImageTest_Graphite")
+				}
 			}
 			if b.extraConfig("Dawn") {
 				configs = []string{"grdawn"}
@@ -347,13 +353,43 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 				skip(ALL, "test", ALL, "GraphitePurgeNotUsedSinceResourcesTest")
 				skip(ALL, "test", ALL, "MakeColorSpace_Test")
 				skip(ALL, "test", ALL, "PaintParamsKeyTest")
-				if b.matchOs("Win") {
-					// Async read call failed
-					skip(ALL, "gm", ALL, "async_rescale_and_read_no_bleed")
-					skip(ALL, "gm", ALL, "async_rescale_and_read_text_up")
-					skip(ALL, "gm", ALL, "async_rescale_and_read_dog_down")
-					skip(ALL, "gm", ALL, "async_rescale_and_read_rose")
+
+				if b.matchOs("Win10") {
+					// The Dawn Win10 job OOMs (skbug.com/14410)
+					skip(ALL, "test", ALL, "BigImageTest_Graphite")
 				}
+			}
+			if b.extraConfig("Vulkan") {
+				configs = []string{"grvk"}
+				// Couldn't readback
+				skip(ALL, "gm", ALL, "aaxfermodes")
+				// Could not instantiate texture proxy for UploadTask!
+				skip(ALL, "test", ALL, "BigImageTest_Graphite")
+				// Test failures
+				skip(ALL, "test", ALL, "DeviceTestVertexTransparency")
+				skip(ALL, "test", ALL, "GraphitePromiseImageMultipleImgUses")
+				skip(ALL, "test", ALL, "GraphitePromiseImageRecorderLoss")
+				skip(ALL, "test", ALL, "GraphitePurgeNotUsedSinceResourcesTest")
+				skip(ALL, "test", ALL, "GraphiteTextureProxyTest")
+				skip(ALL, "test", ALL, "GraphiteYUVAPromiseImageMultipleImgUses")
+				skip(ALL, "test", ALL, "GraphiteYUVAPromiseImageRecorderLoss")
+				skip(ALL, "test", ALL, "ImageProviderTest_Graphite_Testing")
+				skip(ALL, "test", ALL, "ImageProviderTest_Graphite_Default")
+				skip(ALL, "test", ALL, "MakeColorSpace_Test")
+				skip(ALL, "test", ALL, "ImageProviderTest")
+				skip(ALL, "test", ALL, "ImageShaderTest")
+				skip(ALL, "test", ALL, "MutableImagesTest")
+				skip(ALL, "test", ALL, "MultisampleRetainTest")
+				skip(ALL, "test", ALL, "NonVolatileGraphitePromiseImageTest")
+				skip(ALL, "test", ALL, "NonVolatileGraphiteYUVAPromiseImageTest")
+				skip(ALL, "test", ALL, "PaintParamsKeyTest")
+				skip(ALL, "test", ALL, "RecordingOrderTest_Graphite")
+				skip(ALL, "test", ALL, "RecordingSurfacesTestClear")
+				skip(ALL, "test", ALL, "ShaderTestNestedBlendsGraphite")
+				skip(ALL, "test", ALL, "SkRuntimeEffectSimple_Graphite")
+				skip(ALL, "test", ALL, "SkSLMatrixScalarNoOpFolding_GPU")
+				skip(ALL, "test", ALL, "VolatileGraphiteYUVAPromiseImageTest")
+				skip(ALL, "test", ALL, "VolatileGraphitePromiseImageTest")
 			}
 		}
 
@@ -437,7 +473,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		if b.gpu() && b.extraConfig("Vulkan") && (b.gpu("RadeonR9M470X", "RadeonHD7770")) {
 			skip(ALL, "tests", ALL, "VkDrawableImportTest")
 		}
-		if b.extraConfig("Vulkan") {
+		if b.extraConfig("Vulkan") && !b.extraConfig("Graphite") {
 			configs = []string{"vk"}
 			// MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926, skia:9023
 			if !b.matchGpu("Intel") {
@@ -474,7 +510,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		// Test 1010102 on our Linux/NVIDIA bots and the persistent cache config
 		// on the GL bots.
 		if b.gpu("QuadroP400") && !b.extraConfig("PreAbandonGpuContext") && !b.extraConfig("TSAN") && b.isLinux() &&
-			!b.extraConfig("FailFlushTimeCallbacks") {
+			!b.extraConfig("FailFlushTimeCallbacks") && !b.extraConfig("Graphite") {
 			if b.extraConfig("Vulkan") {
 				configs = append(configs, "vk1010102")
 				// Decoding transparent images to 1010102 just looks bad
@@ -974,9 +1010,13 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 	if b.matchOs("Mac") && b.cpu() {
 		// skia:6992
-		skip("pic-8888", "gm", ALL, "encode-platform")
+		skip("pic-8888",       "gm", ALL, "encode-platform")
 		skip("serialize-8888", "gm", ALL, "encode-platform")
 	}
+
+	// skia:14411 -- images are visibly identical, not interested in diagnosing non-determinism here
+	skip("pic-8888",       "gm", ALL, "perlinnoise_layered")
+	skip("serialize-8888", "gm", ALL, "perlinnoise_layered")
 
 	// skia:4769
 	skip("pic-8888", "gm", ALL, "drawfilter")
@@ -1221,6 +1261,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLMatrixFoldingES2_GPU") // skia:11919
 		skip(ALL, "tests", ALL, "SkSLMatrixEquality_GPU")   // skia:11919
 		skip(ALL, "tests", ALL, "SkSLIntrinsicFract_GPU")
+		skip(ALL, "tests", ALL, "SkSLModifiedStructParametersCannotBeInlined_GPU")
 	}
 
 	if b.gpu("QuadroP400") && b.matchOs("Ubuntu") && b.matchModel("Golo") {
@@ -1273,6 +1314,17 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 	}
 
 	match := []string{}
+
+	if b.extraConfig("Graphite") {
+		// Graphite doesn't do auto-image-tiling so these GMs should remain disabled
+		match = append(match, "~^verylarge_picture_image$")
+		match = append(match, "~^verylargebitmap$")
+		match = append(match, "~^path_huge_aa$")
+		match = append(match, "~^fast_constraint_red_is_allowed$")
+		match = append(match, "~^strict_constraint_batch_no_red_allowed$")
+		match = append(match, "~^strict_constraint_no_red_allowed$")
+	}
+
 	if b.extraConfig("Valgrind") { // skia:3021
 		match = append(match, "~Threaded")
 	}
