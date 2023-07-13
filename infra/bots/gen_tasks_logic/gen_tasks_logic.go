@@ -956,17 +956,17 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 				gpu, ok := map[string]string{
 					// At some point this might use the device ID, but for now it's like Chromebooks.
 					"GTX660":        "10de:11c0-26.21.14.4120",
-					"GTX960":        "10de:1401-31.0.15.1694",
+					"GTX960":        "10de:1401-31.0.15.3179",
 					"IntelHD4400":   "8086:0a16-20.19.15.4963",
 					"IntelIris540":  "8086:1926-31.0.101.2115",
 					"IntelIris6100": "8086:162b-20.19.15.4963",
 					"IntelIris655":  "8086:3ea5-26.20.100.7463",
-					"IntelIrisXe":   "8086:9a49-31.0.101.3959",
+					"IntelIrisXe":   "8086:9a49-31.0.101.4338",
 					"RadeonHD7770":  "1002:683d-26.20.13031.18002",
 					"RadeonR9M470X": "1002:6646-26.20.13031.18002",
 					"QuadroP400":    "10de:1cb3-30.0.15.1179",
 					"RadeonVega6":   "1002:1636-31.0.14057.5006",
-					"RTX3060":       "10de:2489-31.0.15.1694",
+					"RTX3060":       "10de:2489-31.0.15.3179",
 				}[b.parts["cpu_or_gpu_value"]]
 				if !ok {
 					log.Fatalf("Entry %q not found in Win GPU mapping.", b.parts["cpu_or_gpu_value"])
@@ -1321,6 +1321,9 @@ func (b *jobBuilder) compile() string {
 				if b.compiler("Clang") {
 					b.asset("clang_win")
 				}
+				if b.extraConfig("DWriteCore") {
+					b.asset("dwritecore")
+				}
 			} else if b.matchOs("Mac") {
 				b.cipd(CIPD_PKGS_XCODE...)
 				b.Spec.Caches = append(b.Spec.Caches, &specs.Cache{
@@ -1638,6 +1641,10 @@ func (b *taskBuilder) commonTestPerfAssets() {
 			}
 		}
 	}
+
+	if b.matchOs("Win") && b.extraConfig("DWriteCore") {
+		b.asset("dwritecore")
+	}
 }
 
 // directUpload adds prerequisites for uploading to GCS.
@@ -1715,6 +1722,9 @@ func (b *jobBuilder) dm() {
 		}
 		if b.matchOs("Android") && b.extraConfig("ASAN") {
 			b.asset("android_ndk_linux")
+		}
+		if b.extraConfig("NativeFonts") && !b.matchOs("Android") {
+			b.needsFontsForParagraphTests()
 		}
 		b.commonTestPerfAssets()
 		if b.matchExtraConfig("Lottie") {

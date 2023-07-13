@@ -21,10 +21,6 @@ class VulkanSharedContext;
 
 class VulkanResourceProvider final : public ResourceProvider {
 public:
-    static void DescriptorDataToVkDescSetLayout(const VulkanSharedContext*,
-                                                const SkSpan<DescriptorData>&,
-                                                VkDescriptorSetLayout*);
-
     VulkanResourceProvider(SharedContext* sharedContext, SingleOwner*, uint32_t recorderID);
     ~VulkanResourceProvider() override;
 
@@ -49,8 +45,10 @@ private:
     void onDeleteBackendTexture(BackendTexture&) override {}
 
     sk_sp<VulkanDescriptorSet> findOrCreateDescriptorSet(SkSpan<DescriptorData>);
+    VkPipelineCache pipelineCache();
 
     friend class VulkanCommandBuffer;
+    VkPipelineCache fPipelineCache = VK_NULL_HANDLE;
 };
 
 } // namespace skgpu::graphite

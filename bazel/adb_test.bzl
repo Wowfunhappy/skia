@@ -1,13 +1,13 @@
 """This module defines the adb_test rule."""
 
 load("@local_config_platform//:constraints.bzl", "HOST_CONSTRAINTS")
-load("//bazel:remove_indentation.bzl", "remove_indentation")
+load(":remove_indentation.bzl", "remove_indentation")
 
 def _adb_test_runner_transition_impl(settings, attr):  # buildifier: disable=unused-variable
-    platform = settings["//tests/adb_test_runner:adb_platform"]
+    platform = settings["//bazel/adb_test_runner:adb_platform"]
 
     # If no platform was specified via --adb_platform, use the host platform. This allows us to
-    # "bazel test" a skia_android_unit_test on a developer workstation without passing said flag to
+    # "bazel test" an adb_test target on a developer workstation without passing said flag to
     # Bazel.
     if platform == "":
         # The HOST_CONSTRAINTS list should always be of the form [cpu, os], e.g.:
@@ -52,13 +52,29 @@ def _adb_test_runner_transition_impl(settings, attr):  # buildifier: disable=unu
 # running the compiled artifact on a Raspberry Pi in a subsequent CI task.
 adb_test_runner_transition = transition(
     implementation = _adb_test_runner_transition_impl,
-    inputs = ["//tests/adb_test_runner:adb_platform"],
+    inputs = ["//bazel/adb_test_runner:adb_platform"],
     outputs = ["//command_line_option:platforms"],
 )
 
 def _adb_test_impl(ctx):
+    test_undeclared_outputs_dir_env_var_check = ""
+    output_dir_flag = ""
+    if ctx.attr.save_output_files:
+        test_undeclared_outputs_dir_env_var_check = remove_indentation("""
+            if [[ -z "${TEST_UNDECLARED_OUTPUTS_DIR}" ]]; then
+                echo "FAILED: Environment variable TEST_UNDECLARED_OUTPUTS_DIR is unset. If you"
+                echo "        are running this test outside of Bazel, set said variable to the"
+                echo "        directory where you wish to store any files produced by this test."
+
+                exit 1
+            fi
+        """)
+        output_dir_flag = "--output-dir $TEST_UNDECLARED_OUTPUTS_DIR"
+
     template = remove_indentation("""
         #!/bin/bash
+
+        {test_undeclared_outputs_dir_env_var_check}
 
         # Print commands and expand variables for easier debugging.
         set -x
@@ -69,7 +85,8 @@ def _adb_test_impl(ctx):
         $(rootpath {adb_test_runner}) \
             --device {device} \
             --archive $(rootpath {archive}) \
-            --test-runner $(rootpath {test_runner})
+            --test-runner $(rootpath {test_runner}) \
+            {output_dir_flag}
     """)
 
     if ctx.attr.device == "unknown":
@@ -88,6 +105,8 @@ def _adb_test_impl(ctx):
         archive = ctx.attr.archive.label,
         test_runner = ctx.attr.test_runner.label,
         adb_test_runner = ctx.attr._adb_test_runner[0].label,
+        test_undeclared_outputs_dir_env_var_check = test_undeclared_outputs_dir_env_var_check,
+        output_dir_flag = output_dir_flag,
     ), targets = [
         ctx.attr.archive,
         ctx.attr.test_runner,
@@ -107,6 +126,9 @@ def _adb_test_impl(ctx):
 
 adb_test = rule(
     doc = """Runs an Android test on device via `adb`.
+
+    Note: This rule is not intended to be used directly in BUILD files. Instead, please use macros
+    android_unit_test, android_gm_test, etc.
 
     This test rule produces a wrapper shell script that invokes a Go proram that issues adb
     commands to interact with the device under test.
@@ -142,8 +164,16 @@ adb_test = rule(
             allow_single_file = [".tar.gz"],
             mandatory = True,
         ),
+        "save_output_files": attr.bool(
+            doc = (
+                "If true, save any files produced by this test (e.g. PNG and JSON files in the " +
+                "case of GM tests) as undeclared outputs (see documentation for the " +
+                "TEST_UNDECLARED_OUTPUTS_DIR environment variable at " +
+                "https://bazel.build/reference/test-encyclopedia#initial-conditions)."
+            ),
+        ),
         "_adb_test_runner": attr.label(
-            default = Label("//tests/adb_test_runner"),
+            default = Label("//bazel/adb_test_runner"),
             allow_single_file = True,
             executable = True,
             cfg = adb_test_runner_transition,

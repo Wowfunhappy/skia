@@ -329,6 +329,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip(ALL, "gm", ALL, "async_rescale_and_read_no_bleed")
 			skip(ALL, "gm", ALL, "async_rescale_and_read_text_up")
 			skip(ALL, "gm", ALL, "async_rescale_and_read_dog_down")
+			skip(ALL, "gm", ALL, "async_rescale_and_read_dog_up")
 			skip(ALL, "gm", ALL, "async_rescale_and_read_rose")
 
 			if b.extraConfig("Metal") {
@@ -1530,8 +1531,14 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		args = append(args, "--forceAnalyticAA")
 	}
 
-	if !b.extraConfig("NativeFonts") {
-		args = append(args, "--nonativeFonts")
+	if b.extraConfig("NativeFonts") {
+		args = append(args, "--nativeFonts")
+		if !b.matchOs("Android") {
+			args = append(args, "--paragraph_fonts", "extra_fonts")
+			args = append(args, "--norun_paragraph_tests_needing_system_fonts")
+		}
+	} else {
+	    args = append(args, "--nonativeFonts")
 	}
 
 	if b.extraConfig("GDI") {

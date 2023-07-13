@@ -106,6 +106,9 @@ bool SkImageFilter::canComputeFastBounds() const {
 bool SkImageFilter_Base::affectsTransparentBlack() const {
     if (this->onAffectsTransparentBlack()) {
         return true;
+    } else if (this->ignoreInputsAffectsTransparentBlack()) {
+        // TODO(skbug.com/14611): Automatically infer this from output bounds being finite
+        return false;
     }
     for (int i = 0; i < this->countInputs(); i++) {
         const SkImageFilter* input = this->getInput(i);
@@ -227,17 +230,6 @@ void SkImageFilter_Base::flatten(SkWriteBuffer& buffer) const {
 }
 
 skif::FilterResult SkImageFilter_Base::filterImage(const skif::Context& context) const {
-    // TODO (michaelludwig) - Old filters have an implicit assumption that the source image
-    // (originally passed separately) has an origin of (0, 0). SkComposeImageFilter makes an effort
-    // to ensure that remains the case. Once everyone uses the new type systems for bounds, non
-    // (0, 0) source origins will be easy to support.
-    SkASSERT((!context.source().image() && context.source().layerBounds().isEmpty()) ||
-             (context.source().image() &&
-              context.source().layerBounds().left() == 0 &&
-              context.source().layerBounds().top() == 0 &&
-              context.source().layerBounds().right() == context.source().image()->width() &&
-              context.source().layerBounds().bottom() == context.source().image()->height()));
-
     // TODO: Once all image filters operate on FilterResult, we should allow null source images.
     // Some filters that use a source input will produce non-transparent black values even if the
     // input is fully transparent (null). For now, at least allow filters that do not use the source

@@ -13,24 +13,37 @@
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPoint.h"
 #include "include/core/SkRect.h"
+#include "include/core/SkRefCnt.h"
 #include "include/core/SkSamplingOptions.h"
+#include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
+#include "include/core/SkSpan.h"
+#include "include/core/SkSurfaceProps.h"
+#include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
 #include "include/private/base/SkTArray.h"
+#include "include/private/base/SkTPin.h"
+#include "include/private/base/SkTo.h"
 #include "src/core/SkEnumBitMask.h"
 #include "src/core/SkSpecialImage.h"
 
+#include <cstdint>
+#include <functional>
 #include <optional>
+#include <utility>
 
+class FilterResultImageResolver;  // for testing
 class GrRecordingContext;
-enum GrSurfaceOrigin : int;
+class SkCanvas;
 class SkImage;
 class SkImageFilter;
 class SkImageFilterCache;
 class SkPicture;
+class SkShader;
 class SkSpecialSurface;
-class SkSurfaceProps;
-
-class FilterResultImageResolver; // for testing
+enum GrSurfaceOrigin : int;
+enum SkColorType : int;
+struct SkImageInfo;
 
 namespace skgpu::graphite { class Recorder; }
 
@@ -659,6 +672,7 @@ public:
     FilterResult(sk_sp<SkSpecialImage> image, const LayerSpace<SkIPoint>& origin)
             : fImage(std::move(image))
             , fSamplingOptions(kDefaultSampling)
+            , fTileMode(SkTileMode::kDecal)
             , fTransform(SkMatrix::Translate(origin.x(), origin.y()))
             , fColorFilter(nullptr)
             , fLayerBounds(
@@ -704,7 +718,7 @@ public:
 
     // Get the layer-space bounds of the result. This will incorporate any layer-space transform.
     LayerSpace<SkIRect> layerBounds() const { return fLayerBounds; }
-
+    SkTileMode tileMode() const { return fTileMode; }
     SkSamplingOptions sampling() const { return fSamplingOptions; }
 
     const SkColorFilter* colorFilter() const { return fColorFilter.get(); }
@@ -713,12 +727,9 @@ public:
     // desired output. When possible, the returned FilterResult will reuse the underlying image and
     // adjust its metadata. This will depend on the current transform and tile mode as well as how
     // the crop rect intersects this result's layer bounds.
-    // TODO (michaelludwig): All FilterResults are decal mode and there are no current usages that
-    // require force-padding a decal FilterResult so these arguments aren't implemented yet.
     FilterResult applyCrop(const Context& ctx,
-                           const LayerSpace<SkIRect>& crop) const;
-                           //  SkTileMode newTileMode=SkTileMode::kDecal,
-                           //  bool forcePad=false) const;
+                           const LayerSpace<SkIRect>& crop,
+                           SkTileMode tileMode=SkTileMode::kDecal) const;
 
     // Produce a new FilterResult that is the transformation of this FilterResult. When this
     // result's sampling and transform are compatible with the new transformation, the returned
@@ -763,9 +774,11 @@ private:
 
     // Renders this FilterResult into a new, but visually equivalent, image that fills 'dstBounds',
     // has default sampling, no color filter, and a transform that translates by only 'dstBounds's
-    // top-left corner. 'dstBounds' is always intersected with 'fLayerBounds'.
+    // top-left corner. 'dstBounds' is intersected with 'fLayerBounds' unless 'preserveTransparency'
+    // is true.
     std::pair<sk_sp<SkSpecialImage>, LayerSpace<SkIPoint>>
-    resolve(const Context& ctx, LayerSpace<SkIRect> dstBounds) const;
+    resolve(const Context& ctx, LayerSpace<SkIRect> dstBounds,
+            bool preserveTransparency=false) const;
 
     // Returns true if tiling and color filtering affect pixels outside of the image's bounds that
     // are within the layer bounds (limited to 'dstBounds'). This does not consider the layer bounds
@@ -789,12 +802,16 @@ private:
                              SkEnumBitMask<ShaderFlags> flags,
                              const LayerSpace<SkIRect>& sampleBounds) const;
 
+    // Safely updates fTileMode, doing nothing if the FilterResult is empty. Updates the layer
+    // bounds to the context's desired output if the tilemode is not decal.
+    void updateTileMode(const Context& ctx, SkTileMode tileMode);
+
     // The effective image of a FilterResult is 'fImage' sampled by 'fSamplingOptions' and
     // respecting 'fTileMode' (on the SkSpecialImage's subset), transformed by 'fTransform',
     // filtered by 'fColorFilter', and then clipped to 'fLayerBounds'.
     sk_sp<SkSpecialImage> fImage;
     SkSamplingOptions     fSamplingOptions;
-    // SkTileMode         fTileMode = SkTileMode::kDecal;
+    SkTileMode            fTileMode;
     // Typically this will be an integer translation that encodes the origin of the top left corner,
     // but can become more complex when combined with applyTransform().
     LayerSpace<SkMatrix>  fTransform;
@@ -919,30 +936,7 @@ struct ContextInfo {
 class Context {
     static constexpr GrSurfaceOrigin kUnusedOrigin = (GrSurfaceOrigin) 0;
 public:
-    static Context MakeRaster(const ContextInfo& info) {
-        // TODO (skbug:14286): Remove this forcing to 8888. Many legacy image filters only support
-        // N32 on CPU, but once they are implemented in terms of draws and SkSL they will support
-        // all color types, like the GPU backends.
-        ContextInfo n32 = info;
-        n32.fColorType = kN32_SkColorType;
-        return Context(n32, nullptr, kUnusedOrigin, nullptr);
-    }
-
-#if defined(SK_GANESH)
-    static Context MakeGanesh(GrRecordingContext* context,
-                              GrSurfaceOrigin origin,
-                              const ContextInfo& info) {
-        return Context(info, context, origin, nullptr);
-    }
-#endif
-
-#if defined(SK_GRAPHITE)
-    static Context MakeGraphite(skgpu::graphite::Recorder* recorder, const ContextInfo& info) {
-        return Context(info, nullptr, kUnusedOrigin, recorder);
-    }
-#endif
-
-    Context() = default; // unitialized to support assignment in branches for MakeX() above
+    static Context MakeRaster(const ContextInfo& info);
 
     // The mapping that defines the transformation from local parameter space of the filters to the
     // layer space where the image filters are evaluated, as well as the remaining transformation
@@ -968,9 +962,7 @@ public:
     // The output device's color type, which can be used for intermediate images to be
     // compatible with the eventual target of the filtered result.
     SkColorType colorType() const { return fInfo.fColorType; }
-#if defined(SK_GANESH)
-    GrColorType grColorType() const { return SkColorTypeToGrColorType(fInfo.fColorType); }
-#endif
+
     // The output device's color space, so intermediate images can match, and so filtering can
     // be performed in the destination color space.
     SkColorSpace* colorSpace() const { return fInfo.fColorSpace; }
@@ -1002,24 +994,23 @@ public:
     Context withNewMapping(const Mapping& mapping) const {
         ContextInfo info = fInfo;
         info.fMapping = mapping;
-        return Context(info, fGaneshContext, fGaneshOrigin, fGraphiteRecorder);
+        return Context(info, fGaneshContext, fMakeSurfaceDelegate);
     }
     // Create a new context that matches this context, but with an overridden desired output rect.
     Context withNewDesiredOutput(const LayerSpace<SkIRect>& desiredOutput) const {
         ContextInfo info = fInfo;
         info.fDesiredOutput = desiredOutput;
-        return Context(info, fGaneshContext, fGaneshOrigin, fGraphiteRecorder);
+        return Context(info, fGaneshContext, fMakeSurfaceDelegate);
     }
     // Create a new context that matches this context, but with an overridden color space.
     Context withNewColorSpace(SkColorSpace* cs) const {
         ContextInfo info = fInfo;
         info.fColorSpace = cs;
-        return Context(info, fGaneshContext, fGaneshOrigin, fGraphiteRecorder);
+        return Context(info, fGaneshContext, fMakeSurfaceDelegate);
     }
 
-    // Create a new context that matches this context, but with an overridden source.
-    // TODO: Have this take just a FilterResult when no origin manipulation is required.
-    Context withNewSource(sk_sp<SkSpecialImage> source, LayerSpace<SkIPoint> origin) const {
+#if defined(SK_USE_LEGACY_COMPOSE_IMAGEFILTER)
+   Context withNewSource(sk_sp<SkSpecialImage> source, LayerSpace<SkIPoint> origin) const {
         // TODO: Some legacy image filter implementations assume that the source FilterResult's
         // origin/transform is at (0,0). To accommodate that, we push the typical origin transform
         // into the param-to-layer matrix and adjust the desired output.
@@ -1027,39 +1018,40 @@ public:
         info.fMapping.applyOrigin(origin);
         info.fDesiredOutput.offset(-origin);
         info.fSource = FilterResult(std::move(source));
-        return Context(info, fGaneshContext, fGaneshOrigin, fGraphiteRecorder);
+        return Context(info, fGaneshContext, fMakeSurfaceDelegate);
     }
+#else
+    // Create a new context that matches this context, but with an overridden source.
+    Context withNewSource(const FilterResult& source) const {
+        ContextInfo info = fInfo;
+        info.fSource = source;
+        return Context(info, fGaneshContext, fMakeSurfaceDelegate);
+    }
+#endif
 
 private:
+    using MakeSurfaceDelegate = std::function<sk_sp<SkSpecialSurface>(const SkImageInfo& info,
+                                                                      const SkSurfaceProps* props)>;
     Context(const ContextInfo& info,
             GrRecordingContext* ganeshContext,
-            GrSurfaceOrigin ganeshOrigin,
-            skgpu::graphite::Recorder* graphiteRecorder)
+            MakeSurfaceDelegate msd)
             : fInfo(info)
             , fGaneshContext(ganeshContext)
-            , fGaneshOrigin(ganeshOrigin)
-            , fGraphiteRecorder(graphiteRecorder) {
-#if defined(SK_GANESH)
-        SkASSERT(!fInfo.fSource.image() ||
-                 SkToBool(ganeshContext) == fInfo.fSource.image()->isTextureBacked());
-#else
-        SkASSERT(!SkToBool(ganeshContext));
-#endif
-
-#if defined(SK_GRAPHITE)
-        SkASSERT(!fInfo.fSource.image() ||
-                 SkToBool(graphiteRecorder) == fInfo.fSource.image()->isGraphiteBacked());
-#else
-        SkASSERT(!SkToBool(graphiteRecorder));
-#endif
+            , fMakeSurfaceDelegate(msd) {
+        SkASSERT(fMakeSurfaceDelegate);
     }
 
     ContextInfo fInfo;
 
-    // Both will be null for CPU image filtering, or one will be non-null to select the GPU backend.
+    // This will be null for CPU image filtering.
     GrRecordingContext* fGaneshContext;
-    GrSurfaceOrigin fGaneshOrigin;
-    skgpu::graphite::Recorder* fGraphiteRecorder;
+    MakeSurfaceDelegate fMakeSurfaceDelegate;
+
+    friend Context MakeGaneshContext(GrRecordingContext* context,
+                                     GrSurfaceOrigin origin,
+                                     const ContextInfo& info);
+    friend Context MakeGraphiteContext(skgpu::graphite::Recorder* recorder,
+                                       const ContextInfo& info);
 };
 
 } // end namespace skif

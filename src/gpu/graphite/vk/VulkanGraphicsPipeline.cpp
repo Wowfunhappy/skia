@@ -10,6 +10,7 @@
 #include "include/gpu/ShaderErrorHandler.h"
 #include "include/private/base/SkTArray.h"
 #include "src/core/SkSLTypeShared.h"
+#include "src/core/SkTraceEvent.h"
 #include "src/gpu/PipelineUtils.h"
 #include "src/gpu/graphite/AttachmentTypes.h"
 #include "src/gpu/graphite/Attribute.h"
@@ -19,7 +20,6 @@
 #include "src/gpu/graphite/RendererProvider.h"
 #include "src/gpu/graphite/RuntimeEffectDictionary.h"
 #include "src/gpu/graphite/vk/VulkanGraphicsPipeline.h"
-#include "src/gpu/graphite/vk/VulkanGraphiteUtilsPriv.h"
 #include "src/gpu/graphite/vk/VulkanSharedContext.h"
 #include "src/sksl/SkSLProgramKind.h"
 #include "src/sksl/SkSLProgramSettings.h"
@@ -437,12 +437,112 @@ static void setup_shader_stage_info(VkShaderStageFlagBits stage,
     shaderStageInfo->pSpecializationInfo = nullptr;
 }
 
+static VkPipelineLayout setup_pipeline_layout(const VulkanSharedContext* sharedContext,
+                                  bool hasStepUniforms,
+                                  bool hasFragment,
+                                  int numTextureSamplers) {
+    // Determine descriptor set layouts based upon the number of uniform buffers & texture/samplers.
+    skia_private::STArray<2, VkDescriptorSetLayout> setLayouts;
+    skia_private::STArray<VulkanGraphicsPipeline::kNumUniformBuffers, DescriptorData>
+            uniformDescriptors;
+    uniformDescriptors.push_back(VulkanGraphicsPipeline::kIntrinsicUniformDescriptor);
+    if (hasStepUniforms) {
+        uniformDescriptors.push_back(VulkanGraphicsPipeline::kRenderStepUniformDescriptor);
+    }
+    if (hasFragment) {
+        uniformDescriptors.push_back(VulkanGraphicsPipeline::kPaintUniformDescriptor);
+    }
+    VkDescriptorSetLayout uniformSetLayout;
+    DescriptorDataToVkDescSetLayout(sharedContext, uniformDescriptors, &uniformSetLayout);
+    if (uniformSetLayout != VK_NULL_HANDLE) {
+        setLayouts.push_back(uniformSetLayout);
+    } else {
+        SkDebugf("Failed to create uniform descriptor set layout; pipeline creation will fail.\n");
+        return VK_NULL_HANDLE;
+    }
+
+    VkDescriptorSetLayout textureSamplerSetLayout;
+    if (numTextureSamplers > 0) {
+        skia_private::TArray<DescriptorData> textureSamplerDescs(numTextureSamplers);
+
+        for (int i = 0; i < numTextureSamplers; i++) {
+            textureSamplerDescs.push_back({DescriptorType::kCombinedTextureSampler, 1, i});
+        }
+        DescriptorDataToVkDescSetLayout(
+                sharedContext, textureSamplerDescs, &textureSamplerSetLayout);
+        if (textureSamplerSetLayout != VK_NULL_HANDLE) {
+            setLayouts.push_back(textureSamplerSetLayout);
+        } else {
+            SKGPU_LOG_W("Failed to create texture/sampler descriptor set layout!\n");
+            SkDebugf("Texture/sampler descriptors will not be able to bind.\n");
+        }
+    }
+
+    VkPipelineLayoutCreateInfo layoutCreateInfo;
+    memset(&layoutCreateInfo, 0, sizeof(VkPipelineLayoutCreateFlags));
+    layoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutCreateInfo.pNext = nullptr;
+    layoutCreateInfo.flags = 0;
+    layoutCreateInfo.setLayoutCount = setLayouts.size();
+    layoutCreateInfo.pSetLayouts = setLayouts.begin();
+    // TODO: Add support for push constants.
+    layoutCreateInfo.pushConstantRangeCount = 0;
+    layoutCreateInfo.pPushConstantRanges = nullptr;
+
+    VkResult result;
+    VkPipelineLayout layout;
+    VULKAN_CALL_RESULT(sharedContext->interface(),
+                       result,
+                       CreatePipelineLayout(sharedContext->device(),
+                                            &layoutCreateInfo,
+                                            /*const VkAllocationCallbacks*=*/nullptr,
+                                            &layout));
+    // Whether the pipeline layout creation was successful or not, clean up the prerequisite
+    // DescriptorSetLayout(s) that are no longer needed.
+    for (int i = 0; i < setLayouts.size(); i++) {
+        if (setLayouts[i] != VK_NULL_HANDLE) {
+            VULKAN_CALL(sharedContext->interface(),
+            DestroyDescriptorSetLayout(sharedContext->device(),
+                                       setLayouts[i],
+                                       nullptr));
+        }
+    }
+    return result == VK_SUCCESS ? layout : VK_NULL_HANDLE;
+}
+
+static void destroy_shader_modules(const VulkanSharedContext* sharedContext,
+                                   VkShaderModule vsModule,
+                                   VkShaderModule fsModule) {
+    if (vsModule != VK_NULL_HANDLE) {
+        VULKAN_CALL(sharedContext->interface(),
+                    DestroyShaderModule(sharedContext->device(), vsModule, nullptr));
+    }
+    if (fsModule != VK_NULL_HANDLE) {
+        VULKAN_CALL(sharedContext->interface(),
+                    DestroyShaderModule(sharedContext->device(), fsModule, nullptr));
+    }
+}
+
+static void setup_dynamic_state(VkPipelineDynamicStateCreateInfo* dynamicInfo,
+                                VkDynamicState* dynamicStates) {
+    memset(dynamicInfo, 0, sizeof(VkPipelineDynamicStateCreateInfo));
+    dynamicInfo->sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicInfo->pNext = VK_NULL_HANDLE;
+    dynamicInfo->flags = 0;
+    dynamicStates[0] = VK_DYNAMIC_STATE_VIEWPORT;
+    dynamicStates[1] = VK_DYNAMIC_STATE_SCISSOR;
+    dynamicStates[2] = VK_DYNAMIC_STATE_BLEND_CONSTANTS;
+    dynamicInfo->dynamicStateCount = 3;
+    dynamicInfo->pDynamicStates = dynamicStates;
+}
+
 sk_sp<VulkanGraphicsPipeline> VulkanGraphicsPipeline::Make(
         const VulkanSharedContext* sharedContext,
         SkSL::Compiler* compiler,
         const RuntimeEffectDictionary* runtimeDict,
         const GraphicsPipelineDesc& pipelineDesc,
-        const RenderPassDesc& renderPassDesc) {
+        const RenderPassDesc& renderPassDesc,
+        VkPipelineCache pipelineCache) {
     SkSL::Program::Interface vsInterface, fsInterface;
     SkSL::ProgramSettings settings;
     settings.fForceNoRTFlip = true; // TODO: Confirm
@@ -453,14 +553,20 @@ sk_sp<VulkanGraphicsPipeline> VulkanGraphicsPipeline::Make(
     bool useShadingSsboIndex =
             sharedContext->caps()->storageBufferPreferred() && step->performsShading();
 
-    const FragSkSLInfo fsSkSLInfo = GetSkSLFS(sharedContext->caps(),
-                                              sharedContext->shaderCodeDictionary(),
-                                              runtimeDict,
-                                              step,
-                                              pipelineDesc.paintParamsID(),
-                                              useShadingSsboIndex,
-                                              renderPassDesc.fWriteSwizzle);
-    const std::string& fsSkSL = fsSkSLInfo.fSkSL;
+    if (step->vertexAttributes().size() + step->instanceAttributes().size() >
+        sharedContext->vulkanCaps().maxVertexAttributes()) {
+        SKGPU_LOG_W("Requested more than the supported number of vertex attributes");
+        return nullptr;
+    }
+
+    FragSkSLInfo fsSkSLInfo = GetSkSLFS(sharedContext->caps(),
+                                        sharedContext->shaderCodeDictionary(),
+                                        runtimeDict,
+                                        step,
+                                        pipelineDesc.paintParamsID(),
+                                        useShadingSsboIndex,
+                                        renderPassDesc.fWriteSwizzle);
+    std::string& fsSkSL = fsSkSLInfo.fSkSL;
     const bool localCoordsNeeded = fsSkSLInfo.fRequiresLocalCoords;
 
     bool hasFragment = !fsSkSL.empty();
@@ -484,11 +590,12 @@ sk_sp<VulkanGraphicsPipeline> VulkanGraphicsPipeline::Make(
         }
     }
 
+    std::string vsSkSL = GetSkSLVS(sharedContext->caps()->resourceBindingRequirements(),
+                                   step,
+                                   useShadingSsboIndex,
+                                   localCoordsNeeded);
     if (!SkSLToSPIRV(compiler,
-                     GetSkSLVS(sharedContext->caps()->resourceBindingRequirements(),
-                               step,
-                               useShadingSsboIndex,
-                               localCoordsNeeded),
+                     vsSkSL,
                      SkSL::ProgramKind::kGraphiteVertex,
                      settings,
                      &vsSPIRV,
@@ -499,24 +606,14 @@ sk_sp<VulkanGraphicsPipeline> VulkanGraphicsPipeline::Make(
 
     vsModule = createVulkanShaderModule(sharedContext, vsSPIRV, VK_SHADER_STAGE_VERTEX_BIT);
     if (!vsModule) {
+        // Clean up the other shader module before returning.
+        destroy_shader_modules(sharedContext, VK_NULL_HANDLE, fsModule);
         return nullptr;
     }
 
     VkPipelineVertexInputStateCreateInfo vertexInputInfo;
     skia_private::STArray<2, VkVertexInputBindingDescription, true> bindingDescs;
     skia_private::STArray<16, VkVertexInputAttributeDescription> attributeDescs;
-    if (step->vertexAttributes().size() + step->instanceAttributes().size() >
-        sharedContext->vulkanCaps().maxVertexAttributes()) {
-        SKGPU_LOG_W("Requested more than the supported number of vertex attributes");
-        // Clean up shader modules before returning.
-        VULKAN_CALL(sharedContext->interface(),
-            DestroyShaderModule(sharedContext->device(), vsModule, nullptr));
-        if (fsModule != VK_NULL_HANDLE) {
-            VULKAN_CALL(sharedContext->interface(),
-                        DestroyShaderModule(sharedContext->device(), fsModule, nullptr));
-        }
-        return nullptr;
-    }
     setup_vertex_input_state(step->vertexAttributes(),
                              step->instanceAttributes(),
                              &vertexInputInfo,
@@ -545,29 +642,127 @@ sk_sp<VulkanGraphicsPipeline> VulkanGraphicsPipeline::Make(
     // TODO: Check for wire frame mode once that is an available context option within graphite.
     setup_raster_state(/*isWireframe=*/false, &rasterInfo);
 
-    VkPipelineShaderStageCreateInfo vertexShaderStageInfo;
+    VkPipelineShaderStageCreateInfo pipelineShaderStages[2];
     setup_shader_stage_info(VK_SHADER_STAGE_VERTEX_BIT,
                             vsModule,
-                            &vertexShaderStageInfo);
-    VkPipelineShaderStageCreateInfo fragShaderStageInfo;
-    setup_shader_stage_info(VK_SHADER_STAGE_FRAGMENT_BIT,
-                            fsModule,
-                            &fragShaderStageInfo);
-
-    // TODO: Set up other helpers and structs to populate VkGraphicsPipelineCreateInfo.
-
-    // After creating the pipeline object, we can clean up the VkShaderModule(s).
-    VULKAN_CALL(sharedContext->interface(),
-                DestroyShaderModule(sharedContext->device(), vsModule, nullptr));
-    if (fsModule != VK_NULL_HANDLE) {
-        VULKAN_CALL(sharedContext->interface(),
-                    DestroyShaderModule(sharedContext->device(), fsModule, nullptr));
+                            &pipelineShaderStages[0]);
+    if (hasFragment) {
+        setup_shader_stage_info(VK_SHADER_STAGE_FRAGMENT_BIT,
+                                fsModule,
+                                &pipelineShaderStages[1]);
     }
 
-    return sk_sp<VulkanGraphicsPipeline>(new VulkanGraphicsPipeline(sharedContext));
+    VkPipelineLayout pipelineLayout = setup_pipeline_layout(sharedContext,
+                                                            !step->uniforms().empty(),
+                                                            hasFragment,
+                                                            fsSkSLInfo.fNumTexturesAndSamplers);
+    if (pipelineLayout == VK_NULL_HANDLE) {
+        destroy_shader_modules(sharedContext, vsModule, fsModule);
+        return nullptr;
+    }
+
+    VkDynamicState dynamicStates[3];
+    VkPipelineDynamicStateCreateInfo dynamicInfo;
+    setup_dynamic_state(&dynamicInfo, dynamicStates);
+
+    VkPipelineRenderingCreateInfoKHR pipelineRenderingInfo;
+    memset(&pipelineRenderingInfo, 0, sizeof(VkPipelineRenderingCreateInfoKHR));
+    pipelineRenderingInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+    pipelineRenderingInfo.colorAttachmentCount = 1;
+    VulkanTextureInfo textureInfo;
+    bool validTextureInfo =
+            renderPassDesc.fColorAttachment.fTextureInfo.getVulkanTextureInfo(&textureInfo);
+    pipelineRenderingInfo.pColorAttachmentFormats = validTextureInfo ? &textureInfo.fFormat
+                                                                     : VK_NULL_HANDLE;
+
+    VkGraphicsPipelineCreateInfo pipelineCreateInfo;
+    memset(&pipelineCreateInfo, 0, sizeof(VkGraphicsPipelineCreateInfo));
+    pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineCreateInfo.pNext = &pipelineRenderingInfo;
+    pipelineCreateInfo.flags = 0;
+    pipelineCreateInfo.stageCount = hasFragment ? 2 : 1;
+    pipelineCreateInfo.pStages = &pipelineShaderStages[0];
+    pipelineCreateInfo.pVertexInputState = &vertexInputInfo;
+    pipelineCreateInfo.pInputAssemblyState = &inputAssemblyInfo;
+    pipelineCreateInfo.pTessellationState = nullptr;
+    pipelineCreateInfo.pViewportState = &viewportInfo;
+    pipelineCreateInfo.pRasterizationState = &rasterInfo;
+    pipelineCreateInfo.pMultisampleState = &multisampleInfo;
+    pipelineCreateInfo.pDepthStencilState = &depthStencilInfo;
+    pipelineCreateInfo.pColorBlendState = &colorBlendInfo;
+    pipelineCreateInfo.pDynamicState = &dynamicInfo;
+    pipelineCreateInfo.layout = pipelineLayout;
+    pipelineCreateInfo.renderPass = VK_NULL_HANDLE;
+    // For the vast majority of cases we only have one subpass so we default piplines to subpass 0.
+    // TODO: However, if we need to load a resolve into msaa attachment for discardable msaa then
+    // the main subpass will be 1.
+    pipelineCreateInfo.subpass = 0;
+    pipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineCreateInfo.basePipelineIndex = -1;
+
+    VkPipeline vkPipeline;
+    VkResult result;
+    {
+        TRACE_EVENT0_ALWAYS("skia.shaders", "CreateGraphicsPipeline");
+        VULKAN_CALL_RESULT(sharedContext->interface(),
+                           result,
+                           CreateGraphicsPipelines(sharedContext->device(),
+                                                   pipelineCache,
+                                                   1,
+                                                   &pipelineCreateInfo,
+                                                   nullptr,
+                                                   &vkPipeline));
+    }
+    if (result != VK_SUCCESS) {
+        SkDebugf("Failed to create pipeline. Error: %d\n", result);
+        return nullptr;
+    }
+
+    // After creating the pipeline object, we can clean up the VkShaderModule(s).
+    destroy_shader_modules(sharedContext, vsModule, fsModule);
+
+#if GRAPHITE_TEST_UTILS
+    GraphicsPipeline::Shaders pipelineShaders = {
+        std::move(vsSkSL),
+        std::move(fsSkSL),
+        "SPIR-V disassembly not available",
+        "SPIR-V disassembly not available",
+    };
+    GraphicsPipeline::Shaders* pipelineShadersPtr = &pipelineShaders;
+#else
+    GraphicsPipeline::Shaders* pipelineShadersPtr = nullptr;
+#endif
+
+    return sk_sp<VulkanGraphicsPipeline>(new VulkanGraphicsPipeline(sharedContext,
+                                                                    pipelineShadersPtr,
+                                                                    pipelineLayout,
+                                                                    vkPipeline,
+                                                                    hasFragment,
+                                                                    !step->uniforms().empty()));
 }
 
+VulkanGraphicsPipeline::VulkanGraphicsPipeline(const skgpu::graphite::SharedContext* sharedContext,
+                                               Shaders* pipelineShaders,
+                                               VkPipelineLayout pipelineLayout,
+                                               VkPipeline pipeline,
+                                               bool hasFragment,
+                                               bool hasStepUniforms)
+        : GraphicsPipeline(sharedContext, pipelineShaders)
+        , fPipelineLayout(pipelineLayout)
+        , fPipeline(pipeline)
+        , fHasFragment(hasFragment)
+        , fHasStepUniforms(hasStepUniforms) {}
+
 void VulkanGraphicsPipeline::freeGpuData() {
+    auto sharedCtxt = static_cast<const VulkanSharedContext*>(this->sharedContext());
+    if (fPipeline != VK_NULL_HANDLE) {
+        VULKAN_CALL(sharedCtxt->interface(),
+            DestroyPipeline(sharedCtxt->device(), fPipeline, nullptr));
+    }
+    if (fPipelineLayout != VK_NULL_HANDLE) {
+        VULKAN_CALL(sharedCtxt->interface(),
+                    DestroyPipelineLayout(sharedCtxt->device(), fPipelineLayout, nullptr));
+    }
 }
 
 } // namespace skgpu::graphite

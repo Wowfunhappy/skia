@@ -25,6 +25,7 @@
 #include "src/gpu/graphite/CommandBuffer.h"
 #include "src/gpu/graphite/ContextPriv.h"
 #include "src/gpu/graphite/CopyTask.h"
+#include "src/gpu/graphite/Device.h"
 #include "src/gpu/graphite/DrawAtlas.h"
 #include "src/gpu/graphite/GlobalCache.h"
 #include "src/gpu/graphite/GraphicsPipeline.h"
@@ -135,12 +136,14 @@ bool Context::submit(SyncToCpu syncToCpu) {
     return success;
 }
 
-void Context::asyncReadPixels(const SkImage* image,
-                              const SkColorInfo& dstColorInfo,
-                              const SkIRect& srcRect,
-                              SkImage::ReadPixelsCallback callback,
-                              SkImage::ReadPixelsContext callbackContext) {
-    if (!as_IB(image)->isGraphiteBacked()) {
+void Context::asyncRescaleAndReadPixels(const SkImage* image,
+                                        const SkImageInfo& dstImageInfo,
+                                        const SkIRect& srcRect,
+                                        SkImage::RescaleGamma rescaleGamma,
+                                        SkImage::RescaleMode rescaleMode,
+                                        SkImage::ReadPixelsCallback callback,
+                                        SkImage::ReadPixelsContext callbackContext) {
+    if (!image || !as_IB(image)->isGraphiteBacked()) {
         callback(callbackContext, nullptr);
         return;
     }
@@ -149,35 +152,95 @@ void Context::asyncReadPixels(const SkImage* image,
         callback(callbackContext, nullptr);
         return;
     }
+
+    const SkImageInfo& srcImageInfo = image->imageInfo();
+    if (!SkIRect::MakeSize(image->imageInfo().dimensions()).contains(srcRect)) {
+        callback(callbackContext, nullptr);
+        return;
+    }
+
+    if (srcRect.size() == dstImageInfo.bounds().size()) {
+        // No need for rescale
+        auto graphiteImage = reinterpret_cast<const skgpu::graphite::Image*>(image);
+        TextureProxyView proxyView = graphiteImage->textureProxyView();
+        return this->asyncReadPixels(proxyView.proxy(),
+                                     image->imageInfo(),
+                                     dstImageInfo.colorInfo(),
+                                     srcRect,
+                                     callback,
+                                     callbackContext);
+    }
+
+    // Make a recorder to record drawing commands into
+    std::unique_ptr<Recorder> recorder = this->makeRecorder();
+
+    // Make Device from Recorder
     auto graphiteImage = reinterpret_cast<const skgpu::graphite::Image*>(image);
     TextureProxyView proxyView = graphiteImage->textureProxyView();
+    SkColorInfo colorInfo = srcImageInfo.colorInfo().makeAlphaType(kPremul_SkAlphaType);
+    sk_sp<Device> device = Device::Make(recorder.get(),
+                                        proxyView.refProxy(),
+                                        image->dimensions(),
+                                        colorInfo,
+                                        SkSurfaceProps{},
+                                        false);
+    if (!device) {
+        callback(callbackContext, nullptr);
+        return;
+    }
 
-    this->asyncReadPixels(proxyView.proxy(),
-                          image->imageInfo(),
-                          dstColorInfo,
-                          srcRect,
+    sk_sp<SkImage> scaledImage = device->rescale(srcRect, dstImageInfo, rescaleGamma, rescaleMode);
+    if (!scaledImage) {
+        callback(callbackContext, nullptr);
+        return;
+    }
+
+    // Add draw commands to queue before starting the transfer
+    std::unique_ptr<Recording> recording = recorder->snap();
+    if (!recording) {
+        callback(callbackContext, nullptr);
+        return;
+    }
+    InsertRecordingInfo recordingInfo;
+    recordingInfo.fRecording = recording.get();
+    if (!this->insertRecording(recordingInfo)) {
+        callback(callbackContext, nullptr);
+        return;
+    }
+
+    SkASSERT(scaledImage->imageInfo() == dstImageInfo);
+
+    auto scaledGraphiteImage = reinterpret_cast<const skgpu::graphite::Image*>(scaledImage.get());
+    TextureProxyView scaledProxyView = scaledGraphiteImage->textureProxyView();
+
+    this->asyncReadPixels(scaledProxyView.proxy(),
+                          dstImageInfo,
+                          dstImageInfo.colorInfo(),
+                          dstImageInfo.bounds(),
                           callback,
                           callbackContext);
 }
 
-void Context::asyncReadPixels(const SkSurface* surface,
-                              const SkColorInfo& dstColorInfo,
-                              const SkIRect& srcRect,
-                              SkImage::ReadPixelsCallback callback,
-                              SkImage::ReadPixelsContext callbackContext) {
+void Context::asyncRescaleAndReadPixels(const SkSurface* surface,
+                                        const SkImageInfo& dstImageInfo,
+                                        const SkIRect& srcRect,
+                                        SkImage::RescaleGamma rescaleGamma,
+                                        SkImage::RescaleMode rescaleMode,
+                                        SkImage::ReadPixelsCallback callback,
+                                        SkImage::ReadPixelsContext callbackContext) {
     if (!static_cast<const SkSurface_Base*>(surface)->isGraphiteBacked()) {
         callback(callbackContext, nullptr);
         return;
     }
-    auto graphiteSurface = reinterpret_cast<const skgpu::graphite::Surface*>(surface);
-    TextureProxyView proxyView = graphiteSurface->readSurfaceView();
 
-    this->asyncReadPixels(proxyView.proxy(),
-                          surface->imageInfo(),
-                          dstColorInfo,
-                          srcRect,
-                          callback,
-                          callbackContext);
+    sk_sp<SkImage> surfaceImage = SkSurfaces::AsImage(sk_ref_sp(surface));
+    this->asyncRescaleAndReadPixels(surfaceImage.get(),
+                                    dstImageInfo,
+                                    srcRect,
+                                    rescaleGamma,
+                                    rescaleMode,
+                                    callback,
+                                    callbackContext);
 }
 
 void Context::asyncReadPixels(const TextureProxy* proxy,
@@ -291,8 +354,39 @@ void Context::asyncRescaleAndReadPixelsYUV420(const SkImage* image,
                                            callbackContext);
     }
 
-    // TODO: fill in rescaling code, then call asyncReadPixelsYUV420 on result
-    callback(callbackContext, nullptr);
+    // Make Device from Recorder
+    auto graphiteImage = reinterpret_cast<const skgpu::graphite::Image*>(image);
+    TextureProxyView proxyView = graphiteImage->textureProxyView();
+    sk_sp<Device> device = Device::Make(recorder.get(),
+                                        proxyView.refProxy(),
+                                        image->dimensions(),
+                                        srcImageInfo.colorInfo(),
+                                        SkSurfaceProps{},
+                                        false);
+    if (!device) {
+        callback(callbackContext, nullptr);
+        return;
+    }
+
+    SkImageInfo dstImageInfo = SkImageInfo::Make(dstSize,
+                                                 kRGBA_8888_SkColorType,
+                                                 srcImageInfo.colorInfo().alphaType(),
+                                                 dstColorSpace);
+    sk_sp<SkImage> scaledImage = device->rescale(srcRect,
+                                                 dstImageInfo,
+                                                 rescaleGamma,
+                                                 rescaleMode);
+    if (!scaledImage) {
+        callback(callbackContext, nullptr);
+        return;
+    }
+
+    this->asyncReadPixelsYUV420(recorder.get(),
+                                scaledImage.get(),
+                                yuvColorSpace,
+                                SkIRect::MakeSize(dstSize),
+                                callback,
+                                callbackContext);
 }
 
 void Context::asyncRescaleAndReadPixelsYUV420(const SkSurface* surface,

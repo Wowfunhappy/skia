@@ -63,19 +63,8 @@ public:
     static void ClampedOutsetWithOffset(SkIRect* iRect, int outset, SkPoint* offset,
                                         const SkIRect& clamp);
 
-    static void DrawTiledBitmap_Ganesh(SkBaseDevice*,
-                                       const SkBitmap&,
-                                       int tileSize,
-                                       const SkMatrix& srcToDst,
-                                       const SkRect& srcRect,
-                                       const SkIRect& clippedSrcIRect,
-                                       const SkPaint& paint,
-                                       SkCanvas::QuadAAFlags origAAFlags,
-                                       const SkMatrix& localToDevice,
-                                       SkCanvas::SrcRectConstraint constraint,
-                                       SkSamplingOptions sampling);
-
-    static void DrawImageRect_Ganesh(skgpu::ganesh::Device*,
+    static bool DrawImageRect_Ganesh(SkCanvas*,
+                                     skgpu::ganesh::Device*,
                                      const SkImage*,
                                      const SkRect& srcRect,
                                      const SkRect& dstRect,
@@ -84,7 +73,7 @@ public:
                                      const SkPaint&,
                                      SkCanvas::SrcRectConstraint);
 
-    static void DrawImageRect_Graphite(SkCanvas*,
+    static bool DrawImageRect_Graphite(SkCanvas*,
                                        const SkImage*,
                                        const SkRect& src,
                                        const SkRect& dst,

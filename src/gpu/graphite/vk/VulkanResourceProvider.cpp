@@ -22,6 +22,7 @@
 #include "src/gpu/graphite/vk/VulkanSampler.h"
 #include "src/gpu/graphite/vk/VulkanSharedContext.h"
 #include "src/gpu/graphite/vk/VulkanTexture.h"
+#include "src/sksl/SkSLCompiler.h"
 
 namespace skgpu::graphite {
 
@@ -54,56 +55,19 @@ GraphiteResourceKey build_desc_set_key(const SkSpan<DescriptorData>& requestedDe
     return key;
 }
 
-// This function populates a VkDescriptorSetLayout, but does not own the layout itself. The caller
-// is responsible for lifetime management of the layout.
-void VulkanResourceProvider::DescriptorDataToVkDescSetLayout(
-        const VulkanSharedContext* ctxt,
-        const SkSpan<DescriptorData>& requestedDescriptors,
-        VkDescriptorSetLayout* outLayout) {
-    skia_private::STArray<kDescriptorTypeCount, VkDescriptorSetLayoutBinding> bindingLayouts;
-    for (size_t i = 0; i < requestedDescriptors.size(); i++) {
-        if (requestedDescriptors[i].count != 0) {
-            VkDescriptorSetLayoutBinding layoutBinding;
-            memset(&layoutBinding, 0, sizeof(VkDescriptorSetLayoutBinding));
-            layoutBinding.binding = requestedDescriptors[i].bindingIndex;
-            layoutBinding.descriptorType =
-                    VulkanDescriptorSet::DsTypeEnumToVkDs(requestedDescriptors[i].type);
-            layoutBinding.descriptorCount = requestedDescriptors[i].count;
-            // TODO: Obtain layout binding stage flags from visibility (vertex or shader)
-            layoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-            // TODO: Optionally set immutableSamplers here.
-            layoutBinding.pImmutableSamplers = nullptr;
-            bindingLayouts.push_back(layoutBinding);
-        }
-    }
-
-    VkDescriptorSetLayoutCreateInfo layoutCreateInfo;
-    memset(&layoutCreateInfo, 0, sizeof(VkDescriptorSetLayoutCreateInfo));
-    layoutCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutCreateInfo.pNext = nullptr;
-    layoutCreateInfo.flags = 0;
-    layoutCreateInfo.bindingCount = bindingLayouts.size();
-    layoutCreateInfo.pBindings = &bindingLayouts.front();
-
-    VkResult result;
-    VULKAN_CALL_RESULT(ctxt->interface(),
-                       result,
-                       CreateDescriptorSetLayout(ctxt->device(),
-                                                 &layoutCreateInfo,
-                                                 nullptr,
-                                                 outLayout));
-    if (result != VK_SUCCESS) {
-        SkDebugf("Failed to create VkDescriptorSetLayout\n");
-        outLayout = nullptr;
-    }
-}
-
 VulkanResourceProvider::VulkanResourceProvider(SharedContext* sharedContext,
                                                SingleOwner* singleOwner,
                                                uint32_t recorderID)
         : ResourceProvider(sharedContext, singleOwner, recorderID) {}
 
-VulkanResourceProvider::~VulkanResourceProvider() {}
+VulkanResourceProvider::~VulkanResourceProvider() {
+    if (fPipelineCache != VK_NULL_HANDLE) {
+        VULKAN_CALL(this->vulkanSharedContext()->interface(),
+                    DestroyPipelineCache(this->vulkanSharedContext()->device(),
+                                         fPipelineCache,
+                                         nullptr));
+    }
+}
 
 const VulkanSharedContext* VulkanResourceProvider::vulkanSharedContext() {
     return static_cast<const VulkanSharedContext*>(fSharedContext);
@@ -117,11 +81,13 @@ sk_sp<GraphicsPipeline> VulkanResourceProvider::createGraphicsPipeline(
         const RuntimeEffectDictionary* runtimeDict,
         const GraphicsPipelineDesc& pipelineDesc,
         const RenderPassDesc& renderPassDesc) {
+    SkSL::Compiler skslCompiler(fSharedContext->caps()->shaderCaps());
     return VulkanGraphicsPipeline::Make(this->vulkanSharedContext(),
-                                        this->skslCompiler(),
+                                        &skslCompiler,
                                         runtimeDict,
                                         pipelineDesc,
-                                        renderPassDesc);
+                                        renderPassDesc,
+                                        this->pipelineCache());
 }
 
 sk_sp<ComputePipeline> VulkanResourceProvider::createComputePipeline(const ComputePipelineDesc&) {
@@ -191,5 +157,28 @@ sk_sp<VulkanDescriptorSet> VulkanResourceProvider::findOrCreateDescriptorSet(
     auto descSet = fResourceCache->findAndRefResource(descSetKeys[0], skgpu::Budgeted::kNo);
     return descSet ? sk_sp<VulkanDescriptorSet>(static_cast<VulkanDescriptorSet*>(descSet))
                    : nullptr;
+}
+
+VkPipelineCache VulkanResourceProvider::pipelineCache() {
+    if (fPipelineCache == VK_NULL_HANDLE) {
+        VkPipelineCacheCreateInfo createInfo;
+        memset(&createInfo, 0, sizeof(VkPipelineCacheCreateInfo));
+        createInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+        createInfo.pNext = nullptr;
+        createInfo.flags = 0;
+        createInfo.initialDataSize = 0;
+        createInfo.pInitialData = nullptr;
+        VkResult result;
+        VULKAN_CALL_RESULT(this->vulkanSharedContext()->interface(),
+                           result,
+                           CreatePipelineCache(this->vulkanSharedContext()->device(),
+                                               &createInfo,
+                                               nullptr,
+                                               &fPipelineCache));
+        if (VK_SUCCESS != result) {
+            fPipelineCache = VK_NULL_HANDLE;
+        }
+    }
+    return fPipelineCache;
 }
 } // namespace skgpu::graphite

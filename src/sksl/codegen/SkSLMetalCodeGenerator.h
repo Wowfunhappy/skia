@@ -10,13 +10,13 @@
 
 #include "include/core/SkSpan.h"
 #include "include/private/SkSLDefines.h"
-#include "include/private/base/SkTArray.h"
 #include "src/core/SkTHash.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/codegen/SkSLCodeGenerator.h"
 
 #include <cstdint>
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -88,7 +88,9 @@ protected:
     inline static constexpr Requirements kUniforms_Requirement     = 1 << 2;
     inline static constexpr Requirements kGlobals_Requirement      = 1 << 3;
     inline static constexpr Requirements kFragCoord_Requirement    = 1 << 4;
-    inline static constexpr Requirements kThreadgroups_Requirement = 1 << 5;
+    inline static constexpr Requirements kVertexID_Requirement     = 1 << 5;
+    inline static constexpr Requirements kInstanceID_Requirement   = 1 << 6;
+    inline static constexpr Requirements kThreadgroups_Requirement = 1 << 7;
 
     class GlobalStructVisitor;
     void visitGlobalStruct(GlobalStructVisitor* visitor);
@@ -175,10 +177,6 @@ protected:
 
     void writeMinAbsHack(Expression& absExpr, Expression& otherExpr);
 
-    std::string getOutParamHelper(const FunctionCall& c,
-                                  const ExpressionArray& arguments,
-                                  const skia_private::TArray<VariableReference*>& outVars);
-
     std::string getInversePolyfill(const ExpressionArray& arguments);
 
     std::string getBitcastIntrinsic(const Type& outType);
@@ -255,6 +253,8 @@ protected:
 
     void writeIndexExpression(const IndexExpression& expr);
 
+    void writeIndexInnerExpression(const Expression& expr);
+
     void writePrefixExpression(const PrefixExpression& p, Precedence parentPrecedence);
 
     void writePostfixExpression(const PostfixExpression& p, Precedence parentPrecedence);
@@ -315,9 +315,17 @@ protected:
     std::string fRTFlipName;
     const FunctionDeclaration* fCurrentFunction = nullptr;
     int fSwizzleHelperCount = 0;
-    bool fIgnoreVariableReferenceModifiers = false;
     static constexpr char kTextureSuffix[] = "_Tex";
     static constexpr char kSamplerSuffix[] = "_Smplr";
+
+    // If we might use an index expression more than once, we need to capture the result in a
+    // temporary variable to avoid double-evaluation. This should generally only occur when emitting
+    // a function call, since we need to polyfill GLSL-style out-parameter support. (skia:14130)
+    // The map holds <index-expression, temp-variable name>.
+    using IndexSubstitutionMap = skia_private::THashMap<const Expression*, std::string>;
+
+    // When this is null (usually), index-substitution does not need to be performed.
+    std::unique_ptr<IndexSubstitutionMap> fIndexSubstitutionMap;
 
     // Workaround/polyfill flags
     bool fWrittenInverse2 = false, fWrittenInverse3 = false, fWrittenInverse4 = false;
