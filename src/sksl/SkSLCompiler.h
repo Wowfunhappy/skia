@@ -149,6 +149,8 @@ public:
 
     bool toWGSL(Program& program, OutputStream& out);
 
+    bool toWGSL(Program& program, std::string* out);
+
     void handleError(std::string_view msg, Position pos);
 
     std::string errorText(bool showCount = true);
@@ -183,6 +185,9 @@ public:
     bool optimizeModuleBeforeMinifying(ProgramKind kind, Module& module);
 
     const Module* moduleForProgramKind(ProgramKind kind);
+
+    /** Run the inliner on a program which was compiled earlier (with inlining turned off). */
+    void runInliner(Program& program);
 
 private:
     class CompilerErrorReporter : public ErrorReporter {

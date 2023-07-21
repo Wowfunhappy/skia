@@ -44,6 +44,7 @@ class SkMatrix;
 #include "src/gpu/ganesh/GrSurfaceProxyView.h"
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/effects/GrMatrixConvolutionEffect.h"
+#include "src/gpu/ganesh/image/SkSpecialImage_Ganesh.h"
 #endif
 
 using namespace skia_private;
@@ -391,7 +392,7 @@ sk_sp<SkSpecialImage> SkMatrixConvolutionImageFilter::onFilterImage(const skif::
         // fall-back, which saves us from having to do the xform during the filter itself.
         input = ImageToColorSpace(ctx, input.get());
 
-        GrSurfaceProxyView inputView = input->view(context);
+        GrSurfaceProxyView inputView = SkSpecialImages::AsView(context, input);
         SkASSERT(inputView.asTextureProxy());
 
         const auto isProtected = inputView.proxy()->isProtected();
@@ -493,8 +494,8 @@ sk_sp<SkSpecialImage> SkMatrixConvolutionImageFilter::onFilterImage(const skif::
     this->filterBorderPixels(inputBM, &dst, dstContentOffset, right, srcBounds);
     this->filterBorderPixels(inputBM, &dst, dstContentOffset, bottom, srcBounds);
 
-    return SkSpecialImage::MakeFromRaster(SkIRect::MakeWH(dstBounds.width(), dstBounds.height()),
-                                          dst, ctx.surfaceProps());
+    return SkSpecialImages::MakeFromRaster(
+            SkIRect::MakeWH(dstBounds.width(), dstBounds.height()), dst, ctx.surfaceProps());
 }
 
 SkIRect SkMatrixConvolutionImageFilter::onFilterNodeBounds(

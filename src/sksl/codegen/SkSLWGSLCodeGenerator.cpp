@@ -15,6 +15,7 @@
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLCompiler.h"
+#include "src/sksl/SkSLConstantFolder.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLErrorReporter.h"
 #include "src/sksl/SkSLIntrinsicList.h"
@@ -434,7 +435,17 @@ int count_pipeline_inputs(const Program* program) {
 
 bool is_in_global_uniforms(const Variable& var) {
     SkASSERT(var.storage() == VariableStorage::kGlobal);
-    return var.modifiers().fFlags & Modifiers::kUniform_Flag && !var.type().isOpaque();
+    return (var.modifiers().fFlags & Modifiers::kUniform_Flag) &&
+           !var.type().isOpaque() &&
+           !var.interfaceBlock();
+}
+
+bool is_in_anonymous_uniform_block(const Variable& var) {
+    SkASSERT(var.storage() == VariableStorage::kGlobal);
+    return (var.modifiers().fFlags & Modifiers::kUniform_Flag) &&
+           !var.type().isOpaque() &&
+            var.interfaceBlock() &&
+            var.interfaceBlock()->instanceName().empty();
 }
 
 }  // namespace
@@ -442,12 +453,6 @@ bool is_in_global_uniforms(const Variable& var) {
 class WGSLCodeGenerator::LValue {
 public:
     virtual ~LValue() = default;
-
-    // Returns a pointer to the lvalue, if possible. If the lvalue cannot be directly referenced
-    // by a pointer (e.g. vector swizzles), returns "".
-    virtual std::string getPointer() {
-        return "";
-    }
 
     // Returns a WGSL expression that loads from the lvalue with no side effects.
     // (e.g. `array[index].field`)
@@ -463,10 +468,6 @@ public:
     // `name` must be a WGSL expression with no side-effects, which we can safely take the address
     // of. (e.g. `array[index].field` would be valid, but `array[Func()]` or `vector.x` are not.)
     PointerLValue(std::string name) : fName(std::move(name)) {}
-
-    std::string getPointer() override {
-        return std::string("&(") + fName + std::string(")");
-    }
 
     std::string load() override {
         return fName;
@@ -485,10 +486,6 @@ public:
     // `name` must be a WGSL expression with no side-effects that points to a single component of a
     // WGSL vector.
     VectorComponentLValue(std::string name) : fName(std::move(name)) {}
-
-    std::string getPointer() override {
-        return "";
-    }
 
     std::string load() override {
         return fName;
@@ -554,10 +551,6 @@ public:
         }
     }
 
-    std::string getPointer() override {
-        return "";
-    }
-
     std::string load() override {
         return fName + "." + Swizzle::MaskString(fComponents);
     }
@@ -610,8 +603,10 @@ bool WGSLCodeGenerator::generateCode() {
         AutoOutputStream outputToHeader(this, &header, &fIndentation);
         // TODO(skia:13092): Implement the following:
         // - global uniform/storage resource declarations, including interface blocks.
+        this->writeLine("diagnostic(off, derivative_uniformity);");
         this->writeStageInputStruct();
         this->writeStageOutputStruct();
+        this->writeUniformsStruct();
         this->writeNonBlockUniformsForTests();
     }
     StringStream body;
@@ -1621,8 +1616,11 @@ std::string WGSLCodeGenerator::assembleBinaryExpression(const Expression& left,
             result = this->assembleExpression(right, Precedence::kAssignment);
         } else {
             // Evaluate the right-hand side of compound-assignment (`a += b` --> `a + b`).
-            result = this->assembleBinaryExpression(left, op.removeAssignment(), right, resultType,
-                                                    Precedence::kAssignment);
+            op = op.removeAssignment();
+
+            result += lvalue->load();
+            result += operator_name(op);
+            result += this->assembleExpression(right, op.getBinaryPrecedence());
         }
 
         // Emit the assignment statement (`a = a + b`).
@@ -1664,7 +1662,18 @@ std::string WGSLCodeGenerator::assembleBinaryExpression(const Expression& left,
         expr.push_back('(');
     }
 
-    expr += this->assembleExpression(left, precedence);
+    if (ConstantFolder::GetConstantValueOrNull(left) &&
+        ConstantFolder::GetConstantValueOrNull(right)) {
+        // If we are emitting `constant + constant`, this generally indicates that the values could
+        // not be constant-folded. This happens when the values overflow or become nan. WGSL will
+        // refuse to compile such expressions, as WGSL 1.0 has no infinity/nan support. However, the
+        // WGSL compile-time check can be dodged by putting one side into a let-variable. This
+        // technically gives us an indeterminate result, but the vast majority of backends will just
+        // calculate an infinity or nan here, as we would expect. (skia:14385)
+        expr += this->writeScratchLet(left, precedence);
+    } else {
+        expr += this->assembleExpression(left, precedence);
+    }
     expr += operator_name(op);
     expr += this->assembleExpression(right, precedence);
 
@@ -1677,30 +1686,37 @@ std::string WGSLCodeGenerator::assembleBinaryExpression(const Expression& left,
 
 std::string WGSLCodeGenerator::assembleFieldAccess(const FieldAccess& f) {
     std::string expr;
-
     const Field* field = &f.base()->type().fields()[f.fieldIndex()];
-    if (FieldAccess::OwnerKind::kDefault == f.ownerKind()) {
-        expr += this->assembleExpression(*f.base(), Precedence::kPostfix);
-        expr.push_back('.');
-    } else {
-        // We are accessing a field in an anonymous interface block. If the field refers to a
-        // pipeline IO parameter, then we access it via the synthesized IO structs. We make an
-        // explicit exception for `sk_PointSize` which we declare as a placeholder variable in
-        // global scope as it is not supported by WebGPU as a pipeline IO parameter (see comments
-        // in `writeStageOutputStruct`).
-        const Variable& v = *f.base()->as<VariableReference>().variable();
-        if (v.modifiers().fFlags & Modifiers::kIn_Flag) {
-            expr += "_stageIn.";
-        } else if (v.modifiers().fFlags & Modifiers::kOut_Flag &&
-                   field->fModifiers.fLayout.fBuiltin != SK_POINTSIZE_BUILTIN) {
-            expr += "(*_stageOut).";
-        } else {
-            // TODO(skia:13092): Reference the variable using the base name used for its
-            // uniform/storage block global declaration.
+
+    switch (f.ownerKind()) {
+        case FieldAccess::OwnerKind::kDefault:
+            expr = this->assembleExpression(*f.base(), Precedence::kPostfix) + '.';
+            break;
+
+        case FieldAccess::OwnerKind::kAnonymousInterfaceBlock:
+            if (f.base()->is<VariableReference>() &&
+                field->fModifiers.fLayout.fBuiltin != SK_POINTSIZE_BUILTIN) {
+                expr = this->variablePrefix(*f.base()->as<VariableReference>().variable());
+            }
+            break;
+    }
+
+    return expr + std::string(field->fName);
+}
+
+static bool all_arguments_constant(const ExpressionArray& arguments) {
+    // Returns true if all arguments in the ExpressionArray are compile-time constants. If we are
+    // calling an intrinsic and all of its inputs are constant, but we didn't constant-fold it, this
+    // generally indicates that constant-folding resulted in an infinity or nan. The WGSL compiler
+    // will reject such an expression with a compile-time error. We can dodge the error, taking on
+    // the risk of indeterminate behavior instead, by replacing one of the constant values with a
+    // scratch let-variable. (skia:14385)
+    for (const std::unique_ptr<Expression>& arg : arguments) {
+        if (!ConstantFolder::GetConstantValueOrNull(*arg)) {
+            return false;
         }
     }
-    expr += field->fName;
-    return expr;
+    return true;
 }
 
 std::string WGSLCodeGenerator::assembleSimpleIntrinsic(std::string_view intrinsicName,
@@ -1712,9 +1728,14 @@ std::string WGSLCodeGenerator::assembleSimpleIntrinsic(std::string_view intrinsi
     expr.push_back('(');
     const ExpressionArray& args = call.arguments();
     auto separator = SkSL::String::Separator();
+    bool allConstant = all_arguments_constant(call.arguments());
     for (int index = 0; index < args.size(); ++index) {
         expr += separator();
-        expr += this->assembleExpression(*args[index], Precedence::kSequence);
+
+        // We can use a scratch-let for argument 0 to dodge WGSL overflow errors. (skia:14385)
+        std::string argument = this->assembleExpression(*args[index], Precedence::kSequence);
+        expr += (allConstant && index == 0) ? this->writeScratchLet(argument)
+                                            : argument;
     }
     expr.push_back(')');
 
@@ -1732,6 +1753,7 @@ std::string WGSLCodeGenerator::assembleVectorizedIntrinsic(std::string_view intr
     auto separator = SkSL::String::Separator();
     const ExpressionArray& args = call.arguments();
     bool returnsVector = call.type().isVector();
+    bool allConstant = all_arguments_constant(call.arguments());
     for (int index = 0; index < args.size(); ++index) {
         expr += separator();
 
@@ -1741,8 +1763,10 @@ std::string WGSLCodeGenerator::assembleVectorizedIntrinsic(std::string_view intr
             expr.push_back('(');
         }
 
-        expr += this->assembleExpression(*args[index], Precedence::kSequence);
-
+        // We can use a scratch-let for argument 0 to dodge WGSL overflow errors. (skia:14385)
+        std::string argument = this->assembleExpression(*args[index], Precedence::kSequence);
+        expr += (allConstant && index == 0) ? this->writeScratchLet(argument)
+                                            : argument;
         if (vectorize) {
             expr.push_back(')');
         }
@@ -1787,7 +1811,10 @@ std::string WGSLCodeGenerator::assembleBinaryOpIntrinsic(Operator op,
         expr.push_back('(');
     }
 
-    expr += this->assembleExpression(*call.arguments()[0], precedence);
+    // We can use a scratch-let for argument 0 to dodge WGSL overflow errors. (skia:14385)
+    std::string argument = this->assembleExpression(*call.arguments()[0], precedence);
+    expr += all_arguments_constant(call.arguments()) ? this->writeScratchLet(argument)
+                                                     : argument;
     expr += operator_name(op);
     expr += this->assembleExpression(*call.arguments()[1], precedence);
 
@@ -1801,13 +1828,18 @@ std::string WGSLCodeGenerator::assembleBinaryOpIntrinsic(Operator op,
 std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
                                                      IntrinsicKind kind,
                                                      Precedence parentPrecedence) {
+    // Be careful: WGSL 1.0 will reject any intrinsic calls which can be constant-evaluated to
+    // infinity or nan with a compile error. If all arguments to an intrinsic are compile-time
+    // constants (`all_arguments_constant`), it is safest to copy one argument into a scratch-let so
+    // that the call will be seen as runtime-evaluated, which defuses the overflow checks.
+    // Don't worry; a competent driver should still optimize it away.
+
     const ExpressionArray& arguments = call.arguments();
     switch (kind) {
         case k_atan_IntrinsicKind: {
             const char* name = (arguments.size() == 1) ? "atan" : "atan2";
             return this->assembleSimpleIntrinsic(name, call);
         }
-
         case k_dot_IntrinsicKind: {
             if (arguments[0]->type().isScalar()) {
                 return this->assembleBinaryOpIntrinsic(OperatorKind::STAR, call, parentPrecedence);
@@ -1819,14 +1851,17 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
 
         case k_faceforward_IntrinsicKind: {
             if (arguments[0]->type().isScalar()) {
-                // (select(-1.0, 1.0, (I * Nref) < 0) * N)
+                // select(-N, N, (I * Nref) < 0)
+                std::string N = this->writeNontrivialScratchLet(*arguments[0],
+                                                                Precedence::kAssignment);
                 return this->writeScratchLet(
-                        "(select(-1.0, 1.0, (" +
-                        this->assembleExpression(*arguments[1], Precedence::kMultiplicative) +
-                        " * " +
-                        this->assembleExpression(*arguments[2], Precedence::kMultiplicative) +
-                        ") < 0) * " +
-                        this->assembleExpression(*arguments[0], Precedence::kMultiplicative) + ")");
+                        "select(-" + N + ", " + N + ", " +
+                        this->assembleBinaryExpression(*arguments[1],
+                                                       OperatorKind::STAR,
+                                                       *arguments[2],
+                                                       arguments[1]->type(),
+                                                       Precedence::kRelational) +
+                        " < 0)");
             }
             return this->assembleSimpleIntrinsic("faceForward", call);
         }
@@ -1846,7 +1881,10 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
             return this->assembleBinaryOpIntrinsic(OperatorKind::LTEQ, call, parentPrecedence);
 
         case k_matrixCompMult_IntrinsicKind: {
-            std::string arg0 = this->writeNontrivialScratchLet(*arguments[0], Precedence::kPostfix);
+            // We use a scratch-let for arg0 to avoid the potential for WGSL overflow. (skia:14385)
+            std::string arg0 = all_arguments_constant(arguments)
+                            ? this->writeScratchLet(*arguments[0], Precedence::kPostfix)
+                            : this->writeNontrivialScratchLet(*arguments[0], Precedence::kPostfix);
             std::string arg1 = this->writeNontrivialScratchLet(*arguments[1], Precedence::kPostfix);
             std::string expr = to_wgsl_type(arguments[0]->type()) + '(';
 
@@ -1865,8 +1903,11 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
         }
         case k_mod_IntrinsicKind: {
             // WGSL has no intrinsic equivalent to `mod`. Synthesize `x - y * floor(x / y)`.
-            std::string arg0 = this->writeNontrivialScratchLet(*arguments[0],
-                                                               Precedence::kAdditive);
+            // We can use a scratch-let on one side to dodge WGSL overflow errors.  In practice, I
+            // can't find any values of x or y which would overflow, but it can't hurt. (skia:14385)
+            std::string arg0 = all_arguments_constant(arguments)
+                            ? this->writeScratchLet(*arguments[0], Precedence::kAdditive)
+                            : this->writeNontrivialScratchLet(*arguments[0], Precedence::kAdditive);
             std::string arg1 = this->writeNontrivialScratchLet(*arguments[1],
                                                                Precedence::kAdditive);
             return this->writeScratchLet(arg0 + " - " + arg1 + " * floor(" +
@@ -1885,10 +1926,12 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
         case k_reflect_IntrinsicKind:
             if (arguments[0]->type().isScalar()) {
                 // I - 2 * N * I * N
+                // We can use a scratch-let for N to dodge WGSL overflow errors. (skia:14385)
                 std::string I = this->writeNontrivialScratchLet(*arguments[0],
                                                                 Precedence::kAdditive);
-                std::string N = this->writeNontrivialScratchLet(*arguments[1],
-                                                                Precedence::kMultiplicative);
+                std::string N = all_arguments_constant(arguments)
+                      ? this->writeScratchLet(*arguments[1], Precedence::kMultiplicative)
+                      : this->writeNontrivialScratchLet(*arguments[1], Precedence::kMultiplicative);
                 return this->writeScratchLet(String::printf("%s - 2 * %s * %s * %s",
                                                             I.c_str(), N.c_str(),
                                                             I.c_str(), N.c_str()));
@@ -1903,8 +1946,10 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
                                                                 Precedence::kSequence);
                 std::string N = this->writeNontrivialScratchLet(*arguments[1],
                                                                 Precedence::kSequence);
-                std::string Eta = this->writeNontrivialScratchLet(*arguments[2],
-                                                                  Precedence::kSequence);
+                // We can use a scratch-let for Eta to avoid WGSL overflow errors. (skia:14385)
+                std::string Eta = all_arguments_constant(arguments)
+                      ? this->writeScratchLet(*arguments[2], Precedence::kSequence)
+                      : this->writeNontrivialScratchLet(*arguments[2], Precedence::kSequence);
                 return this->writeScratchLet(
                         String::printf("refract(vec2<%s>(%s, 0), vec2<%s>(%s, 0), %s).x",
                                        to_wgsl_type(arguments[0]->type()).c_str(), I.c_str(),
@@ -2191,6 +2236,11 @@ std::string WGSLCodeGenerator::writeScratchLet(const std::string& expr) {
     return scratchVarName;
 }
 
+std::string WGSLCodeGenerator::writeScratchLet(const Expression& expr,
+                                               Precedence parentPrecedence) {
+    return this->writeScratchLet(this->assembleExpression(expr, parentPrecedence));
+}
+
 std::string WGSLCodeGenerator::writeNontrivialScratchLet(const Expression& expr,
                                                          Precedence parentPrecedence) {
     std::string result = this->assembleExpression(expr, parentPrecedence);
@@ -2275,39 +2325,48 @@ std::string WGSLCodeGenerator::assembleTernaryExpression(const TernaryExpression
     return expr;
 }
 
-std::string WGSLCodeGenerator::variableReferenceNameForLValue(const VariableReference& r) {
-    std::string expr;
-    const Variable& v = *r.variable();
-    bool needsDeref = false;
-
-    // When a variable is referenced in the context of a synthesized out-parameter helper argument,
-    // two special rules apply:
-    //     1. If it's accessed via a pipeline I/O or global uniforms struct, it should instead
-    //        be referenced by name (since it's actually referring to a function parameter).
-    //     2. Its type should be treated as a pointer and should be dereferenced as such.
+std::string_view WGSLCodeGenerator::variablePrefix(const Variable& v) {
     if (v.storage() == Variable::Storage::kGlobal) {
+        // If the field refers to a pipeline IO parameter, then we access it via the synthesized IO
+        // structs. We make an explicit exception for `sk_PointSize` which we declare as a
+        // placeholder variable in global scope as it is not supported by WebGPU as a pipeline IO
+        // parameter (see comments in `writeStageOutputStruct`).
         if (v.modifiers().fFlags & Modifiers::kIn_Flag) {
-            expr += "_stageIn.";
-        } else if (v.modifiers().fFlags & Modifiers::kOut_Flag) {
-            expr += "(*_stageOut).";
-        } else if (is_in_global_uniforms(v)) {
-            expr += "_globalUniforms.";
+            return "_stageIn.";
         }
-    } else if ((v.storage() == Variable::Storage::kParameter &&
-                v.modifiers().fFlags & Modifiers::kOut_Flag)) {
-        // This is an out-parameter and its type is a pointer, which we need to dereference.
-        // We wrap the dereference in parentheses in case the value is used in an access expression
-        // later.
-        needsDeref = true;
-        expr += "(*";
+        if (v.modifiers().fFlags & Modifiers::kOut_Flag) {
+            return "(*_stageOut).";
+        }
+
+        // If the field refers to an anonymous-interface-block uniform, access it via the
+        // synthesized `_uniforms` global.
+        if (is_in_anonymous_uniform_block(v)) {
+            return "_uniforms.";
+        }
+
+        // If the field refers to an top-level uniform, access it via the synthesized
+        // `_globalUniforms` global. (Note that this should only occur in test code; Skia will
+        // always put uniforms in an interface block.)
+        if (is_in_global_uniforms(v)) {
+            return "_globalUniforms.";
+        }
     }
 
-    expr += this->assembleName(v.mangledName());
-    if (needsDeref) {
-        expr.push_back(')');
+    return "";
+}
+
+std::string WGSLCodeGenerator::variableReferenceNameForLValue(const VariableReference& r) {
+    const Variable& v = *r.variable();
+
+    if ((v.storage() == Variable::Storage::kParameter &&
+         v.modifiers().fFlags & Modifiers::kOut_Flag)) {
+        // This is an out-parameter; it's pointer-typed, so we need to dereference it. We wrap the
+        // dereference in parentheses, in case the value is used in an access expression later.
+        return "(*" + this->assembleName(v.mangledName()) + ')';
     }
 
-    return expr;
+    return std::string(this->variablePrefix(v)) +
+           this->assembleName(v.mangledName());
 }
 
 std::string WGSLCodeGenerator::assembleVariableReference(const VariableReference& r) {
@@ -2763,6 +2822,67 @@ void WGSLCodeGenerator::writeStageOutputStruct() {
     // sk_PointSize when using the Dawn backend.
     if (ProgramConfig::IsVertex(fProgram.fConfig->fKind) && requiresPointSizeBuiltin) {
         this->writeLine("/* unsupported */ var<private> sk_PointSize: f32;");
+    }
+}
+
+void WGSLCodeGenerator::writeUniformsStruct() {
+    std::string_view uniformsType;
+    std::string_view uniformsName;
+    for (const ProgramElement* e : fProgram.elements()) {
+        // Search for an interface block marked `uniform`.
+        if (!e->is<InterfaceBlock>()) {
+            continue;
+        }
+        const InterfaceBlock& ib = e->as<InterfaceBlock>();
+        if (!(ib.var()->modifiers().fFlags & Modifiers::kUniform_Flag)) {
+            continue;
+        }
+        // We should only find one; Skia never creates more than one interface block for its
+        // uniforms. (However, we might use multiple storage buffers.)
+        if (!uniformsType.empty()) {
+            fContext.fErrors->error(ib.fPosition,
+                                    "all uniforms should be contained within one interface block");
+            break;
+        }
+        // Find the struct type and fields used by this interface block.
+        const Type& ibType = ib.var()->type().componentType();
+        SkASSERT(ibType.isStruct());
+
+        SkSpan<const Field> ibFields = ibType.fields();
+        SkASSERT(!ibFields.empty());
+
+        // Create a struct to hold all of the uniforms from this InterfaceBlock.
+        uniformsType = ib.typeName();
+        if (uniformsType.empty()) {
+            uniformsType = "_UniformBuffer";
+        }
+        uniformsName = ib.instanceName();
+        if (uniformsName.empty()) {
+            uniformsName = "_uniforms";
+        }
+        this->write("struct ");
+        this->write(uniformsType);
+        this->writeLine(" {");
+
+        // TODO: We should validate offsets/layouts with SkSLMemoryLayout here. We can mimic the
+        // approach used in MetalCodeGenerator.
+        // TODO(skia:14370): array uniforms may need manual fixup for std140 padding. (Those
+        // uniforms will also need special handling when they are accessed, or passed to functions.)
+        for (const Field& field : ibFields) {
+            this->write("  ");
+            this->writeVariableDecl(*field.fType, field.fName, Delimiter::kComma);
+        }
+
+        this->writeLine("};");
+        this->write("@group(");
+        this->write(std::to_string(std::max(0, ib.var()->modifiers().fLayout.fSet)));
+        this->write(") @binding(");
+        this->write(std::to_string(std::max(0, ib.var()->modifiers().fLayout.fBinding)));
+        this->write(") var<uniform> ");
+        this->write(uniformsName);
+        this->write(" : ");
+        this->write(to_wgsl_type(ib.var()->type()));
+        this->writeLine(";");
     }
 }
 

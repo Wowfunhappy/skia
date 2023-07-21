@@ -29,6 +29,7 @@
 #include "src/gpu/ganesh/GrTextureProxy.h"
 #include "src/gpu/ganesh/SkGr.h"
 #include "src/gpu/ganesh/SurfaceFillContext.h"
+#include "src/gpu/ganesh/image/SkSpecialImage_Ganesh.h"
 #endif
 #include <atomic>
 
@@ -254,7 +255,7 @@ skif::FilterResult SkImageFilter_Base::filterImage(const skif::Context& context)
     result = this->onFilterImage(context);
 
     if (context.gpuBacked()) {
-        SkASSERT(!result.image() || result.image()->isTextureBacked());
+        SkASSERT(!result.image() || result.image()->isGaneshBacked());
     }
 
     if (context.cache()) {
@@ -562,7 +563,7 @@ sk_sp<SkSpecialImage> SkImageFilter_Base::filterInput(int index,
     }
 
     skif::FilterResult result = as_IFB(input)->filterImage(inputCtx);
-    SkASSERT(!result.image() || ctx.gpuBacked() == result.image()->isTextureBacked());
+    SkASSERT(!result.image() || ctx.gpuBacked() == result.image()->isGaneshBacked());
 
     return result.imageAndOffset(inputCtx, offset);
 }
@@ -609,12 +610,12 @@ sk_sp<SkSpecialImage> SkImageFilter_Base::DrawWithFP(GrRecordingContext* rContex
     SkRect srcRect = SkRect::Make(bounds);
     sfc->fillRectToRectWithFP(srcRect, dstIRect, std::move(fp));
 
-    return SkSpecialImage::MakeDeferredFromGpu(rContext,
-                                               dstIRect,
-                                               kNeedNewImageUniqueID_SpecialImage,
-                                               sfc->readSurfaceView(),
-                                               sfc->colorInfo(),
-                                               surfaceProps);
+    return SkSpecialImages::MakeDeferredFromGpu(rContext,
+                                                dstIRect,
+                                                kNeedNewImageUniqueID_SpecialImage,
+                                                sfc->readSurfaceView(),
+                                                sfc->colorInfo(),
+                                                surfaceProps);
 }
 
 sk_sp<SkSpecialImage> SkImageFilter_Base::ImageToColorSpace(const skif::Context& ctx,

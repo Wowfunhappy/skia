@@ -17,7 +17,6 @@
 #include "include/core/SkImage.h"
 #include "include/core/SkImageFilter.h"
 #include "include/core/SkMaskFilter.h"
-#include "include/core/SkMesh.h"
 #include "include/core/SkPath.h"
 #include "include/core/SkPathEffect.h"
 #include "include/core/SkPicture.h"
@@ -1717,16 +1716,13 @@ void SkCanvas::drawVertices(const SkVertices* vertices, SkBlendMode mode, const 
     this->onDrawVerticesObject(vertices, mode, paint);
 }
 
-#ifdef SK_ENABLE_SKSL
 void SkCanvas::drawMesh(const SkMesh& mesh, sk_sp<SkBlender> blender, const SkPaint& paint) {
     TRACE_EVENT0("skia", TRACE_FUNC);
-    RETURN_ON_FALSE(mesh.isValid());
     if (!blender) {
         blender = SkBlender::Mode(SkBlendMode::kModulate);
     }
     this->onDrawMesh(mesh, std::move(blender), paint);
 }
-#endif
 
 void SkCanvas::drawPath(const SkPath& path, const SkPaint& paint) {
     TRACE_EVENT0("skia", TRACE_FUNC);
@@ -2147,15 +2143,13 @@ void SkCanvas::onDrawImage2(const SkImage* image, SkScalar x, SkScalar y,
         } // else fall through to regular drawing path
     }
 
+    if (this->topDevice()->drawAsTiledImageRect(this, image, nullptr, dst, sampling,
+                                                realPaint, kFast_SrcRectConstraint)) {
+        return;
+    }
+
     auto layer = this->aboutToDraw(this, realPaint, &dst);
     if (layer) {
-        // TODO: move this above the aboutToDraw call once Ganesh performs tiled image draws at the
-        // SkCanvas level
-        if (this->topDevice()->drawAsTiledImageRect(this, image, nullptr, dst, sampling,
-                                                    layer->paint(), kFast_SrcRectConstraint)) {
-            return;
-        }
-
         this->topDevice()->drawImageRect(image, nullptr, dst, sampling,
                                          layer->paint(), kFast_SrcRectConstraint);
     }
@@ -2185,17 +2179,15 @@ void SkCanvas::onDrawImageRect2(const SkImage* image, const SkRect& src, const S
         return;
     }
 
+    if (this->topDevice()->drawAsTiledImageRect(this, image, &src, dst, realSampling,
+                                                realPaint, constraint)) {
+        return;
+    }
+
     auto layer = this->aboutToDraw(this, realPaint, &dst, CheckForOverwrite::kYes,
                                    image->isOpaque() ? kOpaque_ShaderOverrideOpacity
                                                      : kNotOpaque_ShaderOverrideOpacity);
     if (layer) {
-        // TODO: move this above the aboutToDraw call once Ganesh performs tiled image draws at the
-        // SkCanvas level
-        if (this->topDevice()->drawAsTiledImageRect(this, image, &src, dst, realSampling,
-                                                    layer->paint(), constraint)) {
-            return;
-        }
-
         this->topDevice()->drawImageRect(image, &src, dst, realSampling, layer->paint(),
                                          constraint);
     }
@@ -2405,20 +2397,13 @@ void SkCanvas::onDrawVerticesObject(const SkVertices* vertices, SkBlendMode bmod
     }
 }
 
-#ifdef SK_ENABLE_SKSL
 void SkCanvas::onDrawMesh(const SkMesh& mesh, sk_sp<SkBlender> blender, const SkPaint& paint) {
     SkPaint simplePaint = clean_paint_for_drawVertices(paint);
-
-    if (this->internalQuickReject(mesh.bounds(), simplePaint)) {
-        return;
-    }
-
     auto layer = this->aboutToDraw(this, simplePaint, nullptr);
     if (layer) {
         this->topDevice()->drawMesh(mesh, std::move(blender), paint);
     }
 }
-#endif
 
 void SkCanvas::drawPatch(const SkPoint cubics[12], const SkColor colors[4],
                          const SkPoint texCoords[4], SkBlendMode bmode,

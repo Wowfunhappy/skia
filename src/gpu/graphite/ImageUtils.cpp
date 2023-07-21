@@ -14,6 +14,7 @@
 #include "src/core/SkSpecialSurface.h"
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/Log.h"
+#include "src/gpu/graphite/SpecialImage_Graphite.h"
 #include "src/image/SkImage_Base.h"
 
 namespace {
@@ -119,15 +120,19 @@ namespace skif {
 Context MakeGraphiteContext(skgpu::graphite::Recorder* recorder,
                             const ContextInfo& info) {
     SkASSERT(recorder);
-    SkASSERT(!info.fSource.image() ||
-             SkToBool(recorder) == info.fSource.image()->isGraphiteBacked());
+    SkASSERT(!info.fSource.image() || info.fSource.image()->isGraphiteBacked());
 
     auto makeSurfaceFunctor = [recorder](const SkImageInfo& imageInfo,
                                          const SkSurfaceProps* props) {
         return SkSpecialSurface::MakeGraphite(recorder, imageInfo, *props);
     };
+    auto makeImageCallback = [recorder](const SkIRect& subset,
+                                sk_sp<SkImage> image,
+                                const SkSurfaceProps& props) {
+        // This just makes a raster image, but it could maybe call MakeFromGraphite
+        return SkSpecialImages::MakeGraphite(recorder, subset, image, props);
+    };
 
-    return Context(info, nullptr, makeSurfaceFunctor);
+    return Context(info, nullptr, makeSurfaceFunctor, makeImageCallback);
 }
 }  // namespace skif
-

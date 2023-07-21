@@ -33,6 +33,14 @@ Image::Image(uint32_t uniqueID,
 
 Image::~Image() {}
 
+size_t Image::textureSize() const {
+    if (!fTextureProxyView.proxy() || !fTextureProxyView.proxy()->texture()) {
+        return 0;
+    }
+
+    return fTextureProxyView.proxy()->texture()->gpuMemorySize();
+}
+
 sk_sp<SkImage> Image::onMakeSubset(Recorder* recorder,
                                    const SkIRect& subset,
                                    RequiredProperties requiredProps) const {
@@ -109,6 +117,7 @@ using SkImages::GraphitePromiseImageFulfillProc;
 using SkImages::GraphitePromiseTextureReleaseProc;
 
 sk_sp<TextureProxy> Image::MakePromiseImageLazyProxy(
+        const Caps* caps,
         SkISize dimensions,
         TextureInfo textureInfo,
         Volatile isVolatile,
@@ -175,7 +184,8 @@ sk_sp<TextureProxy> Image::MakePromiseImageLazyProxy(
 
     } callback(fulfillProc, std::move(releaseHelper), textureReleaseProc);
 
-    return TextureProxy::MakeLazy(dimensions,
+    return TextureProxy::MakeLazy(caps,
+                                  dimensions,
                                   textureInfo,
                                   skgpu::Budgeted::kNo,  // This is destined for a user's SkImage
                                   isVolatile,
@@ -191,4 +201,3 @@ sk_sp<SkImage> SkImage::makeTextureImage(skgpu::graphite::Recorder* recorder,
     return SkImages::TextureFromImage(recorder, this, {mm});
 }
 #endif
-

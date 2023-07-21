@@ -30,7 +30,6 @@
 #include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/SkIDChangeListener.h"
 #include "include/private/base/SkMutex.h"
-#include "include/private/base/SkTo.h"
 #include "include/private/gpu/ganesh/GrImageContext.h"
 #include "include/private/gpu/ganesh/GrTextureGenerator.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
@@ -60,6 +59,7 @@
 #include "src/gpu/ganesh/effects/GrYUVtoRGBEffect.h"
 #include "src/gpu/ganesh/image/SkImage_GaneshBase.h"
 #include "src/gpu/ganesh/image/SkImage_RasterPinnable.h"
+#include "src/gpu/ganesh/image/SkSpecialImage_Ganesh.h"
 #include "src/image/SkImage_Base.h"
 #include "src/image/SkImage_Lazy.h"
 #include "src/image/SkImage_Picture.h"
@@ -729,8 +729,7 @@ Context MakeGaneshContext(GrRecordingContext* context,
                           GrSurfaceOrigin origin,
                           const ContextInfo& info) {
     SkASSERT(context);
-    SkASSERT(!info.fSource.image() ||
-             SkToBool(context) == info.fSource.image()->isTextureBacked());
+    SkASSERT(!info.fSource.image() || info.fSource.image()->isGaneshBacked());
 
     auto makeSurfaceFunctor = [context, origin](const SkImageInfo& imageInfo,
                                                 const SkSurfaceProps* props) {
@@ -740,9 +739,13 @@ Context MakeGaneshContext(GrRecordingContext* context,
                                                   origin);
     };
 
-    return Context(info, context, makeSurfaceFunctor);
+    auto makeImageFunctor = [context](const SkIRect& subset,
+                                      sk_sp<SkImage> image,
+                                      const SkSurfaceProps& props) {
+        return SkSpecialImages::MakeFromTextureImage(context, subset, image, props);
+    };
+
+    return Context(info, context, makeSurfaceFunctor, makeImageFunctor);
 }
 
 }  // namespace skgpu::ganesh
-
-

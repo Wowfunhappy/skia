@@ -7,9 +7,12 @@
 
 #include "src/gpu/graphite/vk/VulkanCommandBuffer.h"
 
+#include "include/gpu/MutableTextureState.h"
+#include "include/gpu/graphite/BackendSemaphore.h"
 #include "include/private/base/SkTArray.h"
 #include "src/gpu/graphite/DescriptorTypes.h"
 #include "src/gpu/graphite/Log.h"
+#include "src/gpu/graphite/Surface_Graphite.h"
 #include "src/gpu/graphite/vk/VulkanBuffer.h"
 #include "src/gpu/graphite/vk/VulkanDescriptorSet.h"
 #include "src/gpu/graphite/vk/VulkanGraphiteUtilsPriv.h"
@@ -151,6 +154,71 @@ void VulkanCommandBuffer::end() {
     fActive = false;
 }
 
+void VulkanCommandBuffer::addWaitSemaphores(size_t numWaitSemaphores,
+                                            const BackendSemaphore* waitSemaphores) {
+    if (!waitSemaphores) {
+        SkASSERT(numWaitSemaphores == 0);
+        return;
+    }
+
+    for (size_t i = 0; i < numWaitSemaphores; ++i) {
+        auto& semaphore = waitSemaphores[i];
+        if (semaphore.isValid() && semaphore.backend() == BackendApi::kVulkan) {
+            fWaitSemaphores.push_back(semaphore.getVkSemaphore());
+        }
+    }
+}
+
+void VulkanCommandBuffer::addSignalSemaphores(size_t numSignalSemaphores,
+                                              const BackendSemaphore* signalSemaphores) {
+    if (!signalSemaphores) {
+        SkASSERT(numSignalSemaphores == 0);
+        return;
+    }
+
+    for (size_t i = 0; i < numSignalSemaphores; ++i) {
+        auto& semaphore = signalSemaphores[i];
+        if (semaphore.isValid() && semaphore.backend() == BackendApi::kVulkan) {
+            fSignalSemaphores.push_back(semaphore.getVkSemaphore());
+        }
+    }
+}
+
+void VulkanCommandBuffer::prepareSurfaceForStateUpdate(SkSurface* targetSurface,
+                                                       const MutableTextureState* newState) {
+    TextureProxy* textureProxy = static_cast<Surface*>(targetSurface)->backingTextureProxy();
+    VulkanTexture* texture = static_cast<VulkanTexture*>(textureProxy->texture());
+
+    // Even though internally we use this helper for getting src access flags and stages they
+    // can also be used for general dst flags since we don't know exactly what the client
+    // plans on using the image for.
+    VkImageLayout newLayout = newState->getVkImageLayout();
+    if (newLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+        newLayout = texture->currentLayout();
+    }
+    VkPipelineStageFlags dstStage = VulkanTexture::LayoutToPipelineSrcStageFlags(newLayout);
+    VkAccessFlags dstAccess = VulkanTexture::LayoutToSrcAccessMask(newLayout);
+
+    uint32_t currentQueueFamilyIndex = texture->currentQueueFamilyIndex();
+    uint32_t newQueueFamilyIndex = newState->getQueueFamilyIndex();
+    auto isSpecialQueue = [](uint32_t queueFamilyIndex) {
+        return queueFamilyIndex == VK_QUEUE_FAMILY_EXTERNAL ||
+               queueFamilyIndex == VK_QUEUE_FAMILY_FOREIGN_EXT;
+    };
+    if (isSpecialQueue(currentQueueFamilyIndex) && isSpecialQueue(newQueueFamilyIndex)) {
+        // It is illegal to have both the new and old queue be special queue families (i.e. external
+        // or foreign).
+        return;
+    }
+
+    texture->setImageLayoutAndQueueIndex(this,
+                                         newLayout,
+                                         dstAccess,
+                                         dstStage,
+                                         false,
+                                         newQueueFamilyIndex);
+}
+
 static bool submit_to_queue(const VulkanInterface* interface,
                             VkQueue queue,
                             VkFence fence,
@@ -215,18 +283,25 @@ bool VulkanCommandBuffer::submit(VkQueue queue) {
     }
 
     SkASSERT(fSubmitFence != VK_NULL_HANDLE);
+    int waitCount = fWaitSemaphores.size();
+    TArray<VkPipelineStageFlags> vkWaitStages(waitCount);
+    for (int i = 0; i < waitCount; ++i) {
+        vkWaitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+    }
 
     bool submitted = submit_to_queue(interface,
                                      queue,
                                      fSubmitFence,
-                                     /*waitCount=*/0,
-                                     /*waitSemaphores=*/nullptr,
-                                     /*waitStages=*/nullptr,
+                                     waitCount,
+                                     fWaitSemaphores.data(),
+                                     vkWaitStages.data(),
                                      /*commandBufferCount*/1,
                                      &fPrimaryCommandBuffer,
-                                     /*signalCount=*/0,
-                                     /*signalSemaphores=*/nullptr,
+                                     fSignalSemaphores.size(),
+                                     fSignalSemaphores.data(),
                                      fSharedContext->isProtected());
+    fWaitSemaphores.clear();
+    fSignalSemaphores.clear();
     if (!submitted) {
         // Destroy the fence or else we will try to wait forever for it to finish.
         VULKAN_CALL(interface, DestroyFence(device, fSubmitFence, nullptr));

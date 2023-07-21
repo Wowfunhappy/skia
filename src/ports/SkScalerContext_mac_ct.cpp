@@ -403,14 +403,6 @@ bool SkScalerContext_Mac::generateBBoxes() {
     return true;
 }
 
-unsigned SkScalerContext_Mac::generateGlyphCount(void) {
-    return fGlyphCount;
-}
-
-bool SkScalerContext_Mac::generateAdvance(SkGlyph* glyph) {
-    return false;
-}
-
 void SkScalerContext_Mac::generateMetrics(SkGlyph* glyph, SkArenaAlloc* alloc) {
     glyph->fMaskFormat = fRec.fMaskFormat;
 

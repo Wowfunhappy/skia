@@ -67,6 +67,7 @@ GrGLCaps::GrGLCaps(const GrContextOptions& contextOptions,
     fRebindColorAttachmentAfterCheckFramebufferStatus = false;
     fFlushBeforeWritePixels = false;
     fDisableScalingCopyAsDraws = false;
+    fSetMaxLevelForRegenerateMipMapLevels = false;
     fProgramBinarySupport = false;
     fProgramParameterSupport = false;
     fSamplerObjectSupport = false;
@@ -1448,7 +1449,7 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
 
         bool supportsBGRAColorType = GR_IS_GR_GL(standard) &&
                 (version >= GR_GL_VER(1, 2) || ctxInfo.hasExtension("GL_EXT_bgra"));
-        info.fColorTypeInfoCount = supportsBGRAColorType ? 4 : 2;
+        info.fColorTypeInfoCount = supportsBGRAColorType ? 3 : 2;
         info.fColorTypeInfos = std::make_unique<ColorTypeInfo[]>(info.fColorTypeInfoCount);
         int ctIdx = 0;
         // Format: RGBA8, Surface: kRGBA_8888
@@ -1536,40 +1537,6 @@ void GrGLCaps::initFormatTable(const GrGLContextInfo& ctxInfo, const GrGLInterfa
                 ioFormat.fColorType = GrColorType::kRGB_888x;
                 ioFormat.fExternalType = GR_GL_UNSIGNED_BYTE;
                 ioFormat.fExternalTexImageFormat = GR_GL_RGBA;
-                ioFormat.fExternalReadFormat = GR_GL_RGBA;
-            }
-        }
-
-        // Format: RGBA8, Surface: kBGR_888x
-        if (supportsBGRAColorType) {
-            auto& ctInfo = info.fColorTypeInfos[ctIdx++];
-            ctInfo.fColorType = GrColorType::kBGR_888x;
-            ctInfo.fFlags = ColorTypeInfo::kUploadData_Flag;
-            ctInfo.fReadSwizzle = skgpu::Swizzle::RGB1();
-
-            // External IO ColorTypes:
-            ctInfo.fExternalIOFormatCount = 2;
-            ctInfo.fExternalIOFormats = std::make_unique<ColorTypeInfo::ExternalIOFormats[]>(
-                    ctInfo.fExternalIOFormatCount);
-            int ioIdx = 0;
-            // Format: RGBA8, Surface: kBGR_888x, Data: kBGR_888x
-            {
-                auto& ioFormat = ctInfo.fExternalIOFormats[ioIdx++];
-                ioFormat.fColorType = GrColorType::kBGR_888x;
-                ioFormat.fExternalType = GR_GL_UNSIGNED_BYTE;
-                ioFormat.fExternalTexImageFormat = GR_GL_BGRA;
-                ioFormat.fExternalReadFormat =
-                        formatWorkarounds.fDisallowBGRA8ReadPixels ? 0 : GR_GL_BGRA;
-                // Not guaranteed by ES/WebGL.
-                ioFormat.fRequiresImplementationReadQuery = !GR_IS_GR_GL(standard);
-            }
-
-            // Format: RGBA8, Surface: kBGR_888x, Data: kRGB_888x
-            {
-                auto& ioFormat = ctInfo.fExternalIOFormats[ioIdx++];
-                ioFormat.fColorType = GrColorType::kRGB_888x;
-                ioFormat.fExternalType = GR_GL_UNSIGNED_BYTE;
-                ioFormat.fExternalTexImageFormat = 0;
                 ioFormat.fExternalReadFormat = GR_GL_RGBA;
             }
         }
@@ -4490,13 +4457,6 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
         fAvoidReorderingRenderTasks = true;
     }
 
-    // skbug.com/14411. Don't reorder on newer Intel GPUs; this can cause strange z-fighting when
-    // rendering some complex shaders.
-    if (ctxInfo.renderer() >= GrGLRenderer::kIntelIceLake &&
-        (ctxInfo.vendor() == GrGLVendor::kIntel || ctxInfo.angleVendor() == GrGLVendor::kIntel)) {
-        fAvoidReorderingRenderTasks = true;
-    }
-
     // http://crbug.com/1197152
     // http://b/187364475
     // We could limit this < 1.13 on ChromeOS but we don't really have a good way to detect
@@ -4618,6 +4578,14 @@ void GrGLCaps::applyDriverCorrectnessWorkarounds(const GrGLContextInfo& ctxInfo,
     if (ctxInfo.renderer() == GrGLRenderer::kMali4xx &&
         ctxInfo.driverVersion() >= GR_GL_DRIVER_VER(2, 1, 19900)) {
         fDisableScalingCopyAsDraws = true;
+    }
+    // skbug.com/14194
+    // Setting the max level is technically unnecessary and can affect validation for the
+    // framebuffer. However, by making it clear that a rendering feedback loop is not occurring,
+    // we avoid hitting a slow path on some drivers.
+    if (GR_IS_GR_GL(ctxInfo.standard()) &&
+        (ctxInfo.vendor() == GrGLVendor::kIntel || ctxInfo.angleVendor() == GrGLVendor::kIntel)) {
+        fSetMaxLevelForRegenerateMipMapLevels = true;
     }
 }
 
