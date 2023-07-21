@@ -5,6 +5,10 @@
  * found in the LICENSE file.
  */
 
+#include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
+
+#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
+
 #include "include/core/SkStream.h"
 #include "include/private/base/SkMalloc.h"
 #include "include/private/base/SkTo.h"
@@ -16,7 +20,6 @@
 #include "src/core/SkTHash.h"
 #include "src/sksl/SkSLPosition.h"
 #include "src/sksl/SkSLString.h"
-#include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
 #include "src/sksl/tracing/SkSLDebugTracePriv.h"
 #include "src/sksl/tracing/SkSLTraceHook.h"
 #include "src/utils/SkBitSet.h"
@@ -38,8 +41,7 @@
 
 using namespace skia_private;
 
-namespace SkSL {
-namespace RP {
+namespace SkSL::RP {
 
 #define ALL_SINGLE_SLOT_UNARY_OP_CASES  \
          BuilderOp::acos_float:         \
@@ -55,9 +57,7 @@ namespace RP {
     case BuilderOp::tan_float
 
 #define ALL_MULTI_SLOT_UNARY_OP_CASES        \
-         BuilderOp::abs_float:               \
-    case BuilderOp::abs_int:                 \
-    case BuilderOp::bitwise_not_int:         \
+         BuilderOp::abs_int:                 \
     case BuilderOp::cast_to_float_from_int:  \
     case BuilderOp::cast_to_float_from_uint: \
     case BuilderOp::cast_to_int_from_float:  \
@@ -101,21 +101,28 @@ namespace RP {
     case BuilderOp::cmpne_n_floats:     \
     case BuilderOp::cmpne_n_ints
 
-#define ALL_IMMEDIATE_BINARY_OP_CASES   \
-         BuilderOp::add_imm_float:      \
-    case BuilderOp::add_imm_int:        \
-    case BuilderOp::mul_imm_float:      \
-    case BuilderOp::mul_imm_int:        \
-    case BuilderOp::cmple_imm_float:    \
-    case BuilderOp::cmple_imm_int:      \
-    case BuilderOp::cmple_imm_uint:     \
-    case BuilderOp::cmplt_imm_float:    \
-    case BuilderOp::cmplt_imm_int:      \
-    case BuilderOp::cmplt_imm_uint:     \
-    case BuilderOp::cmpeq_imm_float:    \
-    case BuilderOp::cmpeq_imm_int:      \
-    case BuilderOp::cmpne_imm_float:    \
+#define ALL_IMMEDIATE_BINARY_OP_CASES    \
+         BuilderOp::add_imm_float:       \
+    case BuilderOp::add_imm_int:         \
+    case BuilderOp::mul_imm_float:       \
+    case BuilderOp::mul_imm_int:         \
+    case BuilderOp::bitwise_and_imm_int: \
+    case BuilderOp::bitwise_xor_imm_int: \
+    case BuilderOp::min_imm_float:       \
+    case BuilderOp::max_imm_float:       \
+    case BuilderOp::cmple_imm_float:     \
+    case BuilderOp::cmple_imm_int:       \
+    case BuilderOp::cmple_imm_uint:      \
+    case BuilderOp::cmplt_imm_float:     \
+    case BuilderOp::cmplt_imm_int:       \
+    case BuilderOp::cmplt_imm_uint:      \
+    case BuilderOp::cmpeq_imm_float:     \
+    case BuilderOp::cmpeq_imm_int:       \
+    case BuilderOp::cmpne_imm_float:     \
     case BuilderOp::cmpne_imm_int
+
+#define ALL_IMMEDIATE_MULTI_SLOT_BINARY_OP_CASES \
+         BuilderOp::bitwise_and_imm_int
 
 #define ALL_N_WAY_TERNARY_OP_CASES       \
          BuilderOp::smoothstep_n_floats
@@ -124,31 +131,51 @@ namespace RP {
          BuilderOp::mix_n_floats:       \
     case BuilderOp::mix_n_ints
 
-static BuilderOp convert_n_way_op_to_immediate(BuilderOp op, int32_t* constantValue) {
-    // This relies on the ordering of SkRP ops; the immediate-mode op must always come directly
-    // before the n-way op.
-    BuilderOp immOp = (BuilderOp)((int)op - 1);
-    switch (immOp) {
-        case ALL_IMMEDIATE_BINARY_OP_CASES:
-            return immOp;
+static bool is_immediate_op(BuilderOp op) {
+    switch (op) {
+        case ALL_IMMEDIATE_BINARY_OP_CASES: return true;
+        default:                            return false;
+    }
+}
 
-        default:
-            break;
+static bool is_multi_slot_immediate_op(BuilderOp op) {
+    switch (op) {
+        case ALL_IMMEDIATE_MULTI_SLOT_BINARY_OP_CASES: return true;
+        default:                                       return false;
+    }
+}
+
+static BuilderOp convert_n_way_op_to_immediate(BuilderOp op, int slots, int32_t* constantValue) {
+    // We rely on the exact ordering of SkRP ops here; the immediate-mode op must always come
+    // directly before the n-way op. (If we have more than one, the increasing-slot variations
+    // continue backwards from there.)
+    BuilderOp immOp = (BuilderOp)((int)op - 1);
+
+    // Some immediate ops support multiple slots.
+    if (is_multi_slot_immediate_op(immOp)) {
+        return immOp;
     }
 
-    // We also support immediate-mode subtraction; it's converted into addition of a negative value.
-    switch (op) {
-        case BuilderOp::sub_n_ints:
-            *constantValue *= -1;
-            return BuilderOp::add_imm_int;
-
-        case BuilderOp::sub_n_floats: {
-            // This inverts the sign bit.
-            *constantValue ^= 0x80000000;
-            return BuilderOp::add_imm_float;
+    // Most immediate ops only support a single slot.
+    if (slots == 1) {
+        if (is_immediate_op(immOp)) {
+            return immOp;
         }
-        default:
-            break;
+
+        // We also allow for immediate-mode subtraction, by adding a negative value.
+        switch (op) {
+            case BuilderOp::sub_n_ints:
+                *constantValue *= -1;
+                return BuilderOp::add_imm_int;
+
+            case BuilderOp::sub_n_floats: {
+                // This negates the floating-point value by inverting its sign bit.
+                *constantValue ^= 0x80000000;
+                return BuilderOp::add_imm_float;
+            }
+            default:
+                break;
+        }
     }
 
     // We don't have an immediate-mode version of this op.
@@ -169,18 +196,17 @@ void Builder::unary_op(BuilderOp op, int32_t slots) {
 }
 
 void Builder::binary_op(BuilderOp op, int32_t slots) {
-    // If this is a single-slot operation...
-    if (slots == 1 && !fInstructions.empty()) {
-        // ... and we just pushed a constant onto the stack...
+    if (!fInstructions.empty()) {
+        // If we just pushed or splatted a constant onto the stack...
         Instruction& lastInstruction = fInstructions.back();
-        if (lastInstruction.fOp == BuilderOp::push_constant) {
+        if (lastInstruction.fOp == BuilderOp::push_constant && lastInstruction.fImmA >= slots) {
             // ... and this op has an immediate-mode equivalent...
             int32_t constantValue = lastInstruction.fImmB;
-            BuilderOp immOp = convert_n_way_op_to_immediate(op, &constantValue);
+            BuilderOp immOp = convert_n_way_op_to_immediate(op, slots, &constantValue);
             if (immOp != op) {
-                // ... discard the constant from the stack, and use an immediate-mode op.
-                this->discard_stack(1);
-                fInstructions.push_back({immOp, {}, constantValue});
+                // ... discard the constants from the stack, and use an immediate-mode op.
+                this->discard_stack(slots);
+                fInstructions.push_back({immOp, {}, slots, constantValue});
                 return;
             }
         }
@@ -243,6 +269,46 @@ void Builder::pad_stack(int32_t count) {
     }
 }
 
+bool Builder::simplifyImmediateUnmaskedOp() {
+    if (fInstructions.size() < 3) {
+        return false;
+    }
+
+    // If we detect a pattern of 'push, immediate-op, unmasked pop', then we can
+    // convert it into an immediate-op directly onto the value slots and take the
+    // stack entirely out of the equation.
+    Instruction& popInstruction  = fInstructions.back();
+    Instruction& immInstruction  = fInstructions.fromBack(1);
+    Instruction& pushInstruction = fInstructions.fromBack(2);
+
+    // If the last instruction is an unmasked pop...
+    if (popInstruction.fOp == BuilderOp::copy_stack_to_slots_unmasked) {
+        // ... and the prior instruction was an immediate-mode op, with the same number of slots...
+        if (is_immediate_op(immInstruction.fOp) && immInstruction.fImmA == popInstruction.fImmA) {
+            // ... and we support multiple-slot immediates (if this op calls for it)...
+            if (immInstruction.fImmA == 1 || is_multi_slot_immediate_op(immInstruction.fOp)) {
+                // ... and the prior instruction was `push_slots` of at least that many slots...
+                if (pushInstruction.fOp == BuilderOp::push_slots &&
+                    pushInstruction.fImmA >= popInstruction.fImmA) {
+                    // ... onto the same slot range...
+                    Slot immSlot = popInstruction.fSlotA + popInstruction.fImmA;
+                    Slot pushSlot = pushInstruction.fSlotA + pushInstruction.fImmA;
+                    if (immSlot == pushSlot) {
+                        // ... we can shrink the push, eliminate the pop, and perform the immediate
+                        // op in-place instead.
+                        pushInstruction.fImmA -= immInstruction.fImmA;
+                        immInstruction.fSlotA = immSlot - immInstruction.fImmA;
+                        fInstructions.pop_back();
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 void Builder::discard_stack(int32_t count) {
     // If we pushed something onto the stack and then immediately discarded part of it, we can
     // shrink or eliminate the push.
@@ -282,6 +348,38 @@ void Builder::discard_stack(int32_t count) {
                 fInstructions.pop_back();
                 continue;
 
+            case BuilderOp::copy_stack_to_slots_unmasked: {
+                // Look for a pattern of `push, immediate-ops, pop` and simplify it down to an
+                // immediate-op directly to the value slot.
+                if (count == 1) {
+                    if (this->simplifyImmediateUnmaskedOp()) {
+                        return;
+                    }
+                }
+
+                // A `copy_stack_to_slots_unmasked` op, followed immediately by a `discard_stack`
+                // op with an equal number of slots, is interpreted as an unmasked stack pop.
+                // We can simplify pops in a variety of ways. First, temporarily get rid of
+                // `copy_stack_to_slots_unmasked`.
+                if (count == lastInstruction.fImmA) {
+                    SlotRange dst{lastInstruction.fSlotA, lastInstruction.fImmA};
+                    fInstructions.pop_back();
+
+                    // See if we can write this pop in a simpler way.
+                    this->simplifyPopSlotsUnmasked(&dst);
+
+                    // If simplification consumed the entire range, we're done!
+                    if (dst.count == 0) {
+                        return;
+                    }
+
+                    // Simplification did not consume the entire range. We are still responsible for
+                    // copying-back and discarding any remaining slots.
+                    this->copy_stack_to_slots_unmasked(dst);
+                    count = dst.count;
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -405,28 +503,37 @@ void Builder::push_slots(SlotRange src) {
         if (lastInstruction.fOp == BuilderOp::push_slots &&
             lastInstruction.fSlotA + lastInstruction.fImmA == src.index) {
             lastInstruction.fImmA += src.count;
-            return;
-        }
-
-        // If the previous instruction was discarding an equal number of slots...
-        if (lastInstruction.fOp == BuilderOp::discard_stack && lastInstruction.fImmA == src.count) {
-            // ... and the instruction before that was copying from the stack to the same slots...
-            Instruction& prevInstruction = fInstructions.fromBack(1);
-            if ((prevInstruction.fOp == BuilderOp::copy_stack_to_slots ||
-                 prevInstruction.fOp == BuilderOp::copy_stack_to_slots_unmasked) &&
-                prevInstruction.fSlotA == src.index &&
-                prevInstruction.fImmA == src.count) {
-                // ... we are emitting `copy stack to X, discard stack, copy X to stack`. This is a
-                // common pattern when multiple operations in a row affect the same variable. We can
-                // eliminate the discard and just leave X on the stack.
-                fInstructions.pop_back();
-                return;
-            }
+            src.count = 0;
         }
     }
 
     if (src.count > 0) {
         fInstructions.push_back({BuilderOp::push_slots, {src.index}, src.count});
+    }
+
+    // Look for a sequence of "copy stack to X, discard stack, copy X to stack". This is a common
+    // pattern when multiple operations in a row affect the same variable. When we see this, we can
+    // eliminate both the discard and the push.
+    if (fInstructions.size() >= 3 && fInstructions.back().fOp == BuilderOp::push_slots) {
+        int pushIndex = fInstructions.back().fSlotA;
+        int pushCount = fInstructions.back().fImmA;
+
+        const Instruction& discardInst     = fInstructions.fromBack(1);
+        const Instruction& copyToSlotsInst = fInstructions.fromBack(2);
+
+        // Look for a `discard_stack` matching our push count.
+        if (discardInst.fOp == BuilderOp::discard_stack && discardInst.fImmA == pushCount) {
+            // Look for a `copy_stack_to_slots` matching our push.
+            if ((copyToSlotsInst.fOp == BuilderOp::copy_stack_to_slots ||
+                 copyToSlotsInst.fOp == BuilderOp::copy_stack_to_slots_unmasked) &&
+                copyToSlotsInst.fSlotA == pushIndex &&
+                copyToSlotsInst.fImmA  == pushCount) {
+                // We found a matching sequence. Remove the discard and push.
+                fInstructions.pop_back();
+                fInstructions.pop_back();
+                return;
+            }
+        }
     }
 }
 
@@ -487,25 +594,6 @@ void Builder::trace_var_indirect(int traceMaskStackID,
                              traceMaskStackID,
                              fixedRange.count,
                              dynamicStackID});
-}
-
-void Builder::copy_constant(Slot slot, int constantValue) {
-    // If the last instruction copied the same constant, just extend it.
-    if (!fInstructions.empty()) {
-        Instruction& lastInstr = fInstructions.back();
-
-        // If the last op is copy-constant...
-        if (lastInstr.fOp == BuilderOp::copy_constant &&
-            // and has the same value
-            lastInstr.fImmB == constantValue &&
-            // and the slot is immediately after the last copy-constant's destination
-            lastInstr.fSlotA + lastInstr.fImmA == slot) {
-            // then we can just extend the copy!
-            lastInstr.fImmA += 1;
-            return;
-        }
-    }
-    fInstructions.push_back({BuilderOp::copy_constant, {slot}, 1, constantValue});
 }
 
 void Builder::push_constant_i(int32_t val, int count) {
@@ -696,16 +784,23 @@ void Builder::simplifyPopSlotsUnmasked(SlotRange* dst) {
 
 void Builder::pop_slots_unmasked(SlotRange dst) {
     SkASSERT(dst.count >= 0);
+    this->copy_stack_to_slots_unmasked(dst);
+    this->discard_stack(dst.count);
+}
 
-    // If we are popping immediately after a push, we can simplify the code by writing the pushed
-    // value directly to the destination range.
-    this->simplifyPopSlotsUnmasked(&dst);
+void Builder::exchange_src() {
+    if (!fInstructions.empty()) {
+        Instruction& lastInstruction = fInstructions.back();
 
-    // Pop from the stack normally.
-    if (dst.count > 0) {
-        this->copy_stack_to_slots_unmasked(dst);
-        this->discard_stack(dst.count);
+        // If the previous op is also an exchange-src...
+        if (lastInstruction.fOp == BuilderOp::exchange_src) {
+            // ... both ops can be eliminated. A double-swap is a no-op.
+            fInstructions.pop_back();
+            return;
+        }
     }
+
+    fInstructions.push_back({BuilderOp::exchange_src, {}});
 }
 
 void Builder::pop_src_rgba() {
@@ -769,6 +864,26 @@ static bool slot_ranges_overlap(SlotRange x, SlotRange y) {
            y.index < x.index + x.count;
 }
 
+void Builder::copy_constant(Slot slot, int constantValue) {
+    // If the last instruction copied the same constant, just extend it.
+    if (!fInstructions.empty()) {
+        Instruction& lastInstr = fInstructions.back();
+
+        // If the last op is copy-constant...
+        if (lastInstr.fOp == BuilderOp::copy_constant &&
+            // ... and has the same value...
+            lastInstr.fImmB == constantValue &&
+            // ... and the slot is immediately after the last copy-constant's destination...
+            lastInstr.fSlotA + lastInstr.fImmA == slot) {
+            // ... then we can extend the copy!
+            lastInstr.fImmA += 1;
+            return;
+        }
+    }
+
+    fInstructions.push_back({BuilderOp::copy_constant, {slot}, 1, constantValue});
+}
+
 void Builder::copy_slots_unmasked(SlotRange dst, SlotRange src) {
     // If the last instruction copied adjacent slots, just extend it.
     if (!fInstructions.empty()) {
@@ -818,16 +933,16 @@ void Builder::copy_uniform_to_slots_unmasked(SlotRange dst, SlotRange src) {
 void Builder::copy_stack_to_slots_unmasked(SlotRange dst, int offsetFromStackTop) {
     // If the last instruction copied the previous stack slots, just extend it.
     if (!fInstructions.empty()) {
-        Instruction& lastInstruction = fInstructions.back();
+        Instruction& lastInstr = fInstructions.back();
 
         // If the last op is copy-stack-to-slots-unmasked...
-        if (lastInstruction.fOp == BuilderOp::copy_stack_to_slots_unmasked &&
+        if (lastInstr.fOp == BuilderOp::copy_stack_to_slots_unmasked &&
             // and this op's destination is immediately after the last copy-slots-op's destination
-            lastInstruction.fSlotA + lastInstruction.fImmA == dst.index &&
+            lastInstr.fSlotA + lastInstr.fImmA == dst.index &&
             // and this op's source is immediately after the last copy-slots-op's source
-            lastInstruction.fImmB - lastInstruction.fImmA == offsetFromStackTop) {
+            lastInstr.fImmB - lastInstr.fImmA == offsetFromStackTop) {
             // then we can just extend the copy!
-            lastInstruction.fImmA += dst.count;
+            lastInstr.fImmA += dst.count;
             return;
         }
     }
@@ -1114,9 +1229,6 @@ static int stack_usage(const Instruction& inst) {
         case BuilderOp::pop_return_mask:
             return -1;
 
-        case BuilderOp::pop_src_rg:
-            return -2;
-
         case BuilderOp::pop_src_rgba:
         case BuilderOp::pop_dst_rgba:
             return -4;
@@ -1287,15 +1399,35 @@ void Program::appendSingleSlotUnaryOp(TArray<Stage>* pipeline, ProgramOp stage,
 void Program::appendMultiSlotUnaryOp(TArray<Stage>* pipeline, ProgramOp baseStage,
                                      float* dst, int numSlots) const {
     SkASSERT(numSlots >= 0);
-    while (numSlots > 4) {
-        this->appendMultiSlotUnaryOp(pipeline, baseStage, dst, /*numSlots=*/4);
+    while (numSlots > 0) {
+        int currentSlots = std::min(numSlots, 4);
+        auto stage = (ProgramOp)((int)baseStage + currentSlots - 1);
+        pipeline->push_back({stage, dst});
+
         dst += 4 * SkOpts::raster_pipeline_highp_stride;
         numSlots -= 4;
     }
+}
 
-    SkASSERT(numSlots <= 4);
-    auto stage = (ProgramOp)((int)baseStage + numSlots - 1);
-    pipeline->push_back({stage, dst});
+void Program::appendImmediateBinaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
+                                      ProgramOp baseStage,
+                                      SkRPOffset dst, float value, int numSlots) const {
+    SkASSERT(is_immediate_op((BuilderOp)baseStage));
+    SkASSERT(numSlots == 1 || is_multi_slot_immediate_op((BuilderOp)baseStage));
+
+    SkRasterPipeline_ConstantCtx ctx;
+    ctx.dst = dst;
+    ctx.value = value;
+
+    SkASSERT(numSlots >= 0);
+    while (numSlots > 0) {
+        int currentSlots = std::min(numSlots, 4);
+        auto stage = (ProgramOp)((int)baseStage - (currentSlots - 1));
+        pipeline->push_back({stage, SkRPCtxUtils::Pack(ctx, alloc)});
+
+        ctx.dst += 4 * SkOpts::raster_pipeline_highp_stride * sizeof(float);
+        numSlots -= 4;
+    }
 }
 
 void Program::appendAdjacentNWayBinaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
@@ -1331,37 +1463,38 @@ void Program::appendAdjacentMultiSlotBinaryOp(TArray<Stage>* pipeline, SkArenaAl
 }
 
 void Program::appendAdjacentNWayTernaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
-                                          ProgramOp stage, float* dst, const float* src0,
-                                          const float* src1, int numSlots) const {
+                                          ProgramOp stage, std::byte* basePtr, SkRPOffset dst,
+                                          SkRPOffset src0, SkRPOffset src1, int numSlots) const {
     // The float pointers must all be immediately adjacent to each other.
     SkASSERT(numSlots >= 0);
-    SkASSERT((dst  + SkOpts::raster_pipeline_highp_stride * numSlots) == src0);
-    SkASSERT((src0 + SkOpts::raster_pipeline_highp_stride * numSlots) == src1);
+    SkASSERT((dst  + SkOpts::raster_pipeline_highp_stride * numSlots * sizeof(float)) == src0);
+    SkASSERT((src0 + SkOpts::raster_pipeline_highp_stride * numSlots * sizeof(float)) == src1);
 
     if (numSlots > 0) {
-        auto ctx = alloc->make<SkRasterPipeline_TernaryOpCtx>();
-        ctx->dst = dst;
-        ctx->src0 = src0;
-        ctx->src1 = src1;
-        pipeline->push_back({stage, ctx});
+        SkRasterPipeline_TernaryOpCtx ctx;
+        ctx.dst = dst;
+        ctx.delta = src0 - dst;
+        pipeline->push_back({stage, SkRPCtxUtils::Pack(ctx, alloc)});
     }
 }
 
 void Program::appendAdjacentMultiSlotTernaryOp(TArray<Stage>* pipeline, SkArenaAlloc* alloc,
-                                               ProgramOp baseStage, float* dst, const float* src0,
-                                               const float* src1, int numSlots) const {
+                                               ProgramOp baseStage, std::byte* basePtr,
+                                               SkRPOffset dst, SkRPOffset src0, SkRPOffset src1,
+                                               int numSlots) const {
     // The float pointers must all be immediately adjacent to each other.
     SkASSERT(numSlots >= 0);
-    SkASSERT((dst  + SkOpts::raster_pipeline_highp_stride * numSlots) == src0);
-    SkASSERT((src0 + SkOpts::raster_pipeline_highp_stride * numSlots) == src1);
+    SkASSERT((dst  + SkOpts::raster_pipeline_highp_stride * numSlots * sizeof(float)) == src0);
+    SkASSERT((src0 + SkOpts::raster_pipeline_highp_stride * numSlots * sizeof(float)) == src1);
 
     if (numSlots > 4) {
-        this->appendAdjacentNWayTernaryOp(pipeline, alloc, baseStage, dst, src0, src1, numSlots);
+        this->appendAdjacentNWayTernaryOp(pipeline, alloc, baseStage, basePtr,
+                                          dst, src0, src1, numSlots);
         return;
     }
     if (numSlots > 0) {
         auto specializedStage = (ProgramOp)((int)baseStage + numSlots);
-        pipeline->push_back({specializedStage, dst});
+        pipeline->push_back({specializedStage, basePtr + dst});
     }
 }
 
@@ -1390,12 +1523,13 @@ Program::SlotData Program::allocateSlotData(SkArenaAlloc* alloc) const {
     return s;
 }
 
-#if !defined(SKSL_STANDALONE)
-
 bool Program::appendStages(SkRasterPipeline* pipeline,
                            SkArenaAlloc* alloc,
                            RP::Callbacks* callbacks,
                            SkSpan<const float> uniforms) const {
+#if defined(SKSL_STANDALONE)
+    return false;
+#else
     // Convert our Instruction list to an array of ProgramOps.
     TArray<Stage> stages;
     SlotData slotData = this->allocateSlotData(alloc);
@@ -1449,7 +1583,7 @@ bool Program::appendStages(SkRasterPipeline* pipeline,
                 if (!callbacks) {
                     return false;
                 }
-                callbacks->toLinearSrgb();
+                callbacks->toLinearSrgb(stage.ctx);
                 // A ColorSpaceXform shouldn't ever alter the base pointer, so we don't need to call
                 // resetBasePointer here.
                 break;
@@ -1458,7 +1592,7 @@ bool Program::appendStages(SkRasterPipeline* pipeline,
                 if (!callbacks) {
                     return false;
                 }
-                callbacks->fromLinearSrgb();
+                callbacks->fromLinearSrgb(stage.ctx);
                 // A ColorSpaceXform shouldn't ever alter the base pointer, so we don't need to call
                 // resetBasePointer here.
                 break;
@@ -1507,9 +1641,8 @@ bool Program::appendStages(SkRasterPipeline* pipeline,
     }
 
     return true;
-}
-
 #endif
+}
 
 void Program::makeStages(TArray<Stage>* pipeline,
                          SkArenaAlloc* alloc,
@@ -1634,12 +1767,12 @@ void Program::makeStages(TArray<Stage>* pipeline,
                 break;
             }
             case ALL_IMMEDIATE_BINARY_OP_CASES: {
-                float* dst = tempStackPtr - (1 * N);
+                float* dst = (inst.fSlotA == NA) ? tempStackPtr - (inst.fImmA * N)
+                                                 : SlotA();
 
-                SkRasterPipeline_ConstantCtx ctx;
-                ctx.dst = OffsetFromBase(dst);
-                ctx.value = sk_bit_cast<float>(inst.fImmA);
-                pipeline->push_back({(ProgramOp)inst.fOp, SkRPCtxUtils::Pack(ctx, alloc)});
+                this->appendImmediateBinaryOp(pipeline, alloc, (ProgramOp)inst.fOp,
+                                              OffsetFromBase(dst), sk_bit_cast<float>(inst.fImmB),
+                                              inst.fImmA);
                 break;
             }
             case ALL_N_WAY_BINARY_OP_CASES: {
@@ -1664,16 +1797,22 @@ void Program::makeStages(TArray<Stage>* pipeline,
                 float* src1 = tempStackPtr - (inst.fImmA * N);
                 float* src0 = tempStackPtr - (inst.fImmA * 2 * N);
                 float* dst  = tempStackPtr - (inst.fImmA * 3 * N);
-                this->appendAdjacentNWayTernaryOp(pipeline, alloc, (ProgramOp)inst.fOp,
-                                                  dst, src0, src1, inst.fImmA);
+                this->appendAdjacentNWayTernaryOp(pipeline, alloc, (ProgramOp)inst.fOp, basePtr,
+                                                  OffsetFromBase(dst),
+                                                  OffsetFromBase(src0),
+                                                  OffsetFromBase(src1),
+                                                  inst.fImmA);
                 break;
             }
             case ALL_MULTI_SLOT_TERNARY_OP_CASES: {
                 float* src1 = tempStackPtr - (inst.fImmA * N);
                 float* src0 = tempStackPtr - (inst.fImmA * 2 * N);
                 float* dst  = tempStackPtr - (inst.fImmA * 3 * N);
-                this->appendAdjacentMultiSlotTernaryOp(pipeline, alloc, (ProgramOp)inst.fOp,
-                                                       dst, src0, src1, inst.fImmA);
+                this->appendAdjacentMultiSlotTernaryOp(pipeline, alloc,(ProgramOp)inst.fOp, basePtr,
+                                                       OffsetFromBase(dst),
+                                                       OffsetFromBase(src0),
+                                                       OffsetFromBase(src1),
+                                                       inst.fImmA);
                 break;
             }
             case BuilderOp::select: {
@@ -1778,11 +1917,6 @@ void Program::makeStages(TArray<Stage>* pipeline,
                 pipeline->push_back({ProgramOp::store_device_xy01, dst});
                 break;
             }
-            case BuilderOp::pop_src_rg: {
-                float* src = tempStackPtr - (2 * N);
-                pipeline->push_back({ProgramOp::load_src_rg, src});
-                break;
-            }
             case BuilderOp::pop_src_rgba: {
                 float* src = tempStackPtr - (4 * N);
                 pipeline->push_back({ProgramOp::load_src, src});
@@ -1860,9 +1994,10 @@ void Program::makeStages(TArray<Stage>* pipeline,
                 pipeline->push_back({ProgramOp::load_condition_mask, src});
                 break;
             }
-            case BuilderOp::merge_condition_mask: {
+            case BuilderOp::merge_condition_mask:
+            case BuilderOp::merge_inv_condition_mask: {
                 float* ptr = tempStackPtr - (2 * N);
-                pipeline->push_back({ProgramOp::merge_condition_mask, ptr});
+                pipeline->push_back({(ProgramOp)inst.fOp, ptr});
                 break;
             }
             case BuilderOp::push_loop_mask: {
@@ -2014,12 +2149,16 @@ void Program::makeStages(TArray<Stage>* pipeline,
                 break;
             }
             case BuilderOp::case_op: {
-                auto* ctx = alloc->make<SkRasterPipeline_CaseOpCtx>();
-                ctx->ptr = reinterpret_cast<int*>(tempStackPtr - 2 * N);
-                ctx->expectedValue = inst.fImmA;
-                pipeline->push_back({ProgramOp::case_op, ctx});
+                SkRasterPipeline_CaseOpCtx ctx;
+                ctx.expectedValue = inst.fImmA;
+                ctx.offset = OffsetFromBase(tempStackPtr - (2 * N));
+                pipeline->push_back({ProgramOp::case_op, SkRPCtxUtils::Pack(ctx, alloc)});
                 break;
             }
+            case BuilderOp::continue_op:
+                pipeline->push_back({ProgramOp::continue_op, tempStackMap[inst.fImmA] - (1 * N)});
+                break;
+
             case BuilderOp::pad_stack:
             case BuilderOp::discard_stack:
                 break;
@@ -2036,7 +2175,7 @@ void Program::makeStages(TArray<Stage>* pipeline,
 
             case BuilderOp::invoke_to_linear_srgb:
             case BuilderOp::invoke_from_linear_srgb:
-                pipeline->push_back({(ProgramOp)inst.fOp, nullptr});
+                pipeline->push_back({(ProgramOp)inst.fOp, tempStackMap[inst.fImmA] - (4 * N)});
                 break;
 
             case BuilderOp::trace_line: {
@@ -2365,6 +2504,12 @@ void Program::dump(SkWStream* out) const {
                                    PtrCtx(ctxAsSlot + (2 * N * numSlots), numSlots));
         };
 
+        // Interprets a slab offset as three adjacent slot ranges.
+        auto Adjacent3OffsetCtx = [&](SkRPOffset offset, int numSlots) ->
+                                     std::tuple<std::string, std::string, std::string> {
+            return Adjacent3PtrCtx((std::byte*)slots.values.data() + offset, numSlots);
+        };
+
         // Interpret the context value as a BinaryOp structure for copy_n_slots (numSlots is
         // dictated by the op itself).
         auto BinaryOpCtx = [&](const void* v,
@@ -2391,13 +2536,12 @@ void Program::dump(SkWStream* out) const {
             return AdjacentOffsetCtx(ctx.dst, numSlots);
         };
 
-        // Interpret the context value as a TernaryOp structure (numSlots is inferred from the
-        // distance between pointers).
+        // Interpret the context value as a TernaryOp structure (numSlots is inferred from `delta`).
         auto AdjacentTernaryOpCtx = [&](const void* v) ->
                                        std::tuple<std::string, std::string, std::string> {
-            const auto* ctx = static_cast<const SkRasterPipeline_TernaryOpCtx*>(v);
-            int numSlots = (ctx->src0 - ctx->dst) / N;
-            return Adjacent3PtrCtx(ctx->dst, numSlots);
+            auto ctx = SkRPCtxUtils::Unpack((const SkRasterPipeline_TernaryOpCtx*)v);
+            int numSlots = ctx.delta / (sizeof(float) * N);
+            return Adjacent3OffsetCtx(ctx.dst, numSlots);
         };
 
         // Stringize a span of swizzle offsets to the textual equivalent (`xyzw`).
@@ -2492,10 +2636,10 @@ void Program::dump(SkWStream* out) const {
                 break;
 
             case POp::case_op: {
-                const auto* ctx = static_cast<SkRasterPipeline_CaseOpCtx*>(stage.ctx);
-                opArg1 = PtrCtx(ctx->ptr, 1);
-                opArg2 = PtrCtx(ctx->ptr + N, 1);
-                opArg3 = Imm(sk_bit_cast<float>(ctx->expectedValue), /*showAsFloat=*/false);
+                auto ctx = SkRPCtxUtils::Unpack((const SkRasterPipeline_CaseOpCtx*)stage.ctx);
+                opArg1 = OffsetCtx(ctx.offset, 1);
+                opArg2 = OffsetCtx(ctx.offset + sizeof(int32_t) * N, 1);
+                opArg3 = Imm(sk_bit_cast<float>(ctx.expectedValue), /*showAsFloat=*/false);
                 break;
             }
             case POp::swizzle_1:
@@ -2570,10 +2714,10 @@ void Program::dump(SkWStream* out) const {
             case POp::reenable_loop_mask:
             case POp::load_return_mask:
             case POp::store_return_mask:
-            case POp::bitwise_not_int:
+            case POp::continue_op:
             case POp::cast_to_float_from_int: case POp::cast_to_float_from_uint:
             case POp::cast_to_int_from_float: case POp::cast_to_uint_from_float:
-            case POp::abs_float:              case POp::abs_int:
+            case POp::abs_int:
             case POp::acos_float:
             case POp::asin_float:
             case POp::atan_float:
@@ -2591,21 +2735,19 @@ void Program::dump(SkWStream* out) const {
                 opArg1 = PtrCtx(stage.ctx, 1);
                 break;
 
-            case POp::bitwise_not_2_ints:
-            case POp::load_src_rg:               case POp::store_src_rg:
+            case POp::store_src_rg:
             case POp::cast_to_float_from_2_ints: case POp::cast_to_float_from_2_uints:
             case POp::cast_to_int_from_2_floats: case POp::cast_to_uint_from_2_floats:
-            case POp::abs_2_floats:              case POp::abs_2_ints:
+            case POp::abs_2_ints:
             case POp::ceil_2_floats:
             case POp::floor_2_floats:
             case POp::invsqrt_2_floats:
                 opArg1 = PtrCtx(stage.ctx, 2);
                 break;
 
-            case POp::bitwise_not_3_ints:
             case POp::cast_to_float_from_3_ints: case POp::cast_to_float_from_3_uints:
             case POp::cast_to_int_from_3_floats: case POp::cast_to_uint_from_3_floats:
-            case POp::abs_3_floats:              case POp::abs_3_ints:
+            case POp::abs_3_ints:
             case POp::ceil_3_floats:
             case POp::floor_3_floats:
             case POp::invsqrt_3_floats:
@@ -2618,10 +2760,11 @@ void Program::dump(SkWStream* out) const {
             case POp::store_src:
             case POp::store_dst:
             case POp::store_device_xy01:
-            case POp::bitwise_not_4_ints:
+            case POp::invoke_to_linear_srgb:
+            case POp::invoke_from_linear_srgb:
             case POp::cast_to_float_from_4_ints: case POp::cast_to_float_from_4_uints:
             case POp::cast_to_int_from_4_floats: case POp::cast_to_uint_from_4_floats:
-            case POp::abs_4_floats:              case POp::abs_4_ints:
+            case POp::abs_4_ints:
             case POp::ceil_4_floats:
             case POp::floor_4_floats:
             case POp::invsqrt_4_floats:
@@ -2644,11 +2787,15 @@ void Program::dump(SkWStream* out) const {
             case POp::cmplt_imm_float:
             case POp::cmpeq_imm_float:
             case POp::cmpne_imm_float:
+            case POp::min_imm_float:
+            case POp::max_imm_float:
                 std::tie(opArg1, opArg2) = ConstantCtx(stage.ctx, 1);
                 break;
 
             case POp::add_imm_int:
             case POp::mul_imm_int:
+            case POp::bitwise_and_imm_int:
+            case POp::bitwise_xor_imm_int:
             case POp::cmple_imm_int:
             case POp::cmple_imm_uint:
             case POp::cmplt_imm_int:
@@ -2659,14 +2806,17 @@ void Program::dump(SkWStream* out) const {
                 break;
 
             case POp::splat_2_constants:
+            case POp::bitwise_and_imm_2_ints:
                 std::tie(opArg1, opArg2) = ConstantCtx(stage.ctx, 2);
                 break;
 
             case POp::splat_3_constants:
+            case POp::bitwise_and_imm_3_ints:
                 std::tie(opArg1, opArg2) = ConstantCtx(stage.ctx, 3);
                 break;
 
             case POp::splat_4_constants:
+            case POp::bitwise_and_imm_4_ints:
                 std::tie(opArg1, opArg2) = ConstantCtx(stage.ctx, 4);
                 break;
 
@@ -2731,6 +2881,7 @@ void Program::dump(SkWStream* out) const {
                 break;
             }
             case POp::merge_condition_mask:
+            case POp::merge_inv_condition_mask:
             case POp::add_float:   case POp::add_int:
             case POp::sub_float:   case POp::sub_int:
             case POp::mul_float:   case POp::mul_int:
@@ -2935,6 +3086,10 @@ void Program::dump(SkWStream* out) const {
                 opText = "CondMask = " + opArg1 + " & " + opArg2;
                 break;
 
+            case POp::merge_inv_condition_mask:
+                opText = "CondMask = " + opArg1 + " & ~" + opArg2;
+                break;
+
             case POp::load_loop_mask:
                 opText = "LoopMask = " + opArg1;
                 break;
@@ -2987,10 +3142,6 @@ void Program::dump(SkWStream* out) const {
                 opText = opArg1 + " = DeviceCoords.xy01";
                 break;
 
-            case POp::load_src_rg:
-                opText = "src.rg = " + opArg1;
-                break;
-
             case POp::load_src:
                 opText = "src.rgba = " + opArg1;
                 break;
@@ -3004,6 +3155,10 @@ void Program::dump(SkWStream* out) const {
             case POp::bitwise_and_3_ints:
             case POp::bitwise_and_4_ints:
             case POp::bitwise_and_n_ints:
+            case POp::bitwise_and_imm_int:
+            case POp::bitwise_and_imm_2_ints:
+            case POp::bitwise_and_imm_3_ints:
+            case POp::bitwise_and_imm_4_ints:
                 opText = opArg1 + " &= " + opArg2;
                 break;
 
@@ -3020,14 +3175,8 @@ void Program::dump(SkWStream* out) const {
             case POp::bitwise_xor_3_ints:
             case POp::bitwise_xor_4_ints:
             case POp::bitwise_xor_n_ints:
+            case POp::bitwise_xor_imm_int:
                 opText = opArg1 + " ^= " + opArg2;
-                break;
-
-            case POp::bitwise_not_int:
-            case POp::bitwise_not_2_ints:
-            case POp::bitwise_not_3_ints:
-            case POp::bitwise_not_4_ints:
-                opText = opArg1 + " = ~" + opArg1;
                 break;
 
             case POp::cast_to_float_from_int:
@@ -3091,10 +3240,10 @@ void Program::dump(SkWStream* out) const {
                          opArg2 + ")";
                 break;
 
-            case POp::abs_float:    case POp::abs_int:
-            case POp::abs_2_floats: case POp::abs_2_ints:
-            case POp::abs_3_floats: case POp::abs_3_ints:
-            case POp::abs_4_floats: case POp::abs_4_ints:
+            case POp::abs_int:
+            case POp::abs_2_ints:
+            case POp::abs_3_ints:
+            case POp::abs_4_ints:
                 opText = opArg1 + " = abs(" + opArg1 + ")";
                 break;
 
@@ -3235,19 +3384,21 @@ void Program::dump(SkWStream* out) const {
                 opText = opArg1 + " = mod(" + opArg1 + ", " + opArg2 + ")";
                 break;
 
-            case POp::min_float:    case POp::min_int:    case POp::min_uint:
-            case POp::min_2_floats: case POp::min_2_ints: case POp::min_2_uints:
-            case POp::min_3_floats: case POp::min_3_ints: case POp::min_3_uints:
-            case POp::min_4_floats: case POp::min_4_ints: case POp::min_4_uints:
-            case POp::min_n_floats: case POp::min_n_ints: case POp::min_n_uints:
+            case POp::min_float:        case POp::min_int:          case POp::min_uint:
+            case POp::min_2_floats:     case POp::min_2_ints:       case POp::min_2_uints:
+            case POp::min_3_floats:     case POp::min_3_ints:       case POp::min_3_uints:
+            case POp::min_4_floats:     case POp::min_4_ints:       case POp::min_4_uints:
+            case POp::min_n_floats:     case POp::min_n_ints:       case POp::min_n_uints:
+            case POp::min_imm_float:
                 opText = opArg1 + " = min(" + opArg1 + ", " + opArg2 + ")";
                 break;
 
-            case POp::max_float:    case POp::max_int:    case POp::max_uint:
-            case POp::max_2_floats: case POp::max_2_ints: case POp::max_2_uints:
-            case POp::max_3_floats: case POp::max_3_ints: case POp::max_3_uints:
-            case POp::max_4_floats: case POp::max_4_ints: case POp::max_4_uints:
-            case POp::max_n_floats: case POp::max_n_ints: case POp::max_n_uints:
+            case POp::max_float:        case POp::max_int:          case POp::max_uint:
+            case POp::max_2_floats:     case POp::max_2_ints:       case POp::max_2_uints:
+            case POp::max_3_floats:     case POp::max_3_ints:       case POp::max_3_uints:
+            case POp::max_4_floats:     case POp::max_4_ints:       case POp::max_4_uints:
+            case POp::max_n_floats:     case POp::max_n_ints:       case POp::max_n_uints:
+            case POp::max_imm_float:
                 opText = opArg1 + " = max(" + opArg1 + ", " + opArg2 + ")";
                 break;
 
@@ -3310,11 +3461,11 @@ void Program::dump(SkWStream* out) const {
                 break;
 
             case POp::invoke_to_linear_srgb:
-                opText = "src.rgba = toLinearSrgb(src.rgba)";
+                opText = opArg1 + " = toLinearSrgb(" + opArg1 + ")";
                 break;
 
             case POp::invoke_from_linear_srgb:
-                opText = "src.rgba = fromLinearSrgb(src.rgba)";
+                opText = opArg1 + " = fromLinearSrgb(" + opArg1 + ")";
                 break;
 
             case POp::branch_if_no_active_lanes_eq:
@@ -3325,11 +3476,16 @@ void Program::dump(SkWStream* out) const {
                 opText = "label " + opArg1;
                 break;
 
-            case POp::case_op: {
+            case POp::case_op:
                 opText = "if (" + opArg1 + " == " + opArg3 +
                          ") { LoopMask = true; " + opArg2 + " = false; }";
                 break;
-            }
+
+            case POp::continue_op:
+                opText = opArg1 +
+                         " |= Mask(0xFFFFFFFF); LoopMask &= ~(CondMask & LoopMask & RetMask)";
+                break;
+
             default:
                 break;
         }
@@ -3346,5 +3502,6 @@ void Program::dump(SkWStream* out) const {
     }
 }
 
-}  // namespace RP
-}  // namespace SkSL
+}  // namespace SkSL::RP
+
+#endif  // SK_ENABLE_SKSL_IN_RASTER_PIPELINE

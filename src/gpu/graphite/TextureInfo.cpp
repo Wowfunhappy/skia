@@ -32,7 +32,7 @@ TextureInfo& TextureInfo::operator=(const TextureInfo& that) {
 #endif
 #ifdef SK_VULKAN
         case BackendApi::kVulkan:
-            // TODO: Actually fill this out
+            fVkSpec = that.fVkSpec;
             break;
 #endif
         default:
@@ -78,6 +78,16 @@ bool TextureInfo::operator==(const TextureInfo& that) const {
             return false;
     }
 }
+
+#ifdef SK_DAWN
+bool TextureInfo::getDawnTextureInfo(DawnTextureInfo* info) const {
+    if (!this->isValid() || fBackend != BackendApi::kDawn) {
+        return false;
+    }
+    *info = DawnTextureSpecToTextureInfo(fDawnSpec, fSampleCount, fMipmapped);
+    return true;
+}
+#endif
 
 } // namespace skgpu::graphite
 

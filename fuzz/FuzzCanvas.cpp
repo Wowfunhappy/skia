@@ -34,6 +34,7 @@
 #include "include/effects/SkImageFilters.h"
 #include "include/effects/SkLumaColorFilter.h"
 #include "include/effects/SkPerlinNoiseShader.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/base/SkTo.h"
 #include "include/svg/SkSVGCanvas.h"
 #include "include/utils/SkNullCanvas.h"
@@ -646,17 +647,19 @@ static sk_sp<SkImageFilter> make_fuzz_imageFilter(Fuzz* fuzz, int depth) {
         case 11:
             return make_fuzz_lighting_imagefilter(fuzz, depth - 1);
         case 12: {
-            SkRect srcRect;
+            SkRect lensBounds;
+            SkScalar zoomAmount;
             SkScalar inset;
             bool useCropRect;
             SkIRect cropRect;
-            fuzz->next(&srcRect, &inset, &useCropRect);
+            fuzz->next(&lensBounds, &zoomAmount, &inset, &useCropRect);
             if (useCropRect) {
                 fuzz->next(&cropRect);
             }
             sk_sp<SkImageFilter> input = make_fuzz_imageFilter(fuzz, depth - 1);
-            return SkImageFilters::Magnifier(srcRect, inset, std::move(input),
-                                             useCropRect ? &cropRect : nullptr);
+            const auto sampling = next_sampling(fuzz);
+            return SkImageFilters::Magnifier(lensBounds, zoomAmount, inset, sampling,
+                                             std::move(input), useCropRect ? &cropRect : nullptr);
         }
         case 13: {
             constexpr int kMaxKernelSize = 5;
@@ -1512,7 +1515,8 @@ DEF_FUZZ(NullCanvas, fuzz) {
 constexpr SkISize kCanvasSize = {128, 160};
 
 DEF_FUZZ(RasterN32Canvas, fuzz) {
-    auto surface = SkSurface::MakeRasterN32Premul(kCanvasSize.width(), kCanvasSize.height());
+    auto surface = SkSurfaces::Raster(
+            SkImageInfo::MakeN32Premul(kCanvasSize.width(), kCanvasSize.height()));
     if (!surface || !surface->getCanvas()) { fuzz->signalBug(); }
     fuzz_canvas(fuzz, surface->getCanvas());
 }
@@ -1528,7 +1532,8 @@ DEF_FUZZ(RasterN32CanvasViaSerialization, fuzz) {
     SkReadBuffer rb(data->data(), data->size());
     auto deserialized = SkPicturePriv::MakeFromBuffer(rb);
     if (!deserialized) { fuzz->signalBug(); }
-    auto surface = SkSurface::MakeRasterN32Premul(kCanvasSize.width(), kCanvasSize.height());
+    auto surface = SkSurfaces::Raster(
+            SkImageInfo::MakeN32Premul(kCanvasSize.width(), kCanvasSize.height()));
     SkASSERT(surface && surface->getCanvas());
     surface->getCanvas()->drawPicture(deserialized);
 }
@@ -1612,7 +1617,7 @@ DEF_FUZZ(SerializedImageFilter, fuzz) {
 #if defined(SK_GANESH)
 static void fuzz_ganesh(Fuzz* fuzz, GrDirectContext* context) {
     SkASSERT(context);
-    auto surface = SkSurface::MakeRenderTarget(
+    auto surface = SkSurfaces::RenderTarget(
             context,
             skgpu::Budgeted::kNo,
             SkImageInfo::Make(kCanvasSize, kRGBA_8888_SkColorType, kPremul_SkAlphaType));

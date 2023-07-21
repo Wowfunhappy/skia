@@ -958,13 +958,13 @@ protected:
                         sk_sp<SkImage> csImage;
 #if defined(SK_GRAPHITE)
                         if (recorder) {
-                            csImage = fImages[opaque][cs][format]->makeColorSpace(fTargetColorSpace,
-                                                                                  recorder);
+                            csImage = fImages[opaque][cs][format]->makeColorSpace(
+                                    recorder, fTargetColorSpace, {});
                         } else
 #endif
                         {
-                            csImage = fImages[opaque][cs][format]->makeColorSpace(fTargetColorSpace,
-                                                                                  direct);
+                            csImage = fImages[opaque][cs][format]->makeColorSpace(
+                                    direct, fTargetColorSpace);
                         }
                         canvas->drawImageRect(csImage, srcRect, dstRect, sampling,
                                               &paint, constraint);
@@ -1134,7 +1134,7 @@ protected:
                     y += kTileWidthHeight + kPad;
 
                     SkIRect bounds = SkIRect::MakeWH(kTileWidthHeight / 2, kTileWidthHeight / 2);
-                    auto subset = yuv->makeSubset(bounds, dContext);
+                    auto subset = SkImages::SubsetTextureFrom(dContext, yuv.get(), bounds);
                     SkASSERT(subset);
                     canvas->drawImage(subset, x, y);
                     y += kTileWidthHeight + kPad;

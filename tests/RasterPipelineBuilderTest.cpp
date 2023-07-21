@@ -14,6 +14,8 @@
 #include "src/sksl/tracing/SkSLDebugTracePriv.h"
 #include "tests/Test.h"
 
+#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
+
 static sk_sp<SkData> get_program_dump(SkSL::RP::Program& program) {
     SkDynamicMemoryWStream stream;
     program.dump(&stream);
@@ -99,6 +101,7 @@ DEF_TEST(RasterPipelineBuilderPushPopMaskRegisters, r) {
     builder.push_loop_mask();              // push into 1
     builder.push_return_mask();            // push into 2
     builder.merge_condition_mask();        // set the condition-mask to 1 & 2
+    builder.merge_inv_condition_mask();    // set the condition-mask to 1 & ~2
     builder.pop_condition_mask();          // pop from 2
     builder.merge_loop_mask();             // mask off the loop-mask against 1
     builder.push_condition_mask();         // push into 2
@@ -119,6 +122,7 @@ R"(store_condition_mask           $0 = CondMask
 store_loop_mask                $1 = LoopMask
 store_return_mask              $2 = RetMask
 merge_condition_mask           CondMask = $1 & $2
+merge_inv_condition_mask       CondMask = $1 & ~$2
 load_condition_mask            CondMask = $2
 merge_loop_mask                LoopMask &= $1
 store_condition_mask           $2 = CondMask
@@ -157,24 +161,20 @@ DEF_TEST(RasterPipelineBuilderPushPopSrcDst, r) {
 
     builder.push_src_rgba();
     builder.push_dst_rgba();
-    builder.exchange_src();
-    builder.push_src_rgba();
     builder.pop_src_rgba();
+    builder.exchange_src();
+    builder.exchange_src();
+    builder.exchange_src();
     builder.pop_dst_rgba();
-    builder.pop_src_rg();
-    builder.pop_src_rg();
 
     std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/0,
                                                                 /*numUniformSlots=*/0);
     check(r, *program,
 R"(store_src                      $0..3 = src.rgba
 store_dst                      $4..7 = dst.rgba
-exchange_src                   swap(src.rgba, $4..7)
-store_src                      $8..11 = src.rgba
-load_src                       src.rgba = $8..11
-load_dst                       dst.rgba = $4..7
-load_src_rg                    src.rg = $2..3
-load_src_rg                    src.rg = $0..1
+load_src                       src.rgba = $4..7
+exchange_src                   swap(src.rgba, $0..3)
+load_dst                       dst.rgba = $0..3
 )");
 }
 
@@ -623,8 +623,7 @@ splat_4_constants              $24..27 = 0x0000007B (1.723597e-43)
 splat_4_constants              $28..31 = 0x0000007B (1.723597e-43)
 splat_4_constants              $32..35 = 0x0000007B (1.723597e-43)
 splat_4_constants              $36..39 = 0x0000007B (1.723597e-43)
-copy_constant                  $40 = 0x0000007B (1.723597e-43)
-bitwise_and_int                $39 &= $40
+bitwise_and_imm_int            $39 &= 0x0000007B
 bitwise_xor_2_ints             $36..37 ^= $38..39
 bitwise_or_3_ints              $32..34 |= $35..37
 add_2_ints                     $31..32 += $33..34
@@ -679,15 +678,13 @@ DEF_TEST(RasterPipelineBuilderUnaryOps, r) {
     builder.unary_op(BuilderOp::cast_to_float_from_uint, 2);
     builder.unary_op(BuilderOp::cast_to_int_from_float, 3);
     builder.unary_op(BuilderOp::cast_to_uint_from_float, 4);
-    builder.unary_op(BuilderOp::bitwise_not_int, 5);
     builder.unary_op(BuilderOp::cos_float, 4);
     builder.unary_op(BuilderOp::tan_float, 3);
     builder.unary_op(BuilderOp::sin_float, 2);
     builder.unary_op(BuilderOp::sqrt_float, 1);
-    builder.unary_op(BuilderOp::abs_float, 2);
-    builder.unary_op(BuilderOp::abs_int, 3);
-    builder.unary_op(BuilderOp::floor_float, 4);
-    builder.unary_op(BuilderOp::ceil_float, 5);
+    builder.unary_op(BuilderOp::abs_int, 2);
+    builder.unary_op(BuilderOp::floor_float, 3);
+    builder.unary_op(BuilderOp::ceil_float, 4);
     builder.discard_stack(5);
     std::unique_ptr<SkSL::RP::Program> program = builder.finish(/*numValueSlots=*/0,
                                                                 /*numUniformSlots=*/0);
@@ -698,8 +695,6 @@ cast_to_float_from_int         $4 = IntToFloat($4)
 cast_to_float_from_2_uints     $3..4 = UintToFloat($3..4)
 cast_to_int_from_3_floats      $2..4 = FloatToInt($2..4)
 cast_to_uint_from_4_floats     $1..4 = FloatToUint($1..4)
-bitwise_not_4_ints             $0..3 = ~$0..3
-bitwise_not_int                $4 = ~$4
 cos_float                      $1 = cos($1)
 cos_float                      $2 = cos($2)
 cos_float                      $3 = cos($3)
@@ -710,11 +705,9 @@ tan_float                      $4 = tan($4)
 sin_float                      $3 = sin($3)
 sin_float                      $4 = sin($4)
 sqrt_float                     $4 = sqrt($4)
-abs_2_floats                   $3..4 = abs($3..4)
-abs_3_ints                     $2..4 = abs($2..4)
-floor_4_floats                 $1..4 = floor($1..4)
-ceil_4_floats                  $0..3 = ceil($0..3)
-ceil_float                     $4 = ceil($4)
+abs_2_ints                     $3..4 = abs($3..4)
+floor_3_floats                 $2..4 = floor($2..4)
+ceil_4_floats                  $1..4 = ceil($1..4)
 )");
 }
 
@@ -866,3 +859,5 @@ trace_exit                     TraceExit(FunctionC) when $0 is true
         }
     }
 }
+
+#endif  // SK_ENABLE_SKSL_IN_RASTER_PIPELINE

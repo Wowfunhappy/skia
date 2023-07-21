@@ -256,16 +256,196 @@ void VulkanCommandBuffer::waitUntilFinished() {
                                                                     /*timeout=*/UINT64_MAX));
 }
 
-bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc&,
+bool VulkanCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
                                           const Texture* colorTexture,
                                           const Texture* resolveTexture,
                                           const Texture* depthStencilTexture,
                                           SkRect viewport,
                                           const DrawPassList& drawPasses) {
-    // TODO: fill this in
+    if (!this->beginRenderPass(renderPassDesc, colorTexture, resolveTexture, depthStencilTexture)) {
+        return false;
+    }
 
-    // return true despite doing nothing to allow dm to run
+    for (const auto& drawPass : drawPasses) {
+        this->addDrawPass(drawPass.get());
+    }
+
+    // TODO: Set viewport
+
+    this->endRenderPass();
     return true;
+}
+
+bool VulkanCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
+                                          const Texture* colorTexture,
+                                          const Texture* resolveTexture,
+                                          const Texture* depthStencilTexture) {
+    // TODO: Implement the following:
+    // Get render pass descriptor
+    // Set up color attachment
+    // Set up depth/stencil attachment
+    // If needed, load MSAA from resolve
+
+    // Return true despite not being fully completed to allow dm to run.
+    return true;
+}
+
+void VulkanCommandBuffer::endRenderPass() {
+    SkASSERT(fActive);
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::addDrawPass(const DrawPass* drawPass) {
+    drawPass->addResourceRefs(this);
+    for (auto [type, cmdPtr] : drawPass->commands()) {
+        switch (type) {
+            case DrawPassCommands::Type::kBindGraphicsPipeline: {
+                auto bgp = static_cast<DrawPassCommands::BindGraphicsPipeline*>(cmdPtr);
+                this->bindGraphicsPipeline(drawPass->getPipeline(bgp->fPipelineIndex));
+                break;
+            }
+            case DrawPassCommands::Type::kSetBlendConstants: {
+                auto sbc = static_cast<DrawPassCommands::SetBlendConstants*>(cmdPtr);
+                this->setBlendConstants(sbc->fBlendConstants);
+                break;
+            }
+            case DrawPassCommands::Type::kBindUniformBuffer: {
+                auto bub = static_cast<DrawPassCommands::BindUniformBuffer*>(cmdPtr);
+                this->bindUniformBuffer(bub->fInfo, bub->fSlot);
+                break;
+            }
+            case DrawPassCommands::Type::kBindDrawBuffers: {
+                auto bdb = static_cast<DrawPassCommands::BindDrawBuffers*>(cmdPtr);
+                this->bindDrawBuffers(
+                        bdb->fVertices, bdb->fInstances, bdb->fIndices, bdb->fIndirect);
+                break;
+            }
+            case DrawPassCommands::Type::kBindTexturesAndSamplers: {
+                auto bts = static_cast<DrawPassCommands::BindTexturesAndSamplers*>(cmdPtr);
+                this->bindTextureAndSamplers(*drawPass, *bts);
+                break;
+            }
+            case DrawPassCommands::Type::kSetScissor: {
+                auto ss = static_cast<DrawPassCommands::SetScissor*>(cmdPtr);
+                const SkIRect& rect = ss->fScissor;
+                this->setScissor(rect.fLeft, rect.fTop, rect.width(), rect.height());
+                break;
+            }
+            case DrawPassCommands::Type::kDraw: {
+                auto draw = static_cast<DrawPassCommands::Draw*>(cmdPtr);
+                this->draw(draw->fType, draw->fBaseVertex, draw->fVertexCount);
+                break;
+            }
+            case DrawPassCommands::Type::kDrawIndexed: {
+                auto draw = static_cast<DrawPassCommands::DrawIndexed*>(cmdPtr);
+                this->drawIndexed(
+                        draw->fType, draw->fBaseIndex, draw->fIndexCount, draw->fBaseVertex);
+                break;
+            }
+            case DrawPassCommands::Type::kDrawInstanced: {
+                auto draw = static_cast<DrawPassCommands::DrawInstanced*>(cmdPtr);
+                this->drawInstanced(draw->fType,
+                                    draw->fBaseVertex,
+                                    draw->fVertexCount,
+                                    draw->fBaseInstance,
+                                    draw->fInstanceCount);
+                break;
+            }
+            case DrawPassCommands::Type::kDrawIndexedInstanced: {
+                auto draw = static_cast<DrawPassCommands::DrawIndexedInstanced*>(cmdPtr);
+                this->drawIndexedInstanced(draw->fType,
+                                           draw->fBaseIndex,
+                                           draw->fIndexCount,
+                                           draw->fBaseVertex,
+                                           draw->fBaseInstance,
+                                           draw->fInstanceCount);
+                break;
+            }
+            case DrawPassCommands::Type::kDrawIndirect: {
+                auto draw = static_cast<DrawPassCommands::DrawIndirect*>(cmdPtr);
+                this->drawIndirect(draw->fType);
+                break;
+            }
+            case DrawPassCommands::Type::kDrawIndexedIndirect: {
+                auto draw = static_cast<DrawPassCommands::DrawIndexedIndirect*>(cmdPtr);
+                this->drawIndexedIndirect(draw->fType);
+                break;
+            }
+        }
+    }
+}
+
+void VulkanCommandBuffer::bindGraphicsPipeline(const GraphicsPipeline*) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::setBlendConstants(float* blendConstants) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::bindUniformBuffer(const BindBufferInfo& info, UniformSlot) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::bindDrawBuffers(const BindBufferInfo& vertices,
+                                          const BindBufferInfo& instances,
+                                          const BindBufferInfo& indices,
+                                          const BindBufferInfo& indirect) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::bindVertexBuffers(const Buffer* vertexBuffer,
+                                            size_t vertexOffset,
+                                            const Buffer* instanceBuffer,
+                                            size_t instanceOffset) {
+    // TODO: Implement
+}
+void VulkanCommandBuffer::bindIndexBuffer(const Buffer* indexBuffer, size_t offset) {
+    // TODO: Implement
+}
+void VulkanCommandBuffer::bindIndirectBuffer(const Buffer* indirectBuffer, size_t offset) {
+    // TODO: Implement
+}
+void VulkanCommandBuffer::bindTextureAndSamplers(const DrawPass& drawPass,
+        const DrawPassCommands::BindTexturesAndSamplers& command) {
+    // TODO: Implement
+}
+void VulkanCommandBuffer::setScissor(unsigned int left, unsigned int top, unsigned int width,
+                                     unsigned int height) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::draw(PrimitiveType type,
+                               unsigned int baseVertex,
+                               unsigned int vertexCount) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::drawIndexed(PrimitiveType type,
+                                      unsigned int baseIndex,
+                                      unsigned int indexCount,
+                                      unsigned int baseVertex) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::drawInstanced(PrimitiveType type,
+                    unsigned int baseVertex, unsigned int vertexCount,
+                    unsigned int baseInstance, unsigned int instanceCount) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::drawIndexedInstanced(PrimitiveType type, unsigned int baseIndex,
+                            unsigned int indexCount, unsigned int baseVertex,
+                            unsigned int baseInstance, unsigned int instanceCount) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::drawIndirect(PrimitiveType type) {
+    // TODO: Implement
+}
+
+void VulkanCommandBuffer::drawIndexedIndirect(PrimitiveType type) {
+    // TODO: Implement
 }
 
 bool VulkanCommandBuffer::onAddComputePass(const DispatchGroupList&) { return false; }
@@ -275,8 +455,6 @@ bool VulkanCommandBuffer::onCopyBufferToBuffer(const Buffer* srcBuffer,
                                                const Buffer* dstBuffer,
                                                size_t dstOffset,
                                                size_t size) {
-    this->submitPipelineBarriers();
-
     auto vkSrcBuffer = static_cast<const VulkanBuffer*>(srcBuffer);
     auto vkDstBuffer = static_cast<const VulkanBuffer*>(dstBuffer);
 
@@ -288,6 +466,8 @@ bool VulkanCommandBuffer::onCopyBufferToBuffer(const Buffer* srcBuffer,
     region.srcOffset = srcOffset;
     region.dstOffset = dstOffset;
     region.size = size;
+
+    this->submitPipelineBarriers();
 
     VULKAN_CALL(fSharedContext->interface(),
                 CmdCopyBuffer(fPrimaryCommandBuffer,
@@ -304,8 +484,6 @@ bool VulkanCommandBuffer::onCopyTextureToBuffer(const Texture* texture,
                                                 const Buffer* buffer,
                                                 size_t bufferOffset,
                                                 size_t bufferRowBytes) {
-    this->submitPipelineBarriers();
-
     const VulkanTexture* srcTexture = static_cast<const VulkanTexture*>(texture);
     auto dstBuffer = static_cast<const VulkanBuffer*>(buffer);
     SkASSERT(dstBuffer->bufferUsageFlags() & VK_BUFFER_USAGE_TRANSFER_DST_BIT);
@@ -332,6 +510,13 @@ bool VulkanCommandBuffer::onCopyTextureToBuffer(const Texture* texture,
                                                            VK_ACCESS_TRANSFER_READ_BIT,
                                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                            false);
+    // Set current access mask for buffer
+    const_cast<VulkanBuffer*>(dstBuffer)->setBufferAccess(this,
+                                                          VK_ACCESS_TRANSFER_WRITE_BIT,
+                                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                          false);
+
+    this->submitPipelineBarriers();
 
     VULKAN_CALL(fSharedContext->interface(),
                 CmdCopyImageToBuffer(fPrimaryCommandBuffer,
@@ -347,8 +532,6 @@ bool VulkanCommandBuffer::onCopyBufferToTexture(const Buffer* buffer,
                                                 const Texture* texture,
                                                 const BufferTextureCopyData* copyData,
                                                 int count) {
-    this->submitPipelineBarriers();
-
     auto srcBuffer = static_cast<const VulkanBuffer*>(buffer);
     SkASSERT(srcBuffer->bufferUsageFlags() & VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     const VulkanTexture* dstTexture = static_cast<const VulkanTexture*>(texture);
@@ -383,6 +566,8 @@ bool VulkanCommandBuffer::onCopyBufferToTexture(const Buffer* buffer,
                                                            VK_PIPELINE_STAGE_TRANSFER_BIT,
                                                            false);
 
+    this->submitPipelineBarriers();
+
     VULKAN_CALL(fSharedContext->interface(),
             CmdCopyBufferToImage(fPrimaryCommandBuffer,
                                  srcBuffer->vkBuffer(),
@@ -400,18 +585,19 @@ bool VulkanCommandBuffer::onCopyTextureToTexture(const Texture* src,
     return false;
 }
 
-bool VulkanCommandBuffer::onSynchronizeBufferToCpu(const Buffer*, bool* outDidResultInWork) {
-    return false;
+bool VulkanCommandBuffer::onSynchronizeBufferToCpu(const Buffer* buffer, bool* outDidResultInWork) {
+    static_cast<const VulkanBuffer*>(buffer)->setBufferAccess(this,
+                                                              VK_ACCESS_HOST_READ_BIT,
+                                                              VK_PIPELINE_STAGE_HOST_BIT,
+                                                              false);
+
+    *outDidResultInWork = true;
+    return true;
 }
 
 bool VulkanCommandBuffer::onClearBuffer(const Buffer*, size_t offset, size_t size) {
     return false;
 }
-
-#ifdef SK_ENABLE_PIET_GPU
-void VulkanCommandBuffer::onRenderPietScene(const skgpu::piet::Scene& scene,
-                                            const Texture* target) {}
-#endif
 
 void VulkanCommandBuffer::addBufferMemoryBarrier(const Resource* resource,
                                                  VkPipelineStageFlags srcStageMask,

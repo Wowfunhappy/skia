@@ -163,6 +163,13 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		threadLimit = MAIN_THREAD_ONLY
 	}
 
+	if b.model("GalaxyS9", "GalaxyS20", "Pixel6", "Pixel7") {
+		// Only these four devices/gpus (MaliG72, MaliG77, MaliG78, MaliG720) seem
+		// to have functional EXT_protected_content implementations (please see
+		// skbug.com/14298#c6 for more details).
+		args = append(args, "--createProtected")
+	}
+
 	// Avoid issues with dynamically exceeding resource cache limits.
 	if b.matchExtraConfig("DISCARDABLE") {
 		threadLimit = MAIN_THREAD_ONLY
@@ -277,7 +284,8 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip("gltestthreading", "gm", ALL, "stroketext")
 			skip("gltestthreading", "gm", ALL, "draw_image_set")
 
-			// Fail on Iris Xe.
+			// Fail on Iris Xe (skbug:13921)
+			skip("gltestthreading", "gm", ALL, "circular_arcs_stroke_and_fill_round")
 			skip("gltestthreading", "gm", ALL, "degeneratesegments")
 			skip("gltestthreading", "gm", ALL, "ovals")
 			skip("gltestthreading", "gm", ALL, "persp_images")
@@ -288,6 +296,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			skip("gltestthreading", "gm", ALL, "yuv420_odd_dim_repeat")
 
 			skip("gltestthreading", "svg", ALL, "filters-conv-01-f.svg")
+			skip("gltestthreading", "svg", ALL, "filters-displace-01-f.svg")
 			skip("gltestthreading", "svg", ALL, "filters-offset-01-b.svg")
 			skip("gltestthreading", "svg", ALL, "gallardo.svg")
 			skip("gltestthreading", "svg", ALL, "masking-filter-01-f.svg")
@@ -325,14 +334,16 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 			if b.extraConfig("Dawn") {
 				configs = []string{"grdawn"}
 				// Could not readback from surface
-				// https://skbug/14105
+				// https://skbug.com/14105
 				skip(ALL, "gm", ALL, "tall_stretched_bitmaps")
 				// Shader doesn't compile
-				// https://skbug/14105
+				// https://skbug.com/14105
 				skip(ALL, "gm", ALL, "runtime_intrinsics_matrix")
-				// Crashes
-				// https://skbug/14105
+				// Crashes and failures
+				// https://skbug.com/14105
 				skip(ALL, "test", ALL, "BackendTextureTest")
+				skip(ALL, "test", ALL, "GraphitePurgeNotUsedSinceResourcesTest")
+				skip(ALL, "test", ALL, "MakeColorSpace_Test")
 				skip(ALL, "test", ALL, "PaintParamsKeyTest")
 				if b.matchOs("Win") {
 					// Async read call failed
@@ -1077,6 +1088,7 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		skip(ALL, "tests", ALL, "SkSLOutParams_GPU")         // skia:11919
 		skip(ALL, "tests", ALL, "SkSLOutParamsTricky_GPU")   // skia:11919
 		skip(ALL, "tests", ALL, "SkSLOutParamsNoInline_GPU") // skia:11919
+		skip(ALL, "tests", ALL, "SkSLOutParamsFunctionCallInArgument")
 	}
 
 	if (b.matchGpu("Adreno3") || b.matchGpu("Mali400")) && !b.extraConfig("Vulkan") {
@@ -1225,6 +1237,13 @@ func (b *taskBuilder) dmFlags(internalHardwareLabel string) {
 		// Accessing an indexed swizzle can be trouble. (skia:14177)
 		skip(ALL, "tests", ALL, "SkSLSwizzleIndexLookup_GPU")
 		skip(ALL, "tests", ALL, "SkSLSwizzleIndexStore_GPU")
+	}
+
+	if (b.gpu("RadeonR9M470X") && b.extraConfig("ANGLE")) {
+		// skbug:14293 - ANGLE D3D9 ES2 has flaky texture sampling that leads to fuzzy diff errors
+		skip(ALL, "tests", ALL, "FilterResult")
+		// skbug:13815 - Flaky failures on ANGLE D3D9 ES2
+		skip(ALL, "tests", ALL, "SkRuntimeEffectSimple_GPU")
 	}
 
 	if b.extraConfig("Vulkan") && b.gpu("RadeonVega6") {

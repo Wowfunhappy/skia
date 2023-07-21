@@ -24,6 +24,8 @@
 #include <optional>
 #include <string>
 
+#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
+
 //#define DUMP_PROGRAMS 1
 #if defined(DUMP_PROGRAMS)
 #include "src/core/SkStreamPriv.h"
@@ -142,32 +144,6 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorIfElseTest, r) {
          )__SkSL__",
          /*uniforms=*/{},
          /*startingColor=*/SkColor4f{0.0, 0.0, 0.0, 0.0},
-         /*expectedResult=*/SkColor4f{0.0f, 1.0f, 0.0f, 1.0f});
-}
-
-DEF_TEST(SkSLRasterPipelineCodeGeneratorTernaryTest, r) {
-    // Add in your SkSL here.
-    test(r,
-         R"__SkSL__(
-             half4 main(half4 colorWhite) {
-                 half4 colorBlue  = colorWhite.00ba,
-                       colorGreen = colorWhite.0g0a,
-                       colorRed   = colorWhite.r00a;
-                 // This ternary matches the initial if-else block inside IfElseTest.
-                 half4 result;
-                 result = (colorWhite != colorBlue)                              // TRUE
-                            ? (colorGreen == colorRed ? colorRed : colorGreen)   // FALSE
-                            : (colorRed != colorGreen ? colorBlue : colorWhite); // in false branch
-
-                 // This ternary matches the second portion of IfElseTest.
-                 return colorRed == colorBlue  ? colorWhite :
-                        colorRed != colorGreen ? result :     // TRUE
-                        colorRed == colorWhite ? colorBlue :
-                                                 colorRed;
-             }
-         )__SkSL__",
-         /*uniforms=*/{},
-         /*startingColor=*/SkColor4f{1.0, 1.0, 1.0, 1.0},
          /*expectedResult=*/SkColor4f{0.0f, 1.0f, 0.0f, 1.0f});
 }
 
@@ -310,3 +286,5 @@ DEF_TEST(SkSLRasterPipelineCodeGeneratorComparisonIntrinsicTest, r) {
          /*startingColor=*/SkColor4f{0.0, 0.0, 0.0, 0.0},
          /*expectedResult=*/SkColor4f{0.0, 1.0, 0.0, 1.0});
 }
+
+#endif  // SK_ENABLE_SKSL_IN_RASTER_PIPELINE

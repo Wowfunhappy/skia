@@ -13,16 +13,17 @@
 #include "include/core/SkSurface.h"
 #include "include/private/base/SkMutex.h"
 #include "include/private/base/SkOnce.h"
+#include "src/base/SkNoDestructor.h"
 #include "src/base/SkUtils.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkCanvasPriv.h"
+#include "src/core/SkChecksum.h"
 #include "src/core/SkColorFilterBase.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkColorSpaceXformSteps.h"
 #include "src/core/SkFilterColorProgram.h"
 #include "src/core/SkLRUCache.h"
 #include "src/core/SkMatrixProvider.h"
-#include "src/core/SkOpts.h"
 #include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkRuntimeEffectPriv.h"
@@ -37,7 +38,6 @@
 #include "src/sksl/analysis/SkSLProgramUsage.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
 #include "src/sksl/codegen/SkSLVMCodeGenerator.h"
-#include "src/sksl/dsl/DSLCore.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLVarDeclarations.h"
@@ -45,6 +45,7 @@
 
 #if defined(SK_GANESH)
 #include "include/gpu/GrRecordingContext.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "src/gpu/SkBackingFit.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #include "src/gpu/ganesh/GrColorInfo.h"
@@ -260,6 +261,7 @@ const SkSL::RP::Program* SkRuntimeEffect::getRPProgram(SkSL::DebugTracePriv* deb
                   originalData->size() / sizeof(float)};
 }
 
+#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
 class RuntimeEffectRPCallbacks : public SkSL::RP::Callbacks {
 public:
     RuntimeEffectRPCallbacks(const SkStageRec& s,
@@ -301,25 +303,39 @@ public:
 
     // TODO: If an effect calls these intrinsics more than once, we could cache and re-use the steps
     // object(s), rather than re-creating them in the arena repeatedly.
-    void toLinearSrgb() override {
-        if (!fStage.fDstCS) {
-            // These intrinsics do nothing when color management is disabled
-            return;
+    void toLinearSrgb(const void* color) override {
+        if (fStage.fDstCS) {
+            SkColorSpaceXformSteps xform{fStage.fDstCS,              kUnpremul_SkAlphaType,
+                                         sk_srgb_linear_singleton(), kUnpremul_SkAlphaType};
+            if (xform.flags.mask()) {
+                // We have a non-identity colorspace transform; apply it.
+                this->applyColorSpaceXform(xform, color);
+            }
         }
-        fStage.fAlloc
-                ->make<SkColorSpaceXformSteps>(fStage.fDstCS,              kUnpremul_SkAlphaType,
-                                               sk_srgb_linear_singleton(), kUnpremul_SkAlphaType)
-                ->apply(fStage.fPipeline);
     }
-    void fromLinearSrgb() override {
-        if (!fStage.fDstCS) {
-            // These intrinsics do nothing when color management is disabled
-            return;
+
+    void fromLinearSrgb(const void* color) override {
+        if (fStage.fDstCS) {
+            SkColorSpaceXformSteps xform{sk_srgb_linear_singleton(), kUnpremul_SkAlphaType,
+                                         fStage.fDstCS,              kUnpremul_SkAlphaType};
+            if (xform.flags.mask()) {
+                // We have a non-identity colorspace transform; apply it.
+                this->applyColorSpaceXform(xform, color);
+            }
         }
-        fStage.fAlloc
-                ->make<SkColorSpaceXformSteps>(sk_srgb_linear_singleton(), kUnpremul_SkAlphaType,
-                                               fStage.fDstCS,              kUnpremul_SkAlphaType)
-                ->apply(fStage.fPipeline);
+    }
+
+private:
+    void applyColorSpaceXform(const SkColorSpaceXformSteps& tempXform, const void* color) {
+        // Copy the transform steps into our alloc.
+        SkColorSpaceXformSteps* xform = fStage.fAlloc->make<SkColorSpaceXformSteps>(tempXform);
+
+        // Put the color into src.rgba (and temporarily stash the execution mask there instead).
+        fStage.fPipeline->append(SkRasterPipelineOp::exchange_src, color);
+        // Add the color space transform to our raster pipeline.
+        xform->apply(fStage.fPipeline);
+        // Restore the execution mask, and move the color back into program data.
+        fStage.fPipeline->append(SkRasterPipelineOp::exchange_src, color);
     }
 
     const SkStageRec& fStage;
@@ -327,6 +343,7 @@ public:
     SkSpan<const SkRuntimeEffect::ChildPtr> fChildren;
     SkSpan<const SkSL::SampleUsage> fSampleUsages;
 };
+#endif  // SK_ENABLE_SKSL_IN_RASTER_PIPELINE
 
 bool SkRuntimeEffectPriv::CanDraw(const SkCapabilities* caps, const SkSL::Program* program) {
     SkASSERT(caps && program);
@@ -701,26 +718,10 @@ SkRuntimeEffect::Result SkRuntimeEffect::MakeForBlender(SkString sksl, const Opt
 sk_sp<SkRuntimeEffect> SkMakeCachedRuntimeEffect(
         SkRuntimeEffect::Result (*make)(SkString sksl, const SkRuntimeEffect::Options&),
         SkString sksl) {
-    SK_BEGIN_REQUIRE_DENSE
-    struct Key {
-        uint32_t skslHashA;
-        uint32_t skslHashB;
+    static SkNoDestructor<SkMutex> mutex;
+    static SkNoDestructor<SkLRUCache<uint64_t, sk_sp<SkRuntimeEffect>>> cache(11 /*arbitrary*/);
 
-        bool operator==(const Key& that) const {
-            return this->skslHashA == that.skslHashA
-                && this->skslHashB == that.skslHashB;
-        }
-
-        explicit Key(const SkString& sksl)
-            : skslHashA(SkOpts::hash(sksl.c_str(), sksl.size(), 0))
-            , skslHashB(SkOpts::hash(sksl.c_str(), sksl.size(), 1)) {}
-    };
-    SK_END_REQUIRE_DENSE
-
-    static auto* mutex = new SkMutex;
-    static auto* cache = new SkLRUCache<Key, sk_sp<SkRuntimeEffect>>(11/*totally arbitrary*/);
-
-    Key key(sksl);
+    uint64_t key = SkChecksum::Hash64(sksl.c_str(), sksl.size());
     {
         SkAutoMutexExclusive _(*mutex);
         if (sk_sp<SkRuntimeEffect>* found = cache->find(key)) {
@@ -776,7 +777,7 @@ SkRuntimeEffect::SkRuntimeEffect(std::unique_ptr<SkSL::Program> baseProgram,
                                  std::vector<Child>&& children,
                                  std::vector<SkSL::SampleUsage>&& sampleUsages,
                                  uint32_t flags)
-        : fHash(SkOpts::hash_fn(baseProgram->fSource->c_str(), baseProgram->fSource->size(), 0))
+        : fHash(SkChecksum::Hash32(baseProgram->fSource->c_str(), baseProgram->fSource->size()))
         , fBaseProgram(std::move(baseProgram))
         , fMain(main)
         , fUniforms(std::move(uniforms))
@@ -795,11 +796,11 @@ SkRuntimeEffect::SkRuntimeEffect(std::unique_ptr<SkSL::Program> baseProgram,
         SkSL::Version maxVersionAllowed;
     };
     static_assert(sizeof(Options) == sizeof(KnownOptions));
-    fHash = SkOpts::hash_fn(&options.forceUnoptimized,
+    fHash = SkChecksum::Hash32(&options.forceUnoptimized,
                       sizeof(options.forceUnoptimized), fHash);
-    fHash = SkOpts::hash_fn(&options.allowPrivateAccess,
+    fHash = SkChecksum::Hash32(&options.allowPrivateAccess,
                       sizeof(options.allowPrivateAccess), fHash);
-    fHash = SkOpts::hash_fn(&options.maxVersionAllowed,
+    fHash = SkChecksum::Hash32(&options.maxVersionAllowed,
                       sizeof(options.maxVersionAllowed), fHash);
 
     fFilterColorProgram = SkFilterColorProgram::Make(this);
@@ -1177,6 +1178,10 @@ private:
 };
 
 sk_sp<SkFlattenable> SkRuntimeColorFilter::CreateProc(SkReadBuffer& buffer) {
+    if (!buffer.validate(buffer.allowSkSL())) {
+        return nullptr;
+    }
+
     SkString sksl;
     buffer.readString(&sksl);
     sk_sp<SkData> uniforms = buffer.readByteArrayAsData();
@@ -1397,6 +1402,10 @@ private:
 };
 
 sk_sp<SkFlattenable> SkRTShader::CreateProc(SkReadBuffer& buffer) {
+    if (!buffer.validate(buffer.allowSkSL())) {
+        return nullptr;
+    }
+
     SkString sksl;
     buffer.readString(&sksl);
     sk_sp<SkData> uniforms = buffer.readByteArrayAsData();
@@ -1567,6 +1576,10 @@ private:
 };
 
 sk_sp<SkFlattenable> SkRuntimeBlender::CreateProc(SkReadBuffer& buffer) {
+    if (!buffer.validate(buffer.allowSkSL())) {
+        return nullptr;
+    }
+
     SkString sksl;
     buffer.readString(&sksl);
     sk_sp<SkData> uniforms = buffer.readByteArrayAsData();
@@ -1664,16 +1677,16 @@ sk_sp<SkImage> SkRuntimeEffect::makeImage(GrRecordingContext* rContext,
         if (!rContext->priv().caps()->mipmapSupport()) {
             mipmapped = false;
         }
-        surface = SkSurface::MakeRenderTarget(rContext,
-                                              skgpu::Budgeted::kYes,
-                                              resultInfo,
-                                              1,
-                                              kTopLeft_GrSurfaceOrigin,
-                                              nullptr,
-                                              mipmapped);
+        surface = SkSurfaces::RenderTarget(rContext,
+                                           skgpu::Budgeted::kYes,
+                                           resultInfo,
+                                           1,
+                                           kTopLeft_GrSurfaceOrigin,
+                                           nullptr,
+                                           mipmapped);
 #endif
     } else {
-        surface = SkSurface::MakeRaster(resultInfo);
+        surface = SkSurfaces::Raster(resultInfo);
     }
     if (!surface) {
         return nullptr;

@@ -163,8 +163,6 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/sksl/codegen:core_srcs",
 				"//src/sksl/codegen:private_hdrs",
 				"//src/sksl/dsl:srcs",
-				"//src/sksl/dsl/priv:private_hdrs",
-				"//src/sksl/dsl/priv:srcs",
 				"//src/sksl/ir:ir_hdrs",
 				"//src/sksl/ir:ir_srcs",
 				"//src/sksl/tracing:private_hdrs",
@@ -279,6 +277,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/gpu/ganesh/ops:ops_srcs",
 				"//src/gpu/ganesh/surface:surface_srcs",
 				"//src/gpu/ganesh/surface:surface_srcs",
+				"//src/gpu/ganesh/surface:android_srcs",
 				"//src/gpu/ganesh/tessellate:tessellate_hdrs",
 				"//src/gpu/ganesh/tessellate:tessellate_srcs",
 				"//src/gpu/ganesh/text:private_hdrs",
@@ -406,11 +405,6 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//include/gpu/mtl:shared_public_hdrs",
 				"//src/gpu/mtl:mtl_hdrs",
 				"//src/gpu/mtl:mtl_srcs",
-			}},
-		{Var: "skia_piet_gpu_sources",
-			Rules: []string{
-				"//src/gpu/piet:piet_hdrs",
-				"//src/gpu/piet:piet_srcs",
 			}},
 	}},
 	{GNI: "modules/svg/svg.gni", Vars: []exporter.GNIFileListExportDesc{

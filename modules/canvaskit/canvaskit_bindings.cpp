@@ -77,6 +77,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/ganesh/GrTextureGenerator.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "src/gpu/ganesh/GrCaps.h"
 #endif // ENABLE_GPU
 
@@ -212,8 +213,12 @@ sk_sp<SkSurface> MakeOnScreenGLSurface(sk_sp<GrDirectContext> dContext, int widt
     const auto colorSettings = ColorSettings(colorSpace);
     info.fFormat = colorSettings.pixFormat;
     GrBackendRenderTarget target(width, height, sampleCnt, stencil, info);
-    sk_sp<SkSurface> surface(SkSurface::MakeFromBackendRenderTarget(dContext.get(), target,
-        kBottomLeft_GrSurfaceOrigin, colorSettings.colorType, colorSpace, nullptr));
+    sk_sp<SkSurface> surface(SkSurfaces::WrapBackendRenderTarget(dContext.get(),
+                                                                 target,
+                                                                 kBottomLeft_GrSurfaceOrigin,
+                                                                 colorSettings.colorType,
+                                                                 colorSpace,
+                                                                 nullptr));
     return surface;
 }
 
@@ -232,24 +237,24 @@ sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrDirectContext> dContext, int width, in
     SkImageInfo info = SkImageInfo::MakeN32(
             width, height, SkAlphaType::kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
 
-    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(dContext.get(),
-                                                         skgpu::Budgeted::kYes,
-                                                         info,
-                                                         0,
-                                                         kBottomLeft_GrSurfaceOrigin,
-                                                         nullptr,
-                                                         true));
+    sk_sp<SkSurface> surface(SkSurfaces::RenderTarget(dContext.get(),
+                                                      skgpu::Budgeted::kYes,
+                                                      info,
+                                                      0,
+                                                      kBottomLeft_GrSurfaceOrigin,
+                                                      nullptr,
+                                                      true));
     return surface;
 }
 
 sk_sp<SkSurface> MakeRenderTarget(sk_sp<GrDirectContext> dContext, SimpleImageInfo sii) {
-    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(dContext.get(),
-                                                         skgpu::Budgeted::kYes,
-                                                         toSkImageInfo(sii),
-                                                         0,
-                                                         kBottomLeft_GrSurfaceOrigin,
-                                                         nullptr,
-                                                         true));
+    sk_sp<SkSurface> surface(SkSurfaces::RenderTarget(dContext.get(),
+                                                      skgpu::Budgeted::kYes,
+                                                      toSkImageInfo(sii),
+                                                      0,
+                                                      kBottomLeft_GrSurfaceOrigin,
+                                                      nullptr,
+                                                      true));
     return surface;
 }
 #endif // CK_ENABLE_WEBGL
@@ -283,10 +288,14 @@ sk_sp<SkSurface> MakeGPUTextureSurface(sk_sp<GrDirectContext> dContext,
     info.fLevelCount = mipLevelCount;
 
     GrBackendTexture target(width, height, info);
-    return SkSurface::MakeFromBackendTexture(
-            dContext.get(), target, kTopLeft_GrSurfaceOrigin, sampleCount,
+    return SkSurfaces::WrapBackendTexture(
+            dContext.get(),
+            target,
+            kTopLeft_GrSurfaceOrigin,
+            sampleCount,
             colorSpace->isSRGB() ? kRGBA_8888_SkColorType : kRGBA_F16_SkColorType,
-            colorSpace, nullptr);
+            colorSpace,
+            nullptr);
 }
 
 bool ReplaceBackendTexture(SkSurface& surface, uint32_t textureHandle, uint32_t textureFormat,
@@ -2157,7 +2166,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
                                                                   size_t rowBytes)->sk_sp<SkSurface> {
             uint8_t* pixels = reinterpret_cast<uint8_t*>(pPtr);
             SkImageInfo imageInfo = toSkImageInfo(ii);
-            return SkSurface::MakeRasterDirect(imageInfo, pixels, rowBytes, nullptr);
+            return SkSurfaces::WrapPixels(imageInfo, pixels, rowBytes, nullptr);
         }), allow_raw_pointers())
         .function("_flush", optional_override([](SkSurface& self) {
             self.flushAndSubmit(false);
@@ -2210,7 +2219,8 @@ EMSCRIPTEN_BINDINGS(Skia) {
             return self.getCanvas()->recordingContext() != nullptr;
         }))
         .function("sampleCnt", optional_override([](SkSurface& self)->int {
-            auto backendRT = self.getBackendRenderTarget(SkSurface::kFlushRead_BackendHandleAccess);
+            auto backendRT = SkSurfaces::GetBackendRenderTarget(
+                    &self, SkSurfaces::BackendHandleAccess::kFlushRead);
             return (backendRT.isValid()) ? backendRT.sampleCnt() : 0;
         }))
         .function("_resetContext",optional_override([](SkSurface& self)->void {

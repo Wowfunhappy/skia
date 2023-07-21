@@ -6,15 +6,21 @@
  */
 
 #include "src/core/SkBlendModeBlender.h"
+
+#include "include/core/SkBlendMode.h"
+#include "include/core/SkBlender.h"
+#include "include/core/SkRefCnt.h"
+#include "include/private/base/SkAssert.h"
+#include "src/base/SkNoDestructor.h"
 #include "src/core/SkBlendModePriv.h"
 #include "src/core/SkEffectPriv.h"
-#include "src/core/SkRasterPipeline.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
 
 #if defined(SK_GANESH)
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
 #include "src/gpu/ganesh/effects/GrBlendFragmentProcessor.h"
+struct GrFPArgs;
 #endif
 
 #if defined(SK_GRAPHITE)
@@ -22,11 +28,13 @@
 #include "src/gpu/graphite/PaintParamsKey.h"
 #endif
 
+#include <utility>
+
 sk_sp<SkBlender> SkBlender::Mode(SkBlendMode mode) {
-#define RETURN_SINGLETON_BLENDER(m)                        \
-    case m: {                                              \
-        static auto* sBlender = new SkBlendModeBlender{m}; \
-        return sk_ref_sp(sBlender);                        \
+#define RETURN_SINGLETON_BLENDER(m)                            \
+    case m: {                                                  \
+        static SkNoDestructor<SkBlendModeBlender> sBlender(m); \
+        return sk_ref_sp(sBlender.get());                      \
     }
 
     switch (mode) {

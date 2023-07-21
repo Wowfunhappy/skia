@@ -21,6 +21,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrTypes.h"
 #include "include/gpu/ganesh/SkImageGanesh.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
 
@@ -48,15 +49,15 @@ DEF_GANESH_TEST(GrDDLImage_MakeSubset, reporter, options, CtsEnforcement::kApiLe
         REPORTER_ASSERT(reporter, rasterImg->isValid(static_cast<GrRecordingContext*>(nullptr)));
 
         // raster + context:
-        auto subImg1 = rasterImg->makeSubset(subsetBounds, dContext);
+        auto subImg1 = rasterImg->makeSubset(dContext, subsetBounds);
         REPORTER_ASSERT(reporter, subImg1->isValid(dContext));
 
         // raster + no context:
-        auto subImg2 = rasterImg->makeSubset(subsetBounds);
+        auto subImg2 = rasterImg->makeSubset(nullptr, subsetBounds);
         REPORTER_ASSERT(reporter, subImg2->isValid(static_cast<GrRecordingContext*>(nullptr)));
 
         // Texture image:
-        auto surf = SkSurface::MakeRenderTarget(dContext, skgpu::Budgeted::kNo, ii);
+        auto surf = SkSurfaces::RenderTarget(dContext, skgpu::Budgeted::kNo, ii);
         SkSurfaceCharacterization sc;
         REPORTER_ASSERT(reporter, surf->characterize(&sc));
         GrBackendTexture tex = dContext->createBackendTexture(ii.width(),
@@ -73,11 +74,11 @@ DEF_GANESH_TEST(GrDDLImage_MakeSubset, reporter, options, CtsEnforcement::kApiLe
         REPORTER_ASSERT(reporter, gpuImage->isValid(dContext));
 
         // gpu image + context:
-        auto subImg5 = gpuImage->makeSubset(subsetBounds, dContext);
+        auto subImg5 = gpuImage->makeSubset(dContext, subsetBounds);
         REPORTER_ASSERT(reporter, subImg5->isValid(dContext));
 
         // gpu image + nullptr:
-        REPORTER_ASSERT(reporter, !gpuImage->makeSubset(subsetBounds));
+        REPORTER_ASSERT(reporter, !gpuImage->makeSubset(nullptr, subsetBounds));
 
         dContext->flush();
         dContext->submit(true);

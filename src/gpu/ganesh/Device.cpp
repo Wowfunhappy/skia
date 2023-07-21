@@ -41,6 +41,7 @@
 #include "include/gpu/GrContextOptions.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/SkColorData.h"
 #include "include/private/base/SingleOwner.h"
 #include "include/private/base/SkAssert.h"
@@ -52,9 +53,9 @@
 #include "src/core/SkDevice.h"
 #include "src/core/SkDrawBase.h"
 #include "src/core/SkImageFilterCache.h"
+#include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageInfoPriv.h"
 #include "src/core/SkLatticeIter.h"
-#include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkMatrixProvider.h"
 #include "src/core/SkMeshPriv.h"
 #include "src/core/SkRasterClip.h"
@@ -71,6 +72,7 @@
 #include "src/gpu/ganesh/GrColorInfo.h"
 #include "src/gpu/ganesh/GrColorSpaceXform.h"
 #include "src/gpu/ganesh/GrFragmentProcessor.h"
+#include "src/gpu/ganesh/GrFragmentProcessors.h"
 #include "src/gpu/ganesh/GrImageInfo.h"
 #include "src/gpu/ganesh/GrPaint.h"
 #include "src/gpu/ganesh/GrProxyProvider.h"
@@ -606,9 +608,9 @@ void Device::drawRRect(const SkRRect& rrect, const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
     GR_CREATE_TRACE_MARKER_CONTEXT("skgpu::ganesh::Device", "drawRRect", fContext.get());
 
-    SkMaskFilterBase* mf = as_MFB(paint.getMaskFilter());
+    auto mf = paint.getMaskFilter();
     if (mf) {
-        if (mf->hasFragmentProcessor()) {
+        if (GrFragmentProcessors::IsSupported(mf)) {
             mf = nullptr; // already handled in SkPaintToGrPaint
         }
     }
@@ -802,6 +804,10 @@ void Device::drawPath(const SkPath& origSrcPath, const SkPaint& paint, bool path
 
     GrBlurUtils::drawShapeWithMaskFilter(fContext.get(), fSurfaceDrawContext.get(), this->clip(),
                                          paint, this->asMatrixProvider(), shape);
+}
+
+skif::Context Device::createContext(const skif::ContextInfo& ctxInfo) const {
+    return skif::Context::MakeGanesh(fContext.get(), fSurfaceDrawContext->origin(), ctxInfo);
 }
 
 sk_sp<SkSpecialImage> Device::makeSpecial(const SkBitmap& bitmap) {
@@ -1341,9 +1347,12 @@ sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& info, const SkSurfacePro
     ASSERT_SINGLE_OWNER
     // TODO: Change the signature of newSurface to take a budgeted parameter.
     static const skgpu::Budgeted kBudgeted = skgpu::Budgeted::kNo;
-    return SkSurface::MakeRenderTarget(fContext.get(), kBudgeted, info,
-                                       fSurfaceDrawContext->numSamples(),
-                                       fSurfaceDrawContext->origin(), &props);
+    return SkSurfaces::RenderTarget(fContext.get(),
+                                    kBudgeted,
+                                    info,
+                                    fSurfaceDrawContext->numSamples(),
+                                    fSurfaceDrawContext->origin(),
+                                    &props);
 }
 
 SkImageFilterCache* Device::getImageFilterCache() {

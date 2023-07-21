@@ -76,13 +76,7 @@ public:
     Protected isProtected() const { return fProtected; }
 
 #ifdef SK_DAWN
-    bool getDawnTextureInfo(DawnTextureInfo* info) const {
-        if (!this->isValid() || fBackend != BackendApi::kDawn) {
-            return false;
-        }
-        *info = DawnTextureSpecToTextureInfo(fDawnSpec, fSampleCount, fMipmapped);
-        return true;
-    }
+    bool getDawnTextureInfo(DawnTextureInfo* info) const;
 #endif
 
 #ifdef SK_METAL
@@ -154,6 +148,7 @@ private:
 #ifdef SK_VULKAN
         VulkanTextureSpec fVkSpec;
 #endif
+        void* fEnsureUnionNonEmpty;
     };
 };
 

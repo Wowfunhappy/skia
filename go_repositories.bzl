@@ -2397,8 +2397,8 @@ def go_repositories():
     go_repository(
         name = "com_google_cloud_go_bigquery",
         importpath = "cloud.google.com/go/bigquery",
-        sum = "h1:PQcPefKFdaIzjQFbiyOgAqyx8q5djaE7x9Sqe712DPA=",
-        version = "v1.8.0",
+        sum = "h1:oq1PIpl9u1thzdsX0K9w5H8OlqH5gRu3zGc7FCk19IY=",
+        version = "v1.17.0",
     )
     go_repository(
         name = "com_google_cloud_go_bigtable",
@@ -2995,8 +2995,8 @@ def go_repositories():
     go_repository(
         name = "org_golang_x_sync",
         importpath = "golang.org/x/sync",
-        sum = "h1:5KslGYwFpkhGh+Q16bwMP3cOontH8FOep7tGV86Y7SQ=",
-        version = "v0.0.0-20210220032951-036812b2e83c",
+        sum = "h1:PUR+T4wwASmuSTYdKjYHI5TD22Wy5ogLU5qZCOLxBrI=",
+        version = "v0.2.0",
     )
     go_repository(
         name = "org_golang_x_sys",
@@ -3038,8 +3038,8 @@ def go_repositories():
     go_repository(
         name = "org_skia_go_infra",
         importpath = "go.skia.org/infra",
-        sum = "h1:5qP6dxeq1Y1Sb3fl/kSZWEFZ4RVc6RQ4s78dvg+ff4g=",
-        version = "v0.0.0-20230424194513-8f39f2978ef8",
+        sum = "h1:LrRu//FtLjMVoDN6do89jZ1UAglePhRJyYJLmrOqmBg=",
+        version = "v0.0.0-20230523031700-ddf59ec4e8fc",
     )
     go_repository(
         name = "org_uber_go_atomic",

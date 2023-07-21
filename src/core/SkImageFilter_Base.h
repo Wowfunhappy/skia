@@ -16,6 +16,8 @@
 
 #include "src/core/SkImageFilterTypes.h"
 
+#include <optional>
+
 class GrFragmentProcessor;
 class GrRecordingContext;
 
@@ -102,6 +104,9 @@ public:
     // Returns true if this image filter graph transforms a source transparent black pixel to a
     // color other than transparent black.
     bool affectsTransparentBlack() const;
+
+    // Returns true if this image filter graph references the Context's source image.
+    bool usesSource() const { return fUsesSrcInput; }
 
     /**
      *  Most ImageFilters can natively handle scaling and translate components in the CTM. Only
@@ -195,8 +200,9 @@ protected:
         kYes = true
     };
 
+    // If 'usesSrc' is not provided, this filter uses the OR of all input's usesSource() values.
     SkImageFilter_Base(sk_sp<SkImageFilter> const* inputs, int inputCount,
-                       const SkRect* cropRect);
+                       const SkRect* cropRect, std::optional<bool> usesSrc = {});
 
     ~SkImageFilter_Base() override;
 
@@ -216,9 +222,7 @@ protected:
                                        MapDirection, const SkIRect* inputRect) const;
 
     // DEPRECRATED - Call the Context-only filterInput()
-    sk_sp<SkSpecialImage> filterInput(int index, const Context& ctx, SkIPoint* offset) const {
-        return this->filterInput(index, ctx).imageAndOffset(offset);
-    }
+    sk_sp<SkSpecialImage> filterInput(int index, const Context& ctx, SkIPoint* offset) const;
 
     // Helper function to visit each of this filter's child filters and call their
     // onGetInputLayerBounds with the provided 'desiredOutput' and 'contentBounds'. Automatically
@@ -314,14 +318,11 @@ protected:
                                             GrProtected isProtected = GrProtected::kNo);
 
     /**
-     *  Returns a version of the passed-in image (possibly the original), that is in a colorspace
-     *  with the same gamut as the one from the OutputProperties. This allows filters that do many
+     *  Returns a version of the passed-in image (possibly the original), that is in the Context's
+     *  colorspace and color type. This allows filters that do many
      *  texture samples to guarantee that any color space conversion has happened before running.
      */
-    static sk_sp<SkSpecialImage> ImageToColorSpace(SkSpecialImage* src,
-                                                   SkColorType colorType,
-                                                   SkColorSpace* colorSpace,
-                                                   const SkSurfaceProps&);
+    static sk_sp<SkSpecialImage> ImageToColorSpace(const skif::Context& ctx, SkSpecialImage* src);
 #endif
 
     // If 'srcBounds' will sample outside the border of 'originalSrcBounds' (i.e., the sample

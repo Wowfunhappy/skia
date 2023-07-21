@@ -198,7 +198,9 @@ public:
 
     /**
      *  Create a filter that draws the 'srcRect' portion of image into 'dstRect' using the given
-     *  filter quality. Similar to SkCanvas::drawImageRect. Returns null if 'image' is null.
+     *  filter quality. Similar to SkCanvas::drawImageRect. The returned image filter evaluates
+     *  to transparent black if 'image' is null.
+     *
      *  @param image    The image that is output by the filter, subset by 'srcRect'.
      *  @param srcRect  The source pixels sampled into 'dstRect'
      *  @param dstRect  The local rectangle to draw the image into.
@@ -209,7 +211,9 @@ public:
 
     /**
      *  Create a filter that draws the image using the given sampling.
-     *  Similar to SkCanvas::drawImage. Returns null if 'image' is null.
+     *  Similar to SkCanvas::drawImage. The returned image filter evaluates to transparent black if
+     *  'image' is null.
+     *
      *  @param image    The image that is output by the filter.
      *  @param sampling The sampling to use when drawing the image.
      */
@@ -223,7 +227,9 @@ public:
     }
 
     /**
-     *  Create a filter that draws the image using Mitchel cubic resampling.
+     *  Create a filter that draws the image using Mitchel cubic resampling. The returned image
+     *  filter evaluates to transparent black if 'image' is null.
+     *
      *  @param image    The image that is output by the filter.
      */
     static sk_sp<SkImageFilter> Image(sk_sp<SkImage> image) {
@@ -232,12 +238,32 @@ public:
 
     /**
      *  Create a filter that mimics a zoom/magnifying lens effect.
+     *  DEPRECATED: This factory does not accept enough parameters to fully specify the zoom effect,
+                    and derives the zoom based on the internal allocation size of a saveLayer. This
+                    makes its behavior brittle and respond poorly to SkCanvas transforms.
      *  @param srcRect
      *  @param inset
      *  @param input    The input filter that is magnified, if null the source bitmap is used.
      *  @param cropRect Optional rectangle that crops the input and output.
      */
     static sk_sp<SkImageFilter> Magnifier(const SkRect& srcRect, SkScalar inset,
+                                          sk_sp<SkImageFilter> input,
+                                          const CropRect& cropRect = {});
+
+    /**
+     *  Create a filter that fills 'lensBounds' with a magnification of the input.
+     *
+     *  @param lensBounds The outer bounds of the magnifier effect
+     *  @param zoomAmount The amount of magnification applied to the input image
+     *  @param inset      The size or width of the fish-eye distortion around the magnified content
+     *  @param sampling   The SkSamplingOptions applied to the input image when magnified
+     *  @param input      The input filter that is magnified; if null the source bitmap is used
+     *  @param cropRect   Optional rectangle that crops the input and output.
+     */
+    static sk_sp<SkImageFilter> Magnifier(const SkRect& lensBounds,
+                                          SkScalar zoomAmount,
+                                          SkScalar inset,
+                                          const SkSamplingOptions& sampling,
                                           sk_sp<SkImageFilter> input,
                                           const CropRect& cropRect = {});
 
@@ -311,9 +337,11 @@ public:
                                        const CropRect& cropRect = {});
 
     /**
-     *  Create a filter that produces the SkPicture as its output, drawn into targetRect. Note that
-     *  the targetRect is not the same as the SkIRect cropRect that many filters accept. Returns
-     *  null if 'pic' is null.
+     *  Create a filter that produces the SkPicture as its output, clipped to both 'targetRect' and
+     *  the picture's internal cull rect.
+     *
+     *  If 'pic' is null, the returned image filter produces transparent black.
+     *
      *  @param pic        The picture that is drawn for the filter output.
      *  @param targetRect The drawing region for the picture.
      */
@@ -377,6 +405,9 @@ public:
      *  Like Image() and Picture(), this is a leaf filter that can be used to introduce inputs to
      *  a complex filter graph, but should generally be combined with a filter that as at least
      *  one null input to use the implicit source image.
+     *
+     *  Returns an image filter that evaluates to transparent black if 'shader' is null.
+     *
      *  @param shader The shader that fills the result image
      */
     static sk_sp<SkImageFilter> Shader(sk_sp<SkShader> shader, const CropRect& cropRect = {}) {

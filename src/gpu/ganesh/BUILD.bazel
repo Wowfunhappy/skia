@@ -97,6 +97,8 @@ CORE_FILES = [
     "GrFixedClip.h",
     "GrFragmentProcessor.cpp",
     "GrFragmentProcessor.h",
+    "GrFragmentProcessors.cpp",
+    "GrFragmentProcessors.h",
     "GrGeometryProcessor.cpp",
     "GrGeometryProcessor.h",
     "GrGpu.cpp",
@@ -261,23 +263,24 @@ split_srcs_and_hdrs(
 skia_filegroup(
     name = "srcs",
     srcs = [
-        ":core_srcs",
         ":core_skslc_srcs",
+        ":core_srcs",
         "//src/gpu/ganesh/effects:srcs",
         "//src/gpu/ganesh/geometry:srcs",
         "//src/gpu/ganesh/glsl:srcs",
         "//src/gpu/ganesh/gradients:srcs",
         "//src/gpu/ganesh/image:srcs",
         "//src/gpu/ganesh/mock:srcs",  # TODO(kjlubick, egdaniel) should this be test only?
+        "//src/gpu/ganesh/ops:srcs",
         "//src/gpu/ganesh/surface:srcs",
         "//src/gpu/ganesh/tessellate:srcs",
-        "//src/gpu/ganesh/ops:srcs",
         "//src/gpu/ganesh/text:srcs",
     ] + select_multi(
         {
             "//src/gpu:dawn_backend": ["//src/gpu/ganesh/dawn:srcs"],
             "//src/gpu:gl_backend": ["//src/gpu/ganesh/gl:srcs"],
             "//src/gpu:vulkan_backend": ["//src/gpu/ganesh/vk:srcs"],
+            "@platforms//os:android": ["//src/gpu/ganesh/surface:android_srcs"],
             # TODO(kjlubick) d3d backend
         },
     ),

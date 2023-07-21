@@ -7,8 +7,6 @@
 
 #include "src/gpu/ganesh/surface/SkSurface_Ganesh.h"
 
-#if defined(SK_GANESH)
-
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkColorType.h"
@@ -26,6 +24,7 @@
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/SkSurfaceGanesh.h"
 #include "include/private/base/SkTo.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/core/SkDevice.h"
@@ -50,10 +49,6 @@
 #include "src/gpu/ganesh/image/SkImage_Ganesh.h"
 #include "src/image/SkImage_Base.h"
 
-#if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
-#include "src/gpu/ganesh/GrAHardwareBufferUtils_impl.h"
-#endif
-
 #include <algorithm>
 #include <cstddef>
 #include <utility>
@@ -72,9 +67,13 @@ SkSurface_Ganesh::SkSurface_Ganesh(sk_sp<skgpu::ganesh::Device> device)
     SkASSERT(fDevice->targetProxy()->priv().isExact());
 }
 
-SkSurface_Ganesh::~SkSurface_Ganesh() {}
+SkSurface_Ganesh::~SkSurface_Ganesh() {
+    if (this->hasCachedImage()) {
+        as_IB(this->refCachedImage())->generatingSurfaceIsDeleted();
+    }
+}
 
-GrRecordingContext* SkSurface_Ganesh::onGetRecordingContext() {
+GrRecordingContext* SkSurface_Ganesh::onGetRecordingContext() const {
     return fDevice->recordingContext();
 }
 
@@ -93,10 +92,10 @@ static GrRenderTarget* prepare_rt_for_external_access(SkSurface_Ganesh* surface,
     }
 
     switch (access) {
-        case SkSurface::kFlushRead_BackendHandleAccess:
+        case SkSurfaces::BackendHandleAccess::kFlushRead:
             break;
-        case SkSurface::kFlushWrite_BackendHandleAccess:
-        case SkSurface::kDiscardWrite_BackendHandleAccess:
+        case SkSurfaces::BackendHandleAccess::kFlushWrite:
+        case SkSurfaces::BackendHandleAccess::kDiscardWrite:
             // for now we don't special-case on Discard, but we may in the future.
             surface->notifyContentWillChange(SkSurface::kRetain_ContentChangeMode);
             break;
@@ -108,7 +107,7 @@ static GrRenderTarget* prepare_rt_for_external_access(SkSurface_Ganesh* surface,
     return surface->getDevice()->targetProxy()->peekRenderTarget();
 }
 
-GrBackendTexture SkSurface_Ganesh::onGetBackendTexture(BackendHandleAccess access) {
+GrBackendTexture SkSurface_Ganesh::getBackendTexture(BackendHandleAccess access) {
     GrRenderTarget* rt = prepare_rt_for_external_access(this, access);
     if (!rt) {
         return GrBackendTexture();  // invalid
@@ -120,7 +119,7 @@ GrBackendTexture SkSurface_Ganesh::onGetBackendTexture(BackendHandleAccess acces
     return GrBackendTexture();  // invalid
 }
 
-GrBackendRenderTarget SkSurface_Ganesh::onGetBackendRenderTarget(BackendHandleAccess access) {
+GrBackendRenderTarget SkSurface_Ganesh::getBackendRenderTarget(BackendHandleAccess access) {
     GrRenderTarget* rt = prepare_rt_for_external_access(this, access);
     if (!rt) {
         return GrBackendRenderTarget();  // invalid
@@ -137,7 +136,7 @@ sk_sp<SkSurface> SkSurface_Ganesh::onNewSurface(const SkImageInfo& info) {
     GrSurfaceOrigin origin = targetView.origin();
     // TODO: Make caller specify this (change virtual signature of onNewSurface).
     static const skgpu::Budgeted kBudgeted = skgpu::Budgeted::kNo;
-    return SkSurface::MakeRenderTarget(
+    return SkSurfaces::RenderTarget(
             fDevice->recordingContext(), kBudgeted, info, sampleCount, origin, &this->props());
 }
 
@@ -433,45 +432,6 @@ sk_sp<const SkCapabilities> SkSurface_Ganesh::onCapabilities() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* rContext,
-                                             const SkSurfaceCharacterization& c,
-                                             skgpu::Budgeted budgeted) {
-    if (!rContext || !c.isValid()) {
-        return nullptr;
-    }
-
-    if (c.usesGLFBO0()) {
-        // If we are making the surface we will never use FBO0.
-        return nullptr;
-    }
-
-    if (c.vulkanSecondaryCBCompatible()) {
-        return nullptr;
-    }
-
-    auto device = rContext->priv().createDevice(budgeted,
-                                                c.imageInfo(),
-                                                SkBackingFit::kExact,
-                                                c.sampleCount(),
-                                                GrMipmapped(c.isMipMapped()),
-                                                c.isProtected(),
-                                                c.origin(),
-                                                c.surfaceProps(),
-                                                skgpu::ganesh::Device::InitContents::kClear);
-    if (!device) {
-        return nullptr;
-    }
-
-    sk_sp<SkSurface> result = sk_make_sp<SkSurface_Ganesh>(std::move(device));
-#ifdef SK_DEBUG
-    if (result) {
-        SkASSERT(result->isCompatible(c));
-    }
-#endif
-
-    return result;
-}
-
 static bool validate_backend_texture(const GrCaps* caps,
                                      const GrBackendTexture& tex,
                                      int sampleCnt,
@@ -512,113 +472,11 @@ static bool validate_backend_texture(const GrCaps* caps,
     return true;
 }
 
-sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* rContext,
-                                             skgpu::Budgeted budgeted,
-                                             const SkImageInfo& info,
-                                             int sampleCount,
+bool SkSurface_Ganesh::replaceBackendTexture(const GrBackendTexture& backendTexture,
                                              GrSurfaceOrigin origin,
-                                             const SkSurfaceProps* props,
-                                             bool shouldCreateWithMips) {
-    if (!rContext) {
-        return nullptr;
-    }
-    sampleCount = std::max(1, sampleCount);
-    GrMipmapped mipmapped = shouldCreateWithMips ? GrMipmapped::kYes : GrMipmapped::kNo;
-
-    if (!rContext->priv().caps()->mipmapSupport()) {
-        mipmapped = GrMipmapped::kNo;
-    }
-
-    auto device = rContext->priv().createDevice(budgeted,
-                                                info,
-                                                SkBackingFit::kExact,
-                                                sampleCount,
-                                                mipmapped,
-                                                GrProtected::kNo,
-                                                origin,
-                                                SkSurfacePropsCopyOrDefault(props),
-                                                skgpu::ganesh::Device::InitContents::kClear);
-    if (!device) {
-        return nullptr;
-    }
-    return sk_make_sp<SkSurface_Ganesh>(std::move(device));
-}
-
-sk_sp<SkSurface> SkSurface::MakeFromBackendTexture(GrRecordingContext* rContext,
-                                                   const GrBackendTexture& tex,
-                                                   GrSurfaceOrigin origin,
-                                                   int sampleCnt,
-                                                   SkColorType colorType,
-                                                   sk_sp<SkColorSpace> colorSpace,
-                                                   const SkSurfaceProps* props,
-                                                   SkSurface::TextureReleaseProc textureReleaseProc,
-                                                   SkSurface::ReleaseContext releaseContext) {
-    auto releaseHelper = skgpu::RefCntedCallback::Make(textureReleaseProc, releaseContext);
-
-    if (!rContext) {
-        RENDERENGINE_ABORTF("%s failed due to a null context ", __func__);
-        return nullptr;
-    }
-    sampleCnt = std::max(1, sampleCnt);
-
-    GrColorType grColorType = SkColorTypeToGrColorType(colorType);
-    if (grColorType == GrColorType::kUnknown) {
-        RENDERENGINE_ABORTF("%s failed due to an unsupported colorType %d", __func__, colorType);
-        return nullptr;
-    }
-
-    if (!validate_backend_texture(rContext->priv().caps(), tex, sampleCnt, grColorType, true)) {
-        return nullptr;
-    }
-
-    sk_sp<GrTextureProxy> proxy(rContext->priv().proxyProvider()->wrapRenderableBackendTexture(
-            tex,
-            sampleCnt,
-            kBorrow_GrWrapOwnership,
-            GrWrapCacheable::kNo,
-            std::move(releaseHelper)));
-    if (!proxy) {
-#ifdef SK_IN_RENDERENGINE
-        GrGLTextureInfo textureInfo;
-        bool retrievedTextureInfo = tex.getGLTextureInfo(&textureInfo);
-        RENDERENGINE_ABORTF(
-                "%s failed to wrap the texture into a renderable target "
-                "\n\tGrBackendTexture: (%i x %i) hasMipmaps: %i isProtected: %i texType: %i"
-                "\n\t\tGrGLTextureInfo: success: %i fTarget: %u fFormat: %u"
-                "\n\tmaxRenderTargetSize: %d",
-                __func__,
-                tex.width(),
-                tex.height(),
-                tex.hasMipmaps(),
-                tex.isProtected(),
-                static_cast<int>(tex.textureType()),
-                retrievedTextureInfo,
-                textureInfo.fTarget,
-                textureInfo.fFormat,
-                rContext->priv().caps()->maxRenderTargetSize());
-#endif
-        return nullptr;
-    }
-
-    auto device = rContext->priv().createDevice(grColorType,
-                                                std::move(proxy),
-                                                std::move(colorSpace),
-                                                origin,
-                                                SkSurfacePropsCopyOrDefault(props),
-                                                skgpu::ganesh::Device::InitContents::kUninit);
-    if (!device) {
-        RENDERENGINE_ABORTF("%s failed to wrap the renderTarget into a surface", __func__);
-        return nullptr;
-    }
-
-    return sk_make_sp<SkSurface_Ganesh>(std::move(device));
-}
-
-bool SkSurface_Ganesh::onReplaceBackendTexture(const GrBackendTexture& backendTexture,
-                                               GrSurfaceOrigin origin,
-                                               ContentChangeMode mode,
-                                               TextureReleaseProc releaseProc,
-                                               ReleaseContext releaseContext) {
+                                             ContentChangeMode mode,
+                                             TextureReleaseProc releaseProc,
+                                             ReleaseContext releaseContext) {
     auto releaseHelper = skgpu::RefCntedCallback::Make(releaseProc, releaseContext);
 
     auto rContext = fDevice->recordingContext();
@@ -698,14 +556,165 @@ bool validate_backend_render_target(const GrCaps* caps,
     return true;
 }
 
-sk_sp<SkSurface> SkSurface::MakeFromBackendRenderTarget(GrRecordingContext* rContext,
-                                                        const GrBackendRenderTarget& rt,
-                                                        GrSurfaceOrigin origin,
-                                                        SkColorType colorType,
-                                                        sk_sp<SkColorSpace> colorSpace,
-                                                        const SkSurfaceProps* props,
-                                                        SkSurface::RenderTargetReleaseProc relProc,
-                                                        SkSurface::ReleaseContext releaseContext) {
+void SkSurface::flushAndSubmit(bool syncCpu) {
+    this->flush(BackendSurfaceAccess::kNoAccess, GrFlushInfo());
+
+    auto direct = GrAsDirectContext(this->recordingContext());
+    if (direct) {
+        direct->submit(syncCpu);
+    }
+}
+
+namespace SkSurfaces {
+sk_sp<SkSurface> RenderTarget(GrRecordingContext* rContext,
+                              const SkSurfaceCharacterization& c,
+                              skgpu::Budgeted budgeted) {
+    if (!rContext || !c.isValid()) {
+        return nullptr;
+    }
+
+    if (c.usesGLFBO0()) {
+        // If we are making the surface we will never use FBO0.
+        return nullptr;
+    }
+
+    if (c.vulkanSecondaryCBCompatible()) {
+        return nullptr;
+    }
+
+    auto device = rContext->priv().createDevice(budgeted,
+                                                c.imageInfo(),
+                                                SkBackingFit::kExact,
+                                                c.sampleCount(),
+                                                GrMipmapped(c.isMipMapped()),
+                                                c.isProtected(),
+                                                c.origin(),
+                                                c.surfaceProps(),
+                                                skgpu::ganesh::Device::InitContents::kClear);
+    if (!device) {
+        return nullptr;
+    }
+
+    sk_sp<SkSurface> result = sk_make_sp<SkSurface_Ganesh>(std::move(device));
+#ifdef SK_DEBUG
+    if (result) {
+        SkASSERT(result->isCompatible(c));
+    }
+#endif
+
+    return result;
+}
+
+sk_sp<SkSurface> RenderTarget(GrRecordingContext* rContext,
+                              skgpu::Budgeted budgeted,
+                              const SkImageInfo& info,
+                              int sampleCount,
+                              GrSurfaceOrigin origin,
+                              const SkSurfaceProps* props,
+                              bool shouldCreateWithMips) {
+    if (!rContext) {
+        return nullptr;
+    }
+    sampleCount = std::max(1, sampleCount);
+    GrMipmapped mipmapped = shouldCreateWithMips ? GrMipmapped::kYes : GrMipmapped::kNo;
+
+    if (!rContext->priv().caps()->mipmapSupport()) {
+        mipmapped = GrMipmapped::kNo;
+    }
+
+    auto device = rContext->priv().createDevice(budgeted,
+                                                info,
+                                                SkBackingFit::kExact,
+                                                sampleCount,
+                                                mipmapped,
+                                                GrProtected::kNo,
+                                                origin,
+                                                SkSurfacePropsCopyOrDefault(props),
+                                                skgpu::ganesh::Device::InitContents::kClear);
+    if (!device) {
+        return nullptr;
+    }
+    return sk_make_sp<SkSurface_Ganesh>(std::move(device));
+}
+
+sk_sp<SkSurface> WrapBackendTexture(GrRecordingContext* rContext,
+                                    const GrBackendTexture& tex,
+                                    GrSurfaceOrigin origin,
+                                    int sampleCnt,
+                                    SkColorType colorType,
+                                    sk_sp<SkColorSpace> colorSpace,
+                                    const SkSurfaceProps* props,
+                                    TextureReleaseProc textureReleaseProc,
+                                    ReleaseContext releaseContext) {
+    auto releaseHelper = skgpu::RefCntedCallback::Make(textureReleaseProc, releaseContext);
+
+    if (!rContext) {
+        RENDERENGINE_ABORTF("%s failed due to a null context ", __func__);
+        return nullptr;
+    }
+    sampleCnt = std::max(1, sampleCnt);
+
+    GrColorType grColorType = SkColorTypeToGrColorType(colorType);
+    if (grColorType == GrColorType::kUnknown) {
+        RENDERENGINE_ABORTF("%s failed due to an unsupported colorType %d", __func__, colorType);
+        return nullptr;
+    }
+
+    if (!validate_backend_texture(rContext->priv().caps(), tex, sampleCnt, grColorType, true)) {
+        return nullptr;
+    }
+
+    sk_sp<GrTextureProxy> proxy(rContext->priv().proxyProvider()->wrapRenderableBackendTexture(
+            tex,
+            sampleCnt,
+            kBorrow_GrWrapOwnership,
+            GrWrapCacheable::kNo,
+            std::move(releaseHelper)));
+    if (!proxy) {
+#ifdef SK_IN_RENDERENGINE
+        GrGLTextureInfo textureInfo;
+        bool retrievedTextureInfo = tex.getGLTextureInfo(&textureInfo);
+        RENDERENGINE_ABORTF(
+                "%s failed to wrap the texture into a renderable target "
+                "\n\tGrBackendTexture: (%i x %i) hasMipmaps: %i isProtected: %i texType: %i"
+                "\n\t\tGrGLTextureInfo: success: %i fTarget: %u fFormat: %u"
+                "\n\tmaxRenderTargetSize: %d",
+                __func__,
+                tex.width(),
+                tex.height(),
+                tex.hasMipmaps(),
+                tex.isProtected(),
+                static_cast<int>(tex.textureType()),
+                retrievedTextureInfo,
+                textureInfo.fTarget,
+                textureInfo.fFormat,
+                rContext->priv().caps()->maxRenderTargetSize());
+#endif
+        return nullptr;
+    }
+
+    auto device = rContext->priv().createDevice(grColorType,
+                                                std::move(proxy),
+                                                std::move(colorSpace),
+                                                origin,
+                                                SkSurfacePropsCopyOrDefault(props),
+                                                skgpu::ganesh::Device::InitContents::kUninit);
+    if (!device) {
+        RENDERENGINE_ABORTF("%s failed to wrap the renderTarget into a surface", __func__);
+        return nullptr;
+    }
+
+    return sk_make_sp<SkSurface_Ganesh>(std::move(device));
+}
+
+sk_sp<SkSurface> WrapBackendRenderTarget(GrRecordingContext* rContext,
+                                         const GrBackendRenderTarget& rt,
+                                         GrSurfaceOrigin origin,
+                                         SkColorType colorType,
+                                         sk_sp<SkColorSpace> colorSpace,
+                                         const SkSurfaceProps* props,
+                                         RenderTargetReleaseProc relProc,
+                                         ReleaseContext releaseContext) {
     auto releaseHelper = skgpu::RefCntedCallback::Make(relProc, releaseContext);
 
     if (!rContext) {
@@ -740,93 +749,104 @@ sk_sp<SkSurface> SkSurface::MakeFromBackendRenderTarget(GrRecordingContext* rCon
     return sk_make_sp<SkSurface_Ganesh>(std::move(device));
 }
 
-#if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
-sk_sp<SkSurface> SkSurface::MakeFromAHardwareBuffer(GrDirectContext* dContext,
-                                                    AHardwareBuffer* hardwareBuffer,
-                                                    GrSurfaceOrigin origin,
-                                                    sk_sp<SkColorSpace> colorSpace,
-                                                    const SkSurfaceProps* surfaceProps
-#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-                                                    ,
-                                                    bool fromWindow
-#endif
-) {
-    AHardwareBuffer_Desc bufferDesc;
-    AHardwareBuffer_describe(hardwareBuffer, &bufferDesc);
-
-    if (!SkToBool(bufferDesc.usage & AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT)) {
-        return nullptr;
+GrBackendTexture GetBackendTexture(SkSurface* surface, BackendHandleAccess access) {
+    if (surface == nullptr) {
+        return GrBackendTexture();
     }
-
-    bool isTextureable = SkToBool(bufferDesc.usage & AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE);
-
-    GrBackendFormat backendFormat = GrAHardwareBufferUtils::GetBackendFormat(
-            dContext, hardwareBuffer, bufferDesc.format, true);
-    if (!backendFormat.isValid()) {
-        return nullptr;
+    auto sb = asSB(surface);
+    if (!sb->isGaneshBacked()) {
+        return GrBackendTexture();
     }
-
-    if (isTextureable) {
-        GrAHardwareBufferUtils::DeleteImageProc deleteImageProc = nullptr;
-        GrAHardwareBufferUtils::UpdateImageProc updateImageProc = nullptr;
-        GrAHardwareBufferUtils::TexImageCtx deleteImageCtx = nullptr;
-
-        bool isProtectedContent =
-                SkToBool(bufferDesc.usage & AHARDWAREBUFFER_USAGE_PROTECTED_CONTENT);
-
-        bool fromWindowLocal = false;
-#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-        fromWindowLocal = fromWindow;
-#endif
-
-        GrBackendTexture backendTexture =
-                GrAHardwareBufferUtils::MakeBackendTexture(dContext,
-                                                           hardwareBuffer,
-                                                           bufferDesc.width,
-                                                           bufferDesc.height,
-                                                           &deleteImageProc,
-                                                           &updateImageProc,
-                                                           &deleteImageCtx,
-                                                           isProtectedContent,
-                                                           backendFormat,
-                                                           true,
-                                                           fromWindowLocal);
-        if (!backendTexture.isValid()) {
-            return nullptr;
-        }
-
-        SkColorType colorType =
-                GrAHardwareBufferUtils::GetSkColorTypeFromBufferFormat(bufferDesc.format);
-
-        sk_sp<SkSurface> surface = SkSurface::MakeFromBackendTexture(dContext,
-                                                                     backendTexture,
-                                                                     origin,
-                                                                     0,
-                                                                     colorType,
-                                                                     std::move(colorSpace),
-                                                                     surfaceProps,
-                                                                     deleteImageProc,
-                                                                     deleteImageCtx);
-
-        if (!surface) {
-            SkASSERT(deleteImageProc);
-            deleteImageProc(deleteImageCtx);
-        }
-
-        return surface;
-    } else {
-        return nullptr;
-    }
+    return static_cast<SkSurface_Ganesh*>(surface)->getBackendTexture(access);
 }
-#endif
 
-void SkSurface::flushAndSubmit(bool syncCpu) {
-    this->flush(BackendSurfaceAccess::kNoAccess, GrFlushInfo());
-
-    auto direct = GrAsDirectContext(this->recordingContext());
-    if (direct) {
-        direct->submit(syncCpu);
+GrBackendRenderTarget GetBackendRenderTarget(SkSurface* surface, BackendHandleAccess access) {
+    if (surface == nullptr) {
+        return GrBackendRenderTarget();
     }
+    auto sb = asSB(surface);
+    if (!sb->isGaneshBacked()) {
+        return GrBackendRenderTarget();
+    }
+    return static_cast<SkSurface_Ganesh*>(surface)->getBackendRenderTarget(access);
+}
+
+}  // namespace SkSurfaces
+
+#if !defined(SK_DISABLE_LEGACY_SKSURFACE_FACTORIES)
+sk_sp<SkSurface> SkSurface::MakeFromBackendTexture(GrRecordingContext* context,
+                                                   const GrBackendTexture& backendTexture,
+                                                   GrSurfaceOrigin origin,
+                                                   int sampleCnt,
+                                                   SkColorType colorType,
+                                                   sk_sp<SkColorSpace> colorSpace,
+                                                   const SkSurfaceProps* surfaceProps,
+                                                   TextureReleaseProc textureReleaseProc,
+                                                   ReleaseContext releaseContext) {
+    return SkSurfaces::WrapBackendTexture(context,
+                                          backendTexture,
+                                          origin,
+                                          sampleCnt,
+                                          colorType,
+                                          colorSpace,
+                                          surfaceProps,
+                                          textureReleaseProc,
+                                          releaseContext);
+}
+
+sk_sp<SkSurface> SkSurface::MakeFromBackendRenderTarget(
+        GrRecordingContext* context,
+        const GrBackendRenderTarget& backendRenderTarget,
+        GrSurfaceOrigin origin,
+        SkColorType colorType,
+        sk_sp<SkColorSpace> colorSpace,
+        const SkSurfaceProps* surfaceProps,
+        RenderTargetReleaseProc releaseProc,
+        ReleaseContext releaseContext) {
+    return SkSurfaces::WrapBackendRenderTarget(context,
+                                               backendRenderTarget,
+                                               origin,
+                                               colorType,
+                                               colorSpace,
+                                               surfaceProps,
+                                               releaseProc,
+                                               releaseContext);
+}
+
+sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* context,
+                                             skgpu::Budgeted budgeted,
+                                             const SkImageInfo& imageInfo,
+                                             int sampleCount,
+                                             GrSurfaceOrigin surfaceOrigin,
+                                             const SkSurfaceProps* surfaceProps,
+                                             bool shouldCreateWithMips) {
+    return SkSurfaces::RenderTarget(context,
+                                    budgeted,
+                                    imageInfo,
+                                    sampleCount,
+                                    surfaceOrigin,
+                                    surfaceProps,
+                                    shouldCreateWithMips);
+}
+
+sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* context,
+                                             skgpu::Budgeted budgeted,
+                                             const SkImageInfo& imageInfo,
+                                             int sampleCount,
+                                             const SkSurfaceProps* surfaceProps) {
+    return SkSurfaces::RenderTarget(context, budgeted, imageInfo, sampleCount, surfaceProps);
+}
+
+sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* context,
+                                             skgpu::Budgeted budgeted,
+                                             const SkImageInfo& imageInfo) {
+    return SkSurfaces::RenderTarget(context, budgeted, imageInfo);
+}
+
+sk_sp<SkSurface> SkSurface::MakeRenderTarget(GrRecordingContext* context,
+                                             const SkSurfaceCharacterization& characterization,
+                                             skgpu::Budgeted budgeted) {
+    return SkSurfaces::RenderTarget(context, characterization, budgeted);
 }
 
 #endif

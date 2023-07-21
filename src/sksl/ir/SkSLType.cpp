@@ -9,6 +9,7 @@
 
 #include "src/base/SkMathPriv.h"
 #include "src/base/SkSafeMath.h"
+#include "src/core/SkTHash.h"
 #include "src/sksl/SkSLBuiltinTypes.h"
 #include "src/sksl/SkSLConstantFolder.h"
 #include "src/sksl/SkSLContext.h"
@@ -24,11 +25,12 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <iterator>
 #include <limits>
 #include <optional>
 #include <string_view>
 #include <utility>
+
+using namespace skia_private;
 
 namespace SkSL {
 
@@ -508,7 +510,7 @@ class StructType final : public Type {
 public:
     inline static constexpr TypeKind kTypeKind = TypeKind::kStruct;
 
-    StructType(Position pos, std::string_view name, std::vector<Field> fields, bool interfaceBlock)
+    StructType(Position pos, std::string_view name, TArray<Field> fields, bool interfaceBlock)
             : INHERITED(std::move(name), "S", kTypeKind, pos)
             , fFields(std::move(fields))
             , fInterfaceBlock(interfaceBlock) {}
@@ -542,7 +544,7 @@ public:
 private:
     using INHERITED = Type;
 
-    std::vector<Field> fFields;
+    TArray<Field> fFields;
     bool fInterfaceBlock;
 };
 
@@ -650,7 +652,7 @@ static bool is_too_deeply_nested(const Type* t, int limit) {
     }
 
     if (t->isStruct()) {
-        for (const Type::Field& f : t->fields()) {
+        for (const Field& f : t->fields()) {
             if (is_too_deeply_nested(f.fType, limit - 1)) {
                 return true;
             }
@@ -663,31 +665,51 @@ static bool is_too_deeply_nested(const Type* t, int limit) {
 std::unique_ptr<Type> Type::MakeStructType(const Context& context,
                                            Position pos,
                                            std::string_view name,
-                                           std::vector<Field> fields,
+                                           TArray<Field> fields,
                                            bool interfaceBlock) {
+    const char* const structOrIB  = interfaceBlock ? "interface block" : "struct";
+    const char* const aStructOrIB = interfaceBlock ? "an interface block" : "a struct";
+
+    if (fields.empty()) {
+        context.fErrors->error(pos, std::string(structOrIB) + " '" + std::string(name) +
+                                    "' must contain at least one field");
+    }
     size_t slots = 0;
+
+    THashSet<std::string_view> fieldNames;
     for (const Field& field : fields) {
+        // Add this field name to our set; if the set doesn't grow, we found a duplicate.
+        int numFieldNames = fieldNames.count();
+        fieldNames.add(field.fName);
+        if (fieldNames.count() == numFieldNames) {
+            context.fErrors->error(field.fPosition, "field '" + std::string(field.fName) +
+                                                    "' was already defined in the same " +
+                                                    std::string(structOrIB) + " ('" +
+                                                    std::string(name) + "')");
+        }
         if (field.fModifiers.fFlags != Modifiers::kNo_Flag) {
             std::string desc = field.fModifiers.description();
             desc.pop_back();  // remove trailing space
-            context.fErrors->error(field.fPosition,
-                                   "modifier '" + desc + "' is not permitted on a struct field");
+            context.fErrors->error(field.fPosition, "modifier '" + desc + "' is not permitted on " +
+                                                    std::string(aStructOrIB) + " field");
         }
         if (field.fModifiers.fLayout.fFlags & Layout::kBinding_Flag) {
-            context.fErrors->error(field.fPosition,
-                                   "layout qualifier 'binding' is not permitted on a struct field");
+            context.fErrors->error(field.fPosition, "layout qualifier 'binding' is not permitted "
+                                                    "on " + std::string(aStructOrIB) + " field");
         }
         if (field.fModifiers.fLayout.fFlags & Layout::kSet_Flag) {
-            context.fErrors->error(field.fPosition,
-                                   "layout qualifier 'set' is not permitted on a struct field");
+            context.fErrors->error(field.fPosition, "layout qualifier 'set' is not permitted on " +
+                                                    std::string(aStructOrIB) + " field");
         }
 
         if (field.fType->isVoid()) {
-            context.fErrors->error(field.fPosition, "type 'void' is not permitted in a struct");
+            context.fErrors->error(field.fPosition, "type 'void' is not permitted in " +
+                                                    std::string(aStructOrIB));
         }
         if (field.fType->isOpaque() && !field.fType->isAtomic()) {
             context.fErrors->error(field.fPosition, "opaque type '" + field.fType->displayName() +
-                                                    "' is not permitted in a struct");
+                                                    "' is not permitted in " +
+                                                    std::string(aStructOrIB));
         }
         if (field.fType->isOrContainsUnsizedArray()) {
             if (!interfaceBlock) {
@@ -700,14 +722,15 @@ std::unique_ptr<Type> Type::MakeStructType(const Context& context,
                 // ... see if this field causes us to exceed the size limit.
                 slots = SkSafeMath::Add(slots, field.fType->slotCount());
                 if (slots >= kVariableSlotLimit) {
-                    context.fErrors->error(pos, "struct is too large");
+                    context.fErrors->error(pos, std::string(structOrIB) + " is too large");
                 }
             }
         }
     }
     for (const Field& field : fields) {
         if (is_too_deeply_nested(field.fType, kMaxStructDepth)) {
-            context.fErrors->error(pos, "struct '" + std::string(name) + "' is too deeply nested");
+            context.fErrors->error(pos, std::string(structOrIB) + " '" + std::string(name) +
+                                        "' is too deeply nested");
             break;
         }
     }
@@ -765,17 +788,15 @@ CoercionCost Type::coercionCost(const Type& other) const {
 
 const Type* Type::applyQualifiers(const Context& context,
                                   Modifiers* modifiers,
-                                  SymbolTable* symbols,
                                   Position pos) const {
     const Type* type;
-    type = this->applyPrecisionQualifiers(context, modifiers, symbols, pos);
-    type = type->applyAccessQualifiers(context, modifiers, symbols, pos);
+    type = this->applyPrecisionQualifiers(context, modifiers, pos);
+    type = type->applyAccessQualifiers(context, modifiers, pos);
     return type;
 }
 
 const Type* Type::applyPrecisionQualifiers(const Context& context,
                                            Modifiers* modifiers,
-                                           SymbolTable* symbols,
                                            Position pos) const {
     int precisionQualifiers = modifiers->fFlags & (Modifiers::kHighp_Flag |
                                                    Modifiers::kMediump_Flag |
@@ -833,7 +854,7 @@ const Type* Type::applyPrecisionQualifiers(const Context& context,
         if (mediumpType) {
             // Convert the mediump component type into the final vector/matrix/array type as needed.
             return this->isArray()
-                           ? symbols->addArrayDimension(mediumpType, this->columns())
+                           ? context.fSymbolTable->addArrayDimension(mediumpType, this->columns())
                            : &mediumpType->toCompound(context, this->columns(), this->rows());
         }
     }
@@ -845,7 +866,6 @@ const Type* Type::applyPrecisionQualifiers(const Context& context,
 
 const Type* Type::applyAccessQualifiers(const Context& context,
                                         Modifiers* modifiers,
-                                        SymbolTable* symbols,
                                         Position pos) const {
     int accessQualifiers = modifiers->fFlags & (Modifiers::kReadOnly_Flag |
                                                 Modifiers::kWriteOnly_Flag);
@@ -1039,7 +1059,7 @@ const Type* Type::clone(SymbolTable* symbolTable) const {
             return symbolTable->add(
                     std::make_unique<StructType>(this->fPosition,
                                                  *name,
-                                                 std::vector(fieldSpan.begin(), fieldSpan.end()),
+                                                 TArray<Field>(fieldSpan.data(), fieldSpan.size()),
                                                  this->isInterfaceBlock()));
         }
         default:
@@ -1061,7 +1081,7 @@ std::unique_ptr<Expression> Type::coerceExpression(std::unique_ptr<Expression> e
     const ProgramSettings& settings = context.fConfig->fSettings;
     if (!expr->coercionCost(*this).isPossible(settings.fAllowNarrowingConversions)) {
         context.fErrors->error(pos, "expected '" + this->displayName() + "', but found '" +
-                expr->type().displayName() + "'");
+                                    expr->type().displayName() + "'");
         return nullptr;
     }
 
@@ -1080,7 +1100,7 @@ std::unique_ptr<Expression> Type::coerceExpression(std::unique_ptr<Expression> e
 
 static bool is_or_contains_array(const Type* type, bool onlyMatchUnsizedArrays) {
     if (type->isStruct()) {
-        for (const Type::Field& f : type->fields()) {
+        for (const Field& f : type->fields()) {
             if (is_or_contains_array(f.fType, onlyMatchUnsizedArrays)) {
                 return true;
             }
@@ -1192,31 +1212,39 @@ SKSL_INT Type::convertArraySize(const Context& context,
     if (!size) {
         return 0;
     }
-    if (!this->checkIfUsableInArray(context, arrayPos)) {
-        return 0;
-    }
     SKSL_INT count;
     if (!ConstantFolder::GetConstantInt(*size, &count)) {
         context.fErrors->error(size->fPosition, "array size must be an integer");
         return 0;
     }
-    if (count <= 0) {
-        context.fErrors->error(size->fPosition, "array size must be positive");
+    return this->convertArraySize(context, arrayPos, size->fPosition, count);
+}
+
+SKSL_INT Type::convertArraySize(const Context& context,
+                                Position arrayPos,
+                                Position sizePos,
+                                SKSL_INT size) const {
+    if (!this->checkIfUsableInArray(context, arrayPos)) {
+        // `checkIfUsableInArray` will generate an error for us.
+        return 0;
+    }
+    if (size <= 0) {
+        context.fErrors->error(sizePos, "array size must be positive");
         return 0;
     }
     // We can't get a meaningful slot count if the interior type contains an unsized array; we'll
     // assert if we try. Unsized arrays should only occur in a handful of limited cases (e.g. an
     // interface block with a trailing buffer), and will never be valid in a runtime effect.
     if (!this->isOrContainsUnsizedArray()) {
-        if (SkSafeMath::Mul(this->slotCount(), count) > kVariableSlotLimit) {
-            context.fErrors->error(size->fPosition, "array size is too large");
+        if (SkSafeMath::Mul(this->slotCount(), size) > kVariableSlotLimit) {
+            context.fErrors->error(sizePos, "array size is too large");
             return 0;
         }
     }
-    return static_cast<int>(count);
+    return size;
 }
 
-std::string Type::Field::description() const {
+std::string Field::description() const {
     return fModifiers.description() + fType->displayName() + " " + std::string(fName) + ";";
 }
 
