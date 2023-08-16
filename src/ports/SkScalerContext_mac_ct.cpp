@@ -175,10 +175,10 @@ SkScalerContext_Mac::SkScalerContext_Mac(sk_sp<SkTypeface_Mac> typeface,
                                          const SkScalerContextEffects& effects,
                                          const SkDescriptor* desc)
         : INHERITED(std::move(typeface), effects, desc)
+        , fOffscreen(fRec.fForegroundColor)
         , fFBoundingBoxes()
         , fFBoundingBoxesGlyphOffset(0)
         , fGeneratedFBoundingBoxes(false)
-        , fOffscreen(fRec.fForegroundColor)
         , fDoSubPosition(SkToBool(fRec.fFlags & kSubpixelPositioning_Flag))
 
 {
