@@ -45,8 +45,8 @@ public:
     }
 
     bool runAsBench() const override { return SkToBool(fFlags & kBench_RTFlag); }
-    SkString onShortName() override { return fName; }
-    SkISize onISize() override { return fSize; }
+    SkString getName() const override { return fName; }
+    SkISize getISize() override { return fSize; }
 
     bool onAnimate(double nanos) override {
         fSecs = nanos / (1000 * 1000 * 1000);
@@ -1091,7 +1091,7 @@ DEF_SIMPLE_GM(null_child_rt, canvas, 150, 150) {
 #endif
         {
             auto direct = GrAsDirectContext(canvas->recordingContext());
-            image = image->makeColorSpace(SkColorSpace::MakeSRGB(), direct);
+            image = image->makeColorSpace(direct, SkColorSpace::MakeSRGB());
         }
 
         canvas->drawImage(image, 0, 0);

@@ -93,6 +93,7 @@ supported_files_or_dirs=(
   "src/core/SkRuntime"
   "src/core/SkScalar.cpp"
   "src/core/SkSpecialImage.cpp"
+  "src/core/SkSpecialSurface.cpp"
   "src/core/SkStream.cpp"
   "src/core/SkStrike"
   "src/core/SkString.cpp"
@@ -126,6 +127,7 @@ supported_files_or_dirs=(
   "src/gpu/ganesh/GrXferProcessor.cpp"
   "src/gpu/ganesh/SkGr.cpp"
   "src/gpu/ganesh/effects/GrPerlinNoise2Effect.cpp"
+  "src/gpu/ganesh/gl/GrGLBackendSurface.cpp"
   "src/pdf/SkJpeg"
 
   # See //bazel/generate_cpp_files_for_headers.bzl and //include/BUILD.bazel for more.

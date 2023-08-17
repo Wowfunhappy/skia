@@ -34,8 +34,12 @@ Image::Image(uint32_t uniqueID,
 Image::~Image() {}
 
 size_t Image::textureSize() const {
-    if (!fTextureProxyView.proxy() || !fTextureProxyView.proxy()->texture()) {
+    if (!fTextureProxyView.proxy()) {
         return 0;
+    }
+
+    if (!fTextureProxyView.proxy()->texture()) {
+        return fTextureProxyView.proxy()->uninstantiatedGpuMemorySize();
     }
 
     return fTextureProxyView.proxy()->texture()->gpuMemorySize();
@@ -191,13 +195,3 @@ sk_sp<TextureProxy> Image::MakePromiseImageLazyProxy(
                                   isVolatile,
                                   std::move(callback));
 }
-
-#if !defined(SK_DISABLE_LEGACY_GRAPHITE_IMAGE_METHODS)
-#include "include/gpu/graphite/Image.h"
-
-sk_sp<SkImage> SkImage::makeTextureImage(skgpu::graphite::Recorder* recorder,
-                                         RequiredImageProperties props) const {
-    auto mm = props.fMipmapped == skgpu::Mipmapped::kYes;
-    return SkImages::TextureFromImage(recorder, this, {mm});
-}
-#endif

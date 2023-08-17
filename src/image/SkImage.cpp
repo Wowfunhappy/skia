@@ -87,6 +87,31 @@ void SkImage::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvColorSpace,
         return;
     }
     as_IB(this)->onAsyncRescaleAndReadPixelsYUV420(yuvColorSpace,
+                                                   /*readAlpha=*/false,
+                                                   std::move(dstColorSpace),
+                                                   srcRect,
+                                                   dstSize,
+                                                   rescaleGamma,
+                                                   rescaleMode,
+                                                   callback,
+                                                   context);
+}
+
+void SkImage::asyncRescaleAndReadPixelsYUVA420(SkYUVColorSpace yuvColorSpace,
+                                               sk_sp<SkColorSpace> dstColorSpace,
+                                               const SkIRect& srcRect,
+                                               const SkISize& dstSize,
+                                               RescaleGamma rescaleGamma,
+                                               RescaleMode rescaleMode,
+                                               ReadPixelsCallback callback,
+                                               ReadPixelsContext context) const {
+    if (!SkIRect::MakeWH(this->width(), this->height()).contains(srcRect) || dstSize.isZero() ||
+        (dstSize.width() & 0b1) || (dstSize.height() & 0b1)) {
+        callback(context, nullptr);
+        return;
+    }
+    as_IB(this)->onAsyncRescaleAndReadPixelsYUV420(yuvColorSpace,
+                                                   /*readAlpha=*/true,
                                                    std::move(dstColorSpace),
                                                    srcRect,
                                                    dstSize,
@@ -263,6 +288,8 @@ sk_sp<SkImage> SkImage::makeRasterImage(GrDirectContext* dContext, CachingHint c
 
 bool SkImage::hasMipmaps() const { return as_IB(this)->onHasMipmaps(); }
 
+bool SkImage::isProtected() const { return as_IB(this)->onIsProtected(); }
+
 sk_sp<SkImage> SkImage::withMipmaps(sk_sp<SkMipmap> mips) const {
     if (mips == nullptr || mips->validForRootLevel(this->imageInfo())) {
         if (auto result = as_IB(this)->onMakeWithMipmaps(std::move(mips))) {
@@ -275,20 +302,6 @@ sk_sp<SkImage> SkImage::withMipmaps(sk_sp<SkMipmap> mips) const {
 sk_sp<SkImage> SkImage::withDefaultMipmaps() const {
     return this->withMipmaps(nullptr);
 }
-
-#if !defined(SK_DISABLE_LEGACY_IMAGE_COLORSPACE_METHODS)
-sk_sp<SkImage> SkImage::makeColorSpace(sk_sp<SkColorSpace> target, GrDirectContext* direct) const {
-    return makeColorSpace(direct, target);
-}
-#endif
-
-#if !defined(SK_DISABLE_LEGACY_IMAGE_COLORSPACE_METHODS)
-sk_sp<SkImage> SkImage::makeColorTypeAndColorSpace(SkColorType targetColorType,
-                                                   sk_sp<SkColorSpace> targetColorSpace,
-                                                   GrDirectContext* direct) const {
-    return makeColorTypeAndColorSpace(direct, targetColorType, targetColorSpace);
-}
-#endif
 
 sk_sp<SkImage> SkImage::makeWithFilter(GrRecordingContext* rContext,
                                        const SkImageFilter* filter,

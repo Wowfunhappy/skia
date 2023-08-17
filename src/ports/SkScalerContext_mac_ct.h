@@ -22,10 +22,10 @@
 #endif
 
 #ifdef SK_BUILD_FOR_IOS
-#include <CoreText/CoreText.h>
-#include <CoreText/CTFontManager.h>
-#include <CoreGraphics/CoreGraphics.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <CoreText/CTFontManager.h>
+#include <CoreText/CoreText.h>
 #endif
 
 #include <memory>
@@ -35,7 +35,6 @@ class SkGlyph;
 class SkPath;
 class SkTypeface_Mac;
 struct SkFontMetrics;
-
 
 typedef uint32_t CGRGBPixel;
 
@@ -54,8 +53,8 @@ public:
 
 protected:
     unsigned generateGlyphCount();
-    void generateMetrics(SkGlyph* glyph, SkArenaAlloc*) override;
-    void generateImage(const SkGlyph& glyph) override;
+    GlyphMetrics generateMetrics(const SkGlyph&, SkArenaAlloc*) override;
+    void generateImage(const SkGlyph&, void*) override;
     bool generatePath(const SkGlyph& glyph, SkPath* path) override;
     void generateFontMetrics(SkFontMetrics*) override;
 
@@ -64,13 +63,14 @@ private:
     public:
         Offscreen(SkColor foregroundColor);
 
-        CGRGBPixel* getCG(const SkScalerContext_Mac& context, const SkGlyph& glyph,
-                          CGGlyph glyphID, size_t* rowBytesPtr, bool generateA8FromLCD);
+        CGRGBPixel* getCG(const SkScalerContext_Mac& context,
+                          const SkGlyph& glyph,
+                          CGGlyph glyphID,
+                          size_t* rowBytesPtr,
+                          bool generateA8FromLCD);
 
     private:
-        enum {
-            kSize = 32 * 32 * sizeof(CGRGBPixel)
-        };
+        enum { kSize = 32 * 32 * sizeof(CGRGBPixel) };
         SkAutoSMalloc<kSize> fImageStorage;
         SkUniqueCFRef<CGColorSpaceRef> fRGBSpace;
 
@@ -137,7 +137,7 @@ private:
     CGAffineTransform fInvTransform;
 
     SkUniqueCFRef<CGFontRef> fCGFont;
-	SkAutoTMalloc<GlyphRect> fFBoundingBoxes;
+    SkAutoTMalloc<GlyphRect> fFBoundingBoxes;
     uint16_t fFBoundingBoxesGlyphOffset;
     uint16_t fGlyphCount;
     bool fGeneratedFBoundingBoxes;
@@ -149,4 +149,4 @@ private:
 };
 
 #endif
-#endif //SkScalerContext_mac_ct_DEFINED
+#endif  // SkScalerContext_mac_ct_DEFINED

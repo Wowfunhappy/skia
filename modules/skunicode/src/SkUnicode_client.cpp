@@ -7,13 +7,13 @@
 #include "include/core/SkSpan.h"
 #include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
-#include "include/private/SkBitmaskEnum.h"
 #include "include/private/base/SkTArray.h"
 #include "include/private/base/SkTo.h"
 #include "modules/skunicode/include/SkUnicode.h"
 #include "modules/skunicode/src/SkUnicode_client.h"
 #include "modules/skunicode/src/SkUnicode_hardcoded.h"
 #include "modules/skunicode/src/SkUnicode_icu_bidi.h"
+#include "src/base/SkBitmaskEnum.h"
 #include "src/base/SkUTF.h"
 
 #include <algorithm>
@@ -33,41 +33,6 @@
 #include <unicode/utypes.h>
 
 using namespace skia_private;
-
-#ifndef SK_UNICODE_ICU_IMPLEMENTATION
-
-const char* SkUnicode_IcuBidi::errorName(UErrorCode status) {
-    return u_errorName_skia(status);
-}
-void SkUnicode_IcuBidi::bidi_close(UBiDi* bidi) {
-    ubidi_close_skia(bidi);
-}
-UBiDiDirection SkUnicode_IcuBidi::bidi_getDirection(const UBiDi* bidi) {
-    return ubidi_getDirection_skia(bidi);
-}
-SkBidiIterator::Position SkUnicode_IcuBidi::bidi_getLength(const UBiDi* bidi) {
-    return ubidi_getLength_skia(bidi);
-}
-SkBidiIterator::Level SkUnicode_IcuBidi::bidi_getLevelAt(const UBiDi* bidi, int pos) {
-    return ubidi_getLevelAt_skia(bidi, pos);
-}
-UBiDi* SkUnicode_IcuBidi::bidi_openSized(int32_t maxLength, int32_t maxRunCount, UErrorCode* pErrorCode) {
-    return ubidi_openSized_skia(maxLength, maxRunCount, pErrorCode);
-}
-void SkUnicode_IcuBidi::bidi_setPara(UBiDi* bidi,
-                         const UChar* text,
-                         int32_t length,
-                         UBiDiLevel paraLevel,
-                         UBiDiLevel* embeddingLevels,
-                         UErrorCode* status) {
-    return ubidi_setPara_skia(bidi, text, length, paraLevel, embeddingLevels, status);
-}
-void SkUnicode_IcuBidi::bidi_reorderVisual(const SkUnicode::BidiLevel runLevels[],
-                               int levelsCount,
-                               int32_t logicalFromVisual[]) {
-    ubidi_reorderVisual_skia(runLevels, levelsCount, logicalFromVisual);
-}
-#endif
 
 class SkUnicode_client : public SkUnicodeHardCodedCharProperties {
 public:
@@ -129,7 +94,7 @@ public:
                         int utf8Units,
                         TextDirection dir,
                         std::vector<BidiRegion>* results) override {
-        return SkUnicode::extractBidi(utf8, utf8Units, dir, results);
+        return SkUnicode_IcuBidi::ExtractBidi(utf8, utf8Units, dir, results);
     }
 
     bool computeCodeUnitFlags(char utf8[],
@@ -252,12 +217,12 @@ public:
 };
 std::unique_ptr<SkBidiIterator> SkUnicode_client::makeBidiIterator(const uint16_t text[], int count,
                                                  SkBidiIterator::Direction dir) {
-    return SkUnicode::makeBidiIterator(text, count, dir);
+    return SkUnicode_IcuBidi::MakeIterator(text, count, dir);
 }
 std::unique_ptr<SkBidiIterator> SkUnicode_client::makeBidiIterator(const char text[],
                                                  int count,
                                                  SkBidiIterator::Direction dir) {
-    return SkUnicode::makeBidiIterator(text, count, dir);
+    return SkUnicode_IcuBidi::MakeIterator(text, count, dir);
 }
 std::unique_ptr<SkBreakIterator> SkUnicode_client::makeBreakIterator(const char locale[],
                                                    BreakType breakType) {

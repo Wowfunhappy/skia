@@ -26,6 +26,8 @@ public:
                                              Mipmapped mipmapped,
                                              Protected,
                                              Renderable) const override;
+    TextureInfo getTextureInfoForSampledCopy(const TextureInfo& textureInfo,
+                                             Mipmapped mipmapped) const override;
     TextureInfo getDefaultMSAATextureInfo(const TextureInfo& singleSampledInfo,
                                           Discardable discardable) const override;
     TextureInfo getDefaultDepthStencilTextureInfo(SkEnumBitMask<DepthStencilFlags>,
@@ -43,7 +45,6 @@ public:
                             ResourceType,
                             Shareable,
                             GraphiteResourceKey*) const override;
-    size_t bytesPerPixel(const TextureInfo&) const override;
     uint64_t getRenderPassDescKey(const RenderPassDesc& renderPassDesc) const;
 
 private:

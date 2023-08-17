@@ -19,6 +19,7 @@
 #include "include/private/base/SkOnce.h"
 #include "include/private/base/SkTArray.h"
 #include "src/base/SkArenaAlloc.h"
+#include "src/base/SkEnumBitMask.h"
 #include "src/base/SkNoDestructor.h"
 #include "src/core/SkBlenderBase.h"
 #include "src/core/SkChecksum.h"
@@ -47,9 +48,10 @@
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/analysis/SkSLProgramUsage.h"
 #include "src/sksl/codegen/SkSLRasterPipelineBuilder.h"
+#include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 #include "src/sksl/ir/SkSLLayout.h"
-#include "src/sksl/ir/SkSLModifiers.h"
+#include "src/sksl/ir/SkSLModifierFlags.h"
 #include "src/sksl/ir/SkSLProgram.h"
 #include "src/sksl/ir/SkSLProgramElement.h"
 #include "src/sksl/ir/SkSLStatement.h"
@@ -60,23 +62,12 @@
 
 #include <algorithm>
 
+using namespace skia_private;
+
 class SkColorSpace;
 struct SkIPoint;
 
-#if defined(SK_GRAPHITE)
-#include "src/gpu/graphite/KeyContext.h"
-#include "src/gpu/graphite/KeyHelpers.h"
-#include "src/gpu/graphite/PaintParamsKey.h"
-#endif
-
-// Set `skia_enable_sksl_in_raster_pipeline = true` in your GN args to use Raster Pipeline SkSL.
-#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
-#include "src/sksl/codegen/SkSLRasterPipelineCodeGenerator.h"
-
 constexpr bool kRPEnableLiveTrace = false;
-#endif
-
-using namespace skia_private;
 
 #if defined(SK_BUILD_FOR_DEBUGGER)
     #define SK_LENIENT_SKSL_DESERIALIZATION 1
@@ -117,7 +108,7 @@ SkRuntimeEffect::Uniform SkRuntimeEffectPriv::VarAsUniform(const SkSL::Variable&
                                                            const SkSL::Context& context,
                                                            size_t* offset) {
     using Uniform = SkRuntimeEffect::Uniform;
-    SkASSERT(var.modifiers().fFlags & SkSL::Modifiers::kUniform_Flag);
+    SkASSERT(var.modifierFlags().isUniform());
     Uniform uni;
     uni.name = var.name();
     uni.flags = 0;
@@ -135,7 +126,7 @@ SkRuntimeEffect::Uniform SkRuntimeEffectPriv::VarAsUniform(const SkSL::Variable&
     }
 
     SkAssertResult(init_uniform_type(context, type, &uni));
-    if (var.modifiers().fLayout.fFlags & SkSL::Layout::Flag::kColor_Flag) {
+    if (var.layout().fFlags & SkSL::LayoutFlag::kColor) {
         uni.flags |= Uniform::kColor_Flag;
     }
 
@@ -208,7 +199,6 @@ const SkSL::RP::Program* SkRuntimeEffect::getRPProgram(SkSL::DebugTracePriv* deb
     // By using an SkOnce, we avoid thread hazards and behave in a conceptually const way, but we
     // can avoid the cost of invoking the RP code generator until it's actually needed.
     fCompileRPProgramOnce([&] {
-#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
         // We generally do not run the inliner when an SkRuntimeEffect program is initially created,
         // because the final compile to native shader code will do this. However, in SkRP, there's
         // no additional compilation occurring, so we need to manually inline here if we want the
@@ -242,7 +232,6 @@ const SkSL::RP::Program* SkRuntimeEffect::getRPProgram(SkSL::DebugTracePriv* deb
                 SkDebugf("----- RP unsupported -----\n\n");
             }
         }
-#endif
     });
 
     return fRPProgram.get();
@@ -272,7 +261,6 @@ SkSpan<const float> SkRuntimeEffectPriv::UniformsAsSpan(
                   originalData->size() / sizeof(float)};
 }
 
-#ifdef SK_ENABLE_SKSL_IN_RASTER_PIPELINE
 bool RuntimeEffectRPCallbacks::appendShader(int index) {
     if (SkShader* shader = fChildren[index].shader()) {
         if (fSampleUsages[index].isPassThrough()) {
@@ -340,7 +328,6 @@ void RuntimeEffectRPCallbacks::applyColorSpaceXform(const SkColorSpaceXformSteps
     // Restore the execution mask, and move the color back into program data.
     fStage.fPipeline->append(SkRasterPipelineOp::exchange_src, color);
 }
-#endif  // SK_ENABLE_SKSL_IN_RASTER_PIPELINE
 
 bool SkRuntimeEffectPriv::CanDraw(const SkCapabilities* caps, const SkSL::Program* program) {
     SkASSERT(caps && program);
@@ -520,13 +507,11 @@ SkRuntimeEffect::Result SkRuntimeEffect::MakeInternal(std::unique_ptr<SkSL::Prog
     if (!main) {
         RETURN_FAILURE("missing 'main' function");
     }
-    const auto& mainParams = main->parameters();
-    auto iter = std::find_if(mainParams.begin(), mainParams.end(), [](const SkSL::Variable* p) {
-        return p->modifiers().fLayout.fBuiltin == SK_MAIN_COORDS_BUILTIN;
-    });
+    const SkSL::Variable* coordsParam = main->getMainCoordsParameter();
+
     const SkSL::ProgramUsage::VariableCounts sampleCoordsUsage =
-            iter != mainParams.end() ? program->usage()->get(**iter)
-                                     : SkSL::ProgramUsage::VariableCounts{};
+            coordsParam ? program->usage()->get(*coordsParam)
+                        : SkSL::ProgramUsage::VariableCounts{};
 
     if (sampleCoordsUsage.fRead || sampleCoordsUsage.fWrite) {
         flags |= kUsesSampleCoords_Flag;
@@ -598,7 +583,7 @@ SkRuntimeEffect::Result SkRuntimeEffect::MakeInternal(std::unique_ptr<SkSL::Prog
                                                          : SkSL::SampleUsage::PassThrough());
             }
             // 'uniform' variables
-            else if (var.modifiers().fFlags & SkSL::Modifiers::kUniform_Flag) {
+            else if (var.modifierFlags().isUniform()) {
                 uniforms.push_back(SkRuntimeEffectPriv::VarAsUniform(var, ctx, &offset));
             }
         }
@@ -802,47 +787,6 @@ const SkRuntimeEffect::Child* SkRuntimeEffect::findChild(std::string_view name) 
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
-
-#if defined(SK_GRAPHITE)
-void SkRuntimeEffectPriv::AddChildrenToKey(SkSpan<const SkRuntimeEffect::ChildPtr> children,
-                                           SkSpan<const SkRuntimeEffect::Child> childInfo,
-                                           const skgpu::graphite::KeyContext& keyContext,
-                                           skgpu::graphite::PaintParamsKeyBuilder* builder,
-                                           skgpu::graphite::PipelineDataGatherer* gatherer) {
-    using namespace skgpu::graphite;
-
-    SkASSERT(children.size() == childInfo.size());
-
-    for (size_t index = 0; index < children.size(); ++index) {
-        const SkRuntimeEffect::ChildPtr& child = children[index];
-        std::optional<ChildType> type = child.type();
-        if (type == ChildType::kShader) {
-            as_SB(child.shader())->addToKey(keyContext, builder, gatherer);
-        } else if (type == ChildType::kColorFilter) {
-            as_CFB(child.colorFilter())->addToKey(keyContext, builder, gatherer);
-        } else if (type == ChildType::kBlender) {
-            as_BB(child.blender())->addToKey(keyContext, builder, gatherer);
-        } else {
-            // We don't have a child effect. Substitute in a no-op effect.
-            switch (childInfo[index].type) {
-                case ChildType::kShader:
-                case ChildType::kColorFilter:
-                    // A "passthrough" shader returns the input color as-is.
-                    PriorOutputBlock::BeginBlock(keyContext, builder, gatherer);
-                    builder->endBlock();
-                    break;
-
-                case ChildType::kBlender:
-                    // A "passthrough" blender performs `blend_src_over(src, dest)`.
-                    BlendModeBlenderBlock::BeginBlock(
-                            keyContext, builder, gatherer, SkBlendMode::kSrcOver);
-                    builder->endBlock();
-                    break;
-            }
-        }
-    }
-}
-#endif
 
 sk_sp<SkShader> SkRuntimeEffectPriv::MakeDeferredShader(
         const SkRuntimeEffect* effect,

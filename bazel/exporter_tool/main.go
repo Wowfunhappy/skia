@@ -190,7 +190,6 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/sksl/analysis:analysis_srcs",
 				"//src/sksl/codegen:core_srcs",
 				"//src/sksl/codegen:private_hdrs",
-				"//src/sksl/dsl:srcs",
 				"//src/sksl/ir:ir_hdrs",
 				"//src/sksl/ir:ir_srcs",
 				"//src/sksl/tracing:private_hdrs",
@@ -231,6 +230,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 		{Var: "sksl_spirv_tests", Rules: []string{"//resources/sksl:sksl_spirv_tests"}},
 		{Var: "sksl_wgsl_tests", Rules: []string{"//resources/sksl:sksl_wgsl_tests"}},
 		{Var: "sksl_shared_tests", Rules: []string{"//resources/sksl:sksl_shared_tests"}},
+		{Var: "sksl_compute_tests", Rules: []string{"//resources/sksl:sksl_compute_tests"}},
 		{Var: "sksl_folding_tests", Rules: []string{"//resources/sksl:sksl_folding_tests"}},
 		{Var: "sksl_inliner_tests", Rules: []string{"//resources/sksl:sksl_inliner_tests"}},
 		{Var: "sksl_blend_tests", Rules: []string{"//resources/sksl:sksl_blend_tests"}},
@@ -325,11 +325,12 @@ var gniExportDescs = []exporter.GNIExportDesc{
 			}},
 		{Var: "skia_gpu_chromium_public",
 			Rules: []string{
-				"//include/private/chromium:gpu_private_hdrs",
+				"//include/private/chromium:ganesh_private_hdrs",
 			}},
 		{Var: "skia_gpu_gl_public",
 			Rules: []string{
 				"//include/gpu/gl:public_hdrs",
+				"//include/gpu/ganesh/gl:public_hdrs",
 			}},
 		{Var: "skia_gpu_gl_private",
 			Rules: []string{
@@ -353,11 +354,10 @@ var gniExportDescs = []exporter.GNIExportDesc{
 			}},
 		{Var: "skia_gpu_vk_chromium_public",
 			Rules: []string{
-				"//include/private/chromium:vk_chromium_hdrs",
+				"//include/private/chromium:vk_ganesh_hdrs",
 			}},
 		{Var: "skia_gpu_vk_private",
 			Rules: []string{
-				"//include/gpu/vk:public_hdrs",
 				"//include/private/gpu/ganesh:vk_private_hdrs",
 				"//src/gpu/ganesh/vk:vk_hdrs",
 				"//src/gpu/ganesh/vk:vk_srcs",
@@ -450,6 +450,20 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//modules/svg/src:srcs",
 			}},
 	}},
+    {GNI: "modules/bentleyottmann/bentleyottmann.gni", Vars: []exporter.GNIFileListExportDesc{
+        {Var: "bentleyottmann_public",
+            Rules: []string{
+                "//modules/bentleyottmann/include:hdrs",
+            }},
+        {Var: "bentleyottmann_sources",
+            Rules: []string{
+                "//modules/bentleyottmann/src:srcs",
+            }},
+        {Var: "bentleyottmann_tests",
+            Rules: []string{
+                "//modules/bentleyottmann/tests:tests",
+            }},
+    }},
 	{GNI: "modules/skparagraph/skparagraph.gni", Vars: []exporter.GNIFileListExportDesc{
 		{Var: "skparagraph_public",
 			Rules: []string{
@@ -495,12 +509,16 @@ var gniExportDescs = []exporter.GNIExportDesc{
 			Rules: []string{"//modules/skunicode/src:srcs"}},
 		{Var: "skia_unicode_icu_sources",
 			Rules: []string{"//modules/skunicode/src:icu_srcs"}},
+		{Var: "skia_unicode_icu_bidi_sources",
+			Rules: []string{"//modules/skunicode/src:icu_bidi_srcs"}},
 		{Var: "skia_unicode_client_icu_sources",
 			Rules: []string{"//modules/skunicode/src:client_srcs"}},
 		{Var: "skia_unicode_builtin_icu_sources",
 			Rules: []string{"//modules/skunicode/src:builtin_srcs"}},
 		{Var: "skia_unicode_runtime_icu_sources",
 			Rules: []string{"//modules/skunicode/src:runtime_srcs"}},
+		{Var: "skia_unicode_libgrapheme_sources",
+			Rules: []string{"//modules/skunicode/src:libgrapheme_srcs"}},
 		{Var: "skia_unicode_tests",
 			Rules: []string{"//modules/skunicode/tests:tests"}},
 	}},

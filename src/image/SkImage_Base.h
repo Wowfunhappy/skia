@@ -78,6 +78,7 @@ public:
                               CachingHint) const = 0;
 
     virtual bool onHasMipmaps() const = 0;
+    virtual bool onIsProtected() const = 0;
 
     virtual SkMipmap* onPeekMips() const { return nullptr; }
 
@@ -98,6 +99,7 @@ public:
      * Default implementation does a rescale/read/yuv conversion and then calls the callback.
      */
     virtual void onAsyncRescaleAndReadPixelsYUV420(SkYUVColorSpace,
+                                                   bool readAlpha,
                                                    sk_sp<SkColorSpace> dstColorSpace,
                                                    SkIRect srcRect,
                                                    SkISize dstSize,

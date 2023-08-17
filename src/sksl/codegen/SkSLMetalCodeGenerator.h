@@ -13,6 +13,7 @@
 #include "src/core/SkTHash.h"
 #include "src/sksl/SkSLStringStream.h"
 #include "src/sksl/codegen/SkSLCodeGenerator.h"
+#include "src/sksl/ir/SkSLModifierFlags.h"
 
 #include <cstdint>
 #include <functional>
@@ -64,7 +65,6 @@ class VariableReference;
 enum class OperatorPrecedence : uint8_t;
 enum IntrinsicKind : int8_t;
 struct Layout;
-struct Modifiers;
 struct Program;
 
 /**
@@ -121,9 +121,7 @@ protected:
 
     void writeConstantVariables();
 
-    void writeFields(SkSpan<const Field> fields,
-                     Position pos,
-                     const InterfaceBlock* parentIntf = nullptr);
+    void writeFields(SkSpan<const Field> fields, Position pos);
 
     int size(const Type* type, bool isPacked) const;
 
@@ -162,7 +160,7 @@ protected:
 
     void writeLayout(const Layout& layout);
 
-    void writeModifiers(const Modifiers& modifiers);
+    void writeModifiers(ModifierFlags flags);
 
     void writeVarInitializer(const Variable& var, const Expression& value);
 
@@ -292,15 +290,14 @@ protected:
     // instances, not the types themselves)
     void writeComputeMainInputs();
 
-    int getUniformBinding(const Modifiers& m);
+    int getUniformBinding(const Layout& layout);
 
-    int getUniformSet(const Modifiers& m);
+    int getUniformSet(const Layout& layout);
 
     void writeWithIndexSubstitution(const std::function<void()>& fn);
 
     skia_private::THashSet<std::string_view> fReservedWords;
-    skia_private::THashMap<const Field*, const InterfaceBlock*> fInterfaceBlockMap;
-    skia_private::THashMap<const InterfaceBlock*, std::string_view> fInterfaceBlockNameMap;
+    skia_private::THashMap<const Type*, std::string> fInterfaceBlockNameMap;
     int fAnonInterfaceCount = 0;
     int fPaddingCount = 0;
     const char* fLineEnding;

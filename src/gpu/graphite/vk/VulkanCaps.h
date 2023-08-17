@@ -30,6 +30,9 @@ public:
                                              Protected,
                                              Renderable) const override;
 
+    TextureInfo getTextureInfoForSampledCopy(const TextureInfo& textureInfo,
+                                             Mipmapped mipmapped) const override;
+
     TextureInfo getDefaultMSAATextureInfo(const TextureInfo& singleSampledInfo,
                                           Discardable discardable) const override;
 
@@ -57,8 +60,6 @@ public:
                             Shareable,
                             GraphiteResourceKey*) const override;
 
-    size_t bytesPerPixel(const TextureInfo&) const override;
-
     bool shouldAlwaysUseDedicatedImageMemory() const {
         return fShouldAlwaysUseDedicatedImageMemory;
     }
@@ -76,9 +77,12 @@ public:
         return fShouldPersistentlyMapCpuToGpuBuffers;
     }
 
+    bool supportsInlineUniformBlocks() const { return fSupportsInlineUniformBlocks; }
+
     uint32_t maxVertexAttributes() const {
         return fMaxVertexAttributes;
     }
+    uint64_t maxUniformBufferRange() const { return fMaxUniformBufferRange; }
 
     uint64_t getRenderPassDescKey(const RenderPassDesc& renderPassDesc) const;
 
@@ -208,6 +212,7 @@ private:
     const DepthStencilFormatInfo& getDepthStencilFormatInfo(VkFormat) const;
 
     uint32_t fMaxVertexAttributes;
+    uint64_t fMaxUniformBufferRange;
 
     // Various bools to define whether certain Vulkan features are supported.
     bool fSupportsMemorylessAttachments = false;
@@ -215,6 +220,7 @@ private:
     bool fShouldAlwaysUseDedicatedImageMemory = false;
     bool fGpuOnlyBuffersMorePerformant = false;
     bool fShouldPersistentlyMapCpuToGpuBuffers = true;
+    bool fSupportsInlineUniformBlocks = false;
 };
 
 } // namespace skgpu::graphite

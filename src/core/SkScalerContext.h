@@ -363,11 +363,26 @@ public:
 protected:
     SkScalerContextRec fRec;
 
-    /** Generates the contents of glyph.fWidth, fHeight, fTop, fLeft,
-     *  as well as fAdvanceX and fAdvanceY if not already set.
-     *  The fMaskFormat will already be set to a requested format but may be changed.
-     */
-    virtual void generateMetrics(SkGlyph* glyph, SkArenaAlloc*) = 0;
+    struct GlyphMetrics {
+        SkVector       advance;
+        SkIRect        bounds;
+        SkMask::Format maskFormat;
+        uint16_t       extraBits;
+        bool           neverRequestPath;
+        bool           computeFromPath;
+
+        GlyphMetrics(SkMask::Format format)
+            : advance{0, 0}
+            , bounds{0, 0, 0, 0}
+            , maskFormat(format)
+            , extraBits(0)
+            , neverRequestPath(false)
+            , computeFromPath(false)
+        {}
+    };
+
+    virtual GlyphMetrics generateMetrics(const SkGlyph&, SkArenaAlloc*) = 0;
+
     static bool GenerateMetricsFromPath(
         SkGlyph* glyph, const SkPath& path, SkMask::Format format,
         bool verticalLCD, bool a8FromLCD, bool hairline);
@@ -380,9 +395,9 @@ protected:
      *  Because glyph.imageSize() will determine the size of fImage,
      *  generateMetrics will be called before generateImage.
      */
-    virtual void generateImage(const SkGlyph& glyph) = 0;
+    virtual void generateImage(const SkGlyph& glyph, void* imageBuffer) = 0;
     static void GenerateImageFromPath(
-        const SkMask& mask, const SkPath& path, const SkMaskGamma::PreBlend& maskPreBlend,
+        SkMaskBuilder& dst, const SkPath& path, const SkMaskGamma::PreBlend& maskPreBlend,
         bool doBGR, bool verticalLCD, bool a8FromLCD, bool hairline);
 
     /** Sets the passed path to the glyph outline.

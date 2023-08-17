@@ -1321,6 +1321,7 @@ void Device::asyncRescaleAndReadPixels(const SkImageInfo& info,
 }
 
 void Device::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvColorSpace,
+                                             bool readAlpha,
                                              sk_sp<SkColorSpace> dstColorSpace,
                                              const SkIRect& srcRect,
                                              SkISize dstSize,
@@ -1336,6 +1337,7 @@ void Device::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvColorSpace,
     }
     sdc->asyncRescaleAndReadPixelsYUV420(dContext,
                                          yuvColorSpace,
+                                         readAlpha,
                                          std::move(dstColorSpace),
                                          srcRect,
                                          dstSize,
@@ -1385,12 +1387,15 @@ sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& info, const SkSurfacePro
     ASSERT_SINGLE_OWNER
     // TODO: Change the signature of newSurface to take a budgeted parameter.
     static const skgpu::Budgeted kBudgeted = skgpu::Budgeted::kNo;
+    bool isProtected = this->targetProxy()->isProtected() == GrProtected::kYes;
     return SkSurfaces::RenderTarget(fContext.get(),
                                     kBudgeted,
                                     info,
                                     fSurfaceDrawContext->numSamples(),
                                     fSurfaceDrawContext->origin(),
-                                    &props);
+                                    &props,
+                                    /* shouldCreateWithMips= */ false,
+                                    isProtected);
 }
 
 SkImageFilterCache* Device::getImageFilterCache() {

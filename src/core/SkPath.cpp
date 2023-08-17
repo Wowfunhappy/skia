@@ -34,6 +34,7 @@
 #include <cmath>
 #include <cstring>
 #include <iterator>
+#include <limits.h>
 #include <utility>
 
 struct SkPath_Storage_Equivalent {
@@ -1441,17 +1442,16 @@ SkPath& SkPath::addPath(const SkPath& srcPath, const SkMatrix& matrix, AddPathMo
     }
 
     if (kAppend_AddPathMode == mode && !matrix.hasPerspective()) {
-        fLastMoveToIndex = this->countPoints() + src->fLastMoveToIndex;
-
+        if (src->fLastMoveToIndex >= 0) {
+            fLastMoveToIndex = src->fLastMoveToIndex + this->countPoints();
+        } else {
+            fLastMoveToIndex = src->fLastMoveToIndex - this->countPoints();
+        }
         SkPathRef::Editor ed(&fPathRef);
         auto [newPts, newWeights] = ed.growForVerbsInPath(*src->fPathRef);
         matrix.mapPoints(newPts, src->fPathRef->points(), src->countPoints());
         if (int numWeights = src->fPathRef->countWeights()) {
             memcpy(newWeights, src->fPathRef->conicWeights(), numWeights * sizeof(newWeights[0]));
-        }
-        // fiddle with fLastMoveToIndex, as we do in SkPath::close()
-        if ((SkPathVerb)fPathRef->verbsEnd()[-1] == SkPathVerb::kClose) {
-            fLastMoveToIndex ^= ~fLastMoveToIndex >> (8 * sizeof(fLastMoveToIndex) - 1);
         }
         return this->dirtyAfterEdit();
     }
@@ -1467,8 +1467,7 @@ SkPath& SkPath::addPath(const SkPath& srcPath, const SkMatrix& matrix, AddPathMo
                     injectMoveToIfNeeded(); // In case last contour is closed
                     SkPoint lastPt;
                     // don't add lineTo if it is degenerate
-                    if (fLastMoveToIndex < 0 || !this->getLastPt(&lastPt) ||
-                        lastPt != mappedPts[0]) {
+                    if (!this->getLastPt(&lastPt) || lastPt != mappedPts[0]) {
                         this->lineTo(mappedPts[0]);
                     }
                 } else {
@@ -3421,43 +3420,52 @@ bool SkPath::IsCubicDegenerate(const SkPoint& p1, const SkPoint& p2,
 
 SkPathVerbAnalysis sk_path_analyze_verbs(const uint8_t vbs[], int verbCount) {
     SkPathVerbAnalysis info = {false, 0, 0, 0};
-
     bool needMove = true;
     bool invalid = false;
-    for (int i = 0; i < verbCount; ++i) {
-        switch ((SkPathVerb)vbs[i]) {
-            case SkPathVerb::kMove:
-                needMove = false;
-                info.points += 1;
-                break;
-            case SkPathVerb::kLine:
-                invalid |= needMove;
-                info.segmentMask |= kLine_SkPathSegmentMask;
-                info.points += 1;
-                break;
-            case SkPathVerb::kQuad:
-                invalid |= needMove;
-                info.segmentMask |= kQuad_SkPathSegmentMask;
-                info.points += 2;
-                break;
-            case SkPathVerb::kConic:
-                invalid |= needMove;
-                info.segmentMask |= kConic_SkPathSegmentMask;
-                info.points += 2;
-                info.weights += 1;
-                break;
-            case SkPathVerb::kCubic:
-                invalid |= needMove;
-                info.segmentMask |= kCubic_SkPathSegmentMask;
-                info.points += 3;
-                break;
-            case SkPathVerb::kClose:
-                invalid |= needMove;
-                needMove = true;
-                break;
-            default:
-                invalid = true;
-                break;
+
+    if (verbCount >= (INT_MAX / 3)) {
+        // A path with an extremely high number of quad, conic or cubic verbs could cause
+        // `info.points` to overflow. To prevent against this, we reject extremely large paths. This
+        // check is conservative and assumes the worst case (in particular, it assumes that every
+        // verb consumes 3 points, which would only happen for a path composed entirely of cubics).
+        // This limits us to 700 million verbs, which is large enough for any reasonable use case.
+        invalid = true;
+    } else {
+        for (int i = 0; i < verbCount; ++i) {
+            switch ((SkPathVerb)vbs[i]) {
+                case SkPathVerb::kMove:
+                    needMove = false;
+                    info.points += 1;
+                    break;
+                case SkPathVerb::kLine:
+                    invalid |= needMove;
+                    info.segmentMask |= kLine_SkPathSegmentMask;
+                    info.points += 1;
+                    break;
+                case SkPathVerb::kQuad:
+                    invalid |= needMove;
+                    info.segmentMask |= kQuad_SkPathSegmentMask;
+                    info.points += 2;
+                    break;
+                case SkPathVerb::kConic:
+                    invalid |= needMove;
+                    info.segmentMask |= kConic_SkPathSegmentMask;
+                    info.points += 2;
+                    info.weights += 1;
+                    break;
+                case SkPathVerb::kCubic:
+                    invalid |= needMove;
+                    info.segmentMask |= kCubic_SkPathSegmentMask;
+                    info.points += 3;
+                    break;
+                case SkPathVerb::kClose:
+                    invalid |= needMove;
+                    needMove = true;
+                    break;
+                default:
+                    invalid = true;
+                    break;
+            }
         }
     }
     info.valid = !invalid;

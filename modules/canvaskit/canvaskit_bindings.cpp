@@ -10,6 +10,7 @@
 #include "include/codec/SkEncodedImageFormat.h"
 #include "include/core/SkBBHFactory.h"
 #include "include/core/SkBlendMode.h"
+#include "include/core/SkBlender.h"
 #include "include/core/SkBlurTypes.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
@@ -86,6 +87,7 @@
 #ifdef CK_ENABLE_WEBGL
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrTypes.h"
+#include "include/gpu/ganesh/gl/GrGLBackendSurface.h"
 #include "include/gpu/gl/GrGLInterface.h"
 #include "include/gpu/gl/GrGLTypes.h"
 #include "src/gpu/RefCntedCallback.h"
@@ -215,7 +217,7 @@ sk_sp<SkSurface> MakeOnScreenGLSurface(sk_sp<GrDirectContext> dContext, int widt
 
     const auto colorSettings = ColorSettings(colorSpace);
     info.fFormat = colorSettings.pixFormat;
-    GrBackendRenderTarget target(width, height, sampleCnt, stencil, info);
+    auto target = GrBackendRenderTargets::MakeGL(width, height, sampleCnt, stencil, info);
     sk_sp<SkSurface> surface(SkSurfaces::WrapBackendRenderTarget(dContext.get(),
                                                                  target,
                                                                  kBottomLeft_GrSurfaceOrigin,
@@ -906,7 +908,10 @@ public:
     glInfo.fFormat = GR_GL_RGBA8;
     glInfo.fTarget = GR_GL_TEXTURE_2D;
 
-    GrBackendTexture backendTexture(fInfo.width(), fInfo.height(), mipmapped, glInfo);
+    auto backendTexture = GrBackendTextures::MakeGL(fInfo.width(),
+                                                    fInfo.height(),
+                                                    mipmapped,
+                                                    glInfo);
 
     // In order to bind the image source to the texture, makeTexture has changed which
     // texture is "in focus" for the WebGL context.
@@ -1084,6 +1089,10 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("width",  optional_override([](SkAnimatedImage& self)->int32_t {
             return SkScalarFloorToInt(self.getBounds().width());
         }));
+
+    class_<SkBlender>("Blender")
+        .smart_ptr<sk_sp<SkBlender>>("sk_sp<Blender>")
+        .class_function("Mode", &SkBlender::Mode);
 
     class_<SkCanvas>("Canvas")
         .constructor<>()
@@ -1597,6 +1606,12 @@ EMSCRIPTEN_BINDINGS(Skia) {
 
     class_<SkImageFilter>("ImageFilter")
         .smart_ptr<sk_sp<SkImageFilter>>("sk_sp<ImageFilter>")
+        .function("_getOutputBounds", optional_override([](const SkImageFilter& self, WASMPointerF32 bPtr, WASMPointerF32 mPtr, WASMPointerU32 oPtr)->void {
+          SkRect* rect = reinterpret_cast<SkRect*>(bPtr);
+          OptionalMatrix ctm(mPtr);
+          SkIRect* output = reinterpret_cast<SkIRect*>(oPtr);
+          output[0] = self.filterBounds(ctm.mapRect(*rect).roundOut(), ctm, SkImageFilter::kForward_MapDirection);
+        }))
         .class_function("MakeBlend", optional_override([](SkBlendMode mode, sk_sp<SkImageFilter> background,
                                                           sk_sp<SkImageFilter> foreground)->sk_sp<SkImageFilter> {
             return SkImageFilters::Blend(mode, background, foreground);
@@ -1708,6 +1723,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
         .function("setAntiAlias", &SkPaint::setAntiAlias)
         .function("setAlphaf", &SkPaint::setAlphaf)
         .function("setBlendMode", &SkPaint::setBlendMode)
+        .function("setBlender", &SkPaint::setBlender)
         .function("_setColor", optional_override([](SkPaint& self, WASMPointerF32 cPtr,
                 sk_sp<SkColorSpace> colorSpace) {
             self.setColor(ptrToSkColor4f(cPtr), colorSpace.get());
@@ -2100,6 +2116,17 @@ EMSCRIPTEN_BINDINGS(Skia) {
             }
             return effect;
         }))
+        .class_function("_MakeForBlender", optional_override([](std::string sksl,
+                                                     emscripten::val errHandler
+                                                    )->sk_sp<SkRuntimeEffect> {
+            SkString s(sksl.c_str(), sksl.length());
+            auto [effect, errorText] = SkRuntimeEffect::MakeForBlender(s);
+            if (!effect) {
+                errHandler.call<void>("onError", val(errorText.c_str()));
+                return nullptr;
+            }
+            return effect;
+        }))
 #ifdef SKSL_ENABLE_TRACING
         .class_function("MakeTraced", optional_override([](
                 sk_sp<SkShader> shader,
@@ -2153,6 +2180,21 @@ EMSCRIPTEN_BINDINGS(Skia) {
             delete[] children;
             return s;
         }))
+        .function("_makeBlender", optional_override([](SkRuntimeEffect& self,
+                                                       WASMPointerF32 fPtr,
+                                                       size_t fLen,
+                                                       bool shouldOwnUniforms)->sk_sp<SkBlender> {
+            void* uniformData = reinterpret_cast<void*>(fPtr);
+            castUniforms(uniformData, fLen, self);
+            sk_sp<SkData> uniforms;
+            if (shouldOwnUniforms) {
+                uniforms = SkData::MakeFromMalloc(uniformData, fLen);
+            } else {
+                uniforms = SkData::MakeWithoutCopy(uniformData, fLen);
+            }
+
+            return self.makeBlender(uniforms, {});
+        }))
         .function("getUniformCount", optional_override([](SkRuntimeEffect& self)->int {
             return self.uniforms().size();
         }))
@@ -2205,7 +2247,7 @@ EMSCRIPTEN_BINDINGS(Skia) {
             auto releaseCtx = new TextureReleaseContext{webglHandle, texHandle};
             GrGLTextureInfo gti = {GR_GL_TEXTURE_2D, texHandle,
                                    GR_GL_RGBA8}; // TODO(kjlubick) look at ii for this
-            GrBackendTexture gbt(ii.width, ii.height, skgpu::Mipmapped::kNo, gti);
+            auto gbt = GrBackendTextures::MakeGL(ii.width, ii.height, skgpu::Mipmapped::kNo, gti);
             auto dContext = GrAsDirectContext(self.getCanvas()->recordingContext());
 
             return SkImages::BorrowTextureFrom(dContext,

@@ -114,13 +114,16 @@ bool DawnCommandBuffer::onAddComputePass(const DispatchGroupList& groups) {
         for (const auto& dispatch : group->dispatches()) {
             this->bindComputePipeline(group->getPipeline(dispatch.fPipelineIndex));
             for (const ResourceBinding& binding : dispatch.fBindings) {
-                if (const BindBufferInfo* buffer =
-                            std::get_if<BindBufferInfo>(&binding.fResource)) {
-                    this->bindBuffer(buffer->fBuffer, buffer->fOffset, binding.fIndex);
-                } else {
-                    const TextureIndex* texIdx = std::get_if<TextureIndex>(&binding.fResource);
+                if (const BufferView* buffer = std::get_if<BufferView>(&binding.fResource)) {
+                    this->bindBuffer(buffer->fInfo.fBuffer, buffer->fInfo.fOffset, binding.fIndex);
+                } else if (const TextureIndex* texIdx =
+                                   std::get_if<TextureIndex>(&binding.fResource)) {
                     SkASSERT(texIdx);
-                    this->bindTexture(group->getTexture(*texIdx), binding.fIndex);
+                    this->bindTexture(group->getTexture(texIdx->fValue), binding.fIndex);
+                } else {
+                    const SamplerIndex* samplerIdx = std::get_if<SamplerIndex>(&binding.fResource);
+                    SkASSERT(samplerIdx);
+                    this->bindSampler(group->getSampler(samplerIdx->fValue), binding.fIndex);
                 }
             }
             this->dispatchThreadgroups(dispatch.fParams.fGlobalDispatchSize,
@@ -167,8 +170,8 @@ bool DawnCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
 
         // TODO: check Texture matches RenderPassDesc
         const auto* dawnColorTexture = static_cast<const DawnTexture*>(colorTexture);
-        SkASSERT(dawnColorTexture->dawnTextureView());
-        wgpuColorAttachment.view = dawnColorTexture->dawnTextureView();
+        SkASSERT(dawnColorTexture->renderTextureView());
+        wgpuColorAttachment.view = dawnColorTexture->renderTextureView();
 
         const std::array<float, 4>& clearColor = renderPassDesc.fClearColor;
         wgpuColorAttachment.clearValue = {
@@ -181,8 +184,8 @@ bool DawnCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
             SkASSERT(renderPassDesc.fColorResolveAttachment.fStoreOp == StoreOp::kStore);
             // TODO: check Texture matches RenderPassDesc
             const auto* dawnResolveTexture = static_cast<const DawnTexture*>(resolveTexture);
-            SkASSERT(dawnResolveTexture->dawnTextureView());
-            wgpuColorAttachment.resolveTarget = dawnResolveTexture->dawnTextureView();
+            SkASSERT(dawnResolveTexture->renderTextureView());
+            wgpuColorAttachment.resolveTarget = dawnResolveTexture->renderTextureView();
 
             // Inclusion of a resolve texture implies the client wants to finish the
             // renderpass with a resolve.
@@ -204,8 +207,8 @@ bool DawnCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
         SkASSERT(DawnFormatIsDepthOrStencil(format));
 
         // TODO: check Texture matches RenderPassDesc
-        SkASSERT(dawnDepthStencilTexture->dawnTextureView());
-        wgpuDepthStencilAttachment.view = dawnDepthStencilTexture->dawnTextureView();
+        SkASSERT(dawnDepthStencilTexture->renderTextureView());
+        wgpuDepthStencilAttachment.view = dawnDepthStencilTexture->renderTextureView();
 
         if (DawnFormatIsDepth(format)) {
             wgpuDepthStencilAttachment.depthClearValue = renderPassDesc.fClearDepth;
@@ -276,7 +279,7 @@ bool DawnCommandBuffer::loadMSAAFromResolveAndBeginRenderPassEncoder(
     wgpuIntermediateColorAttachment.loadOp = wgpu::LoadOp::Clear;
     wgpuIntermediateColorAttachment.clearValue = {1, 1, 1, 1};
     wgpuIntermediateColorAttachment.storeOp = wgpu::StoreOp::Store;
-    wgpuIntermediateColorAttachment.view = msaaLoadTexture->dawnTextureView();
+    wgpuIntermediateColorAttachment.view = msaaLoadTexture->renderTextureView();
 
     wgpu::RenderPassDescriptor wgpuIntermediateRenderPassDesc;
     wgpuIntermediateRenderPassDesc.colorAttachmentCount = 1;
@@ -298,7 +301,7 @@ bool DawnCommandBuffer::loadMSAAFromResolveAndBeginRenderPassEncoder(
     fActiveRenderPassEncoder = fCommandEncoder.BeginRenderPass(&wgpuRenderPassDesc);
 
     return this->doBlitWithDraw(frontendRenderPassDesc,
-                                /*sourceTextureView=*/msaaLoadTexture->dawnTextureView(),
+                                /*sourceTextureView=*/msaaLoadTexture->renderTextureView(),
                                 msaaTexture->dimensions().width(),
                                 msaaTexture->dimensions().height());
 }
@@ -502,7 +505,7 @@ void DawnCommandBuffer::bindTextureAndSamplers(
                 static_cast<const DawnTexture*>(drawPass.getTexture(command.fTextureIndices[i]));
         const auto* sampler =
                 static_cast<const DawnSampler*>(drawPass.getSampler(command.fSamplerIndices[i]));
-        auto& wgpuTextureView = texture->dawnTextureView();
+        auto& wgpuTextureView = texture->sampleTextureView();
         auto& wgpuSampler = sampler->dawnSampler();
 
         // Assuming shader generator assigns binding slot to sampler then texture,
@@ -734,6 +737,11 @@ void DawnCommandBuffer::bindBuffer(const Buffer* buffer, unsigned int offset, un
 }
 
 void DawnCommandBuffer::bindTexture(const Texture* texture, unsigned int index) {
+    // TODO: https://b.corp.google.com/issues/260341543
+    SkASSERT(false);
+}
+
+void DawnCommandBuffer::bindSampler(const Sampler* sampler, unsigned int index) {
     // TODO: https://b.corp.google.com/issues/260341543
     SkASSERT(false);
 }
