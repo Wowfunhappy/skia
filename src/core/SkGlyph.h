@@ -625,6 +625,7 @@ private:
     float     fAdvanceX = 0,
               fAdvanceY = 0;
 
+    public:
     SkMask::Format fMaskFormat{SkMask::kBW_Format};
 
     // Used by the SkScalerContext to pass state from generateMetrics to generateImage.

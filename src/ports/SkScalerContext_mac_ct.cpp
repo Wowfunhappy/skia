@@ -111,55 +111,6 @@ static bool isLion() { return darwinVersion() == 11; }
 static bool isMountainLion() { return darwinVersion() == 12; }
 static bool isMavericks() { return darwinVersion() == 13; }
 
-template <typename T> class AutoCGTable : SkNoncopyable {
-public:
-    AutoCGTable(CGFontRef font)
-            // Undocumented: the tag parameter in this call is expected in machine order and not BE
-            // order.
-            : fCFData(CGFontCopyTableForTag(font,
-                                            SkSetFourByteTag(T::TAG0, T::TAG1, T::TAG2, T::TAG3)))
-            , fData(fCFData ? reinterpret_cast<const T*>(CFDataGetBytePtr(fCFData.get()))
-                            : nullptr) {}
-    const T* operator->() const { return fData; }
-
-private:
-    SkUniqueCFRef<CFDataRef> fCFData;
-
-public:
-    const T* fData;
-};
-
-#include <sys/utsname.h>
-// See Source/WebKit/chromium/base/mac/mac_util.mm DarwinMajorVersionInternal for original source.
-static int readVersion() {
-    struct utsname info;
-    if (uname(&info) != 0) {
-        SkDebugf("uname failed\n");
-        return 0;
-    }
-    if (strcmp(info.sysname, "Darwin") != 0) {
-        SkDebugf("unexpected uname sysname %s\n", info.sysname);
-        return 0;
-    }
-    char* dot = strchr(info.release, '.');
-    if (!dot) {
-        SkDebugf("expected dot in uname release %s\n", info.release);
-        return 0;
-    }
-    int version = atoi(info.release);
-    if (version == 0) {
-        SkDebugf("could not parse uname release %s\n", info.release);
-    }
-    return version;
-}
-static int darwinVersion() {
-    static int darwin_version = readVersion();
-    return darwin_version;
-}
-static bool isLion() { return darwinVersion() == 11; }
-static bool isMountainLion() { return darwinVersion() == 12; }
-static bool isMavericks() { return darwinVersion() == 13; }
-
 static void sk_memset_rect32(
         uint32_t* ptr, uint32_t value, int width, int height, size_t rowBytes) {
     SkASSERT(width);
@@ -451,7 +402,7 @@ bool SkScalerContext_Mac::generateBBoxes() {
 
 SkScalerContext::GlyphMetrics SkScalerContext_Mac::generateMetrics(const SkGlyph& glyph,
                                                                    SkArenaAlloc*) {
-    glyph->fMaskFormat = fRec.fMaskFormat;
+    const_cast<SkGlyph&>(glyph).fMaskFormat = fRec.fMaskFormat;
     GlyphMetrics mx(glyph.maskFormat());
 
     mx.neverRequestPath = ((SkTypeface_Mac*)this->getTypeface())->fHasColorGlyphs;
@@ -493,7 +444,7 @@ SkScalerContext::GlyphMetrics SkScalerContext_Mac::generateMetrics(const SkGlyph
         (cgGlyph < fGlyphCount && cgGlyph >= getFBoundingBoxesGlyphOffset() && generateBBoxes())) {
         const GlyphRect& gRect = fFBoundingBoxes[cgGlyph - fFBoundingBoxesGlyphOffset];
         if (gRect.fMinX >= gRect.fMaxX || gRect.fMinY >= gRect.fMaxY) {
-            return;
+            return mx;
         }
         skBounds = SkRect::MakeLTRB(gRect.fMinX, gRect.fMinY, gRect.fMaxX, gRect.fMaxY);
         // From FUnits (em space, y up) to SkGlyph units (pixels, y down).
