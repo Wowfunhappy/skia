@@ -7,8 +7,10 @@ exports_files_legacy()
 skia_filegroup(
     name = "srcs",
     srcs = [
+        "BentleyOttmann1.cpp",
         "EventQueue.cpp",
         "Point.cpp",
+        "Segment.cpp",
     ],
     visibility = ["//modules/bentleyottmann:__pkg__"],
 )

@@ -97,6 +97,7 @@ public:
     virtual bool isStorage(const TextureInfo&) const = 0;
 
     int maxTextureSize() const { return fMaxTextureSize; }
+    int defaultMSAASamplesCount() const { return fDefaultMSAASamples; }
 
     virtual void buildKeyForTexture(SkISize dimensions,
                                     const TextureInfo&,
@@ -183,6 +184,9 @@ public:
     // Returns whether a draw buffer can be mapped.
     bool drawBufferCanBeMapped() const { return fDrawBufferCanBeMapped; }
 
+    // Returns whether multisampled render to single sampled is supported.
+    bool msaaRenderToSingleSampledSupport() const { return fMSAARenderToSingleSampledSupport; }
+
     // Returns whether compute shaders are supported.
     bool computeSupport() const { return fComputeSupport; }
 
@@ -267,6 +271,7 @@ protected:
     bool fStorageBufferSupport = false;
     bool fStorageBufferPreferred = false;
     bool fDrawBufferCanBeMapped = true;
+    bool fMSAARenderToSingleSampledSupport = false;
 
     bool fComputeSupport = false;
 
@@ -281,7 +286,7 @@ protected:
      */
     ShaderErrorHandler* fShaderErrorHandler = nullptr;
 
-#if GRAPHITE_TEST_UTILS
+#if defined(GRAPHITE_TEST_UTILS)
     int  fMaxTextureAtlasSize = 2048;
 #endif
     size_t fGlyphCacheTextureMaximumBytes = 2048 * 1024 * 4;

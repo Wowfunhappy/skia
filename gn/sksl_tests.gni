@@ -209,6 +209,9 @@ sksl_error_tests = [
   "errors/OverflowUintLiteral.sksl",
   "errors/OverloadedBuiltin.sksl",
   "errors/OverloadedMain.sksl",
+  "errors/PixelFormatMismatch.compute",
+  "errors/PixelFormatMissing.compute",
+  "errors/PixelFormatOverloads.compute",
   "errors/PrecisionQualifiersDisallowed.sksl",
   "errors/PrivateTypes.rts",
   "errors/PrivateVariables.rts",
@@ -370,6 +373,7 @@ sksl_spirv_tests = [
   "spirv/InterfaceBlockPushConstant.sksl",
   "spirv/LayoutMultipleOf4.sksl",
   "spirv/LayoutOutOfOrder.sksl",
+  "spirv/MixedSamplerTypes.sksl",
   "spirv/OpaqueTypeInArray.sksl",
   "spirv/Ossfuzz35916.sksl",
   "spirv/Ossfuzz37627.sksl",
@@ -377,8 +381,7 @@ sksl_spirv_tests = [
   "spirv/Ossfuzz53202.sksl",
   "spirv/StructArrayMemberInDifferentLayouts.sksl",
   "spirv/UnusedInterfaceBlock.sksl",
-  "spirv/WGSLLayoutInVulkanSPIRV.sksl",
-  "spirv/WrongCombinedSamplerLayoutSPIRVDawnCompatMode.sksl",
+  "spirv/WrongCombinedSamplerLayoutForWebGPUSampler.sksl",
   "workarounds/RewriteMatrixVectorMultiply.sksl",
 ]
 
@@ -596,6 +599,7 @@ sksl_shared_tests = [
   "shared/MatrixSwizzleStore.sksl",
   "shared/MatrixToVectorCast.sksl",
   "shared/MultipleAssignments.sksl",
+  "shared/NestedComparisonIntrinsics.sksl",
   "shared/NoFragCoordsPos.vert",
   "shared/NoFragCoordsPosRT.vert",
   "shared/NormalizationVert.vert",
@@ -773,7 +777,6 @@ sksl_inliner_tests = [
   "inliner/ModifiedArrayParametersCannotBeInlined.sksl",
   "inliner/ModifiedStructParametersCannotBeInlined.sksl",
   "inliner/NoInline.sksl",
-  "inliner/OpaqueCallsCannotBeInlined.sksl",
   "inliner/Ossfuzz37994.sksl",
   "inliner/ShortCircuitEvaluationsCannotInlineRightHandSide.sksl",
   "inliner/StaticSwitch.sksl",
@@ -962,7 +965,8 @@ sksl_metal_tests_sources =
 
 sksl_hlsl_tests_sources = sksl_blend_tests + sksl_shared_tests
 
-sksl_wgsl_tests_sources = sksl_blend_tests + sksl_shared_tests + sksl_wgsl_tests
+sksl_wgsl_tests_sources =
+    sksl_blend_tests + sksl_folding_tests + sksl_shared_tests + sksl_wgsl_tests
 
 sksl_spirv_tests_sources =
     sksl_blend_tests + sksl_compute_tests + sksl_shared_tests + sksl_spirv_tests

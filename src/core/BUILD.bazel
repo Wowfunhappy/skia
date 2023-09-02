@@ -147,7 +147,6 @@ CORE_FILES = [
     "SkFontStream.cpp",
     "SkFontStream.h",
     "SkFont_serial.cpp",
-    "SkFuzzLogging.h",
     "SkGaussFilter.cpp",
     "SkGaussFilter.h",
     "SkGeometry.cpp",
@@ -198,6 +197,8 @@ CORE_FILES = [
     "SkMemset_opts.cpp",
     "SkMemset_opts_avx.cpp",
     "SkMemset_opts_erms.cpp",
+    "SkMesh.cpp",
+    "SkMeshPriv.h",
     "SkMessageBus.h",
     "SkMipmap.cpp",
     "SkMipmap.h",
@@ -208,6 +209,7 @@ CORE_FILES = [
     "SkNextID.h",
     "SkOSFile.h",
     "SkOpts.cpp",
+    "SkOptsTargets.h",
     "SkOpts.h",
     "SkOverdrawCanvas.cpp",
     "SkPaint.cpp",
@@ -272,6 +274,12 @@ CORE_FILES = [
     "SkRegion_path.cpp",
     "SkResourceCache.cpp",
     "SkResourceCache.h",
+    "SkRuntimeBlender.cpp",
+    "SkRuntimeBlender.h",
+    "SkRuntimeEffect.cpp",
+    "SkRuntimeEffectPriv.h",
+    "SkSLTypeShared.cpp",
+    "SkSLTypeShared.h",
     "SkSafeRange.h",
     "SkSamplingPriv.h",
     "SkScalar.cpp",
@@ -355,23 +363,6 @@ split_srcs_and_hdrs(
     files = CORE_FILES,
 )
 
-# These files are only needed if SkSL is enabled (GPU backend or SkRP).
-SKSL_FILES = [
-    "SkMesh.cpp",
-    "SkMeshPriv.h",
-    "SkRuntimeBlender.cpp",
-    "SkRuntimeBlender.h",
-    "SkRuntimeEffect.cpp",
-    "SkRuntimeEffectPriv.h",
-    "SkSLTypeShared.cpp",
-    "SkSLTypeShared.h",
-]
-
-split_srcs_and_hdrs(
-    name = "sksl",
-    files = SKSL_FILES,
-)
-
 skia_filegroup(
     name = "legacy_draw_looper",
     srcs = [
@@ -411,12 +402,7 @@ skia_filegroup(
         ":core_skslc_srcs",
         ":core_srcs",
         ":skpicture_srcs",
-    ] + select({
-        "//src/sksl:needs_sksl": [
-            ":sksl_srcs",
-        ],
-        "//conditions:default": [],
-    }),
+    ],
     visibility = ["//src:__pkg__"],
 )
 
@@ -426,12 +412,7 @@ skia_filegroup(
         ":core_hdrs",
         ":core_skslc_hdrs",
         ":skpicture_hdrs",
-    ] + select({
-        "//src/sksl:needs_sksl": [
-            ":sksl_hdrs",
-        ],
-        "//conditions:default": [],
-    }),
+    ],
     visibility = ["//src:__pkg__"],
 )
 
@@ -445,11 +426,13 @@ skia_filegroup(
         "SkMatrixInvert.h",
         "SkMatrixUtils.h",
         "SkPathPriv.h",
+        "SkPathEnums.h",
         "SkPointPriv.h",
         "SkRRectPriv.h",
         "SkRectPriv.h",
         "SkSamplingPriv.h",
         "SkStreamPriv.h",
+        "SkSwizzlePriv.h",
     ],
     visibility = ["//src:__pkg__"],
 )
@@ -475,6 +458,7 @@ skia_filegroup(
         "SkLineClipper.cpp",
         "SkM44.cpp",
         "SkMatrix.cpp",
+        "SkMatrixInvert.cpp",
         "SkPath.cpp",
         "SkPathBuilder.cpp",
         "SkPathRef.cpp",

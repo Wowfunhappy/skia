@@ -11,8 +11,7 @@ struct _GlobalUniforms {
   colorRed: vec4<f32>,
 };
 @binding(0) @group(0) var<uniform> _globalUniforms: _GlobalUniforms;
-fn switch_fallthrough_twice_bi(_skParam0: i32) -> bool {
-  let value = _skParam0;
+fn switch_fallthrough_twice_bi(value: i32) -> bool {
   {
     var ok: bool = false;
     switch value {
@@ -30,8 +29,7 @@ fn switch_fallthrough_twice_bi(_skParam0: i32) -> bool {
     return ok;
   }
 }
-fn switch_fallthrough_groups_bi(_skParam0: i32) -> bool {
-  let value = _skParam0;
+fn switch_fallthrough_groups_bi(value: i32) -> bool {
   {
     var ok: bool = false;
     switch value {
@@ -79,8 +77,7 @@ fn switch_fallthrough_groups_bi(_skParam0: i32) -> bool {
     return ok;
   }
 }
-fn main(_skParam0: vec2<f32>) -> vec4<f32> {
-  let coords = _skParam0;
+fn _skslMain(coords: vec2<f32>) -> vec4<f32> {
   {
     var x: i32 = i32(_globalUniforms.colorGreen.y);
     var _0_ok: bool = false;
@@ -119,8 +116,8 @@ fn main(_skParam0: vec2<f32>) -> vec4<f32> {
     return _skTemp3;
   }
 }
-@fragment fn fragmentMain(_stageIn: FSIn) -> FSOut {
+@fragment fn main(_stageIn: FSIn) -> FSOut {
   var _stageOut: FSOut;
-  _stageOut.sk_FragColor = main(_stageIn.sk_FragCoord.xy);
+  _stageOut.sk_FragColor = _skslMain(_stageIn.sk_FragCoord.xy);
   return _stageOut;
 }
