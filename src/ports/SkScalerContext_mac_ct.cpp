@@ -403,13 +403,10 @@ bool SkScalerContext_Mac::generateBBoxes() {
     return true;
 }
 
-unsigned SkScalerContext_Mac::generateGlyphCount(void) {
-    return fGlyphCount;
-}
-
-bool SkScalerContext_Mac::generateAdvance(SkGlyph* glyph) {
-    return false;
-}
+SkScalerContext::GlyphMetrics SkScalerContext_Mac::generateMetrics(const SkGlyph& glyph,
+                                                                   SkArenaAlloc*) {
+    const_cast<SkGlyph&>(glyph).fMaskFormat = fRec.fMaskFormat;
+    GlyphMetrics mx(glyph.maskFormat());
 
     mx.neverRequestPath = ((SkTypeface_Mac*)this->getTypeface())->fHasColorGlyphs;
 
@@ -451,7 +448,7 @@ bool SkScalerContext_Mac::generateAdvance(SkGlyph* glyph) {
     {
         const GlyphRect& gRect = fFBoundingBoxes[cgGlyph - fFBoundingBoxesGlyphOffset];
         if (gRect.fMinX >= gRect.fMaxX || gRect.fMinY >= gRect.fMaxY) {
-            return;
+            return mx;
         }
         skBounds = SkRect::MakeLTRB(gRect.fMinX, gRect.fMinY, gRect.fMaxX, gRect.fMaxY);
         // From FUnits (em space, y up) to SkGlyph units (pixels, y down).
