@@ -10,6 +10,7 @@
 
 #include "include/core/SkSpan.h"
 #include "include/private/SkSLDefines.h"
+#include "include/private/base/SkTArray.h"
 #include "src/base/SkEnumBitMask.h"
 #include "src/core/SkTHash.h"
 #include "src/sksl/SkSLMemoryLayout.h"
@@ -47,6 +48,7 @@ class InterfaceBlock;
 enum IntrinsicKind : int8_t;
 struct Layout;
 class Literal;
+class ModifiersDeclaration;
 class OutputStream;
 class PostfixExpression;
 class PrefixExpression;
@@ -98,7 +100,8 @@ public:
         kFrontFacing,  // input
         kSampleIndex,  // input
         kFragDepth,    // output
-        kSampleMask,   // input, output
+        kSampleMaskIn, // input
+        kSampleMask,   // output
 
         // Compute stage:
         kLocalInvocationId,     // input
@@ -125,17 +128,11 @@ public:
                                                WGSLFunctionDependencies>;
 
         ProgramRequirements() = default;
-        ProgramRequirements(DepsMap dependencies, bool mainNeedsCoordsArgument)
-                : dependencies(std::move(dependencies))
-                , mainNeedsCoordsArgument(mainNeedsCoordsArgument) {}
+        ProgramRequirements(DepsMap dependencies) : dependencies(std::move(dependencies)) {}
 
         // Mappings used to synthesize function parameters according to dependencies on pipeline
         // input/output variables.
         DepsMap dependencies;
-
-        // True, if the main function takes a coordinate parameter. This is used to ensure that
-        // sk_FragCoord is declared as part of pipeline inputs.
-        bool mainNeedsCoordsArgument;
     };
 
     WGSLCodeGenerator(const Context* context, const Program* program, OutputStream* out)
@@ -154,21 +151,24 @@ private:
     void write(std::string_view s);
     void writeLine(std::string_view s = std::string_view());
     void finishLine();
-    void writeVariableDecl(const Type& type, std::string_view name, Delimiter delimiter);
 
     // Helpers to declare a pipeline stage IO parameter declaration.
     void writePipelineIODeclaration(const Layout& layout,
                                     const Type& type,
                                     std::string_view name,
                                     Delimiter delimiter);
-    void writeUserDefinedIODecl(const Type& type,
+    void writeUserDefinedIODecl(const Layout& layout,
+                                const Type& type,
                                 std::string_view name,
-                                int location,
                                 Delimiter delimiter);
     void writeBuiltinIODecl(const Type& type,
                             std::string_view name,
                             Builtin builtin,
                             Delimiter delimiter);
+    void writeVariableDecl(const Layout& layout,
+                           const Type& type,
+                           std::string_view name,
+                           Delimiter delimiter);
 
     // Write a function definition.
     void writeFunction(const FunctionDefinition& f);
@@ -226,6 +226,8 @@ private:
     std::string assembleTernaryExpression(const TernaryExpression& t, Precedence parentPrecedence);
     std::string assembleVariableReference(const VariableReference& r);
     std::string assembleName(std::string_view name);
+
+    std::string assembleIncrementExpr(const Type& type);
 
     // Intrinsic helper functions.
     std::string assembleIntrinsicCall(const FunctionCall& call,
@@ -287,6 +289,7 @@ private:
     void writeProgramElement(const ProgramElement& e);
     void writeGlobalVarDeclaration(const GlobalVarDeclaration& d);
     void writeStructDefinition(const StructDefinition& s);
+    void writeModifiersDeclaration(const ModifiersDeclaration&);
 
     // Writes the WGSL struct fields for SkSL structs and interface blocks. Enforces WGSL address
     // space layout constraints
@@ -295,7 +298,9 @@ private:
     void writeFields(SkSpan<const Field> fields, const MemoryLayout* memoryLayout = nullptr);
 
     // We bundle uniforms, and all varying pipeline stage inputs and outputs, into separate structs.
+    bool needsStageInputStruct() const;
     void writeStageInputStruct();
+    bool needsStageOutputStruct() const;
     void writeStageOutputStruct();
     void writeUniformsAndBuffers();
     void prepareUniformPolyfillsForInterfaceBlock(const InterfaceBlock* interfaceBlock,
@@ -336,7 +341,8 @@ private:
 
     // Stores the disallowed identifier names.
     ProgramRequirements fRequirements;
-    int fPipelineInputCount = 0;
+    skia_private::TArray<const Variable*> fPipelineInputs;
+    skia_private::TArray<const Variable*> fPipelineOutputs;
 
     // These fields track whether we have written the polyfill for `inverse()` for a given matrix
     // type.
@@ -365,6 +371,9 @@ private:
     bool fHasUnconditionalReturn = false;
     bool fAtFunctionScope = false;
     int fConditionalScopeDepth = 0;
+    int fLocalSizeX = 1;
+    int fLocalSizeY = 1;
+    int fLocalSizeZ = 1;
 
     int fScratchCount = 0;
 };

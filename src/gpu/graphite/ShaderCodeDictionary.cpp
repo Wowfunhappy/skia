@@ -310,10 +310,7 @@ std::string ShaderInfo::toSkSL(const Caps* caps,
                         : skgpu::GetBlendFormula(
                                   /*isOpaque=*/false, /*hasCoverage=*/true, fBlendMode);
 
-        const bool needsSurfaceColorForCoverage =
-                this->needsSurfaceColor() || (coverageBlendFormula.hasSecondaryOutput() &&
-                                              !caps->shaderCaps()->fDualSourceBlendingSupport);
-        if (needsSurfaceColorForCoverage) {
+        if (this->needsSurfaceColor()) {
             // If this draw uses a non-coherent dst read, we want to keep the existing dst color (or
             // whatever has been previously drawn) when there's no coverage. This helps for batching
             // text draws that need to read from a dst copy for blends. However, this only helps the
@@ -338,6 +335,13 @@ std::string ShaderInfo::toSkSL(const Caps* caps,
                     &mainBody,
                     "sk_FragColor = %s * outputCoverage + surfaceColor * (1.0 - outputCoverage);",
                     outColor);
+            if (coverage == Coverage::kLCD) {
+                SkSL::String::appendf(
+                        &mainBody,
+                        "half3 lerpRGB = mix(surfaceColor.aaa, %s.aaa, outputCoverage.rgb);"
+                        "sk_FragColor.a = max(max(lerpRGB.r, lerpRGB.g), lerpRGB.b);",
+                        outColor);
+            }
 
         } else {
             fBlendInfo = {coverageBlendFormula.equation(),
@@ -346,6 +350,11 @@ std::string ShaderInfo::toSkSL(const Caps* caps,
                           SK_PMColor4fTRANSPARENT,
                           coverageBlendFormula.modifiesDst()};
 
+            if (coverage == Coverage::kLCD) {
+                mainBody += "outputCoverage.a = max(max(outputCoverage.r, "
+                                                       "outputCoverage.g), "
+                                                   "outputCoverage.b);";
+            }
             append_color_output(
                     &mainBody, coverageBlendFormula.primaryOutput(), "sk_FragColor", outColor);
             if (coverageBlendFormula.hasSecondaryOutput()) {

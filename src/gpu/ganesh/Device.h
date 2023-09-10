@@ -83,9 +83,9 @@ class SurfaceFillContext;
 class SurfaceDrawContext;
 
 /**
- *  Subclass of SkBaseDevice, which directs all drawing to the GrGpu owned by the canvas.
+ *  Subclass of SkDevice, which directs all drawing to the GrGpu owned by the canvas.
  */
-class Device final : public SkBaseDevice {
+class Device final : public SkDevice {
 public:
     enum class InitContents {
         kClear,
@@ -209,7 +209,7 @@ public:
 
     void drawDrawable(SkCanvas*, SkDrawable*, const SkMatrix*) override;
 
-    void drawDevice(SkBaseDevice*, const SkSamplingOptions&, const SkPaint&) override;
+    void drawDevice(SkDevice*, const SkSamplingOptions&, const SkPaint&) override;
     void drawSpecial(SkSpecialImage*, const SkMatrix& localToDevice, const SkSamplingOptions&,
                      const SkPaint&) override;
 
@@ -245,16 +245,11 @@ public:
 
     bool onAccessPixels(SkPixmap*) override;
 
-    bool android_utils_clipWithStencil() override;
-
     Device* asGaneshDevice() override { return this; }
 
 protected:
     bool onReadPixels(const SkPixmap&, int, int) override;
     bool onWritePixels(const SkPixmap&, int, int) override;
-
-    void onSave() override { fClip.save(); }
-    void onRestore() override { fClip.restore(); }
 
     void onDrawGlyphRunList(SkCanvas*,
                             const sktext::GlyphRunList&,
@@ -268,34 +263,47 @@ protected:
 
     void drawSlug(SkCanvas*, const sktext::gpu::Slug* slug, const SkPaint& drawingPaint) override;
 
-    void onClipRect(const SkRect& rect, SkClipOp op, bool aa) override {
+    SkIRect devClipBounds() const override { return fClip.getConservativeBounds(); }
+
+    void pushClipStack() override { fClip.save(); }
+    void popClipStack() override { fClip.restore(); }
+
+    void clipRect(const SkRect& rect, SkClipOp op, bool aa) override {
         SkASSERT(op == SkClipOp::kIntersect || op == SkClipOp::kDifference);
         fClip.clipRect(this->localToDevice(), rect, GrAA(aa), op);
     }
-    void onClipRRect(const SkRRect& rrect, SkClipOp op, bool aa) override {
+    void clipRRect(const SkRRect& rrect, SkClipOp op, bool aa) override {
         SkASSERT(op == SkClipOp::kIntersect || op == SkClipOp::kDifference);
         fClip.clipRRect(this->localToDevice(), rrect, GrAA(aa), op);
     }
-    void onClipPath(const SkPath& path, SkClipOp op, bool aa) override;
-    void onClipShader(sk_sp<SkShader> shader) override {
-        fClip.clipShader(std::move(shader));
-    }
-    void onReplaceClip(const SkIRect& rect) override {
+    void clipPath(const SkPath& path, SkClipOp op, bool aa) override;
+
+    void replaceClip(const SkIRect& rect) override {
         // Transform from "global/canvas" coordinates to relative to this device
         SkRect deviceRect = SkMatrixPriv::MapRect(this->globalToDevice(), SkRect::Make(rect));
         fClip.replaceClip(deviceRect.round());
     }
-    void onClipRegion(const SkRegion& globalRgn, SkClipOp op) override;
-    void onAsRgnClip(SkRegion*) const override;
-    ClipType onGetClipType() const override;
-    bool onClipIsAA() const override;
+    void clipRegion(const SkRegion& globalRgn, SkClipOp op) override;
 
-    bool onClipIsWideOpen() const override {
+    bool isClipAntiAliased() const override;
+
+    bool isClipEmpty() const override {
+        return fClip.clipState() == ClipStack::ClipState::kEmpty;
+    }
+
+    bool isClipRect() const override {
+        return fClip.clipState() == ClipStack::ClipState::kDeviceRect ||
+               fClip.clipState() == ClipStack::ClipState::kWideOpen;
+    }
+
+    bool isClipWideOpen() const override {
         return fClip.clipState() == ClipStack::ClipState::kWideOpen;
     }
-    SkIRect onDevClipBounds() const override { return fClip.getConservativeBounds(); }
 
-    skif::Context createContext(const skif::ContextInfo& ctxInfo) const override;
+    void android_utils_clipAsRgn(SkRegion*) const override;
+    bool android_utils_clipWithStencil() override;
+
+    skif::Context createContext(const skif::ContextInfo&) const override;
 
 private:
     enum class DeviceFlags {
@@ -323,13 +331,15 @@ private:
 
     Device(std::unique_ptr<SurfaceDrawContext>, DeviceFlags);
 
-    SkBaseDevice* onCreateDevice(const CreateInfo&, const SkPaint*) override;
+    SkDevice* onCreateDevice(const CreateInfo&, const SkPaint*) override;
 
     sk_sp<SkSurface> makeSurface(const SkImageInfo&, const SkSurfaceProps&) override;
 
     SkImageFilterCache* getImageFilterCache() override;
 
-    bool forceConservativeRasterClip() const override { return true; }
+    void onClipShader(sk_sp<SkShader> shader) override {
+        fClip.clipShader(std::move(shader));
+    }
 
     const GrClip* clip() const { return &fClip; }
 

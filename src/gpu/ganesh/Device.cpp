@@ -273,7 +273,7 @@ sk_sp<Device> Device::Make(GrRecordingContext* rContext,
 }
 
 Device::Device(std::unique_ptr<SurfaceDrawContext> sdc, DeviceFlags flags)
-        : SkBaseDevice(MakeInfo(sdc.get(), flags), sdc->surfaceProps())
+        : SkDevice(MakeInfo(sdc.get(), flags), sdc->surfaceProps())
         , fContext(sk_ref_sp(sdc->recordingContext()))
         , fSDFTControl(sdc->recordingContext()->priv().getSDFTControl(
                        sdc->surfaceProps().isUseDeviceIndependentFonts()))
@@ -344,10 +344,10 @@ void Device::clearAll() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void Device::onClipPath(const SkPath& path, SkClipOp op, bool aa) {
+void Device::clipPath(const SkPath& path, SkClipOp op, bool aa) {
 #if defined(GR_TEST_UTILS)
     if (fContext->priv().options().fAllPathsVolatile && !path.isVolatile()) {
-        this->onClipPath(SkPath(path).setIsVolatile(true), op, aa);
+        this->clipPath(SkPath(path).setIsVolatile(true), op, aa);
         return;
     }
 #endif
@@ -355,7 +355,7 @@ void Device::onClipPath(const SkPath& path, SkClipOp op, bool aa) {
     fClip.clipPath(this->localToDevice(), path, GrAA(aa), op);
 }
 
-void Device::onClipRegion(const SkRegion& globalRgn, SkClipOp op) {
+void Device::clipRegion(const SkRegion& globalRgn, SkClipOp op) {
     SkASSERT(op == SkClipOp::kIntersect || op == SkClipOp::kDifference);
 
     // Regions don't actually need AA, but in DMSAA mode every clip element is antialiased.
@@ -372,7 +372,7 @@ void Device::onClipRegion(const SkRegion& globalRgn, SkClipOp op) {
     }
 }
 
-void Device::onAsRgnClip(SkRegion* region) const {
+void Device::android_utils_clipAsRgn(SkRegion* region) const {
     SkIRect bounds = fClip.getConservativeBounds();
     // Assume wide open and then perform intersect/difference operations reducing the region
     region->setRect(bounds);
@@ -392,7 +392,7 @@ void Device::onAsRgnClip(SkRegion* region) const {
     }
 }
 
-bool Device::onClipIsAA() const {
+bool Device::isClipAntiAliased() const {
     for (const ClipStack::Element& e : fClip) {
         if (e.fAA == GrAA::kYes) {
             return true;
@@ -400,18 +400,6 @@ bool Device::onClipIsAA() const {
         SkASSERT(!fSurfaceDrawContext->alwaysAntialias());
     }
     return false;
-}
-
-SkBaseDevice::ClipType Device::onGetClipType() const {
-    ClipStack::ClipState state = fClip.clipState();
-    if (state == ClipStack::ClipState::kEmpty) {
-        return ClipType::kEmpty;
-    } else if (state == ClipStack::ClipState::kDeviceRect ||
-               state == ClipStack::ClipState::kWideOpen) {
-        return ClipType::kRect;
-    } else {
-        return ClipType::kComplex;
-    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -756,7 +744,7 @@ void Device::drawArc(const SkRect& oval,
     ASSERT_SINGLE_OWNER
     GR_CREATE_TRACE_MARKER_CONTEXT("skgpu::ganesh::Device", "drawArc", fContext.get());
     if (paint.getMaskFilter()) {
-        this->SkBaseDevice::drawArc(oval, startAngle, sweepAngle, useCenter, paint);
+        this->SkDevice::drawArc(oval, startAngle, sweepAngle, useCenter, paint);
         return;
     }
     GrPaint grPaint;
@@ -937,13 +925,13 @@ sk_sp<SkSpecialImage> Device::snapSpecialScaled(const SkIRect& subset, const SkI
                                                 this->surfaceProps());
 }
 
-void Device::drawDevice(SkBaseDevice* device,
+void Device::drawDevice(SkDevice* device,
                         const SkSamplingOptions& sampling,
                         const SkPaint& paint) {
     ASSERT_SINGLE_OWNER
     // clear of the source device must occur before CHECK_SHOULD_DRAW
     GR_CREATE_TRACE_MARKER_CONTEXT("skgpu::ganesh::Device", "drawDevice", fContext.get());
-    this->SkBaseDevice::drawDevice(device, sampling, paint);
+    this->SkDevice::drawDevice(device, sampling, paint);
 }
 
 void Device::drawImageRect(const SkImage* image,
@@ -1121,7 +1109,7 @@ void Device::drawShadow(const SkPath& path, const SkDrawShadowRec& rec) {
 
     if (!fSurfaceDrawContext->drawFastShadow(this->clip(), this->localToDevice(), path, rec)) {
         // failed to find an accelerated case
-        this->SkBaseDevice::drawShadow(path, rec);
+        this->SkDevice::drawShadow(path, rec);
     }
 }
 #endif  // SK_ENABLE_OPTIMIZE_SIZE
@@ -1208,7 +1196,7 @@ void Device::drawDrawable(SkCanvas* canvas, SkDrawable* drawable, const SkMatrix
             return;
         }
     }
-    this->SkBaseDevice::drawDrawable(canvas, drawable, matrix);
+    this->SkDevice::drawDrawable(canvas, drawable, matrix);
 }
 
 
@@ -1349,7 +1337,7 @@ void Device::asyncRescaleAndReadPixelsYUV420(SkYUVColorSpace yuvColorSpace,
 
 ///////////////////////////////////////////////////////////////////////////////
 
-SkBaseDevice* Device::onCreateDevice(const CreateInfo& cinfo, const SkPaint*) {
+SkDevice* Device::onCreateDevice(const CreateInfo& cinfo, const SkPaint*) {
     ASSERT_SINGLE_OWNER
 
     SkSurfaceProps props(this->surfaceProps().flags(), cinfo.fPixelGeometry);
@@ -1409,7 +1397,7 @@ SkImageFilterCache* Device::getImageFilterCache() {
 
 bool Device::android_utils_clipWithStencil() {
     SkRegion clipRegion;
-    this->onAsRgnClip(&clipRegion);
+    this->android_utils_clipAsRgn(&clipRegion);
     if (clipRegion.isEmpty()) {
         return false;
     }
