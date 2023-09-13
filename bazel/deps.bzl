@@ -29,7 +29,7 @@ def c_plus_plus_deps(ws = "@"):
     new_git_repository(
         name = "dawn",
         build_file = ws + "//bazel/external/dawn:BUILD.bazel",
-        commit = "a97b5b824f6da1772f6d6b66b6810f6f93ed98d8",
+        commit = "d00d8da6f58de5d24e5b3225ea9951ba39c09971",
         remote = "https://dawn.googlesource.com/dawn.git",
     )
 
@@ -125,7 +125,7 @@ def c_plus_plus_deps(ws = "@"):
     new_git_repository(
         name = "libwebp",
         build_file = ws + "//bazel/external/libwebp:BUILD.bazel",
-        commit = "fd7bb21c0cb56e8a82e9bfa376164b842f433f3b",
+        commit = "2af26267cdfcb63a88e5c74a85927a12d6ca1d76",
         remote = "https://chromium.googlesource.com/webm/libwebp.git",
     )
 
@@ -160,7 +160,7 @@ def c_plus_plus_deps(ws = "@"):
     new_git_repository(
         name = "spirv_cross",
         build_file = ws + "//bazel/external/spirv_cross:BUILD.bazel",
-        commit = "54997fb4bc3adeb47b9b9f7bb67f1c25eaca2204",
+        commit = "5e963d62fa3f2f0ff891c9f9ca150097127c3aad",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Cross",
     )
 
@@ -172,7 +172,7 @@ def c_plus_plus_deps(ws = "@"):
 
     git_repository(
         name = "spirv_tools",
-        commit = "47b63a4d7da04ae8d3f50a5df560c4b879308257",
+        commit = "fc54e178e94060dff8c06dc6957736e713737e53",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git",
     )
 
@@ -186,14 +186,14 @@ def c_plus_plus_deps(ws = "@"):
     new_git_repository(
         name = "vulkan_headers",
         build_file = ws + "//bazel/external/vulkan_headers:BUILD.bazel",
-        commit = "2634c969d7dc0e983f005f7f2e665cce8449efe6",
+        commit = "4f51aac14f65629dfe83702b806f740dbd7bd701",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Headers",
     )
 
     new_git_repository(
         name = "vulkan_tools",
         build_file = ws + "//bazel/external/vulkan_tools:BUILD.bazel",
-        commit = "e50622314dfc8efa00e2e5f824a63464f1a94665",
+        commit = "45095e1b094ae45d4437ad516aaffbb499882d18",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Tools",
     )
 

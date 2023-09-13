@@ -971,7 +971,7 @@ func (b *taskBuilder) defaultSwarmDimensions() {
 					"IntelIris540":  "8086:1926-31.0.101.2115",
 					"IntelIris6100": "8086:162b-20.19.15.4963",
 					"IntelIris655":  "8086:3ea5-26.20.100.7463",
-					"IntelIrisXe":   "8086:9a49-31.0.101.4338",
+					"IntelIrisXe":   "8086:9a49-31.0.101.4575",
 					"RadeonHD7770":  "1002:683d-26.20.13031.18002",
 					"RadeonR9M470X": "1002:6646-26.20.13031.18002",
 					"QuadroP400":    "10de:1cb3-30.0.15.1179",
@@ -2166,6 +2166,7 @@ var shorthandToLabel = map[string]labelAndSavedOutputDir{
 	"android_pathops_test":            {"//tests:android_pathops_test", "tests"},
 	"android_cpu_only_test":           {"//tests:android_cpu_only_test", "tests"},
 	"android_discardable_memory_test": {"//tests:android_discardable_memory_test", "tests"},
+	"hello_bazel_world_android_test":  {"//gm:hello_bazel_world_android_test", "gm"},
 }
 
 // bazelBuild adds a task which builds the specified single-target label (//foo:bar) or
@@ -2258,8 +2259,13 @@ func (b *jobBuilder) bazelTest() {
 	}
 
 	// Expand task driver name to keep task names short.
+	isPrecompiledGM := false
 	if taskdriverName == "precompiled" {
 		taskdriverName = "bazel_test_precompiled"
+	}
+	if taskdriverName == "precompiled_gm" {
+		taskdriverName = "bazel_test_precompiled"
+		isPrecompiledGM = true
 	}
 	if taskdriverName == "gm" {
 		taskdriverName = "bazel_test_gm"
@@ -2322,6 +2328,18 @@ func (b *jobBuilder) bazelTest() {
 			cmd = append(cmd,
 				"--command="+command,
 				"--command_workdir="+commandWorkDir)
+
+			if isPrecompiledGM {
+				cmd = append(cmd,
+					"--gm",
+					"--test_label="+labelAndSavedOutputDir.label,
+					"--goldctl_path=./cipd_bin_packages/goldctl",
+					"--git_commit="+specs.PLACEHOLDER_REVISION,
+					"--changelist_id="+specs.PLACEHOLDER_ISSUE,
+					"--patchset_order="+specs.PLACEHOLDER_PATCHSET,
+					"--tryjob_id="+specs.PLACEHOLDER_BUILDBUCKET_BUILD_ID)
+				b.cipd(CIPD_PKGS_GOLDCTL)
+			}
 
 		case "bazel_test_gm":
 			cmd = append(cmd,
