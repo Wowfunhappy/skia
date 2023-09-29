@@ -426,7 +426,8 @@ std::string_view to_scalar_type(const Type& type) {
 
 // Convert a SkSL type to a WGSL type. Handles all plain types except structure types
 // (see https://www.w3.org/TR/WGSL/#plain-types-section).
-std::string to_wgsl_type(const Context& context, const Type& type, const Layout* layout = nullptr) {
+std::string to_wgsl_type(const Context& context, const Type& raw, const Layout* layout = nullptr) {
+    const Type& type = raw.resolve().scalarTypeForLiteral();
     switch (type.typeKind()) {
         case Type::TypeKind::kScalar:
             return std::string(to_scalar_type(type));
@@ -1253,6 +1254,12 @@ void WGSLCodeGenerator::writeUserDefinedIODecl(const Layout& layout,
                                                std::string_view name,
                                                Delimiter delimiter) {
     this->write("@location(" + std::to_string(layout.fLocation) + ") ");
+
+    // Indices are only allowed when doing dual-source blending, and only on color attachment 0.
+    if (layout.fLocation == 0 && layout.fIndex >= 0 && fContext.fCaps->fDualSourceBlendingSupport &&
+        fProgram.fInterface.fOutputSecondaryColor) {
+        this->write("@index(" + std::to_string(layout.fIndex) + ") ");
+    }
 
     // "User-defined IO of scalar or vector integer type must always be specified as
     // @interpolate(flat)" (see https://www.w3.org/TR/WGSL/#interpolation)
@@ -2725,6 +2732,21 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
         case k_notEqual_IntrinsicKind:
             return this->assembleBinaryOpIntrinsic(OperatorKind::NEQ, call, parentPrecedence);
 
+        case k_packHalf2x16_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("pack2x16float", call);
+
+        case k_packSnorm2x16_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("pack2x16snorm", call);
+
+        case k_packSnorm4x8_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("pack4x8snorm", call);
+
+        case k_packUnorm2x16_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("pack2x16unorm", call);
+
+        case k_packUnorm4x8_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("pack4x8unorm", call);
+
         case k_reflect_IntrinsicKind:
             if (arguments[0]->type().isScalar()) {
                 // I - 2 * N * I * N
@@ -2818,6 +2840,21 @@ std::string WGSLCodeGenerator::assembleIntrinsicCall(const FunctionCall& call,
 
         case k_textureWrite_IntrinsicKind:
             return this->assembleSimpleIntrinsic("textureStore", call);
+
+        case k_unpackHalf2x16_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("unpack2x16float", call);
+
+        case k_unpackSnorm2x16_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("unpack2x16snorm", call);
+
+        case k_unpackSnorm4x8_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("unpack4x8snorm", call);
+
+        case k_unpackUnorm2x16_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("unpack2x16unorm", call);
+
+        case k_unpackUnorm4x8_IntrinsicKind:
+            return this->assembleSimpleIntrinsic("unpack4x8unorm", call);
 
         case k_clamp_IntrinsicKind:
         case k_max_IntrinsicKind:
@@ -3786,6 +3823,9 @@ void WGSLCodeGenerator::writeEnables() {
     this->writeLine("diagnostic(off, derivative_uniformity);");
     if (fRequirements.fPixelLocalExtension) {
         this->writeLine("enable chromium_experimental_pixel_local;");
+    }
+    if (fProgram.fInterface.fOutputSecondaryColor) {
+        this->writeLine("enable chromium_internal_dual_source_blending;");
     }
 }
 

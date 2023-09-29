@@ -25,6 +25,8 @@ SHADER_FILES = [
     "SkLocalMatrixShader.h",
     "SkPerlinNoiseShaderImpl.cpp",
     "SkPerlinNoiseShaderImpl.h",
+    "SkPictureShader.cpp",
+    "SkPictureShader.h",
     "SkRuntimeShader.cpp",
     "SkRuntimeShader.h",
     "SkShader.cpp",
@@ -34,8 +36,8 @@ SHADER_FILES = [
     "SkTransformShader.h",
     "SkTriColorShader.cpp",
     "SkTriColorShader.h",
-    "SkPictureShader.cpp",
-    "SkPictureShader.h",
+    "SkWorkingColorSpaceShader.cpp",
+    "SkWorkingColorSpaceShader.h",
 ]
 
 split_srcs_and_hdrs(
@@ -54,7 +56,10 @@ skia_filegroup(
         ":shader_srcs",
         "//src/shaders/gradients:srcs",
     ],
-    visibility = ["//src:__pkg__"],
+    visibility = [
+        "//src:__pkg__",
+        "//src/core:__pkg__",
+    ],
 )
 
 skia_filegroup(
@@ -63,5 +68,24 @@ skia_filegroup(
         ":shader_hdrs",
         "//src/shaders/gradients:private_hdrs",
     ],
-    visibility = ["//src:__pkg__"],
+    visibility = [
+        "//src:__pkg__",
+        "//src/core:__pkg__",
+    ],
+)
+
+alias(
+    name = "core_priv_hdrs",
+    actual = ":private_hdrs",
+    visibility = [
+        "//src/core:__pkg__",
+    ],
+)
+
+alias(
+    name = "core_srcs",
+    actual = ":srcs",
+    visibility = [
+        "//src/core:__pkg__",
+    ],
 )

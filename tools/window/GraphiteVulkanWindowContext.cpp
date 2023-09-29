@@ -21,6 +21,7 @@
 #include "include/gpu/graphite/vk/VulkanGraphiteUtils.h"
 #include "include/gpu/vk/VulkanExtensions.h"
 #include "include/gpu/vk/VulkanTypes.h"
+#include "include/private/gpu/graphite/ContextOptionsPriv.h"
 #include "src/base/SkAutoMalloc.h"
 #include "src/gpu/graphite/vk/VulkanGraphiteUtilsPriv.h"
 #include "src/gpu/vk/VulkanInterface.h"
@@ -119,7 +120,10 @@ void GraphiteVulkanWindowContext::initializeContext() {
     GET_DEV_PROC(GetDeviceQueue);
 
     skgpu::graphite::ContextOptions contextOptions;
-    contextOptions.fStoreContextRefInRecorder = true;
+    skgpu::graphite::ContextOptionsPriv contextOptionsPriv;
+    // Needed to make synchronous readPixels work
+    contextOptionsPriv.fStoreContextRefInRecorder = true;
+    contextOptions.fOptionsPriv = &contextOptionsPriv;
     fGraphiteContext = skgpu::graphite::ContextFactory::MakeVulkan(backendContext, contextOptions);
     fGraphiteRecorder = fGraphiteContext->makeRecorder(ToolUtils::CreateTestingRecorderOptions());
 

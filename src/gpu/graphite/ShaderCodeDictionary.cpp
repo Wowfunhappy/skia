@@ -581,24 +581,21 @@ std::string GenerateDstReadSampleExpression(const ShaderInfo& shaderInfo,
             get_mangled_uniform_name(shaderInfo, entry->fUniforms[0], node->keyIndex());
     std::string helperFnName = get_mangled_name(entry->fStaticFunctionName, node->keyIndex());
 
-    return SkSL::String::printf("%s(%s, %s, %s)",
+    return SkSL::String::printf("%s(%s, %s)",
                                 helperFnName.c_str(),
-                                args.fPriorStageOutput.data(),
                                 coords.c_str(),
                                 sampler.c_str());
 }
 
-// Emit a surfaceColor global, and a function that passes through a half4 value and initializes
-// surfaceColor as a side effect.
 std::string GenerateDstReadSamplePreamble(const ShaderInfo& shaderInfo, const ShaderNode* node) {
     std::string helperFnName =
             get_mangled_name(node->entry()->fStaticFunctionName, node->keyIndex());
 
     return SkSL::String::printf(
-            "half4 surfaceColor;"
-            "half4 %s(half4 priorStageOutput, float4 coords, sampler2D dstSampler) {"
+            "half4 surfaceColor;"  // we save off the original dstRead color to combine w/ coverage
+            "half4 %s(float4 coords, sampler2D dstSampler) {"
                 "surfaceColor = sample(dstSampler, (sk_FragCoord.xy - coords.xy) * coords.zw);"
-                "return priorStageOutput;"
+                "return surfaceColor;"
             "}",
             helperFnName.c_str());
 }
@@ -610,10 +607,7 @@ std::string GenerateDstReadFetchExpression(const ShaderInfo& shaderInfo,
     std::string helperFnName =
             get_mangled_name(node->entry()->fStaticFunctionName, node->keyIndex());
 
-    return SkSL::String::printf(
-            "%s(%s)",
-            helperFnName.c_str(),
-            args.fPriorStageOutput.data());
+    return SkSL::String::printf("%s()", helperFnName.c_str());
 }
 
 std::string GenerateDstReadFetchPreamble(const ShaderInfo& shaderInfo, const ShaderNode* node) {
@@ -621,10 +615,10 @@ std::string GenerateDstReadFetchPreamble(const ShaderInfo& shaderInfo, const Sha
             get_mangled_name(node->entry()->fStaticFunctionName, node->keyIndex());
 
     return SkSL::String::printf(
-            "half4 surfaceColor;"
-            "half4 %s(half4 priorStageOutput) {"
+            "half4 surfaceColor;"  // we save off the original dstRead color to combine w/ coverage
+            "half4 %s() {"
                 "surfaceColor = sk_LastFragColor;"
-                "return priorStageOutput;"
+                "return surfaceColor;"
             "}",
             helperFnName.c_str());
 }
@@ -868,6 +862,8 @@ static_assert(3 == static_cast<int>(ReadSwizzle::kRRR1),
               "ImageShader code depends on ReadSwizzle");
 static_assert(4 == static_cast<int>(ReadSwizzle::kBGRA),
               "ImageShader code depends on ReadSwizzle");
+static_assert(5 == static_cast<int>(ReadSwizzle::k000R),
+              "ImageShader code depends on ReadSwizzle");
 
 static constexpr char kImageShaderName[] = "sk_image_shader";
 static constexpr char kCubicImageShaderName[] = "sk_cubic_image_shader";
@@ -1019,11 +1015,6 @@ std::string GenerateBlendShaderPreamble(const ShaderInfo& shaderInfo,
 }
 
 //--------------------------------------------------------------------------------------------------
-static constexpr char kColorFilterShaderName[] = "ColorFilterShader";
-
-static constexpr int kNumColorFilterShaderChildren = 2;
-
-//--------------------------------------------------------------------------------------------------
 static constexpr char kRuntimeShaderName[] = "RuntimeEffect";
 
 class GraphitePipelineCallbacks : public SkSL::PipelineStage::Callbacks {
@@ -1141,9 +1132,9 @@ static constexpr Uniform kMatrixColorFilterUniforms[] = {
 static constexpr char kMatrixColorFilterName[] = "sk_matrix_colorfilter";
 
 //--------------------------------------------------------------------------------------------------
-static constexpr char kComposeColorFilterName[] = "ComposeColorFilter";
+static constexpr char kComposeName[] = "Compose";
 
-static constexpr int kNumComposeColorFilterChildren = 2;
+static constexpr int kNumComposeChildren = 2;
 
 // Compose two children, assuming the first child is the innermost.
 std::string GenerateNestedChildrenPreamble(const ShaderInfo& shaderInfo,
@@ -1236,12 +1227,6 @@ std::string GenerateFixedFunctionBlenderExpression(const ShaderInfo&,
 }
 
 //--------------------------------------------------------------------------------------------------
-
-std::string GenerateDstColorExpression(const ShaderInfo&,
-                                       const ShaderNode* node,
-                                       const ShaderSnippet::Args& args) {
-    return "surfaceColor";
-}
 
 std::string GeneratePrimitiveColorExpression(const ShaderInfo&,
                                              const ShaderNode* node,
@@ -1628,18 +1613,6 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             GenerateDefaultPreamble,
             kNoChildren
     };
-
-    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kColorFilterShader] = {
-            "ColorFilterShader",
-            {},      // no uniforms
-            SnippetRequirementFlags::kNone,
-            { },     // no samplers
-            kColorFilterShaderName,
-            GenerateDefaultExpression,
-            GenerateNestedChildrenPreamble,
-            kNumColorFilterShaderChildren
-    };
-
     // SkColorFilter snippets
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kMatrixColorFilter] = {
             "MatrixColorFilter",
@@ -1650,16 +1623,6 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             GenerateDefaultExpression,
             GenerateDefaultPreamble,
             kNoChildren
-    };
-    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kComposeColorFilter] = {
-            "ComposeColorFilter",
-            { },     // no uniforms
-            SnippetRequirementFlags::kPriorStageOutput,
-            { },     // no samplers
-            kComposeColorFilterName,
-            GenerateDefaultExpression,
-            GenerateNestedChildrenPreamble,
-            kNumComposeColorFilterChildren
     };
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kTableColorFilter] = {
             "TableColorFilter",
@@ -1723,16 +1686,6 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
             kNoChildren
     };
 
-    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kDstColor] = {
-            "DstColor",
-            { },          // no uniforms
-            SnippetRequirementFlags::kSurfaceColor,
-            { },          // no samplers
-            "dst color",  // no static sksl
-            GenerateDstColorExpression,
-            GenerateDefaultPreamble,
-            kNoChildren
-    };
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kPrimitiveColor] = {
             "PrimitiveColor",
             { },                // no uniforms
@@ -1747,7 +1700,7 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kDstReadSample] = {
             "DstReadSample",
             SkSpan(kDstReadSampleUniforms),
-            SnippetRequirementFlags::kNone,
+            SnippetRequirementFlags::kSurfaceColor,
             SkSpan(kDstReadSampleTexturesAndSamplers),
             "InitSurfaceColor",
             GenerateDstReadSampleExpression,
@@ -1757,12 +1710,22 @@ ShaderCodeDictionary::ShaderCodeDictionary() {
     fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kDstReadFetch] = {
             "DstReadFetch",
             { },     // no uniforms
-            SnippetRequirementFlags::kNone,
+            SnippetRequirementFlags::kSurfaceColor,
             { },     // no samplers
             "InitSurfaceColor",
             GenerateDstReadFetchExpression,
             GenerateDstReadFetchPreamble,
             kNoChildren
+    };
+    fBuiltInCodeSnippets[(int) BuiltInCodeSnippetID::kCompose] = {
+            "Compose",
+            { },     // no uniforms
+            SnippetRequirementFlags::kPriorStageOutput,
+            { },     // no samplers
+            kComposeName,
+            GenerateDefaultExpression,
+            GenerateNestedChildrenPreamble,
+            kNumComposeChildren
     };
 
     // Fixed-function blend mode snippets are all the same, their functionality is entirely defined

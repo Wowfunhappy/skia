@@ -263,7 +263,7 @@ sk_sp<VulkanFramebuffer> VulkanResourceProvider::createFramebuffer(
     return VulkanFramebuffer::Make(context, framebufferInfo);
 }
 
-void VulkanResourceProvider::onDeleteBackendTexture(BackendTexture& texture) {
+void VulkanResourceProvider::onDeleteBackendTexture(const BackendTexture& texture) {
     SkASSERT(texture.isValid());
     SkASSERT(texture.backend() == BackendApi::kVulkan);
 

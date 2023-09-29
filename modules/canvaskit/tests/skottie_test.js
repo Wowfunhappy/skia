@@ -93,21 +93,40 @@ describe('Skottie behavior', () => {
                                                          {'flightAnim.gif': promises[1]});
         expect(animation).toBeTruthy();
 
+        const slotInfo = animation.getSlotInfo();
+        expect(slotInfo.colorSlotIDs).toEqual(['FillsGroup', 'StrokeGroup']);
+        expect(slotInfo.scalarSlotIDs).toEqual(['Opacity']);
+        expect(slotInfo.vec2SlotIDs).toEqual(['ScaleGroup']);
+        expect(slotInfo.imageSlotIDs).toEqual(['ImageSource']);
+        expect(slotInfo.textSlotIDs).toEqual(['TextSource']);
+
         expect(animation.getScalarSlot('Opacity')).toBe(100);
+        const textProp = animation.getTextSlot('TextSource');
+        expect(textProp.text).toBe('text slots');
+
+        textProp.text = 'new text';
+        textProp.fillColor = CanvasKit.CYAN;
+        textProp.strokeColor = CanvasKit.MAGENTA;
 
         expect(animation.setColorSlot('FillsGroup', CanvasKit.RED)).toBeTruthy();
         expect(animation.setScalarSlot('Opacity', 25)).toBeTruthy();
         expect(animation.setVec2Slot('ScaleGroup', [25, 50])).toBeTruthy();
         expect(animation.setImageSlot('ImageSource', 'flighAnim.gif')).toBeTruthy();
+        expect(animation.setTextSlot('TextSource', textProp)).toBeTruthy();
 
         expectArrayCloseTo(animation.getColorSlot('FillsGroup'), CanvasKit.RED, 4);
         expect(animation.getScalarSlot('Opacity')).toBe(25);
         expectArrayCloseTo(animation.getVec2Slot('ScaleGroup'), [25, 50], 4);
 
+        const newTextSlot = animation.getTextSlot('TextSource');
+        expect(newTextSlot.text).toBe('new text');
+        expectArrayCloseTo(newTextSlot.fillColor, CanvasKit.CYAN, 4);
+        expectArrayCloseTo(newTextSlot.strokeColor, CanvasKit.MAGENTA, 4);
 
         expect(animation.getColorSlot('Bad ID')).toBeFalsy();
         expect(animation.getScalarSlot('Bad ID')).toBeFalsy();
         expect(animation.getVec2Slot('Bad ID')).toBeFalsy();
+        expect(animation.getTextSlot('Bad ID')).toBeFalsy();
 
         animation.seek(0.5);
         animation.render(canvas, bounds);

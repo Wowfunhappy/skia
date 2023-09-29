@@ -870,7 +870,7 @@ void Device::drawAtlasSubRun(const sktext::gpu::AtlasSubRun* subRun,
             // We flush every Device because the glyphs that are being flushed/referenced are not
             // necessarily specific to this Device. This addresses both multiple SkSurfaces within
             // a Recorder, and nested layers.
-            ATRACE_ANDROID_FRAMEWORK_ALWAYS("Atlas full");
+            TRACE_EVENT_INSTANT0("skia.gpu", "Glyph atlas full", TRACE_EVENT_SCOPE_NAME_THREAD);
             fRecorder->priv().flushTrackedDevices();
         }
     }
@@ -991,7 +991,7 @@ void Device::drawGeometry(const Transform& localToDevice,
 
     // If an atlas path renderer was chosen we need to insert the shape into the atlas and schedule
     // it to be drawn.
-    AtlasShape::MaskInfo atlasMaskInfo;  // only used if `pathAtlas != nullptr`
+    CoverageMaskShape::MaskInfo atlasMaskInfo;  // only used if `pathAtlas != nullptr`
 
     // It is possible for the transformed shape bounds to be fully clipped out while the draw still
     // produces coverage due to an inverse fill. In this case, don't render any mask;
@@ -1020,10 +1020,11 @@ void Device::drawGeometry(const Transform& localToDevice,
         }
 
         if (!foundAtlasSpace) {
-            SKGPU_LOG_E("Shape is too large for path atlas!");
-            // TODO(b/285195175): This can happen if the atlas is not large enough. Handle this case
-            // in `chooseRenderer` and make sure that the atlas path renderer is not chosen if the
-            // path is larger than the atlas texture.
+            SKGPU_LOG_E("Failed to add shape to atlas!");
+            // TODO(b/285195175): This can happen if the atlas is not large enough or a compatible
+            // atlas texture cannot be created. Handle the first case in `chooseRenderer` and make
+            // sure that the atlas path renderer is not chosen if the path is larger than the atlas
+            // texture.
             return;
         }
     }
@@ -1082,14 +1083,17 @@ void Device::drawGeometry(const Transform& localToDevice,
         order.dependsOnStencil(setIndex);
     }
 
-    // If the atlas path renderer was chosen, then schedule the shape to be rendered into the atlas
-    // and record a single AtlashShape draw.
+    // If an atlas path renderer was chosen, then record a single CoverageMaskShape draw.
+    // The shape will be scheduled to be rendered or uploaded into the atlas during the
+    // next invocation of flushPendingWorkToRecorder().
     if (pathAtlas != nullptr) {
-        // Record the draw as a fill since stroking is handled by the atlas render.
-        Geometry atlasShape(
-                AtlasShape(geometry.shape(), pathAtlas, localToDevice.inverse(), atlasMaskInfo));
+        // Record the draw as a fill since stroking is handled by the atlas render/upload.
+        Geometry coverageMask(CoverageMaskShape(geometry.shape(),
+                                                pathAtlas->getTexture(fRecorder),
+                                                localToDevice.inverse(),
+                                                atlasMaskInfo));
         fDC->recordDraw(
-                renderer, Transform::Identity(), atlasShape, clip, order, &shading, nullptr);
+                renderer, Transform::Identity(), coverageMask, clip, order, &shading, nullptr);
     } else {
         if (styleType == SkStrokeRec::kStroke_Style ||
             styleType == SkStrokeRec::kHairline_Style ||
@@ -1202,20 +1206,26 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
         return {renderers->analyticRRect(), nullptr};
     }
 
+    PathAtlas* pathAtlas = nullptr;
     // Prefer compute atlas draws if supported. This currently implicitly filters out clip draws as
     // they require MSAA. Eventually we may want to route clip shapes to the atlas as well but not
     // if hardware MSAA is required.
     // TODO(b/285195175): There may be reasons to prefer tessellation, e.g. if the shape is large
     // and hardware MSAA looks acceptable.
-    // TODO(b/280927548): Currently we assume `pathAtlas` is a GPU compute path atlas and select it
-    // if it's supported (this should be always nullptr if SK_ENABLE_VELLO_SHADERS isn't defined).
-    // This will likely need to provide more information about the PathAtlas' rendering algorithm
-    // when we support non-compute PathAtlases, which may factor into the renderer choice.
-    PathAtlas* pathAtlas = fDC->getOrCreatePathAtlas(fRecorder);
-    if (!requireMSAA && pathAtlas) {
+    AtlasProvider* atlasProvider = fRecorder->priv().atlasProvider();
+    if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kCompute)) {
         // TODO: vello can't do correct strokes yet. Maybe this shouldn't get selected for stroke
         // renders until all stroke styles are supported?
-        return {renderers->atlasShape(), pathAtlas};
+        pathAtlas = fDC->getComputePathAtlas(fRecorder);
+    // Only use CPU rendered paths when multisampling is disabled
+    // TODO: enable other uses of the software path renderer
+    } else if (fRecorder->priv().caps()->defaultMSAASamplesCount() <= 1 &&
+               atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kSoftware)) {
+        pathAtlas = fDC->getSoftwarePathAtlas(fRecorder);
+    }
+    // We currently always use a coverage mask renderer if a `PathAtlas` is selected.
+    if (!requireMSAA && pathAtlas) {
+        return {renderers->coverageMask(), pathAtlas};
     }
 
     // If we got here, it requires tessellated path rendering or an MSAA technique applied to a
@@ -1267,6 +1277,7 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
 }
 
 void Device::flushPendingWorkToRecorder() {
+    TRACE_EVENT0("skia.gpu", TRACE_FUNC);
     SkASSERT(fRecorder);
 
     // TODO: we may need to further split this function up since device->device drawList and

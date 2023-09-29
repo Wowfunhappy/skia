@@ -723,6 +723,7 @@ void VulkanCommandBuffer::bindUniformBuffers() {
     }
     static uint64_t maxUniformBufferRange = static_cast<const VulkanSharedContext*>(
             fSharedContext)->vulkanCaps().maxUniformBufferRange();
+    float rtAdjust[4];
 
     for (int i = 0; i < descriptors.size(); i++) {
         int descriptorBindingIndex = descriptors.at(i).bindingIndex;
@@ -751,7 +752,10 @@ void VulkanCommandBuffer::bindUniformBuffers() {
                 const float y = fCurrentViewport.y() - fReplayTranslation.y();
                 float invTwoW = 2.f / fCurrentViewport.width();
                 float invTwoH = 2.f / fCurrentViewport.height();
-                float rtAdjust[4] = {invTwoW, invTwoH, -1.f - x * invTwoW, -1.f - y * invTwoH};
+                rtAdjust[0] = invTwoW;
+                rtAdjust[1] = invTwoH;
+                rtAdjust[2] = -1.f - x * invTwoW;
+                rtAdjust[3] = -1.f - y * invTwoH;
 
                 writeInlineUniform.sType =
                         VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK_EXT;
@@ -895,6 +899,7 @@ void VulkanCommandBuffer::recordTextureAndSamplerDescSet(
     } else {
         // Populate the descriptor set with texture/sampler descriptors
         TArray<VkWriteDescriptorSet> writeDescriptorSets(command.fNumTexSamplers);
+        TArray<VkDescriptorImageInfo> descriptorImageInfos(command.fNumTexSamplers);
         for (int i = 0; i < command.fNumTexSamplers; ++i) {
             auto texture = const_cast<VulkanTexture*>(static_cast<const VulkanTexture*>(
                     drawPass.getTexture(command.fTextureIndices[i])));
@@ -910,7 +915,7 @@ void VulkanCommandBuffer::recordTextureAndSamplerDescSet(
                 return;
             }
 
-            VkDescriptorImageInfo textureInfo;
+            VkDescriptorImageInfo& textureInfo = descriptorImageInfos.push_back();
             memset(&textureInfo, 0, sizeof(VkDescriptorImageInfo));
             textureInfo.sampler = sampler->vkSampler();
             textureInfo.imageView =

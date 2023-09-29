@@ -28,7 +28,6 @@
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkSpecialImage.h"
 #include "src/core/SkWriteBuffer.h"
-#include "src/effects/imagefilters/SkCropImageFilter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -79,11 +78,11 @@ private:
     skif::LayerSpace<SkIRect> onGetInputLayerBounds(
             const skif::Mapping& mapping,
             const skif::LayerSpace<SkIRect>& desiredOutput,
-            const skif::LayerSpace<SkIRect>& contentBounds) const override;
+            std::optional<skif::LayerSpace<SkIRect>> contentBounds) const override;
 
-    skif::LayerSpace<SkIRect> onGetOutputLayerBounds(
+    std::optional<skif::LayerSpace<SkIRect>> onGetOutputLayerBounds(
             const skif::Mapping& mapping,
-            const skif::LayerSpace<SkIRect>& contentBounds) const override;
+            std::optional<skif::LayerSpace<SkIRect>> contentBounds) const override;
 
     skif::LayerSpace<SkSize> mapSigma(const skif::Mapping& mapping, bool gpuBacked) const;
 
@@ -126,13 +125,13 @@ sk_sp<SkImageFilter> SkImageFilters::Blur(
         // Historically the input image was restricted to the cropRect when tiling was not
         // kDecal, so that the kernel evaluated the tiled edge conditions, while a kDecal crop
         // only affected the output.
-        filter = SkMakeCropImageFilter(*cropRect, tileMode, std::move(filter));
+        filter = SkImageFilters::Crop(*cropRect, tileMode, std::move(filter));
     }
 
     filter = sk_make_sp<SkBlurImageFilter>(SkSize{sigmaX, sigmaY}, std::move(filter));
     if (cropRect) {
         // But regardless of the tileMode, the output is always decal cropped
-        filter = SkMakeCropImageFilter(*cropRect, SkTileMode::kDecal, std::move(filter));
+        filter = SkImageFilters::Crop(*cropRect, SkTileMode::kDecal, std::move(filter));
     }
     return filter;
 }
@@ -238,10 +237,11 @@ public:
             }
         }
 
-        // Both srcIdx and dstIdx are in sync now, and can run in a 1:1 fashion. This is the
-        // normal mode of operation.
-        SkASSERT(srcIdx == dstIdx);
         if (int commonEnd = std::min(dstEnd, srcEnd); dstIdx < commonEnd) {
+            // Both srcIdx and dstIdx are in sync now, and can run in a 1:1 fashion. This is the
+            // normal mode of operation.
+            SkASSERT(srcIdx == dstIdx);
+
             int n = commonEnd - dstIdx;
             this->blurSegment(n, srcCursor, srcStride, dstCursor, dstStride);
             srcCursor += n * srcStride;
@@ -1006,7 +1006,7 @@ skif::LayerSpace<SkSize> SkBlurImageFilter::mapSigma(const skif::Mapping& mappin
 skif::LayerSpace<SkIRect> SkBlurImageFilter::onGetInputLayerBounds(
         const skif::Mapping& mapping,
         const skif::LayerSpace<SkIRect>& desiredOutput,
-        const skif::LayerSpace<SkIRect>& contentBounds) const {
+        std::optional<skif::LayerSpace<SkIRect>> contentBounds) const {
     // Use gpuBacked=true since that has a more sensitive kernel, ensuring any layer input bounds
     // will be sufficient for both GPU and CPU evaluations.
     skif::LayerSpace<SkIRect> requiredInput =
@@ -1014,13 +1014,17 @@ skif::LayerSpace<SkIRect> SkBlurImageFilter::onGetInputLayerBounds(
     return this->getChildInputLayerBounds(0, mapping, requiredInput, contentBounds);
 }
 
-skif::LayerSpace<SkIRect> SkBlurImageFilter::onGetOutputLayerBounds(
+std::optional<skif::LayerSpace<SkIRect>> SkBlurImageFilter::onGetOutputLayerBounds(
         const skif::Mapping& mapping,
-        const skif::LayerSpace<SkIRect>& contentBounds) const {
-    // Use gpuBacked=true since it will ensure output bounds are conservative; CPU-based blurs may
-    // produce 1px inset from this for very small sigmas.
-    return this->kernelBounds(mapping, this->getChildOutputLayerBounds(0, mapping, contentBounds),
-                              /*gpuBacked=*/true);
+        std::optional<skif::LayerSpace<SkIRect>> contentBounds) const {
+    auto childOutput = this->getChildOutputLayerBounds(0, mapping, contentBounds);
+    if (childOutput) {
+        // Use gpuBacked=true since it will ensure output bounds are conservative; CPU-based blurs
+        // may produce 1px inset from this for very small sigmas.
+        return this->kernelBounds(mapping, *childOutput, /*gpuBacked=*/true);
+    } else {
+        return skif::LayerSpace<SkIRect>::Unbounded();
+    }
 }
 
 SkRect SkBlurImageFilter::computeFastBounds(const SkRect& src) const {

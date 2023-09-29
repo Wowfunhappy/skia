@@ -126,7 +126,7 @@ void GLSLCodeGenerator::writeIdentifier(std::string_view identifier) {
 
 // Returns the name of the type with array dimensions, e.g. `float[2]`.
 std::string GLSLCodeGenerator::getTypeName(const Type& raw) {
-    const Type& type = raw.resolve();
+    const Type& type = raw.resolve().scalarTypeForLiteral();
     switch (type.typeKind()) {
         case Type::TypeKind::kVector: {
             const Type& component = type.componentType();
@@ -917,12 +917,7 @@ void GLSLCodeGenerator::writeVariableReference(const VariableReference& ref) {
             this->writeIdentifier("gl_InstanceID");
             break;
         case SK_LASTFRAGCOLOR_BUILTIN:
-            if (this->caps().fFBFetchSupport) {
-                this->write(this->caps().fFBFetchColorName);
-            } else {
-                fContext.fErrors->error(ref.fPosition,
-                                        "sk_LastFragColor requires framebuffer fetch support");
-            }
+            this->write(this->caps().fFBFetchColorName);
             break;
         case SK_SAMPLEMASKIN_BUILTIN:
             // GLSL defines gl_SampleMaskIn as an array of ints. SkSL defines it as a scalar uint.
@@ -1332,18 +1327,13 @@ const char* GLSLCodeGenerator::getTypePrecision(const Type& type) {
         switch (type.typeKind()) {
             case Type::TypeKind::kScalar:
                 if (type.matches(*fContext.fTypes.fShort) ||
-                    type.matches(*fContext.fTypes.fUShort)) {
-                    if (fProgram.fConfig->fSettings.fForceHighPrecision ||
-                            this->caps().fIncompleteShortIntPrecision) {
-                        return "highp ";
-                    }
-                    return "mediump ";
-                }
-                if (type.matches(*fContext.fTypes.fHalf)) {
+                    type.matches(*fContext.fTypes.fUShort) ||
+                    type.matches(*fContext.fTypes.fHalf)) {
                     return fProgram.fConfig->fSettings.fForceHighPrecision ? "highp " : "mediump ";
                 }
-                if (type.matches(*fContext.fTypes.fFloat) || type.matches(*fContext.fTypes.fInt) ||
-                        type.matches(*fContext.fTypes.fUInt)) {
+                if (type.matches(*fContext.fTypes.fFloat) ||
+                    type.matches(*fContext.fTypes.fInt) ||
+                    type.matches(*fContext.fTypes.fUInt)) {
                     return "highp ";
                 }
                 return "";

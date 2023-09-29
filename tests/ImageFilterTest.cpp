@@ -29,6 +29,7 @@
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkSamplingOptions.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkSerialProcs.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkSize.h"
 #include "include/core/SkSurface.h"
@@ -38,6 +39,7 @@
 #include "include/effects/SkGradientShader.h"
 #include "include/effects/SkImageFilters.h"
 #include "include/effects/SkPerlinNoiseShader.h"
+#include "include/encode/SkPngEncoder.h"
 #include "include/gpu/GpuTypes.h"
 #include "include/gpu/GrTypes.h"
 #include "include/private/base/SkTArray.h"
@@ -48,9 +50,7 @@
 #include "src/core/SkImageFilter_Base.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkSpecialImage.h"
-#include "src/core/SkSpecialSurface.h"
 #include "src/effects/colorfilters/SkColorFilterBase.h"
-#include "src/effects/imagefilters/SkCropImageFilter.h"
 #include "src/image/SkImage_Base.h"
 #include "tests/CtsEnforcement.h"
 #include "tests/Test.h"
@@ -115,13 +115,13 @@ private:
     skif::LayerSpace<SkIRect> onGetInputLayerBounds(
             const skif::Mapping& mapping,
             const skif::LayerSpace<SkIRect>& desiredOutput,
-            const skif::LayerSpace<SkIRect>& contentBounds) const override {
+            std::optional<skif::LayerSpace<SkIRect>> contentBounds) const override {
         return desiredOutput;
     }
 
-    skif::LayerSpace<SkIRect> onGetOutputLayerBounds(
+    std::optional<skif::LayerSpace<SkIRect>> onGetOutputLayerBounds(
             const skif::Mapping& mapping,
-            const skif::LayerSpace<SkIRect>& contentBounds) const override {
+            std::optional<skif::LayerSpace<SkIRect>> contentBounds) const override {
         return contentBounds;
     }
 
@@ -1658,7 +1658,11 @@ DEF_TEST(ImageFilterImageSourceSerialization, reporter) {
     sk_sp<SkImage> image(surface->makeImageSnapshot());
     sk_sp<SkImageFilter> filter(SkImageFilters::Image(std::move(image), SkFilterMode::kNearest));
 
-    sk_sp<SkData> data(filter->serialize());
+    SkSerialProcs sProcs;
+    sProcs.fImageProc = [](SkImage* img, void*) -> sk_sp<SkData> {
+        return SkPngEncoder::Encode(as_IB(img)->directContext(), img, SkPngEncoder::Options{});
+    };
+    sk_sp<SkData> data(filter->serialize(&sProcs));
     sk_sp<SkImageFilter> unflattenedFilter = SkImageFilter::Deserialize(data->data(), data->size());
     REPORTER_ASSERT(reporter, unflattenedFilter);
 
@@ -1964,8 +1968,8 @@ DEF_TEST(ImageFilterComplexCTM, reporter) {
 DEF_TEST(XfermodeImageFilterBounds, reporter) {
     SkIRect background_rect = SkIRect::MakeXYWH(0, 0, 100, 100);
     SkIRect foreground_rect = SkIRect::MakeXYWH(50, 50, 100, 100);
-    sk_sp<SkImageFilter> background = SkMakeCropImageFilter(SkRect::Make(background_rect), nullptr);
-    sk_sp<SkImageFilter> foreground = SkMakeCropImageFilter(SkRect::Make(foreground_rect), nullptr);
+    sk_sp<SkImageFilter> background = SkImageFilters::Crop(SkRect::Make(background_rect), nullptr);
+    sk_sp<SkImageFilter> foreground = SkImageFilters::Crop(SkRect::Make(foreground_rect), nullptr);
 
     SkIRect expectedBounds[kSkBlendModeCount];
     // Expect union of input rects by default.
@@ -2000,9 +2004,9 @@ DEF_TEST(XfermodeImageFilterBounds, reporter) {
 
     // Test empty intersection.
     sk_sp<SkImageFilter> background2 =
-            SkMakeCropImageFilter(SkRect::MakeXYWH(0, 0, 20, 20), nullptr);
+            SkImageFilters::Crop(SkRect::MakeXYWH(0, 0, 20, 20), nullptr);
     sk_sp<SkImageFilter> foreground2 =
-            SkMakeCropImageFilter(SkRect::MakeXYWH(40, 40, 50, 50), nullptr);
+            SkImageFilters::Crop(SkRect::MakeXYWH(40, 40, 50, 50), nullptr);
     sk_sp<SkImageFilter> xfermode(SkImageFilters::Blend(
             SkBlendMode::kSrcIn, std::move(background2), std::move(foreground2), nullptr));
     auto bounds = xfermode->filterBounds(src, SkMatrix::I(),
@@ -2074,8 +2078,8 @@ static void test_arithmetic_bounds(skiatest::Reporter* reporter, float k1, float
 static void test_arithmetic_combinations(skiatest::Reporter* reporter, float v) {
     SkIRect bgRect = SkIRect::MakeXYWH(0, 0, 100, 100);
     SkIRect fgRect = SkIRect::MakeXYWH(50, 50, 100, 100);
-    sk_sp<SkImageFilter> background = SkMakeCropImageFilter(SkRect::Make(bgRect), nullptr);
-    sk_sp<SkImageFilter> foreground = SkMakeCropImageFilter(SkRect::Make(fgRect), nullptr);
+    sk_sp<SkImageFilter> background = SkImageFilters::Crop(SkRect::Make(bgRect), nullptr);
+    sk_sp<SkImageFilter> foreground = SkImageFilters::Crop(SkRect::Make(fgRect), nullptr);
 
     SkIRect unionRect = bgRect;
     unionRect.join(fgRect);

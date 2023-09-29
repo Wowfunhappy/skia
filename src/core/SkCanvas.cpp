@@ -265,12 +265,16 @@ std::optional<AutoLayerForImageFilter> SkCanvas::aboutToDraw(
 void SkCanvas::resetForNextPicture(const SkIRect& bounds) {
     this->restoreToCount(1);
 
-    // We're peering through a lot of structs here.  Only at this scope do we
-    // know that the device is a SkNoPixelsDevice.
+    // We're peering through a lot of structs here.  Only at this scope do we know that the device
+    // is a SkNoPixelsDevice.
     SkASSERT(fRootDevice->isNoPixelsDevice());
-    fRootDevice = sk_make_sp<SkNoPixelsDevice>(bounds,
-                                               fRootDevice->surfaceProps(),
-                                               fRootDevice->imageInfo().refColorSpace());
+    SkNoPixelsDevice* asNoPixelsDevice = static_cast<SkNoPixelsDevice*>(fRootDevice.get());
+    if (!asNoPixelsDevice->resetForNextPicture(bounds)) {
+        fRootDevice = sk_make_sp<SkNoPixelsDevice>(bounds,
+                                                   fRootDevice->surfaceProps(),
+                                                   fRootDevice->imageInfo().refColorSpace());
+    }
+
     fMCRec->reset(fRootDevice.get());
     fQuickRejectBounds = this->computeDeviceClipBounds();
 }
@@ -518,7 +522,7 @@ static void check_drawdevice_colorspaces(SkColorSpace* src, SkColorSpace* dst) {
 // non-linear transformations.
 static skif::ParameterSpace<SkPoint> compute_decomposition_center(
         const SkMatrix& dstToLocal,
-        const skif::ParameterSpace<SkRect>* contentBounds,
+        std::optional<skif::ParameterSpace<SkRect>> contentBounds,
         const skif::DeviceSpace<SkIRect>& targetOutput) {
     // Will use the inverse and center of the device bounds if the content bounds aren't provided.
     SkRect rect = contentBounds ? SkRect(*contentBounds) : SkRect::Make(SkIRect(targetOutput));
@@ -545,7 +549,7 @@ get_layer_mapping_and_bounds(
         const SkImageFilter* filter,
         const SkMatrix& localToDst,
         const skif::DeviceSpace<SkIRect>& targetOutput,
-        const skif::ParameterSpace<SkRect>* contentBounds = nullptr,
+        std::optional<skif::ParameterSpace<SkRect>> contentBounds = {},
         bool mustCoverDst = true,
         SkScalar scaleFactor = 1.0f) {
     SkMatrix dstToLocal;
@@ -559,7 +563,7 @@ get_layer_mapping_and_bounds(
     // *after* possibly getting a representative point from the provided content bounds, it might
     // be necessary to discard the bounds for subsequent layer calculations.
     if (mustCoverDst) {
-        contentBounds = nullptr;
+        contentBounds.reset();
     }
 
     // Determine initial mapping and a reasonable maximum dimension to prevent layer-to-device
@@ -702,7 +706,7 @@ void SkCanvas::internalDrawDeviceWithFilter(SkDevice* src,
         // re-determining the required input.
         auto mappingAndBounds = get_layer_mapping_and_bounds(
                 filter, dst->localToDevice(), skif::DeviceSpace<SkIRect>(dst->devClipBounds()),
-                nullptr, true, SkTPin(scaleFactor, 0.f, 1.f));
+                {}, true, SkTPin(scaleFactor, 0.f, 1.f));
         if (!mappingAndBounds) {
             return;
         }
@@ -948,11 +952,13 @@ void SkCanvas::internalSaveLayer(const SaveLayerRec& rec, SaveLayerStrategy stra
         // no new layer pushed on the stack and the paired restore() will be a no-op.
         if (filter && !priorDevice->isNoPixelsDevice()) {
             skif::ParameterSpace<SkRect> emptyInput{SkRect::MakeEmpty()};
-            skif::DeviceSpace<SkIRect> output =
+            std::optional<skif::DeviceSpace<SkIRect>> output =
                     as_IFB(filter)->getOutputBounds(newLayerMapping, emptyInput);
-            if (SkIRect::Intersects(SkIRect(output), priorDevice->devClipBounds())) {
-                const bool useNN = can_layer_be_drawn_as_sprite(newLayerMapping.layerToDevice(),
-                                                                SkIRect(output).size());
+            if (!output || SkIRect::Intersects(SkIRect(*output), priorDevice->devClipBounds())) {
+                SkISize targetSize = output ? SkIRect(*output).size()
+                                            : priorDevice->devClipBounds().size();
+                const bool useNN = can_layer_be_drawn_as_sprite(
+                            newLayerMapping.layerToDevice(), targetSize);
 
                 SkSamplingOptions sampling{useNN ? SkFilterMode::kNearest : SkFilterMode::kLinear};
                 priorDevice->drawFilteredImage(newLayerMapping,

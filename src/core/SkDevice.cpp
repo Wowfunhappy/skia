@@ -7,33 +7,40 @@
 
 #include "src/core/SkDevice.h"
 
-#include "include/core/SkColorFilter.h"
+#include "include/core/SkAlphaType.h"
+#include "include/core/SkColorPriv.h"
 #include "include/core/SkColorSpace.h"
+#include "include/core/SkColorType.h"
 #include "include/core/SkDrawable.h"
-#include "include/core/SkImageFilter.h"
-#include "include/core/SkPathMeasure.h"
+#include "include/core/SkImage.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkPath.h"
+#include "include/core/SkPathTypes.h"
+#include "include/core/SkPixmap.h"
+#include "include/core/SkRRect.h"
 #include "include/core/SkRSXform.h"
 #include "include/core/SkShader.h"
+#include "include/core/SkSpan.h"
+#include "include/core/SkSurface.h"
+#include "include/core/SkTypes.h"
 #include "include/core/SkVertices.h"
-#include "include/private/base/SkTo.h"
-#include "include/private/chromium/Slug.h"
-#include "src/base/SkTLazy.h"
+#include "include/private/base/SkFloatingPoint.h"
+#include "include/private/chromium/Slug.h"  // IWYU pragma: keep
 #include "src/core/SkEnumerate.h"
 #include "src/core/SkImageFilterCache.h"
+#include "src/core/SkImageFilterTypes.h"
 #include "src/core/SkImageFilter_Base.h"
-#include "src/core/SkImagePriv.h"
 #include "src/core/SkLatticeIter.h"
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkMemset.h"
 #include "src/core/SkPathPriv.h"
-#include "src/core/SkRasterClip.h"
 #include "src/core/SkRectPriv.h"
+#include "src/core/SkScalerContext.h"
 #include "src/core/SkSpecialImage.h"
-#include "src/core/SkTextBlobPriv.h"
-#include "src/image/SkImage_Base.h"
-#include "src/shaders/SkLocalMatrixShader.h"
 #include "src/text/GlyphRun.h"
 #include "src/utils/SkPatchUtils.h"
+
+#include <cstdint>
 
 SkDevice::SkDevice(const SkImageInfo& info, const SkSurfaceProps& surfaceProps)
         : fInfo(info)
@@ -377,8 +384,6 @@ bool SkDevice::peekPixels(SkPixmap* pmap) {
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
-#include "src/base/SkUtils.h"
-
 static sk_sp<SkShader> make_post_inverse_lm(const SkShader* shader, const SkMatrix& lm) {
      SkMatrix inverse_lm;
     if (!shader || !lm.invert(&inverse_lm)) {
@@ -507,7 +512,27 @@ SkNoPixelsDevice::SkNoPixelsDevice(const SkIRect& bounds, const SkSurfaceProps& 
     //SkASSERT(bounds.width() >= 0 && bounds.height() >= 0);
 
     this->setOrigin(SkM44(), bounds.left(), bounds.top());
-    this->resetClipStack();
+    fClipStack.emplace_back(this->bounds(), /*isAA=*/false, /*isRect=*/true);
+}
+
+bool SkNoPixelsDevice::resetForNextPicture(const SkIRect& bounds) {
+    // Resetting should only happen on the root SkNoPixelsDevice, so its device-to-global
+    // transform should be pixel aligned.
+    SkASSERT(this->isPixelAlignedToGlobal());
+    // We can only reset the device as long as its dimensions are not changing.
+    if (bounds.width() != this->width() || bounds.height() != this->height()) {
+        return false;
+    }
+
+    // And the canvas should have restored back to the original save count.
+    SkASSERT(fClipStack.size() == 1 && fClipStack[0].fDeferredSaveCount == 0);
+    // But in the event that the clip was modified w/o a save(), reset the tracking state
+    fClipStack[0].fClipBounds = this->bounds();
+    fClipStack[0].fIsAA = false;
+    fClipStack[0].fIsRect = true;
+
+    this->setOrigin(SkM44(), bounds.left(), bounds.top());
+    return true;
 }
 
 void SkNoPixelsDevice::pushClipStack() {

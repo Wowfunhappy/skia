@@ -27,8 +27,9 @@ struct IDXGraphicsAnalysis;
 
 class GrD3DGpu : public GrGpu {
 public:
-    static sk_sp<GrGpu> Make(const GrD3DBackendContext& backendContext, const GrContextOptions&,
-                             GrDirectContext*);
+    static std::unique_ptr<GrGpu> Make(const GrD3DBackendContext& backendContext,
+                                       const GrContextOptions&,
+                                       GrDirectContext*);
 
     ~GrD3DGpu() override;
 
@@ -144,7 +145,7 @@ private:
     sk_sp<GrTexture> onCreateCompressedTexture(SkISize dimensions,
                                                const GrBackendFormat&,
                                                skgpu::Budgeted,
-                                               GrMipmapped,
+                                               skgpu::Mipmapped,
                                                GrProtected,
                                                const void* data,
                                                size_t dataSize) override;
@@ -237,7 +238,7 @@ private:
     GrBackendTexture onCreateBackendTexture(SkISize dimensions,
                                             const GrBackendFormat&,
                                             GrRenderable,
-                                            GrMipmapped,
+                                            skgpu::Mipmapped,
                                             GrProtected,
                                             std::string_view label) override;
 
@@ -247,7 +248,7 @@ private:
 
     GrBackendTexture onCreateCompressedBackendTexture(SkISize dimensions,
                                                       const GrBackendFormat&,
-                                                      GrMipmapped,
+                                                      skgpu::Mipmapped,
                                                       GrProtected) override;
 
     bool onUpdateCompressedBackendTexture(const GrBackendTexture&,
@@ -294,7 +295,7 @@ private:
                                                 SkISize dimensions,
                                                 GrTexturable texturable,
                                                 GrRenderable renderable,
-                                                GrMipmapped mipmapped,
+                                                skgpu::Mipmapped mipmapped,
                                                 int sampleCnt,
                                                 GrD3DTextureResourceInfo* info,
                                                 GrProtected isProtected);

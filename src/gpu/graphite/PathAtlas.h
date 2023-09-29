@@ -9,8 +9,9 @@
 #define skgpu_graphite_PathAtlas_DEFINED
 
 #include "include/core/SkStrokeRec.h"
+#include "src/core/SkAutoPixmapStorage.h"
 #include "src/gpu/RectanizerSkyline.h"
-#include "src/gpu/graphite/geom/AtlasShape.h"
+#include "src/gpu/graphite/geom/CoverageMaskShape.h"
 
 #ifdef SK_ENABLE_VELLO_SHADERS
 #include "src/gpu/graphite/compute/VelloRenderer.h"
@@ -20,12 +21,13 @@
 
 namespace skgpu::graphite {
 
+class Caps;
+class DrawContext;
 class Recorder;
 class Rect;
 class Shape;
 class TextureProxy;
 class Transform;
-class UploadList;
 
 /**
  * PathAtlas manages one or more atlas textures that store coverage masks for path rendering.
@@ -73,7 +75,7 @@ public:
                   const Shape& shape,
                   const Transform& localToDevice,
                   const SkStrokeRec& style,
-                  AtlasShape::MaskInfo* outMaskInfo);
+                  CoverageMaskShape::MaskInfo* outMaskInfo);
 
     // Clear all scheduled atlas draws and free up atlas allocations. After this call the atlas can
     // be considered cleared and available for new shape insertions. However this method does not
@@ -81,13 +83,16 @@ public:
     // commands that are in-flight or yet to be submitted.
     void reset();
 
-    // Returns a pointer to the atlas texture.
-    const TextureProxy* texture() const { return fTexture.get(); }
+    // Returns a pointer to the atlas texture. Initializes a texture proxy if necessary. Returns
+    // nullptr if a texture can not be created.
+    const TextureProxy* getTexture(Recorder*);
 
     uint32_t width() const { return static_cast<uint32_t>(fRectanizer.width()); }
     uint32_t height() const { return static_cast<uint32_t>(fRectanizer.height()); }
 
 protected:
+    const TextureProxy* texture() const { return fTexture.get(); }
+
     virtual void onAddShape(const Shape&,
                             const Transform& transform,
                             const Rect& atlasBounds,
@@ -95,7 +100,15 @@ protected:
                             const SkStrokeRec&) = 0;
     virtual void onReset() = 0;
 
+    struct MaskFormat {
+        SkColorType fColorType = kUnknown_SkColorType;
+        bool requiresStorageUsage = false;
+    };
+    virtual MaskFormat coverageMaskFormat(const Caps*) const = 0;
+
 private:
+    bool initializeTextureIfNeeded(Recorder*);
+
     skgpu::RectanizerSkyline fRectanizer;
 
     // A PathAtlas lazily requests a texture from the AtlasProvider when the first shape gets added
@@ -126,6 +139,9 @@ class ComputePathAtlas : public PathAtlas {
 public:
     ComputePathAtlas();
     virtual std::unique_ptr<DispatchGroup> recordDispatches(Recorder*) const = 0;
+
+protected:
+    MaskFormat coverageMaskFormat(const Caps*) const override;
 };
 
 #ifdef SK_ENABLE_VELLO_SHADERS
@@ -170,15 +186,19 @@ class SoftwarePathAtlas : public PathAtlas {
 public:
     SoftwarePathAtlas();
     ~SoftwarePathAtlas() override {}
-    void recordUploads(UploadList*) const {}
+    void recordUploads(DrawContext*, Recorder*);
 
 protected:
     void onAddShape(const Shape&,
                     const Transform& transform,
                     const Rect& atlasBounds,
                     skvx::int2 deviceOffset,
-                    const SkStrokeRec&) override {}
-    void onReset() override {}
+                    const SkStrokeRec&) override;
+    void onReset() override;
+    MaskFormat coverageMaskFormat(const Caps*) const override;
+
+    SkAutoPixmapStorage fPixels;
+    SkIRect fDirtyRect;
 };
 
 }  // namespace skgpu::graphite

@@ -70,14 +70,6 @@
 
 class GrSemaphore;
 
-#ifdef SK_GL
-#include "include/gpu/gl/GrGLConfig.h"
-#include "include/gpu/gl/GrGLFunctions.h"
-#include "include/gpu/gl/GrGLInterface.h"
-#include "include/gpu/gl/GrGLTypes.h"
-#include "src/gpu/ganesh/gl/GrGLDefines.h"
-#include "src/gpu/ganesh/gl/GrGLGpu.h"
-#endif
 #ifdef SK_METAL
 #include "include/gpu/mtl/GrMtlBackendContext.h"
 #include "src/gpu/ganesh/mtl/GrMtlTrampoline.h"
@@ -87,13 +79,6 @@ class GrSemaphore;
 #endif
 #ifdef SK_DIRECT3D
 #include "src/gpu/ganesh/d3d/GrD3DGpu.h"
-#endif
-
-#if defined(GR_TEST_UTILS)
-#   include "src/base/SkRandom.h"
-#   if defined(SK_ENABLE_SCOPED_LSAN_SUPPRESSIONS)
-#       include <sanitizer/lsan_interface.h>
-#   endif
 #endif
 
 using namespace skia_private;
@@ -198,6 +183,16 @@ bool GrDirectContext::abandoned() {
 
     if (fGpu && fGpu->isDeviceLost()) {
         this->abandonContext();
+        return true;
+    }
+    return false;
+}
+
+bool GrDirectContext::isDeviceLost() {
+    if (fGpu && fGpu->isDeviceLost()) {
+        if (!GrRecordingContext::abandoned()) {
+            this->abandonContext();
+        }
         return true;
     }
     return false;
@@ -493,14 +488,6 @@ void GrDirectContext::flushAndSubmit(sk_sp<const SkImage> image) {
     this->submit();
 }
 
-#if !defined(SK_DISABLE_LEGACY_GRDIRECTCONTEXT_FLUSH)
-GrSemaphoresSubmitted GrDirectContext::flush(sk_sp<SkSurface> surface,
-                                             SkSurfaces::BackendSurfaceAccess access,
-                                             const GrFlushInfo& info) {
-    return this->flush(surface.get(), access, info);
-}
-#endif
-
 GrSemaphoresSubmitted GrDirectContext::flush(SkSurface* surface,
                                              SkSurfaces::BackendSurfaceAccess access,
                                              const GrFlushInfo& info) {
@@ -518,14 +505,6 @@ GrSemaphoresSubmitted GrDirectContext::flush(SkSurface* surface,
 
     return this->priv().flushSurface(rtp, access, info, nullptr);
 }
-
-#if !defined(SK_DISABLE_LEGACY_GRDIRECTCONTEXT_FLUSH)
-GrSemaphoresSubmitted GrDirectContext::flush(sk_sp<SkSurface> surface,
-                                             const GrFlushInfo& info,
-                                             const skgpu::MutableTextureState* newState) {
-    return this->flush(surface.get(), info, newState);
-}
-#endif
 
 GrSemaphoresSubmitted GrDirectContext::flush(SkSurface* surface,
                                              const GrFlushInfo& info,
@@ -551,30 +530,9 @@ void GrDirectContext::flushAndSubmit(SkSurface* surface, GrSyncCpu sync) {
     this->submit(sync);
 }
 
-#if !defined(SK_DISABLE_LEGACY_GRDIRECTCONTEXT_BOOLS)
-void GrDirectContext::flushAndSubmit(SkSurface* surface, bool syncCpu) {
-    this->flushAndSubmit(surface, syncCpu ? GrSyncCpu::kYes : GrSyncCpu::kNo);
-}
-
-#if !defined(SK_DISABLE_LEGACY_GRDIRECTCONTEXT_FLUSH)
-void GrDirectContext::flushAndSubmit(sk_sp<SkSurface> surface, bool syncCpu) {
-    this->flushAndSubmit(surface.get(), syncCpu ? GrSyncCpu::kYes : GrSyncCpu::kNo);
-}
-void GrDirectContext::flushAndSubmit(sk_sp<SkSurface> surface, GrSyncCpu sync) {
-    this->flushAndSubmit(surface.get(), sync);
-}
-#endif  // Flush
-#endif  // Bools
-
 void GrDirectContext::flush(SkSurface* surface) {
     this->flush(surface, GrFlushInfo(), nullptr);
 }
-
-#if !defined(SK_DISABLE_LEGACY_GRDIRECTCONTEXT_FLUSH)
-void GrDirectContext::flush(sk_sp<SkSurface> surface) {
-    this->flush(surface, GrFlushInfo(), nullptr);
-}
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -614,9 +572,10 @@ void GrDirectContext::dumpMemoryStatistics(SkTraceMemoryDump* traceMemoryDump) c
                                       this->getTextBlobRedrawCoordinator()->usedBytes());
 }
 
-GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
+GrBackendTexture GrDirectContext::createBackendTexture(int width,
+                                                       int height,
                                                        const GrBackendFormat& backendFormat,
-                                                       GrMipmapped mipmapped,
+                                                       skgpu::Mipmapped mipmapped,
                                                        GrRenderable renderable,
                                                        GrProtected isProtected,
                                                        std::string_view label) {
@@ -672,9 +631,10 @@ GrBackendTexture GrDirectContext::createBackendTexture(const SkPixmap srcData[],
                                       label);
 }
 
-GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
+GrBackendTexture GrDirectContext::createBackendTexture(int width,
+                                                       int height,
                                                        SkColorType skColorType,
-                                                       GrMipmapped mipmapped,
+                                                       skgpu::Mipmapped mipmapped,
                                                        GrRenderable renderable,
                                                        GrProtected isProtected,
                                                        std::string_view label) {
@@ -692,7 +652,7 @@ static GrBackendTexture create_and_clear_backend_texture(
         GrDirectContext* dContext,
         SkISize dimensions,
         const GrBackendFormat& backendFormat,
-        GrMipmapped mipmapped,
+        skgpu::Mipmapped mipmapped,
         GrRenderable renderable,
         GrProtected isProtected,
         sk_sp<skgpu::RefCntedCallback> finishedCallback,
@@ -755,10 +715,11 @@ static bool update_texture_with_pixmaps(GrDirectContext* context,
     return true;
 }
 
-GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
+GrBackendTexture GrDirectContext::createBackendTexture(int width,
+                                                       int height,
                                                        const GrBackendFormat& backendFormat,
                                                        const SkColor4f& color,
-                                                       GrMipmapped mipmapped,
+                                                       skgpu::Mipmapped mipmapped,
                                                        GrRenderable renderable,
                                                        GrProtected isProtected,
                                                        GrGpuFinishedProc finishedProc,
@@ -782,10 +743,11 @@ GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
                                             label);
 }
 
-GrBackendTexture GrDirectContext::createBackendTexture(int width, int height,
+GrBackendTexture GrDirectContext::createBackendTexture(int width,
+                                                       int height,
                                                        SkColorType skColorType,
                                                        const SkColor4f& color,
-                                                       GrMipmapped mipmapped,
+                                                       skgpu::Mipmapped mipmapped,
                                                        GrRenderable renderable,
                                                        GrProtected isProtected,
                                                        GrGpuFinishedProc finishedProc,
@@ -838,9 +800,9 @@ GrBackendTexture GrDirectContext::createBackendTexture(const SkPixmap srcData[],
 
     SkColorType colorType = srcData[0].colorType();
 
-    GrMipmapped mipmapped = GrMipmapped::kNo;
+    skgpu::Mipmapped mipmapped = skgpu::Mipmapped::kNo;
     if (numProvidedLevels > 1) {
-        mipmapped = GrMipmapped::kYes;
+        mipmapped = skgpu::Mipmapped::kYes;
     }
 
     GrBackendFormat backendFormat = this->defaultBackendFormat(colorType, renderable);
@@ -957,7 +919,7 @@ static GrBackendTexture create_and_update_compressed_backend_texture(
         GrDirectContext* dContext,
         SkISize dimensions,
         const GrBackendFormat& backendFormat,
-        GrMipmapped mipmapped,
+        skgpu::Mipmapped mipmapped,
         GrProtected isProtected,
         sk_sp<skgpu::RefCntedCallback> finishedCallback,
         const void* data,
@@ -979,10 +941,11 @@ static GrBackendTexture create_and_update_compressed_backend_texture(
 }
 
 GrBackendTexture GrDirectContext::createCompressedBackendTexture(
-        int width, int height,
+        int width,
+        int height,
         const GrBackendFormat& backendFormat,
         const SkColor4f& color,
-        GrMipmapped mipmapped,
+        skgpu::Mipmapped mipmapped,
         GrProtected isProtected,
         GrGpuFinishedProc finishedProc,
         GrGpuFinishedContext finishedContext) {
@@ -998,10 +961,8 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(
         return {};
     }
 
-    size_t size = SkCompressedDataSize(compression,
-                                       {width, height},
-                                       nullptr,
-                                       mipmapped == GrMipmapped::kYes);
+    size_t size = SkCompressedDataSize(
+            compression, {width, height}, nullptr, mipmapped == skgpu::Mipmapped::kYes);
     auto storage = std::make_unique<char[]>(size);
     GrFillInCompressedData(compression, {width, height}, mipmapped, storage.get(), color);
     return create_and_update_compressed_backend_texture(this,
@@ -1015,10 +976,11 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(
 }
 
 GrBackendTexture GrDirectContext::createCompressedBackendTexture(
-        int width, int height,
+        int width,
+        int height,
         SkTextureCompressionType compression,
         const SkColor4f& color,
-        GrMipmapped mipmapped,
+        skgpu::Mipmapped mipmapped,
         GrProtected isProtected,
         GrGpuFinishedProc finishedProc,
         GrGpuFinishedContext finishedContext) {
@@ -1030,11 +992,12 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(
 }
 
 GrBackendTexture GrDirectContext::createCompressedBackendTexture(
-        int width, int height,
+        int width,
+        int height,
         const GrBackendFormat& backendFormat,
         const void* compressedData,
         size_t dataSize,
-        GrMipmapped mipmapped,
+        skgpu::Mipmapped mipmapped,
         GrProtected isProtected,
         GrGpuFinishedProc finishedProc,
         GrGpuFinishedContext finishedContext) {
@@ -1056,10 +1019,12 @@ GrBackendTexture GrDirectContext::createCompressedBackendTexture(
 }
 
 GrBackendTexture GrDirectContext::createCompressedBackendTexture(
-        int width, int height,
+        int width,
+        int height,
         SkTextureCompressionType compression,
-        const void* data, size_t dataSize,
-        GrMipmapped mipmapped,
+        const void* data,
+        size_t dataSize,
+        skgpu::Mipmapped mipmapped,
         GrProtected isProtected,
         GrGpuFinishedProc finishedProc,
         GrGpuFinishedContext finishedContext) {
@@ -1200,75 +1165,6 @@ SkString GrDirectContext::dump() const {
     SkString result(stream.bytesWritten());
     stream.copyToAndReset(result.data());
     return result;
-}
-#endif
-
-#ifdef SK_GL
-
-/*************************************************************************************************/
-sk_sp<GrDirectContext> GrDirectContext::MakeGL(sk_sp<const GrGLInterface> glInterface) {
-    GrContextOptions defaultOptions;
-    return MakeGL(std::move(glInterface), defaultOptions);
-}
-
-sk_sp<GrDirectContext> GrDirectContext::MakeGL(const GrContextOptions& options) {
-    return MakeGL(nullptr, options);
-}
-
-sk_sp<GrDirectContext> GrDirectContext::MakeGL() {
-    GrContextOptions defaultOptions;
-    return MakeGL(nullptr, defaultOptions);
-}
-
-#if defined(GR_TEST_UTILS)
-GrGLFunction<GrGLGetErrorFn> make_get_error_with_random_oom(GrGLFunction<GrGLGetErrorFn> original) {
-    // A SkRandom and a GrGLFunction<GrGLGetErrorFn> are too big to be captured by a
-    // GrGLFunction<GrGLGetError> (surprise, surprise). So we make a context object and
-    // capture that by pointer. However, GrGLFunction doesn't support calling a destructor
-    // on the thing it captures. So we leak the context.
-    struct GetErrorContext {
-        SkRandom fRandom;
-        GrGLFunction<GrGLGetErrorFn> fGetError;
-    };
-
-    auto errorContext = new GetErrorContext;
-
-#if defined(SK_ENABLE_SCOPED_LSAN_SUPPRESSIONS)
-    __lsan_ignore_object(errorContext);
-#endif
-
-    errorContext->fGetError = original;
-
-    return GrGLFunction<GrGLGetErrorFn>([errorContext]() {
-        GrGLenum error = errorContext->fGetError();
-        if (error == GR_GL_NO_ERROR && (errorContext->fRandom.nextU() % 300) == 0) {
-            error = GR_GL_OUT_OF_MEMORY;
-        }
-        return error;
-    });
-}
-#endif
-
-sk_sp<GrDirectContext> GrDirectContext::MakeGL(sk_sp<const GrGLInterface> glInterface,
-                                               const GrContextOptions& options) {
-    sk_sp<GrDirectContext> direct(new GrDirectContext(GrBackendApi::kOpenGL, options));
-#if defined(GR_TEST_UTILS)
-    if (options.fRandomGLOOM) {
-        auto copy = sk_make_sp<GrGLInterface>(*glInterface);
-        copy->fFunctions.fGetError =
-                make_get_error_with_random_oom(glInterface->fFunctions.fGetError);
-#if GR_GL_CHECK_ERROR
-        // Suppress logging GL errors since we'll be synthetically generating them.
-        copy->suppressErrorLogging();
-#endif
-        glInterface = std::move(copy);
-    }
-#endif
-    direct->fGpu = GrGLGpu::Make(std::move(glInterface), options, direct.get());
-    if (!direct->init()) {
-        return nullptr;
-    }
-    return direct;
 }
 #endif
 
