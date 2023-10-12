@@ -10,6 +10,7 @@
 #include "include/gpu/graphite/Recorder.h"
 #include "include/gpu/graphite/Recording.h"
 #include "include/gpu/graphite/Surface.h"
+#include "include/private/gpu/graphite/ContextOptionsPriv.h"
 #include "src/gpu/AtlasTypes.h"
 #include "src/gpu/graphite/AtlasProvider.h"
 #include "src/gpu/graphite/Buffer.h"
@@ -24,6 +25,7 @@
 #include "src/gpu/graphite/Image_Graphite.h"
 #include "src/gpu/graphite/Log.h"
 #include "src/gpu/graphite/PathAtlas.h"
+#include "src/gpu/graphite/RasterPathAtlas.h"
 #include "src/gpu/graphite/RecorderPriv.h"
 #include "src/gpu/graphite/Renderer.h"
 #include "src/gpu/graphite/RendererProvider.h"
@@ -951,6 +953,8 @@ void Device::drawGeometry(const Transform& localToDevice,
     SkASSERT(!SkToBool(paint.getPathEffect()) || (flags & DrawFlags::kIgnorePathEffect));
     SkASSERT(!SkToBool(paint.getMaskFilter()) || (flags & DrawFlags::kIgnoreMaskFilter));
 
+    // TODO: Some renderer decisions could depend on the clip (see PathAtlas::addShape for
+    // one workaround) so we should figure out how to remove this circular dependency.
     auto [renderer, pathAtlas] =
             this->chooseRenderer(localToDevice, geometry, style, /*requireMSAA=*/false);
     if (!renderer) {
@@ -993,33 +997,31 @@ void Device::drawGeometry(const Transform& localToDevice,
     // it to be drawn.
     CoverageMaskShape::MaskInfo atlasMaskInfo;  // only used if `pathAtlas != nullptr`
 
-    // It is possible for the transformed shape bounds to be fully clipped out while the draw still
-    // produces coverage due to an inverse fill. In this case, don't render any mask;
-    // AtlasShapeRenderStep will automatically handle the simple fill.
-    if (pathAtlas != nullptr && !clip.transformedShapeBounds().isEmptyNegativeOrNaN()) {
-        bool foundAtlasSpace = pathAtlas->addShape(recorder(),
-                                                   clip.transformedShapeBounds(),
-                                                   geometry.shape(),
-                                                   localToDevice,
-                                                   style,
-                                                   &atlasMaskInfo);
+    const TextureProxy* pathAtlasTextureProxy = nullptr;
+    if (pathAtlas != nullptr) {
+        pathAtlasTextureProxy = pathAtlas->addShape(recorder(),
+                                                    clip.transformedShapeBounds(),
+                                                    geometry.shape(),
+                                                    localToDevice,
+                                                    style,
+                                                    &atlasMaskInfo);
 
         // If there was no space in the atlas and we haven't flushed already, then flush pending
         // work to clear up space in the atlas. If we had already flushed once (which would have
         // cleared the atlas) then the atlas is too small for this shape.
-        if (!foundAtlasSpace && !needsFlush) {
+        if (!pathAtlasTextureProxy && !needsFlush) {
             this->flushPendingWorkToRecorder();
 
             // Try inserting the shape again.
-            foundAtlasSpace = pathAtlas->addShape(recorder(),
-                                                  clip.transformedShapeBounds(),
-                                                  geometry.shape(),
-                                                  localToDevice,
-                                                  style,
-                                                  &atlasMaskInfo);
+            pathAtlasTextureProxy = pathAtlas->addShape(recorder(),
+                                                        clip.transformedShapeBounds(),
+                                                        geometry.shape(),
+                                                        localToDevice,
+                                                        style,
+                                                        &atlasMaskInfo);
         }
 
-        if (!foundAtlasSpace) {
+        if (!pathAtlasTextureProxy) {
             SKGPU_LOG_E("Failed to add shape to atlas!");
             // TODO(b/285195175): This can happen if the atlas is not large enough or a compatible
             // atlas texture cannot be created. Handle the first case in `chooseRenderer` and make
@@ -1089,7 +1091,7 @@ void Device::drawGeometry(const Transform& localToDevice,
     if (pathAtlas != nullptr) {
         // Record the draw as a fill since stroking is handled by the atlas render/upload.
         Geometry coverageMask(CoverageMaskShape(geometry.shape(),
-                                                pathAtlas->getTexture(fRecorder),
+                                                pathAtlasTextureProxy,
                                                 localToDevice.inverse(),
                                                 atlasMaskInfo));
         fDC->recordDraw(
@@ -1200,9 +1202,23 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
         return {nullptr, nullptr};
     }
 
+    // Path rendering options. For now the strategy is very simple and not optimal:
+    // I. Use tessellation if MSAA is required for an effect.
+    // II: otherwise:
+    //    1. Always use compute AA if supported unless it was excluded by ContextOptions.
+    //    2. Use CPU raster AA if hardware MSAA is disabled or it was explicitly requested by
+    //       ContextOptions.
+    //    3. Otherwise use tessellation.
+#if defined(GRAPHITE_TEST_UTILS)
+    PathRendererStrategy strategy = fRecorder->priv().caps()->requestedPathRendererStrategy();
+#else
+    PathRendererStrategy strategy = PathRendererStrategy::kDefault;
+#endif
+
     const Shape& shape = geometry.shape();
     // We can't use this renderer if we require MSAA for an effect (i.e. clipping or stroke+fill).
-    if (!requireMSAA && is_simple_shape(shape, type)) {
+    if (!requireMSAA && is_simple_shape(shape, type) &&
+        strategy == PathRendererStrategy::kDefault) {
         return {renderers->analyticRRect(), nullptr};
     }
 
@@ -1213,15 +1229,19 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
     // TODO(b/285195175): There may be reasons to prefer tessellation, e.g. if the shape is large
     // and hardware MSAA looks acceptable.
     AtlasProvider* atlasProvider = fRecorder->priv().atlasProvider();
-    if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kCompute)) {
+    if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kCompute) &&
+        (strategy == PathRendererStrategy::kComputeAnalyticAA ||
+         strategy == PathRendererStrategy::kDefault)) {
         // TODO: vello can't do correct strokes yet. Maybe this shouldn't get selected for stroke
         // renders until all stroke styles are supported?
         pathAtlas = fDC->getComputePathAtlas(fRecorder);
     // Only use CPU rendered paths when multisampling is disabled
     // TODO: enable other uses of the software path renderer
-    } else if (fRecorder->priv().caps()->defaultMSAASamplesCount() <= 1 &&
-               atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kSoftware)) {
-        pathAtlas = fDC->getSoftwarePathAtlas(fRecorder);
+    } else if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kRaster) &&
+               strategy == PathRendererStrategy::kRasterAA) {
+        // TODO: With the default strategy, enable this if
+        // fRecorder->priv().caps()->defaultMSAASamplesCount() <= 1
+        pathAtlas = atlasProvider->getRasterPathAtlas();
     }
     // We currently always use a coverage mask renderer if a `PathAtlas` is selected.
     if (!requireMSAA && pathAtlas) {
@@ -1393,8 +1413,9 @@ sk_sp<SkSpecialImage> Device::snapSpecial(const SkIRect& subset, bool forceCopy)
                                          this->surfaceProps());
 }
 
-skif::Context Device::createContext(const skif::ContextInfo& ctxInfo) const {
-    return skif::MakeGraphiteContext(fRecorder, ctxInfo);
+sk_sp<skif::Backend> Device::createImageFilteringBackend(const SkSurfaceProps& surfaceProps,
+                                                         SkColorType colorType) const {
+    return skif::MakeGraphiteBackend(fRecorder, surfaceProps, colorType);
 }
 
 TextureProxy* Device::target() { return fDC->target(); }

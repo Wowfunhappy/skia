@@ -31,7 +31,7 @@ const int $kColorSpaceXformFlagPremul = 0x10;
 const float $kLinearInset = 0.5 + 0.00001;
 
 $pure half4 sk_error() {
-    return half4(1.0, 0.0, 1.0, 1.0);
+    return half4(1.0, 0.0, 0.0, 1.0);
 }
 
 $pure half4 sk_passthrough(half4 color) {
@@ -40,6 +40,14 @@ $pure half4 sk_passthrough(half4 color) {
 
 $pure half4 sk_solid_shader(float4 colorParam) {
     return half4(colorParam);
+}
+
+$pure half4 sk_rgb_opaque(float4 colorParam) {
+    return half4(colorParam.rgb, 1.0);
+}
+
+$pure half4 sk_alpha_only(float4 colorParam) {
+    return half4(0.0, 0.0, 0.0, colorParam.a);
 }
 
 $pure half4 $apply_swizzle(int swizzleType, half4 color) {

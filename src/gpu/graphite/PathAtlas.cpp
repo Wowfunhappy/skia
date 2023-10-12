@@ -24,13 +24,6 @@
 #include "src/gpu/graphite/compute/DispatchGroup.h"
 #endif
 
-// For SoftwarePathAtlas
-#include "include/core/SkColorSpace.h"
-#include "src/core/SkBlitter_A8.h"
-#include "src/core/SkDrawBase.h"
-#include "src/core/SkRasterClip.h"
-#include "src/gpu/graphite/DrawContext.h"
-
 namespace skgpu::graphite {
 namespace {
 
@@ -38,29 +31,18 @@ namespace {
 // TODO: This is the maximum target dimension that vello can handle today
 constexpr uint16_t kComputeAtlasDim = 4096;
 
-// TODO: for now
-constexpr uint16_t kSoftwareAtlasDim = 4096;
-
 }  // namespace
 
-PathAtlas::PathAtlas(uint32_t width, uint32_t height) : fRectanizer(width, height) {}
+PathAtlas::PathAtlas(uint32_t width, uint32_t height) : fWidth(width), fHeight(height) {}
 
 PathAtlas::~PathAtlas() = default;
 
-bool PathAtlas::addShape(Recorder* recorder,
-                         const Rect& transformedShapeBounds,
-                         const Shape& shape,
-                         const Transform& localToDevice,
-                         const SkStrokeRec& style,
-                         CoverageMaskShape::MaskInfo* out) {
-    SkASSERT(out);
-    SkASSERT(!transformedShapeBounds.isEmptyNegativeOrNaN());
-
-    if (!this->initializeTextureIfNeeded(recorder)) {
-        SKGPU_LOG_E("Failed to instantiate an atlas texture");
-        return false;
-    }
-
+const TextureProxy* PathAtlas::addShape(Recorder* recorder,
+                                        const Rect& transformedShapeBounds,
+                                        const Shape& shape,
+                                        const Transform& localToDevice,
+                                        const SkStrokeRec& style,
+                                        CoverageMaskShape::MaskInfo* out) {
     // Round out the shape bounds to preserve any fractional offset so that it is present in the
     // translation that we use when deriving the atlas-space transform later.
     Rect maskBounds = transformedShapeBounds.makeRoundOut();
@@ -70,54 +52,79 @@ bool PathAtlas::addShape(Recorder* recorder,
     // coverage on inverse fill pixels that fall outside the mask bounds.
     skvx::float2 maskSize = maskBounds.size();
     skvx::float2 atlasSize = maskSize + 2;
-    SkIPoint16 pos;
-    if (!fRectanizer.addRect(atlasSize.x(), atlasSize.y(), &pos)) {
-        return false;
+    // It is possible for the transformed shape bounds to be fully clipped out while the draw still
+    // produces coverage due to an inverse fill. In this case, don't render any mask;
+    // CoverageMaskShapeRenderStep will automatically handle the simple fill. We'll handle this
+    // by adding an empty mask.
+    if (transformedShapeBounds.isEmptyNegativeOrNaN()) {
+        atlasSize = 0;
     }
 
+    SkASSERT(out);
     out->fDeviceOrigin = skvx::int2((int)maskBounds.x(), (int)maskBounds.y());
+
+    skvx::half2 pos;
+    const TextureProxy* atlasProxy = this->onAddShape(recorder,
+                                                      shape,
+                                                      localToDevice,
+                                                      style,
+                                                      atlasSize,
+                                                      out->fDeviceOrigin,
+                                                      &pos);
+    if (!atlasProxy) {
+        return nullptr;
+    }
+
     out->fTextureOrigin = skvx::half2(pos.x(), pos.y());
     out->fMaskSize = skvx::half2((uint16_t)maskSize.x(), (uint16_t)maskSize.y());
 
-    this->onAddShape(shape,
-                     localToDevice,
-                     Rect::XYWH(skvx::float2(pos.x(), pos.y()), atlasSize),
-                     out->fDeviceOrigin,
-                     style);
-    return true;
-}
-
-void PathAtlas::reset() {
-    fRectanizer.reset();
-    this->onReset();
-}
-
-const TextureProxy* PathAtlas::getTexture(Recorder* recorder) {
-    if (!this->initializeTextureIfNeeded(recorder)) {
-        SKGPU_LOG_E("Failed to instantiate an atlas texture");
-    }
-    return fTexture.get();
-}
-
-bool PathAtlas::initializeTextureIfNeeded(Recorder* recorder) {
-    if (!fTexture) {
-        const MaskFormat maskFormat = this->coverageMaskFormat(recorder->priv().caps());
-        fTexture =
-                recorder->priv().atlasProvider()->getAtlasTexture(recorder,
-                                                                  this->width(),
-                                                                  this->height(),
-                                                                  maskFormat.fColorType,
-                                                                  maskFormat.requiresStorageUsage);
-    }
-    return fTexture != nullptr;
+    return atlasProxy;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////
 
-ComputePathAtlas::ComputePathAtlas() : PathAtlas(kComputeAtlasDim, kComputeAtlasDim) {}
+ComputePathAtlas::ComputePathAtlas()
+    : PathAtlas(kComputeAtlasDim, kComputeAtlasDim)
+    , fRectanizer(fWidth, fHeight) {}
 
-PathAtlas::MaskFormat ComputePathAtlas::coverageMaskFormat(const Caps* caps) const {
-    return {ComputeShaderCoverageMaskTargetFormat(caps), /*requiresStorageUsage=*/true};
+bool ComputePathAtlas::initializeTextureIfNeeded(Recorder* recorder) {
+    if (!fTexture) {
+        SkColorType targetCT = ComputeShaderCoverageMaskTargetFormat(recorder->priv().caps());
+        fTexture = recorder->priv().atlasProvider()->getAtlasTexture(recorder,
+                                                                     this->width(),
+                                                                     this->height(),
+                                                                     targetCT,
+                                                                     /*requiresStorageUsage=*/true);
+    }
+    return fTexture != nullptr;
+}
+
+const TextureProxy* ComputePathAtlas::addRect(Recorder* recorder,
+                                              skvx::float2 atlasSize,
+                                              SkIPoint16* outPos) {
+    if (!this->initializeTextureIfNeeded(recorder)) {
+        SKGPU_LOG_E("Failed to instantiate an atlas texture");
+        return nullptr;
+    }
+
+    // An empty mask always fits, so just return the texture.
+    // TODO: This may not be needed if we can handle clipped out bounds with inverse fills
+    // another way. See PathAtlas::addShape().
+    if (!all(atlasSize)) {
+        return fTexture.get();
+    }
+
+    if (!fRectanizer.addRect(atlasSize.x(), atlasSize.y(), outPos)) {
+        return nullptr;
+    }
+
+    return fTexture.get();
+}
+
+void ComputePathAtlas::reset() {
+    fRectanizer.reset();
+
+    this->onReset();
 }
 
 #ifdef SK_ENABLE_VELLO_SHADERS
@@ -135,16 +142,32 @@ std::unique_ptr<DispatchGroup> VelloComputePathAtlas::recordDispatches(Recorder*
             recorder);
 }
 
-void VelloComputePathAtlas::onAddShape(const Shape& shape,
-                                       const Transform& localToDevice,
-                                       const Rect& atlasBounds,
-                                       skvx::int2 deviceOffset,
-                                       const SkStrokeRec& style) {
+const TextureProxy* VelloComputePathAtlas::onAddShape(Recorder* recorder,
+                                                      const Shape& shape,
+                                                      const Transform& localToDevice,
+                                                      const SkStrokeRec& style,
+                                                      skvx::float2 atlasSize,
+                                                      skvx::int2 deviceOffset,
+                                                      skvx::half2* outPos) {
+    SkIPoint16 iPos;
+    const TextureProxy* texProxy = this->addRect(recorder, atlasSize, &iPos);
+    if (!texProxy) {
+        return nullptr;
+    }
+    *outPos = skvx::half2(iPos.x(), iPos.y());
+    // If the mask is empty, just return.
+    // TODO: This may not be needed if we can handle clipped out bounds with inverse fills
+    // another way. See PathAtlas::addShape().
+    if (!all(atlasSize)) {
+        return texProxy;
+    }
+
     // TODO: The compute renderer doesn't support perspective yet. We assume that the path has been
     // appropriately transformed in that case.
     SkASSERT(localToDevice.type() != Transform::Type::kProjection);
 
     // Restrict the render to the occupied area of the atlas.
+    Rect atlasBounds = Rect::XYWH(skvx::float2(iPos.x(), iPos.y()), atlasSize);
     fOccuppiedWidth = std::max(fOccuppiedWidth, (uint32_t)atlasBounds.right());
     fOccuppiedHeight = std::max(fOccuppiedHeight, (uint32_t)atlasBounds.bot());
 
@@ -211,95 +234,10 @@ void VelloComputePathAtlas::onAddShape(const Shape& shape,
     }
 
     fScene.popClipLayer();
+
+    return texProxy;
 }
 
 #endif  // SK_ENABLE_VELLO_SHADERS
-
-///////////////////////////////////////////////////////////////////////////////////////
-
-SoftwarePathAtlas::SoftwarePathAtlas() : PathAtlas(kSoftwareAtlasDim, kSoftwareAtlasDim) {}
-
-void SoftwarePathAtlas::recordUploads(DrawContext* dc, Recorder* recorder) {
-    // build an upload for the dirty rect and record it
-    if (!fDirtyRect.isEmpty()) {
-        std::vector<MipLevel> levels;
-        levels.push_back({fPixels.addr(), fPixels.rowBytes()});
-
-        SkColorInfo colorInfo(kAlpha_8_SkColorType, kUnknown_SkAlphaType, nullptr);
-
-        SkASSERT(this->texture());
-        if (!dc->recordUpload(recorder, sk_ref_sp(this->texture()), colorInfo, colorInfo, levels,
-                              fDirtyRect, nullptr)) {
-            SKGPU_LOG_W("Coverage mask upload failed!");
-            return;
-        }
-
-        // TODO: Keep using this texture until full and cache the results, then get a new one.
-    }
-}
-
-void SoftwarePathAtlas::onAddShape(const Shape& shape,
-                                   const Transform& transform,
-                                   const Rect& atlasBounds,
-                                   skvx::int2 deviceOffset,
-                                   const SkStrokeRec& strokeRec) {
-    // TODO: look up shape and use cached texture
-    // Need to push this up into addShape() somehow
-
-    // allocate pixmap if needed
-    if (!fPixels.addr()) {
-        const SkImageInfo bmImageInfo = SkImageInfo::MakeA8(kSoftwareAtlasDim, kSoftwareAtlasDim);
-        if (!fPixels.tryAlloc(bmImageInfo)) {
-            return;
-        }
-        fPixels.erase(0);
-    }
-
-    // Rasterize path to backing pixmap
-    // TODO: render in a separate thread?
-    SkDrawBase draw;
-    draw.fBlitterChooser = SkA8Blitter_Choose;
-    draw.fDst      = fPixels;
-    SkRasterClip rasterClip;
-    SkIRect iAtlasBounds = atlasBounds.asSkIRect();
-    rasterClip.setRect(iAtlasBounds);
-    draw.fRC       = &rasterClip;
-
-    SkPaint paint;
-    paint.setBlendMode(SkBlendMode::kSrc);  // "Replace" mode
-    paint.setAntiAlias(true);
-    // SkPaint's color is unpremul so this will produce alpha in every channel.
-    paint.setColor(SK_ColorWHITE);
-    strokeRec.applyToPaint(&paint);
-
-    SkMatrix translatedMatrix = SkMatrix(transform);
-    // The atlas transform of the shape is the linear-components (scale, rotation, skew) of
-    // `localToDevice` translated by the top-left offset of `atlasBounds`, accounting for the 1
-    // pixel-wide border we added earlier, so that the shape is correctly centered.
-    translatedMatrix.postTranslate(atlasBounds.x() + 1 - deviceOffset.x(),
-                                   atlasBounds.y() + 1 - deviceOffset.y());
-    draw.fCTM = &translatedMatrix;
-    SkPath path = shape.asPath();
-    if (path.isInverseFillType()) {
-        // The shader will handle the inverse fill in this case
-        path.toggleInverseFillType();
-    }
-    draw.drawPathCoverage(path, paint);
-
-    // Add atlasBounds to dirtyRect for later upload
-    fDirtyRect.join(iAtlasBounds);
-
-    // TODO: cache shape data and texture used
-}
-
-void SoftwarePathAtlas::onReset() {
-    // clear backing data for next pass
-    fDirtyRect.setEmpty();
-    fPixels.erase(0);
-}
-
-PathAtlas::MaskFormat SoftwarePathAtlas::coverageMaskFormat(const Caps*) const {
-    return {kAlpha_8_SkColorType, /*requiresStorageUsage=*/false};
-}
 
 }  // namespace skgpu::graphite

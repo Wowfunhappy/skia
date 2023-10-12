@@ -2145,10 +2145,14 @@ var shorthandToLabel = map[string]labelAndSavedOutputDir{
 	"modules_canvaskit_js_tests":     {"//modules/canvaskit:canvaskit_js_tests", ""},
 	"skia_public":                    {"//:skia_public", ""},
 	"skottie_tool_gpu":               {"//modules/skottie:skottie_tool_gpu", ""},
-	"tests":                          {"//tests:linux_rbe_build", ""},
+	"all_tests":                      {"//tests:linux_rbe_tests", ""},
 	"experimental_bazel_test_client": {"//experimental/bazel_test/client:client_lib", ""},
 	"cpu_gms":                        {"//gm:cpu_gm_tests", ""},
 	"hello_bazel_world_test":         {"//gm:hello_bazel_world_test", ""},
+
+	// Note: these paths are relative to the WORKSPACE in //example/external_client
+	"path_combiner": {"//:path_combiner", ""},
+	"png_decoder":   {"//:png_decoder", ""},
 
 	// Currently there is no way to tell Bazel "only test go_test targets", so we must group them
 	// under a test_suite.
@@ -2174,11 +2178,6 @@ var shorthandToLabel = map[string]labelAndSavedOutputDir{
 
 	// Android tests that run on a device. We store the //bazel-bin/tests directory into CAS for use
 	// by subsequent CI tasks.
-	"android_codec_test":              {"//tests:android_codec_test", "tests"},
-	"android_ganesh_test":             {"//tests:android_ganesh_test", "tests"},
-	"android_pathops_test":            {"//tests:android_pathops_test", "tests"},
-	"android_cpu_only_test":           {"//tests:android_cpu_only_test", "tests"},
-	"android_discardable_memory_test": {"//tests:android_discardable_memory_test", "tests"},
 	"hello_bazel_world_android_test":  {"//gm:hello_bazel_world_android_test", "gm"},
 }
 
@@ -2366,6 +2365,13 @@ func (b *jobBuilder) bazelTest() {
 				"--patchset_order="+specs.PLACEHOLDER_PATCHSET,
 				"--tryjob_id="+specs.PLACEHOLDER_BUILDBUCKET_BUILD_ID)
 			b.cipd(CIPD_PKGS_GOLDCTL)
+
+		case "external_client":
+			cmd = append(cmd,
+				"--bazel_label="+labelAndSavedOutputDir.label,
+				"--path_in_skia=example/external_client",
+				"--bazel_cache_dir="+bazelCacheDir)
+			b.usesDocker()
 
 		default:
 			panic("Unsupported Bazel taskdriver " + taskdriverName)

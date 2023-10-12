@@ -765,6 +765,11 @@ void Context::performDeferredCleanup(std::chrono::milliseconds msNotUsed) {
     fResourceProvider->purgeResourcesNotUsedSince(purgeTime);
 }
 
+size_t Context::currentBudgetedBytes() const {
+    ASSERT_SINGLE_OWNER
+    return fResourceProvider->getResourceCacheCurrentBudgetedBytes();
+}
+
 ///////////////////////////////////////////////////////////////////////////////////
 
 #if defined(GRAPHITE_TEST_UTILS)
@@ -808,6 +813,24 @@ void ContextPriv::deregisterRecorder(const Recorder* recorder) {
             return;
         }
     }
+}
+
+bool ContextPriv::supportsPathRendererStrategy(PathRendererStrategy strategy) {
+    switch (strategy) {
+        case PathRendererStrategy::kDefault:
+            return true;
+        case PathRendererStrategy::kComputeAnalyticAA:
+#ifdef SK_ENABLE_VELLO_SHADERS
+            return this->caps()->computeSupport();
+#else
+            return false;
+#endif
+        case PathRendererStrategy::kRasterAA:
+        case PathRendererStrategy::kTessellation:
+            return true;
+    }
+
+    return false;
 }
 
 #endif

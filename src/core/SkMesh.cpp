@@ -794,11 +794,6 @@ std::tuple<bool, SkString> SkMesh::validate() const {
         }
     }
 
-    if (!fChildren.empty()) {
-        // TODO(b/40045302): support for `children` is a work-in-progress
-        FAIL_MESH_VALIDATE("effects are not permitted in mesh fragment shaders");
-    }
-
     auto vb = static_cast<SkMeshPriv::VB*>(fVB.get());
     auto ib = static_cast<SkMeshPriv::IB*>(fIB.get());
 
