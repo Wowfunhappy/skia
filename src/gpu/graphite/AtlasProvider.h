@@ -19,6 +19,7 @@
 namespace skgpu::graphite {
 
 class ComputePathAtlas;
+class DrawContext;
 class PathAtlas;
 class RasterPathAtlas;
 class Recorder;
@@ -62,9 +63,13 @@ public:
 
     // Return a TextureProxy with the given dimensions and color type.
     sk_sp<TextureProxy> getAtlasTexture(
-            Recorder*, uint16_t width, uint16_t height, SkColorType, bool requireStorageUsage);
+            Recorder*, uint16_t width, uint16_t height, SkColorType, uint16_t identifier,
+            bool requireStorageUsage);
 
     void clearTexturePool();
+
+    // Push any pending uploads to atlases onto the draw context
+    void recordUploads(DrawContext*, Recorder*);
 
 private:
     std::unique_ptr<TextAtlasManager> fTextAtlasManager;
