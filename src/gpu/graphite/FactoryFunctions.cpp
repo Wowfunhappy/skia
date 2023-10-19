@@ -84,7 +84,7 @@ public:
             , fSrcOptions(srcs.begin(), srcs.end()) {
 
         fNumBlenderCombos = 0;
-        for (auto rt : fRuntimeBlendEffects) {
+        for (const auto& rt : fRuntimeBlendEffects) {
             fNumBlenderCombos += rt->numCombinations();
         }
         if (needsPorterDuffBased) {
@@ -97,12 +97,12 @@ public:
         SkASSERT(fNumBlenderCombos >= 1);
 
         fNumDstCombos = 0;
-        for (auto d : fDstOptions) {
+        for (const auto& d : fDstOptions) {
             fNumDstCombos += d->numCombinations();
         }
 
         fNumSrcCombos = 0;
-        for (auto s : fSrcOptions) {
+        for (const auto& s : fSrcOptions) {
             fNumSrcCombos += s->numCombinations();
         }
 
@@ -212,7 +212,7 @@ sk_sp<PrecompileShader> PrecompileShaders::Blend(
     bool needsPorterDuffBased = false;
     bool needsBlendModeBased = false;
 
-    for (auto b : blenders) {
+    for (const auto& b : blenders) {
         if (!b) {
             needsPorterDuffBased = true; // fall back to kSrcOver
         } else if (b->asBlendMode().has_value()) {
@@ -270,8 +270,8 @@ public:
     PrecompileImageShader() {}
 
 private:
-    // cubic and non-cubic sampling
-    inline static constexpr int kNumIntrinsicCombinations = 2;
+    // hardware-tiled, shader-tiled and cubic sampling
+    inline static constexpr int kNumIntrinsicCombinations = 3;
 
     int numIntrinsicCombinations() const override { return kNumIntrinsicCombinations; }
 
@@ -284,11 +284,19 @@ private:
         static constexpr SkSamplingOptions kDefaultCubicSampling(SkCubicResampler::Mitchell());
         static constexpr SkSamplingOptions kDefaultSampling;
 
-        ImageShaderBlock::ImageData imgData(desiredCombination > 0 ? kDefaultCubicSampling
-                                                                   : kDefaultSampling,
+        // ImageShaderBlock will use hardware tiling when the subset covers the entire image, so we
+        // create subset + image size combinations where subset == imgSize (for a shader that uses
+        // hardware tiling) and subset < imgSize (for a shader that does shader-based tiling).
+        static constexpr SkRect kSubset = SkRect::MakeWH(1.0f, 1.0f);
+        static constexpr SkISize kHwTileableSize = SkISize::Make(1, 1);
+        static constexpr SkISize kNonHwTileableSize = SkISize::Make(2, 2);
+
+        ImageShaderBlock::ImageData imgData(desiredCombination == 2 ? kDefaultCubicSampling
+                                                                    : kDefaultSampling,
                                             SkTileMode::kClamp, SkTileMode::kClamp,
-                                            SkISize::MakeEmpty(), SkRect::MakeEmpty(),
-                                            ReadSwizzle::kRGBA);
+                                            desiredCombination == 1 ? kHwTileableSize
+                                                                    : kNonHwTileableSize,
+                                            kSubset, ReadSwizzle::kRGBA);
 
         ImageShaderBlock::AddBlock(keyContext, builder, gatherer, imgData);
     }
@@ -523,12 +531,12 @@ public:
             , fInnerOptions(innerOptions.begin(), innerOptions.end()) {
 
         fNumOuterCombos = 0;
-        for (auto outerOption : fOuterOptions) {
+        for (const auto& outerOption : fOuterOptions) {
             fNumOuterCombos += outerOption ? outerOption->numCombinations() : 1;
         }
 
         fNumInnerCombos = 0;
-        for (auto innerOption : fInnerOptions) {
+        for (const auto& innerOption : fInnerOptions) {
             fNumInnerCombos += innerOption ? innerOption->numCombinations() : 1;
         }
     }
@@ -666,7 +674,7 @@ public:
             : fChildOptions(childOptions.begin(), childOptions.end()) {
 
         fNumChildCombos = 0;
-        for (auto childOption : fChildOptions) {
+        for (const auto& childOption : fChildOptions) {
             fNumChildCombos += childOption->numCombinations();
         }
     }
