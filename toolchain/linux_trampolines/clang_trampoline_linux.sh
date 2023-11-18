@@ -26,6 +26,7 @@ fi
 supported_files_or_dirs=(
   "gm/"
   "include/private/base/"
+  "modules/bentleyottmann/"
   "modules/skunicode/"
   "src/base/"
   "src/codec/"
@@ -125,6 +126,7 @@ supported_files_or_dirs=(
   "tools/Resources.cpp"
   "tools/SvgPathExtractor.cpp"
   "tools/ToolUtils.cpp"
+  "tools/fonts/FontToolUtils.cpp"
 
   # See //bazel/generate_cpp_files_for_headers.bzl and //include/BUILD.bazel for more.
   "include/gen/"
@@ -137,6 +139,7 @@ excluded_files=(
   "tests/SkVxTest.cpp"
   "src/base/SkHalf.cpp"
   "src/core/SkMipmap.cpp"
+  "src/core/SkMipmapHQDownSampler.cpp"
   "src/core/SkMaskBlurFilter.cpp"
   "src/core/SkM44.cpp"
 )

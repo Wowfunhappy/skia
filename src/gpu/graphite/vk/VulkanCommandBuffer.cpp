@@ -309,7 +309,8 @@ bool VulkanCommandBuffer::submit(VkQueue queue) {
     int waitCount = fWaitSemaphores.size();
     TArray<VkPipelineStageFlags> vkWaitStages(waitCount);
     for (int i = 0; i < waitCount; ++i) {
-        vkWaitStages.push_back(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        vkWaitStages.push_back(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                               VK_PIPELINE_STAGE_TRANSFER_BIT);
     }
 
     bool submitted = submit_to_queue(interface,
@@ -383,16 +384,33 @@ void VulkanCommandBuffer::updateRtAdjustUniform(const SkRect& viewport) {
     const float rtAdjust[4] = {invTwoW, invTwoH, -1.f - x * invTwoW, -1.f - y * invTwoH};
 
     auto intrinsicUniformBuffer = fResourceProvider->refIntrinsicConstantBuffer();
+    const auto intrinsicVulkanBuffer = static_cast<VulkanBuffer*>(intrinsicUniformBuffer.get());
+    SkASSERT(intrinsicVulkanBuffer);
 
     fUniformBuffersToBind[VulkanGraphicsPipeline::kIntrinsicUniformBufferIndex] =
             {intrinsicUniformBuffer.get(), /*offset=*/0};
 
+    // TODO(b/307577875): Once synchronization for uniform buffers as a whole is improved, we should
+    // be able to rely upon the bindUniformBuffers() call to handle buffer access changes for us,
+    // removing the need to call setBufferAccess(...) within this method.
+
+    // Per the spec, vkCmdUpdateBuffer is treated as a “transfer" operation for the purposes of
+    // synchronization barriers. Ensure this write operation occurs after any previous read
+    // operations and without clobbering any other write operations on the same memory in the cache.
+    intrinsicVulkanBuffer->setBufferAccess(this, VK_ACCESS_TRANSFER_WRITE_BIT,
+                                           VK_PIPELINE_STAGE_TRANSFER_BIT);
+    this->submitPipelineBarriers();
+
     VULKAN_CALL(fSharedContext->interface(), CmdUpdateBuffer(
             fPrimaryCommandBuffer,
-            static_cast<VulkanBuffer*>(intrinsicUniformBuffer.get())->vkBuffer(),
+            intrinsicVulkanBuffer->vkBuffer(),
             /*dstOffset=*/0,
             VulkanResourceProvider::kIntrinsicConstantSize,
             &rtAdjust));
+
+    // Ensure the buffer update is completed and made visible before reading
+    intrinsicVulkanBuffer->setBufferAccess(this, VK_ACCESS_UNIFORM_READ_BIT,
+                                           VK_PIPELINE_STAGE_VERTEX_SHADER_BIT);
     this->trackResource(std::move(intrinsicUniformBuffer));
 }
 
@@ -890,61 +908,60 @@ void VulkanCommandBuffer::recordTextureAndSamplerDescSet(
         fTextureSamplerDescSetToBind = VK_NULL_HANDLE;
         fBindTextureSamplers = false;
         return;
-    } else {
-        // Populate the descriptor set with texture/sampler descriptors
-        TArray<VkWriteDescriptorSet> writeDescriptorSets(command.fNumTexSamplers);
-        TArray<VkDescriptorImageInfo> descriptorImageInfos(command.fNumTexSamplers);
-        for (int i = 0; i < command.fNumTexSamplers; ++i) {
-            auto texture = const_cast<VulkanTexture*>(static_cast<const VulkanTexture*>(
-                    drawPass.getTexture(command.fTextureIndices[i])));
-            auto sampler = static_cast<const VulkanSampler*>(
-                    drawPass.getSampler(command.fSamplerIndices[i]));
-            if (!texture || !sampler) {
-                // TODO(b/294198324): Investigate the root cause for null texture or samplers on
-                // Ubuntu QuadP400 GPU
-                SKGPU_LOG_E("Texture and sampler must not be null");
-                fNumTextureSamplers = 0;
-                fTextureSamplerDescSetToBind = VK_NULL_HANDLE;
-                fBindTextureSamplers = false;
-                return;
-            }
-
-            VkDescriptorImageInfo& textureInfo = descriptorImageInfos.push_back();
-            memset(&textureInfo, 0, sizeof(VkDescriptorImageInfo));
-            textureInfo.sampler = sampler->vkSampler();
-            textureInfo.imageView =
-                    texture->getImageView(VulkanImageView::Usage::kShaderInput)->imageView();
-            textureInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-            VkWriteDescriptorSet& writeInfo = writeDescriptorSets.push_back();
-            memset(&writeInfo, 0, sizeof(VkWriteDescriptorSet));
-            writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writeInfo.pNext = nullptr;
-            writeInfo.dstSet = *set->descriptorSet();
-            writeInfo.dstBinding = i;
-            writeInfo.dstArrayElement = 0;
-            writeInfo.descriptorCount = 1;
-            writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writeInfo.pImageInfo = &textureInfo;
-            writeInfo.pBufferInfo = nullptr;
-            writeInfo.pTexelBufferView = nullptr;
+    }
+    // Populate the descriptor set with texture/sampler descriptors
+    TArray<VkWriteDescriptorSet> writeDescriptorSets(command.fNumTexSamplers);
+    TArray<VkDescriptorImageInfo> descriptorImageInfos(command.fNumTexSamplers);
+    for (int i = 0; i < command.fNumTexSamplers; ++i) {
+        auto texture = const_cast<VulkanTexture*>(static_cast<const VulkanTexture*>(
+                drawPass.getTexture(command.fTextureIndices[i])));
+        auto sampler = static_cast<const VulkanSampler*>(
+                drawPass.getSampler(command.fSamplerIndices[i]));
+        if (!texture || !sampler) {
+            // TODO(b/294198324): Investigate the root cause for null texture or samplers on
+            // Ubuntu QuadP400 GPU
+            SKGPU_LOG_E("Texture and sampler must not be null");
+            fNumTextureSamplers = 0;
+            fTextureSamplerDescSetToBind = VK_NULL_HANDLE;
+            fBindTextureSamplers = false;
+            return;
         }
 
-        VULKAN_CALL(fSharedContext->interface(),
-                UpdateDescriptorSets(fSharedContext->device(),
-                                     command.fNumTexSamplers,
-                                     &writeDescriptorSets[0],
-                                     /*descriptorCopyCount=*/0,
-                                     /*pDescriptorCopies=*/nullptr));
+        VkDescriptorImageInfo& textureInfo = descriptorImageInfos.push_back();
+        memset(&textureInfo, 0, sizeof(VkDescriptorImageInfo));
+        textureInfo.sampler = sampler->vkSampler();
+        textureInfo.imageView =
+                texture->getImageView(VulkanImageView::Usage::kShaderInput)->imageView();
+        textureInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-        // Store the updated descriptor set to be actually bound later on. This avoids binding and
-        // potentially having to re-bind in cases where earlier descriptor sets change while going
-        // through drawpass commands.
-        fTextureSamplerDescSetToBind = *set->descriptorSet();
-        fBindTextureSamplers = true;
-        fNumTextureSamplers = command.fNumTexSamplers;
-        this->trackResource(std::move(set));
+        VkWriteDescriptorSet& writeInfo = writeDescriptorSets.push_back();
+        memset(&writeInfo, 0, sizeof(VkWriteDescriptorSet));
+        writeInfo.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeInfo.pNext = nullptr;
+        writeInfo.dstSet = *set->descriptorSet();
+        writeInfo.dstBinding = i;
+        writeInfo.dstArrayElement = 0;
+        writeInfo.descriptorCount = 1;
+        writeInfo.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writeInfo.pImageInfo = &textureInfo;
+        writeInfo.pBufferInfo = nullptr;
+        writeInfo.pTexelBufferView = nullptr;
     }
+
+    VULKAN_CALL(fSharedContext->interface(),
+            UpdateDescriptorSets(fSharedContext->device(),
+                                    command.fNumTexSamplers,
+                                    &writeDescriptorSets[0],
+                                    /*descriptorCopyCount=*/0,
+                                    /*pDescriptorCopies=*/nullptr));
+
+    // Store the updated descriptor set to be actually bound later on. This avoids binding and
+    // potentially having to re-bind in cases where earlier descriptor sets change while going
+    // through drawpass commands.
+    fTextureSamplerDescSetToBind = *set->descriptorSet();
+    fBindTextureSamplers = true;
+    fNumTextureSamplers = command.fNumTexSamplers;
+    this->trackResource(std::move(set));
 }
 
 void VulkanCommandBuffer::bindTextureSamplers() {
@@ -1133,8 +1150,7 @@ bool VulkanCommandBuffer::onCopyTextureToBuffer(const Texture* texture,
     // Set current access mask for buffer
     const_cast<VulkanBuffer*>(dstBuffer)->setBufferAccess(this,
                                                           VK_ACCESS_TRANSFER_WRITE_BIT,
-                                                          VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                                          false);
+                                                          VK_PIPELINE_STAGE_TRANSFER_BIT);
 
     this->submitPipelineBarriers();
 
@@ -1244,8 +1260,7 @@ bool VulkanCommandBuffer::onCopyTextureToTexture(const Texture* src,
 bool VulkanCommandBuffer::onSynchronizeBufferToCpu(const Buffer* buffer, bool* outDidResultInWork) {
     static_cast<const VulkanBuffer*>(buffer)->setBufferAccess(this,
                                                               VK_ACCESS_HOST_READ_BIT,
-                                                              VK_PIPELINE_STAGE_HOST_BIT,
-                                                              false);
+                                                              VK_PIPELINE_STAGE_HOST_BIT);
 
     *outDidResultInWork = true;
     return true;
@@ -1258,20 +1273,18 @@ bool VulkanCommandBuffer::onClearBuffer(const Buffer*, size_t offset, size_t siz
 void VulkanCommandBuffer::addBufferMemoryBarrier(const Resource* resource,
                                                  VkPipelineStageFlags srcStageMask,
                                                  VkPipelineStageFlags dstStageMask,
-                                                 bool byRegion,
                                                  VkBufferMemoryBarrier* barrier) {
     SkASSERT(resource);
     this->pipelineBarrier(resource,
                           srcStageMask,
                           dstStageMask,
-                          byRegion,
+                          /*byRegion=*/false,
                           kBufferMemory_BarrierType,
                           barrier);
 }
 
 void VulkanCommandBuffer::addBufferMemoryBarrier(VkPipelineStageFlags srcStageMask,
                                                  VkPipelineStageFlags dstStageMask,
-                                                 bool byRegion,
                                                  VkBufferMemoryBarrier* barrier) {
     // We don't pass in a resource here to the command buffer. The command buffer only is using it
     // to hold a ref, but every place where we add a buffer memory barrier we are doing some other
@@ -1280,7 +1293,7 @@ void VulkanCommandBuffer::addBufferMemoryBarrier(VkPipelineStageFlags srcStageMa
     this->pipelineBarrier(/*resource=*/nullptr,
                           srcStageMask,
                           dstStageMask,
-                          byRegion,
+                          /*byRegion=*/false,
                           kBufferMemory_BarrierType,
                           barrier);
 }

@@ -15,6 +15,7 @@
 #include "include/core/SkString.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/private/base/SkAPI.h"
+#include "include/private/base/SkTArray.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -376,7 +377,7 @@ private:
     sk_sp<IndexBuffer>  fIB;
 
     sk_sp<const SkData> fUniforms;
-    std::vector<ChildPtr> fChildren;
+    skia_private::STArray<2, ChildPtr> fChildren;
 
     size_t fVOffset = 0;  // Must be a multiple of spec->stride()
     size_t fVCount  = 0;
@@ -405,7 +406,7 @@ SK_API sk_sp<SkMesh::IndexBuffer> MakeIndexBuffer(const void* data, size_t size)
 /**
  * Makes a copy of an index buffer. The copy will be CPU-backed.
  */
-SK_API sk_sp<SkMesh::IndexBuffer> CopyIndexBuffer(sk_sp<SkMesh::IndexBuffer>);
+SK_API sk_sp<SkMesh::IndexBuffer> CopyIndexBuffer(const sk_sp<SkMesh::IndexBuffer>&);
 
 /**
  * Makes a CPU-backed vertex buffer to be used with SkMeshes.
@@ -420,7 +421,7 @@ SK_API sk_sp<SkMesh::VertexBuffer> MakeVertexBuffer(const void*, size_t size);
 /**
  * Makes a copy of a vertex buffer.  The copy will be CPU-backed.
  */
-SK_API sk_sp<SkMesh::VertexBuffer> CopyVertexBuffer(sk_sp<SkMesh::VertexBuffer>);
+SK_API sk_sp<SkMesh::VertexBuffer> CopyVertexBuffer(const sk_sp<SkMesh::VertexBuffer>&);
 }  // namespace SkMeshes
 
 #endif

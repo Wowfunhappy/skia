@@ -92,9 +92,19 @@ const (
 	// See the comment in that file on how to find the version to use here.
 	oldestSupportedSkpVersion = 293
 
-	// bazelCacheDir is the path where Bazel should write its cache. It can grow large (>10GB), so
-	// this should be in a partition with enough free space.
-	bazelCacheDir = "/mnt/pd0/bazel_cache"
+	// bazelCacheDirOnGCELinux is the path where Bazel should write its cache on Linux GCE machines.
+	// The Bazel cache can grow large (>10GB), so this should be in a partition with enough free
+	// space. On Linux GCE machines, the partition mounted at /mnt/pd0 is significantly larger than
+	// the partition mounted at /.
+	bazelCacheDirOnGCELinux = "/mnt/pd0/bazel_cache"
+
+	// bazelCacheDirOnSkoloLinux is like bazelCacheDirOnGCELinux for Skolo Linux machines. Unlike GCE
+	// Linux machines, the partition mounted at / on Skolo Linux machines is large enough. While
+	// using the default Bazel cache path would work, our Bazel task drivers demand an explicit path.
+	// We store the Bazel cache at /home/chrome-bot/bazel_cache rather than on the default location
+	// of /home/chrome-bot/cache/.bazel to make it obvious to someone examining a Skolo machine that
+	// we are overriding the default location.
+	bazelCacheDirOnSkoloLinux = "/home/chrome-bot/bazel_cache"
 )
 
 var (
@@ -417,7 +427,7 @@ func GenTasks(cfg *Config) {
 	b.MustAddCasSpec(CAS_BAZEL, &specs.CasSpec{
 		Root: "..",
 		Paths: []string{
-			// source code
+			// Source code.
 			"skia/example",
 			"skia/experimental/bazel_test",
 			"skia/include",
@@ -426,15 +436,18 @@ func GenTasks(cfg *Config) {
 			"skia/tests",
 			"skia/third_party",
 			"skia/tools",
-			// needed for tests
-			"skia/gm", // Needed to run GMs with Bazel.
-			"skia/gn", // some Python scripts still live here
+			// Needed for tests.
+			"skia/bench", // Needed to run benchmark tests with Bazel.
+			"skia/gm",    // Needed to run GMs with Bazel.
+			"skia/gn",    // Some Python scripts still live here.
 			"skia/resources",
 			"skia/package.json",
 			"skia/package-lock.json",
-			"skia/DEPS",       // needed to check generation
-			"skia/infra/bots", // Many Go tests live here.
-			// Needed to run bazel
+			"skia/DEPS",   // Needed to check generation.
+			"skia/infra",  // Many Go tests and Bazel tools live here.
+			"skia/go.mod", // Needed by Gazelle.
+			"skia/go.sum", // Needed by Gazelle.
+			// Needed to run Bazel.
 			"skia/.bazelignore",
 			"skia/.bazelrc",
 			"skia/.bazelversion",
@@ -1195,7 +1208,7 @@ func (b *jobBuilder) createPushAppsFromSkiaDockerImage() {
 			"--patch_issue", specs.PLACEHOLDER_ISSUE,
 			"--patch_set", specs.PLACEHOLDER_PATCHSET,
 			"--patch_server", specs.PLACEHOLDER_CODEREVIEW_SERVER,
-			"--bazel_cache_dir", bazelCacheDir,
+			"--bazel_cache_dir", bazelCacheDirOnGCELinux,
 		)
 		b.dep(b.buildTaskDrivers("linux", "amd64"))
 		b.dep(b.createDockerImage(false))
@@ -1223,7 +1236,7 @@ func (b *jobBuilder) createPushBazelAppsFromWASMDockerImage() {
 			"--task_name", b.Name,
 			"--workdir", ".",
 			"--skia_revision", specs.PLACEHOLDER_REVISION,
-			"--bazel_cache_dir", bazelCacheDir,
+			"--bazel_cache_dir", bazelCacheDirOnGCELinux,
 		)
 		b.dep(b.buildTaskDrivers("linux", "amd64"))
 		b.dep(b.createDockerImage(true))
@@ -1409,8 +1422,8 @@ func (b *jobBuilder) recreateSKPs() {
 	})
 }
 
-// checkGeneratedFiles verifies that no generated SKSL files have been edited
-// by hand.
+// checkGeneratedFiles verifies that no generated SKSL files have been edited by hand, and that
+// we do not get any diffs after regenerating all files (go generate, Gazelle, etc.).
 func (b *jobBuilder) checkGeneratedFiles() {
 	b.addTask(b.Name, func(b *taskBuilder) {
 		b.cas(CAS_BAZEL)
@@ -1421,7 +1434,30 @@ func (b *jobBuilder) checkGeneratedFiles() {
 			"--project_id", "skia-swarming-bots",
 			"--task_id", specs.PLACEHOLDER_TASK_ID,
 			"--task_name", b.Name,
-			"--bazel_cache_dir", bazelCacheDir,
+			"--bazel_cache_dir", bazelCacheDirOnGCELinux,
+			"--bazel_arg=--config=for_linux_x64_with_rbe",
+			"--bazel_arg=--jobs=100",
+		)
+		b.cipd(specs.CIPD_PKGS_GIT_LINUX_AMD64...)
+		b.usesBazel("linux_x64")
+		b.linuxGceDimensions(MACHINE_TYPE_MEDIUM)
+		b.serviceAccount(b.cfg.ServiceAccountHousekeeper)
+	})
+}
+
+// goLinters runs various Go linters (gofmt, errcheck, etc.) and fails if there are any errors or
+// diffs.
+func (b *jobBuilder) goLinters() {
+	b.addTask(b.Name, func(b *taskBuilder) {
+		b.cas(CAS_BAZEL)
+		b.dep(b.buildTaskDrivers("linux", "amd64"))
+		b.cmd("./go_linters",
+			"--local=false",
+			"--git_path=cipd_bin_packages/git",
+			"--project_id", "skia-swarming-bots",
+			"--task_id", specs.PLACEHOLDER_TASK_ID,
+			"--task_name", b.Name,
+			"--bazel_cache_dir", bazelCacheDirOnGCELinux,
 			"--bazel_arg=--config=for_linux_x64_with_rbe",
 			"--bazel_arg=--jobs=100",
 		)
@@ -2149,10 +2185,12 @@ var shorthandToLabel = map[string]labelAndSavedOutputDir{
 	"experimental_bazel_test_client": {"//experimental/bazel_test/client:client_lib", ""},
 	"cpu_gms":                        {"//gm:cpu_gm_tests", ""},
 	"hello_bazel_world_test":         {"//gm:hello_bazel_world_test", ""},
+	"cpu_8888_benchmark_test":        {"//bench:cpu_8888_test", ""},
 
 	// Note: these paths are relative to the WORKSPACE in //example/external_client
-	"path_combiner": {"//:path_combiner", ""},
-	"png_decoder":   {"//:png_decoder", ""},
+	"path_combiner":     {"//:path_combiner", ""},
+	"png_decoder":       {"//:png_decoder", ""},
+	"write_text_to_png": {"//:write_text_to_png", ""},
 
 	// Currently there is no way to tell Bazel "only test go_test targets", so we must group them
 	// under a test_suite.
@@ -2178,7 +2216,9 @@ var shorthandToLabel = map[string]labelAndSavedOutputDir{
 
 	// Android tests that run on a device. We store the //bazel-bin/tests directory into CAS for use
 	// by subsequent CI tasks.
+	"android_math_test":               {"//tests:android_math_test", "tests"},
 	"hello_bazel_world_android_test":  {"//gm:hello_bazel_world_android_test", "gm"},
+	"cpu_8888_benchmark_android_test": {"//bench:cpu_8888_android_test", "bench"},
 }
 
 // bazelBuild adds a task which builds the specified single-target label (//foo:bar) or
@@ -2200,7 +2240,7 @@ func (b *jobBuilder) bazelBuild() {
 			"--task_name=" + b.Name,
 			"--bazel_label=" + labelAndSavedOutputDir.label,
 			"--bazel_config=" + config,
-			"--bazel_cache_dir=" + bazelCacheDir,
+			"--bazel_cache_dir=" + bazelCacheDirOnGCELinux,
 			"--workdir=.",
 		}
 
@@ -2261,6 +2301,15 @@ func (b *jobBuilder) bazelBuild() {
 	})
 }
 
+type precompiledBazelTestKind int
+
+const (
+	precompiledBazelTestNone precompiledBazelTestKind = iota
+	precompiledBenchmarkTest
+	precompiledGMTest
+	precompiledUnitTest
+)
+
 func (b *jobBuilder) bazelTest() {
 	taskdriverName, shorthand, config, host, cross := b.parts.bazelTestParts()
 	labelAndSavedOutputDir, ok := shorthandToLabel[shorthand]
@@ -2269,16 +2318,24 @@ func (b *jobBuilder) bazelTest() {
 	}
 
 	// Expand task driver name to keep task names short.
-	isPrecompiledGM := false
-	if taskdriverName == "precompiled" {
+	precompiledKind := precompiledBazelTestNone
+	if taskdriverName == "precompiled_benchmark" {
 		taskdriverName = "bazel_test_precompiled"
+		precompiledKind = precompiledBenchmarkTest
 	}
 	if taskdriverName == "precompiled_gm" {
 		taskdriverName = "bazel_test_precompiled"
-		isPrecompiledGM = true
+		precompiledKind = precompiledGMTest
+	}
+	if taskdriverName == "precompiled_test" {
+		taskdriverName = "bazel_test_precompiled"
+		precompiledKind = precompiledUnitTest
 	}
 	if taskdriverName == "gm" {
 		taskdriverName = "bazel_test_gm"
+	}
+	if taskdriverName == "benchmark" {
+		taskdriverName = "bazel_test_benchmark"
 	}
 
 	b.addTask(b.Name, func(b *taskBuilder) {
@@ -2294,7 +2351,7 @@ func (b *jobBuilder) bazelTest() {
 			cmd = append(cmd,
 				"--bazel_label="+labelAndSavedOutputDir.label,
 				"--bazel_config="+config,
-				"--bazel_cache_dir="+bazelCacheDir,
+				"--bazel_cache_dir="+bazelCacheDirOnGCELinux,
 				"--goldctl_path=./cipd_bin_packages/goldctl",
 				"--git_commit="+specs.PLACEHOLDER_REVISION,
 				"--changelist_id="+specs.PLACEHOLDER_ISSUE,
@@ -2316,13 +2373,13 @@ func (b *jobBuilder) bazelTest() {
 			cmd = append(cmd,
 				"--bazel_label="+labelAndSavedOutputDir.label,
 				"--bazel_config="+config,
-				"--bazel_cache_dir="+bazelCacheDir)
+				"--bazel_cache_dir="+bazelCacheDirOnGCELinux)
 
 		case "toolchain_layering_check":
 			cmd = append(cmd,
 				"--bazel_label="+labelAndSavedOutputDir.label,
 				"--bazel_config="+config,
-				"--bazel_cache_dir="+bazelCacheDir)
+				"--bazel_cache_dir="+bazelCacheDirOnGCELinux)
 
 		case "bazel_test_precompiled":
 			// Compute the file name of the test based on its Bazel label. The file name will be relative to
@@ -2339,9 +2396,17 @@ func (b *jobBuilder) bazelTest() {
 				"--command="+command,
 				"--command_workdir="+commandWorkDir)
 
-			if isPrecompiledGM {
+			switch precompiledKind {
+			case precompiledBenchmarkTest:
 				cmd = append(cmd,
-					"--gm",
+					"--kind=benchmark",
+					"--git_commit="+specs.PLACEHOLDER_REVISION,
+					"--changelist_id="+specs.PLACEHOLDER_ISSUE,
+					"--patchset_order="+specs.PLACEHOLDER_PATCHSET)
+
+			case precompiledGMTest:
+				cmd = append(cmd,
+					"--kind=gm",
 					"--bazel_label="+labelAndSavedOutputDir.label,
 					"--goldctl_path=./cipd_bin_packages/goldctl",
 					"--git_commit="+specs.PLACEHOLDER_REVISION,
@@ -2349,13 +2414,19 @@ func (b *jobBuilder) bazelTest() {
 					"--patchset_order="+specs.PLACEHOLDER_PATCHSET,
 					"--tryjob_id="+specs.PLACEHOLDER_BUILDBUCKET_BUILD_ID)
 				b.cipd(CIPD_PKGS_GOLDCTL)
+
+			case precompiledUnitTest:
+				cmd = append(cmd, "--kind=unit")
+
+			default:
+				panic(fmt.Sprintf("Unknown precompiled test kind: %v", precompiledKind))
 			}
 
 		case "bazel_test_gm":
 			cmd = append(cmd,
 				"--bazel_label="+labelAndSavedOutputDir.label,
 				"--bazel_config="+config,
-				"--bazel_cache_dir="+bazelCacheDir,
+				"--bazel_cache_dir="+bazelCacheDirOnGCELinux,
 				"--goldctl_path=./cipd_bin_packages/goldctl",
 				"--git_commit="+specs.PLACEHOLDER_REVISION,
 				"--changelist_id="+specs.PLACEHOLDER_ISSUE,
@@ -2363,11 +2434,21 @@ func (b *jobBuilder) bazelTest() {
 				"--tryjob_id="+specs.PLACEHOLDER_BUILDBUCKET_BUILD_ID)
 			b.cipd(CIPD_PKGS_GOLDCTL)
 
+		case "bazel_test_benchmark":
+			// Note that these tasks run on Skolo machines.
+			cmd = append(cmd,
+				"--bazel_label="+labelAndSavedOutputDir.label,
+				"--bazel_config="+config,
+				"--bazel_cache_dir="+bazelCacheDirOnSkoloLinux,
+				"--git_commit="+specs.PLACEHOLDER_REVISION,
+				"--changelist_id="+specs.PLACEHOLDER_ISSUE,
+				"--patchset_order="+specs.PLACEHOLDER_PATCHSET)
+
 		case "external_client":
 			cmd = append(cmd,
 				"--bazel_label="+labelAndSavedOutputDir.label,
 				"--path_in_skia=example/external_client",
-				"--bazel_cache_dir="+bazelCacheDir)
+				"--bazel_cache_dir="+bazelCacheDirOnGCELinux)
 			b.usesDocker()
 
 		default:
@@ -2424,6 +2505,23 @@ func (b *jobBuilder) bazelTest() {
 				"os:Android",
 				fmt.Sprintf("device_type:%s", deviceType),
 				fmt.Sprintf("device_os:%s", deviceOS),
+				fmt.Sprintf("pool:%s", b.cfg.Pool),
+			)
+		} else if taskdriverName == "bazel_test_benchmark" {
+			// Chosen on 2023-10-19 based on the following criteria:
+			//
+			// - Linux.
+			// - Bare-metal machine as opposed to a GCE VM.
+			// - High capacity: 18 machines with 1357.3% "Percent of Optimistic Estimate" as per
+			//   https://status.skia.org/capacity at the time of writing.
+			//
+			// The above criteria is good enough for a few sample CI tasks, but we will probably want to
+			// be more specific moving forward.
+			b.dimension(
+				// Modeled after "Perf-Debian11-Clang-NUC9i7QN-CPU-AVX2-x86_64-OptimizeForSize-All". See
+				// https://skia.googlesource.com/skia/+/b540ed3ba8e78066b7788cc408d16a42fbff250a/infra/bots/tasks.json.
+				"cpu:x86-64-i7-9750H",
+				"os:Debian-11.5",
 				fmt.Sprintf("pool:%s", b.cfg.Pool),
 			)
 		} else {

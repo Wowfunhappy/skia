@@ -19,6 +19,11 @@ import (
 
 var gniExportDescs = []exporter.GNIExportDesc{
 	{GNI: "gn/codec.gni", Vars: []exporter.GNIFileListExportDesc{
+		{Var: "skia_codec_public",
+			Rules: []string{
+				"//include/codec:public_hdrs",
+			},
+		},
 		{Var: "skia_codec_core",
 			Rules: []string{
 				"//src/codec:core_hdrs",
@@ -291,7 +296,6 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/gpu/ganesh/ops:ops_srcs",
 				"//src/gpu/ganesh/surface:surface_srcs",
 				"//src/gpu/ganesh/surface:surface_srcs",
-				"//src/gpu/ganesh/surface:android_srcs",
 				"//src/gpu/ganesh/tessellate:tessellate_hdrs",
 				"//src/gpu/ganesh/tessellate:tessellate_srcs",
 				"//src/gpu/ganesh/text:private_hdrs",
@@ -300,6 +304,11 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/gpu/ganesh:core_skslc_hdrs",
 				"//src/gpu/ganesh:core_skslc_srcs",
 				"//src/gpu/ganesh:core_srcs",
+			}},
+		{Var: "skia_gpu_android_private",
+			Rules: []string{
+				"//src/gpu/ganesh/surface:android_srcs",
+				"//src/gpu/ganesh:android_srcs",
 				"//src/image:android_srcs",
 			}},
 		{Var: "skia_gpu_chromium_public",
@@ -317,6 +326,10 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//src/gpu/ganesh/gl:core_srcs",
 				"//src/gpu/ganesh/gl/builders:builder_hdrs",
 				"//src/gpu/ganesh/gl/builders:builder_srcs",
+			}},
+		{Var: "skia_android_gl_sources",
+			Rules: []string{
+				"//src/gpu/ganesh/gl:android_srcs",
 			}},
 		{Var: "skia_null_gpu_sources",
 			Rules: []string{
@@ -340,6 +353,10 @@ var gniExportDescs = []exporter.GNIExportDesc{
 			Rules: []string{
 				"//src/gpu/ganesh/vk:vk_hdrs",
 				"//src/gpu/ganesh/vk:vk_srcs",
+			}},
+		{Var: "skia_gpu_vk_android_private",
+			Rules: []string{
+				"//src/gpu/ganesh/vk:android_srcs",
 			}},
 		{Var: "skia_gpu_vk_chromium_private",
 			Rules: []string{
@@ -481,6 +498,8 @@ var gniExportDescs = []exporter.GNIExportDesc{
 			Rules: []string{"//modules/skunicode/src:icu_srcs"}},
 		{Var: "skia_unicode_icu_bidi_sources",
 			Rules: []string{"//modules/skunicode/src:icu_bidi_srcs"}},
+		{Var: "skia_unicode_icu4x_sources",
+			Rules: []string{"//modules/skunicode/src:icu4x_srcs"}},
 		{Var: "skia_unicode_client_icu_sources",
 			Rules: []string{"//modules/skunicode/src:client_srcs"}},
 		{Var: "skia_unicode_builtin_icu_sources",
@@ -512,10 +531,29 @@ var gniExportDescs = []exporter.GNIExportDesc{
 	{GNI: "modules/skcms/skcms.gni", Vars: []exporter.GNIFileListExportDesc{
 		{Var: "skcms_public_headers",
 			Rules: []string{"//modules/skcms:public_hdrs"}},
+
+		// TODO(b/310927123): Replace external dependencies on skcms_sources with the more fine-
+		// grained dependencies (skcms_public + skcms_Transform*) below, and remove skcms_sources.
 		{Var: "skcms_sources",
 			Rules: []string{
 				"//modules/skcms:srcs",
 				"//modules/skcms:textual_hdrs",
+			}},
+		{Var: "skcms_public",
+			Rules: []string{
+				"//modules/skcms:skcms_public",
+			}},
+		{Var: "skcms_TransformBaseline",
+			Rules: []string{
+				"//modules/skcms:skcms_TransformBaseline",
+			}},
+		{Var: "skcms_TransformHsw",
+			Rules: []string{
+				"//modules/skcms:skcms_TransformHsw",
+			}},
+		{Var: "skcms_TransformSkx",
+			Rules: []string{
+				"//modules/skcms:skcms_TransformSkx",
 			}},
 	}},
 }

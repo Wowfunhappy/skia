@@ -8,7 +8,6 @@
 #include "src/core/SkImageFilterTypes.h"
 
 #include "include/core/SkAlphaType.h"
-#include "include/core/SkBitmap.h"
 #include "include/core/SkBlendMode.h"
 #include "include/core/SkBlender.h"
 #include "include/core/SkCanvas.h"
@@ -24,6 +23,7 @@
 #include "include/private/base/SkFloatingPoint.h"
 #include "src/core/SkBitmapDevice.h"
 #include "src/core/SkBlenderBase.h"
+#include "src/core/SkBlurEngine.h"
 #include "src/core/SkCanvasPriv.h"
 #include "src/core/SkDevice.h"
 #include "src/core/SkImageFilterCache.h"
@@ -227,7 +227,8 @@ bool decal_tiling_differs_from_aa(const LayerSpace<SkMatrix> transform,
     // transformed 'imageBounds', then the sampling would not access texels outside the image bounds
     if (SkRectPriv::QuadContainsRect(SkMatrix(transform),
                                      SkIRect(imageBounds),
-                                     SkIRect(bufferedSampleBounds.roundOut()))) {
+                                     SkIRect(bufferedSampleBounds.roundOut()),
+                                     kRoundEpsilon)) {
         return false;
     }
 
@@ -369,12 +370,7 @@ public:
                                                   this->colorType(),
                                                   kPremul_SkAlphaType,
                                                   std::move(colorSpace));
-        SkBitmap bitmap;
-        if (!bitmap.tryAllocPixels(imageInfo)) {
-            return nullptr;
-        }
-
-        return sk_make_sp<SkBitmapDevice>(bitmap, props ? *props : this->surfaceProps());
+        return SkBitmapDevice::Create(imageInfo, props ? *props : this->surfaceProps());
     }
 
     sk_sp<SkSpecialImage> makeImage(const SkIRect& subset, sk_sp<SkImage> image) const override {
@@ -385,17 +381,7 @@ public:
         return SkImages::RasterFromBitmap(data);
     }
 
-    sk_sp<SkSpecialImage> blur(SkSize sigma,
-                               sk_sp<SkSpecialImage> input,
-                               SkIRect srcRect,
-                               SkIRect dstRect,
-                               sk_sp<SkColorSpace>) const override {
-        return nullptr;
-    }
-
-    bool isBlurSupported() const override {
-        return false;
-    }
+    const SkBlurEngine* getBlurEngine() const override { return nullptr; }
 };
 
 } // anonymous namespace
@@ -690,7 +676,8 @@ SkEnumBitMask<FilterResult::BoundsAnalysis> FilterResult::analyzeBounds(
             // won't be visible; otherwise add the analysis flag.
             if (!SkRectPriv::QuadContainsRect(SkMatrix::Concat(xtraTransform, SkMatrix(fTransform)),
                                               SkIRect::MakeSize(fImage->dimensions()),
-                                              dstBounds)) {
+                                              dstBounds,
+                                              kRoundEpsilon)) {
                 // We add the effects-visible flag for any reason, but we only mark the effect as
                 // filling layer bounds if there's an effect that applies *before* the layer clip.
                 // If it's just a non-transparency-preserving blend, that applies after the layer
@@ -718,7 +705,8 @@ SkEnumBitMask<FilterResult::BoundsAnalysis> FilterResult::analyzeBounds(
         // NOTE: For the identity transform, this is equal to !fLayerBounds.contains(dstBounds)
         if (!SkRectPriv::QuadContainsRect(SkMatrix(xtraTransform),
                                           SkIRect(fLayerBounds),
-                                          dstBounds)) {
+                                          dstBounds,
+                                          kRoundEpsilon)) {
             analysis |= BoundsAnalysis::kLayerCropVisible;
         }
     }
@@ -1073,25 +1061,7 @@ void FilterResult::draw(const Context& ctx,
                         SkDevice* device,
                         bool preserveDeviceState,
                         const SkBlender* blender) const {
-    bool blendAffectsTransparentBlack = false;
-    if (blender) {
-        if (auto blendMode = as_BB(blender)->asBlendMode()) {
-            SkBlendModeCoeff src, dst;
-            if (SkBlendMode_AsCoeff(*blendMode, &src, &dst)) {
-                // If the source is (0,0,0,0), then dst is preserved as long as its coefficient
-                // evaluates to 1.0. This is true for kOne, kISA, and kISC. Anything else means the
-                // blend mode affects transparent black.
-                blendAffectsTransparentBlack =
-                        dst != SkBlendModeCoeff::kOne &&
-                        dst != SkBlendModeCoeff::kISA &&
-                        dst != SkBlendModeCoeff::kISC;
-            } // else an advanced blend mode, which do not affect transparent black
-        } else {
-            // Blenders that aren't blend modes are assumed to modify transparent black.
-            blendAffectsTransparentBlack = true;
-        }
-    } // else src-over default, which does not modify transparent black
-
+    const bool blendAffectsTransparentBlack = blender && as_BB(blender)->affectsTransparentBlack();
     if (!fImage) {
         // The image is transparent black, this is a no-op unless we need to apply the blend mode
         if (blendAffectsTransparentBlack) {
@@ -1420,7 +1390,18 @@ FilterResult FilterResult::Builder::blur(const LayerSpace<SkSize>& sigma) {
 
     // TODO: The blur functor is only supported for GPU contexts; SkBlurImageFilter should have
     // detected this.
-    SkASSERT(fContext.backend()->isBlurSupported());
+    const SkBlurEngine* blurEngine = fContext.backend()->getBlurEngine();
+    SkASSERT(blurEngine);
+
+    // TODO: All tilemodes are applied right now in resolve() so query with just kDecal
+    const SkBlurEngine::Algorithm* algorithm = blurEngine->findAlgorithm(
+            SkSize(sigma), SkTileMode::kDecal, fContext.backend()->colorType());
+    if (!algorithm) {
+        return {};
+    }
+
+    // TODO: Move resizing logic out of GrBlurUtils into this function
+    SkASSERT(sigma.width() <= algorithm->maxSigma() && sigma.height() <= algorithm->maxSigma());
 
     // TODO: De-duplicate this logic between SkBlurImageFilter, here, and skgpu::BlurUtils.
     skif::LayerSpace<SkISize> radii =
@@ -1449,6 +1430,9 @@ FilterResult FilterResult::Builder::blur(const LayerSpace<SkSize>& sigma) {
     // TODO: The presence of a non-decal tilemode should not force resolving to a simple image; it
     // should be incorporated into the image that's sampled by the blur effect (modulo biasing edge
     // pixels somehow for very large clamp blurs).
+    // TODO: resolve() doesn't actually guarantee that the returned image has the same color space
+    // as the Context, but probably should since the blur algorithm operates in the color space of
+    // the input image.
     auto [image, origin] = fInputs[0].fImage.resolve(fContext, sampleBounds);
     if (!image) {
         return {};
@@ -1458,11 +1442,11 @@ FilterResult FilterResult::Builder::blur(const LayerSpace<SkSize>& sigma) {
     // for creating their own target surfaces.
     auto srcRelativeOutput = outputBounds;
     srcRelativeOutput.offset(-origin);
-    image = fContext.backend()->blur(SkSize(sigma),
-                                     image,
-                                     SkIRect::MakeSize(image->dimensions()),
-                                     SkIRect(srcRelativeOutput),
-                                     fContext.refColorSpace());
+    image = algorithm->blur(SkSize(sigma),
+                            image,
+                            SkIRect::MakeSize(image->dimensions()),
+                            SkTileMode::kDecal,
+                            SkIRect(srcRelativeOutput));
 
     // TODO: Allow the blur functor to provide an upscaling transform that is applied to the
     // FilterResult so that a render pass can possibly be elided if this is the final operation.

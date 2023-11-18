@@ -146,7 +146,7 @@ SkFontStyle SkTypeface::FromOldStyle(Style oldStyle) {
 }
 
 SkTypeface* SkTypeface::GetDefaultTypeface(Style style) {
-#if !defined(SK_DEFAULT_TYPEFACE_IS_EMPTY)
+#if !defined(SK_DEFAULT_TYPEFACE_IS_EMPTY) && !defined(SK_DISABLE_LEGACY_FONTMGR_REFDEFAULT)
     static SkOnce once[4];
     static sk_sp<SkTypeface> defaults[4];
 
@@ -173,19 +173,14 @@ sk_sp<SkTypeface> SkTypeface::MakeEmpty() {
     return SkEmptyTypeface::Make();
 }
 
-uint32_t SkTypeface::UniqueID(const SkTypeface* face) {
-#if !defined(SK_DISABLE_LEGACY_DEFAULT_TYPEFACE)
-    if (nullptr == face) {
-        face = GetDefaultTypeface();
-    }
-#else
-    SkASSERT(face);
-#endif
-    return face->uniqueID();
-}
-
 bool SkTypeface::Equal(const SkTypeface* facea, const SkTypeface* faceb) {
-    return facea == faceb || SkTypeface::UniqueID(facea) == SkTypeface::UniqueID(faceb);
+    if (facea == faceb) {
+        return true;
+    }
+    if (!facea || !faceb) {
+        return false;
+    }
+    return facea->uniqueID() == faceb->uniqueID();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

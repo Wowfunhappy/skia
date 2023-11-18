@@ -9,6 +9,7 @@
 
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkPathTypes.h"
+#include "include/core/SkTraceMemoryDump.h"
 #include "include/effects/SkRuntimeEffect.h"
 #include "include/gpu/graphite/BackendTexture.h"
 #include "include/gpu/graphite/Recorder.h"
@@ -20,6 +21,7 @@
 #include "src/core/SkTraceEvent.h"
 #include "src/core/SkYUVMath.h"
 #include "src/gpu/RefCntedCallback.h"
+#include "src/gpu/graphite/AtlasProvider.h"
 #include "src/gpu/graphite/BufferManager.h"
 #include "src/gpu/graphite/Caps.h"
 #include "src/gpu/graphite/ClientMappedBufferManager.h"
@@ -770,6 +772,17 @@ size_t Context::currentBudgetedBytes() const {
     return fResourceProvider->getResourceCacheCurrentBudgetedBytes();
 }
 
+void Context::dumpMemoryStatistics(SkTraceMemoryDump* traceMemoryDump) const {
+    ASSERT_SINGLE_OWNER
+    fResourceProvider->dumpMemoryStatistics(traceMemoryDump);
+    // TODO: What is the graphite equivalent for the text blob cache and how do we print out its
+    // used bytes here (see Ganesh implementation).
+}
+
+bool Context::supportsProtectedContent() const {
+    return fSharedContext->isProtected() == Protected::kYes;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////
 
 #if defined(GRAPHITE_TEST_UTILS)
@@ -816,16 +829,15 @@ void ContextPriv::deregisterRecorder(const Recorder* recorder) {
 }
 
 bool ContextPriv::supportsPathRendererStrategy(PathRendererStrategy strategy) {
+    AtlasProvider::PathAtlasFlagsBitMask pathAtlasFlags =
+            AtlasProvider::QueryPathAtlasSupport(this->caps());
     switch (strategy) {
         case PathRendererStrategy::kDefault:
             return true;
         case PathRendererStrategy::kComputeAnalyticAA:
-#ifdef SK_ENABLE_VELLO_SHADERS
-            return this->caps()->computeSupport();
-#else
-            return false;
-#endif
+            return SkToBool(pathAtlasFlags & AtlasProvider::PathAtlasFlags::kCompute);
         case PathRendererStrategy::kRasterAA:
+            return SkToBool(pathAtlasFlags & AtlasProvider::PathAtlasFlags::kRaster);
         case PathRendererStrategy::kTessellation:
             return true;
     }

@@ -94,6 +94,9 @@
 //#define SK_HISTOGRAM_EXACT_LINEAR(name, sample, value_max)
 //#define SK_HISTOGRAM_MEMORY_KB(name, sample)
 
+// To use smaller but slower mipmap builder
+//#define SK_USE_DRAWING_MIPMAP_DOWNSAMPLER
+
 /* Skia tries to make use of some non-standard C++ language extensions.
    By default, Skia provides msvc and clang/gcc versions of these macros.
    Skia consumers can provide their own definitions of these macros to
@@ -104,11 +107,6 @@
 //#define SK_PRINTF_LIKE(A, B) __attribute__((format(printf, (A), (B))))
 //#define SK_NO_SANITIZE(A) __attribute__((no_sanitize(A)))
 //#define SK_TRIVIAL_ABI [[clang::trivial_abi]]
-
-/* When --disable-skia-runtime-opts is set in Chrome (or when SkGraphics::Init is not called),
-   Skia will prefer precision over performance when computing reciprocals and inverse-square roots.
-*/
-#define SK_IMPROVE_RASTER_PIPELINE_PRECISION
 
 /*
  * If compiling Skia as a DLL, public APIs should be exported. Skia will set

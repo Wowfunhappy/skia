@@ -222,6 +222,7 @@ sk_sp<Device> Device::Make(Recorder* recorder,
                            const SkImageInfo& ii,
                            skgpu::Budgeted budgeted,
                            Mipmapped mipmapped,
+                           Protected isProtected,
                            const SkSurfaceProps& props,
                            bool addInitialClear) {
     if (!recorder) {
@@ -232,7 +233,7 @@ sk_sp<Device> Device::Make(Recorder* recorder,
                                                     ii.dimensions(),
                                                     ii.colorType(),
                                                     mipmapped,
-                                                    Protected::kNo,
+                                                    isProtected,
                                                     Renderable::kYes,
                                                     budgeted);
     if (!target) {
@@ -276,12 +277,15 @@ sk_sp<Device> Device::Make(Recorder* recorder,
 // These default tuning numbers for the HybridBoundsManager were chosen from looking at performance
 // and accuracy curves produced by the BoundsManagerBench for random draw bounding boxes. This
 // config will use brute force for the first 64 draw calls to the Device and then switch to a grid
-// that is dynamically sized to produce cells that are 16x16, which seemed to be in the sweet spot
-// for maintaining good performance without becoming too inaccurate.
+// that is dynamically sized to produce cells that are 16x16, up to a grid that's 32x32 cells.
+// This seemed like a sweet spot balancing accuracy for low-draw count surfaces and overhead for
+// high-draw count and high-resolution surfaces. With the 32x32 grid limit, cell size will increase
+// above 16px when the surface dimension goes above 512px.
 // TODO: These could be exposed as context options or surface options, and we may want to have
 // different strategies in place for a base device vs. a layer's device.
 static constexpr int kGridCellSize = 16;
 static constexpr int kMaxBruteForceN = 64;
+static constexpr int kMaxGridSize = 32;
 
 Device::Device(Recorder* recorder, sk_sp<DrawContext> dc, bool addInitialClear)
         : SkDevice(dc->imageInfo(), dc->surfaceProps())
@@ -291,12 +295,12 @@ Device::Device(Recorder* recorder, sk_sp<DrawContext> dc, bool addInitialClear)
         , fColorDepthBoundsManager(
                     std::make_unique<HybridBoundsManager>(fDC->imageInfo().dimensions(),
                                                           kGridCellSize,
-                                                          kMaxBruteForceN))
+                                                          kMaxBruteForceN,
+                                                          kMaxGridSize))
         , fDisjointStencilSet(std::make_unique<IntersectionTreeSet>())
         , fCachedLocalToDevice(SkM44())
         , fCurrentDepth(DrawOrder::kClearDepth)
-        , fSDFTControl(recorder->priv().caps()->getSDFTControl(false))
-        , fDrawsOverlap(false) {
+        , fSDFTControl(recorder->priv().caps()->getSDFTControl(false)) {
     SkASSERT(SkToBool(fDC) && SkToBool(fRecorder));
     fRecorder->registerDevice(this);
 
@@ -339,6 +343,7 @@ sk_sp<SkDevice> Device::createDevice(const CreateInfo& info, const SkPaint*) {
                 info.fInfo,
                 skgpu::Budgeted::kYes,
                 Mipmapped::kNo,
+                Protected(this->target()->isProtected()),
                 props,
                 addInitialClear);
 }
@@ -937,45 +942,45 @@ void Device::drawGeometry(const Transform& localToDevice,
     // When using a tessellating path renderer a stroke-and-fill is rendered using two draws. When
     // drawing from an atlas we issue a single draw as the atlas mask covers both styles.
     SkStrokeRec::Style styleType = style.getStyle();
-    const int numNewDraws = !pathAtlas && (styleType == SkStrokeRec::kStrokeAndFill_Style) ? 2 : 1;
+    const int numNewRenderSteps =
+            renderer->numRenderSteps() +
+            (!pathAtlas && (styleType == SkStrokeRec::kStrokeAndFill_Style)
+                     ? fRecorder->priv().rendererProvider()->tessellatedStrokes()->numRenderSteps()
+                     : 0);
 
     // Decide if we have any reason to flush pending work. We want to flush before updating the clip
     // state or making any permanent changes to a path atlas, since otherwise clip operations and/or
     // atlas entries for the current draw will be flushed.
-    const bool needsFlush = this->needsFlushBeforeDraw(numNewDraws, dstReadReq);
+    const bool needsFlush = this->needsFlushBeforeDraw(numNewRenderSteps, dstReadReq);
     if (needsFlush) {
         this->flushPendingWorkToRecorder();
     }
 
     // If an atlas path renderer was chosen we need to insert the shape into the atlas and schedule
     // it to be drawn.
-    CoverageMaskShape::MaskInfo atlasMaskInfo;  // only used if `pathAtlas != nullptr`
-
-    const TextureProxy* pathAtlasTextureProxy = nullptr;
+    std::optional<PathAtlas::MaskAndOrigin> atlasMask;  // only used if `pathAtlas != nullptr`
     if (pathAtlas != nullptr) {
-        pathAtlasTextureProxy = pathAtlas->addShape(recorder(),
-                                                    clip.transformedShapeBounds(),
-                                                    geometry.shape(),
-                                                    localToDevice,
-                                                    style,
-                                                    &atlasMaskInfo);
+        atlasMask = pathAtlas->addShape(recorder(),
+                                        clip.transformedShapeBounds(),
+                                        geometry.shape(),
+                                        localToDevice,
+                                        style);
 
         // If there was no space in the atlas and we haven't flushed already, then flush pending
         // work to clear up space in the atlas. If we had already flushed once (which would have
         // cleared the atlas) then the atlas is too small for this shape.
-        if (!pathAtlasTextureProxy && !needsFlush) {
+        if (!atlasMask && !needsFlush) {
             this->flushPendingWorkToRecorder();
 
             // Try inserting the shape again.
-            pathAtlasTextureProxy = pathAtlas->addShape(recorder(),
-                                                        clip.transformedShapeBounds(),
-                                                        geometry.shape(),
-                                                        localToDevice,
-                                                        style,
-                                                        &atlasMaskInfo);
+            atlasMask = pathAtlas->addShape(recorder(),
+                                            clip.transformedShapeBounds(),
+                                            geometry.shape(),
+                                            localToDevice,
+                                            style);
         }
 
-        if (!pathAtlasTextureProxy) {
+        if (!atlasMask) {
             SKGPU_LOG_E("Failed to add shape to atlas!");
             // TODO(b/285195175): This can happen if the atlas is not large enough or a compatible
             // atlas texture cannot be created. Handle the first case in `chooseRenderer` and make
@@ -1024,9 +1029,9 @@ void Device::drawGeometry(const Transform& localToDevice,
     // also lets Device easily track whether or not there are any overlapping draws.
     PaintParams shading{paint, std::move(primitiveBlender), dstReadReq, skipColorXform};
     const bool dependsOnDst = rendererCoverage != Coverage::kNone || paint_depends_on_dst(shading);
-    CompressedPaintersOrder prevDraw =
-            fColorDepthBoundsManager->getMostRecentDraw(clip.drawBounds());
     if (dependsOnDst) {
+        CompressedPaintersOrder prevDraw =
+            fColorDepthBoundsManager->getMostRecentDraw(clip.drawBounds());
         order.dependsOnPaintersOrder(prevDraw);
     }
 
@@ -1044,12 +1049,10 @@ void Device::drawGeometry(const Transform& localToDevice,
     // next invocation of flushPendingWorkToRecorder().
     if (pathAtlas != nullptr) {
         // Record the draw as a fill since stroking is handled by the atlas render/upload.
-        Geometry coverageMask(CoverageMaskShape(geometry.shape(),
-                                                pathAtlasTextureProxy,
-                                                localToDevice.inverse(),
-                                                atlasMaskInfo));
-        fDC->recordDraw(
-                renderer, Transform::Identity(), coverageMask, clip, order, &shading, nullptr);
+        SkASSERT(atlasMask.has_value());
+        auto [mask, origin] = *atlasMask;
+        fDC->recordDraw(renderer, Transform::Translate(origin.fX, origin.fY), Geometry(mask),
+                        clip, order, &shading, nullptr);
     } else {
         if (styleType == SkStrokeRec::kStroke_Style ||
             styleType == SkStrokeRec::kHairline_Style ||
@@ -1078,17 +1081,17 @@ void Device::drawGeometry(const Transform& localToDevice,
     // Post-draw book keeping (bounds manager, depth tracking, etc.)
     fColorDepthBoundsManager->recordDraw(clip.drawBounds(), order.paintOrder());
     fCurrentDepth = order.depth();
-    fDrawsOverlap |= (prevDraw != DrawOrder::kNoIntersection);
+
+    // TODO(b/238758897): When we enable layer elision that depends on draws not overlapping, we
+    // can use the `getMostRecentDraw()` query to determine that, although that will mean querying
+    // even if the draw does not depend on dst (so should be only be used when the Device is an
+    // elision candidate).
 }
 
 void Device::drawClipShape(const Transform& localToDevice,
                            const Shape& shape,
                            const Clip& clip,
                            DrawOrder order) {
-    // This call represents one of the deferred clip shapes that's already pessimistically counted
-    // in needsFlushBeforeDraw(), so the DrawContext should have room to add it.
-    SkASSERT(fDC->pendingDrawCount() + 1 < DrawList::kMaxDraws);
-
     // A clip draw's state is almost fully defined by the ClipStack. The only thing we need
     // to account for is selecting a Renderer and tracking the stencil buffer usage.
     Geometry geometry{shape};
@@ -1104,6 +1107,10 @@ void Device::drawClipShape(const Transform& localToDevice,
                                                                  clip.drawBounds());
         order.dependsOnStencil(setIndex);
     }
+
+    // This call represents one of the deferred clip shapes that's already pessimistically counted
+    // in needsFlushBeforeDraw(), so the DrawContext should have room to add it.
+    SkASSERT(fDC->pendingRenderSteps() + renderer->numRenderSteps() < DrawList::kMaxRenderSteps);
 
     // Anti-aliased clipping requires the renderer to use MSAA to modify the depth per sample, so
     // analytic coverage renderers cannot be used.
@@ -1147,6 +1154,11 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
     } else if (geometry.isVertices()) {
         SkVerticesPriv info(geometry.vertices()->priv());
         return {renderers->vertices(info.mode(), info.hasColors(), info.hasTexCoords()), nullptr};
+    } else if (geometry.isCoverageMaskShape()) {
+        // drawCoverageMask() passes in CoverageMaskShapes that reference a provided texture.
+        // The CoverageMask renderer can also be chosen later on if the shape is assigned to
+        // to be rendered into the PathAtlas, in which case the 2nd return value is non-null.
+        return {renderers->coverageMask(), nullptr};
     } else if (geometry.isEdgeAAQuad()) {
         SkASSERT(!requireMSAA && style.isFillStyle());
         // handled by specialized system, simplified from rects and round rects
@@ -1304,16 +1316,14 @@ void Device::flushPendingWorkToRecorder() {
     fColorDepthBoundsManager->reset();
     fDisjointStencilSet->reset();
     fCurrentDepth = DrawOrder::kClearDepth;
-    // NOTE: fDrawsOverlap is not reset here because that is a persistent property of everything
-    // drawn into the Device, and not just the currently accumulating pass.
 }
 
-bool Device::needsFlushBeforeDraw(int numNewDraws, DstReadRequirement dstReadReq) const {
+bool Device::needsFlushBeforeDraw(int numNewRenderSteps, DstReadRequirement dstReadReq) const {
     // Must also account for the elements in the clip stack that might need to be recorded.
-    numNewDraws += fClip.maxDeferredClipDraws();
+    numNewRenderSteps += fClip.maxDeferredClipDraws() * Renderer::kMaxRenderSteps;
     return
             // Need flush if we don't have room to record into the current list.
-            (DrawList::kMaxDraws - fDC->pendingDrawCount()) < numNewDraws ||
+            (DrawList::kMaxRenderSteps - fDC->pendingRenderSteps()) < numNewRenderSteps ||
             // Need flush if this draw needs to copy the dst surface for reading.
             dstReadReq == DstReadRequirement::kTextureCopy;
 }
@@ -1345,6 +1355,52 @@ void Device::drawSpecial(SkSpecialImage* special,
     this->drawGeometry(Transform(SkM44(localToDevice)),
                        Geometry(Shape(dst)),
                        paintWithShader,
+                       DefaultFillStyle(),
+                       DrawFlags::kIgnorePathEffect | DrawFlags::kIgnoreMaskFilter);
+}
+
+void Device::drawCoverageMask(const SkSpecialImage* mask,
+                              const SkMatrix& localToDevice,
+                              const SkSamplingOptions& sampling,
+                              const SkPaint& paint) {
+    CoverageMaskShape::MaskInfo maskInfo{/*fTextureOrigin=*/{SkTo<uint16_t>(mask->subset().fLeft),
+                                                             SkTo<uint16_t>(mask->subset().fTop)},
+                                         /*fMaskSize=*/{SkTo<uint16_t>(mask->width()),
+                                                        SkTo<uint16_t>(mask->height())}};
+
+    auto maskProxyView = SkSpecialImages::AsTextureProxyView(mask);
+    if (!maskProxyView) {
+        SKGPU_LOG_W("Couldn't get Graphite-backed special image as texture proxy view");
+        return;
+    }
+
+    // 'mask' logically has 0 coverage outside of its pixels, which is equivalent to kDecal tiling.
+    // However, since we draw geometry tightly fitting 'mask', we can use the better-supported
+    // kClamp tiling and behave effectively the same way.
+    const SkTileMode kClamp[2] = {SkTileMode::kClamp, SkTileMode::kClamp};
+
+    // Ensure this is kept alive; normally textures are kept alive by the PipelineDataGatherer for
+    // image shaders, or by the PathAtlas. This is a unique circumstance.
+    // TODO: Find a cleaner way to ensure 'maskProxyView' is transferred to the final Recording.
+    TextureDataBlock tdb;
+    // TODO: Ideally we'd switch to kLinear filtering if `localToDevice` is not pixel-aligned, but
+    // CoverageMaskRenderStep registers the sampler right now as kNearest.
+    tdb.add(SkFilterMode::kNearest, kClamp, maskProxyView.refProxy());
+    fRecorder->priv().textureDataCache()->insert(tdb);
+
+    // CoverageMaskShape() wraps a Shape when it's used as a PathAtlas, but in this case the
+    // original shape has been long lost, so just use a Rect that bounds the image.
+    CoverageMaskShape maskShape{Shape{Rect::WH((float)mask->width(), (float)mask->height())},
+                                maskProxyView.proxy(),
+                                // Use the active local-to-device transform for this since it
+                                // determines the local coords for evaluating the skpaint, whereas
+                                // the provided 'localToDevice' just places the coverage mask.
+                                this->localToDeviceTransform().inverse(),
+                                maskInfo};
+
+    this->drawGeometry(Transform(SkM44(localToDevice)),
+                       Geometry(maskShape),
+                       paint,
                        DefaultFillStyle(),
                        DrawFlags::kIgnorePathEffect | DrawFlags::kIgnoreMaskFilter);
 }

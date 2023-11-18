@@ -1,5 +1,7 @@
-# This file contains lists of files and defines used in the legacy G3 build, that is, the G3 build
-# that is not derived from our Bazel rules.
+"""
+This module contains lists of files and defines used in the legacy G3 build, that is, the G3 build
+that is not derived from our Bazel rules.
+"""
 
 SKIA_PUBLIC_HDRS = [
     "include/android/SkAndroidFrameworkUtils.h",
@@ -402,6 +404,7 @@ BASE_SRCS_ALL = [
     "src/core/SkBlitter_A8.h",
     "src/core/SkBlitter_ARGB32.cpp",
     "src/core/SkBlitter_Sprite.cpp",
+    "src/core/SkBlurEngine.h",
     "src/core/SkBlurMask.cpp",
     "src/core/SkBlurMask.h",
     "src/core/SkBlurMaskFilterImpl.cpp",
@@ -543,6 +546,8 @@ BASE_SRCS_ALL = [
     "src/core/SkMipmapAccessor.h",
     "src/core/SkMipmapBuilder.cpp",
     "src/core/SkMipmapBuilder.h",
+    "src/core/SkMipmapDrawDownSampler.cpp",
+    "src/core/SkMipmapHQDownSampler.cpp",
     "src/core/SkNextID.h",
     "src/core/SkOSFile.h",
     "src/core/SkOpts.cpp",
@@ -2201,6 +2206,7 @@ VULKAN_SRCS = [
     "src/gpu/vk/VulkanInterface.h",
     "src/gpu/vk/VulkanMemory.cpp",
     "src/gpu/vk/VulkanMemory.h",
+    "src/gpu/vk/VulkanUtilsPriv.cpp",
     "src/gpu/vk/VulkanUtilsPriv.h",
 ]
 

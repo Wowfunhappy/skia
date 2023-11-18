@@ -46,6 +46,7 @@ public:
                               const SkImageInfo&,
                               skgpu::Budgeted,
                               Mipmapped,
+                              skgpu::Protected,
                               const SkSurfaceProps&,
                               bool addInitialClear);
     static sk_sp<Device> Make(Recorder*,
@@ -79,6 +80,12 @@ public:
 
     TextureProxy* target();
     TextureProxyView readSurfaceView() const;
+
+    // SkCanvas only uses drawCoverageMask w/o this staging flag, so only enable
+    // mask filters in clients that have finished migrating.
+#if !defined(SK_RESOLVE_FILTERS_BEFORE_RESTORE)
+    bool useDrawCoverageMaskForMaskFilters() const override { return true; }
+#endif
 
     // Clipping
     void pushClipStack() override { fClip.save(); }
@@ -152,6 +159,8 @@ public:
 
     void drawSpecial(SkSpecialImage*, const SkMatrix& localToDevice,
                      const SkSamplingOptions&, const SkPaint&) override;
+    void drawCoverageMask(const SkSpecialImage*, const SkMatrix& localToDevice,
+                          const SkSamplingOptions&, const SkPaint&) override;
 
 private:
     class IntersectionTreeSet;
@@ -258,8 +267,6 @@ private:
     PaintersDepth fCurrentDepth;
 
     const sktext::gpu::SDFTControl fSDFTControl;
-
-    bool fDrawsOverlap;
 
     friend class ClipStack; // for recordDraw
 };

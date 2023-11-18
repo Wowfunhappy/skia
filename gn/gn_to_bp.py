@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 #
 # Copyright 2016 Google Inc.
 #
@@ -77,6 +77,7 @@ license {
 
 cc_defaults {
     name: "skia_arch_defaults",
+    cpp_std: "gnu++17",
     arch: {
         arm: {
             srcs: [],
@@ -352,6 +353,7 @@ cc_defaults {
 
 cc_test {
     name: "skia_dm",
+    cpp_std: "gnu++17",
 
     defaults: [
         "skia_gm_srcs",
@@ -375,6 +377,7 @@ cc_test {
 
 cc_test {
     name: "skia_nanobench",
+    cpp_std: "gnu++17",
 
     defaults: [
         "skia_gm_srcs",
@@ -681,9 +684,10 @@ gn_to_bp_utils.GrabDependentValues(js_skqp, '//:libskqp_jni', 'cflags_cc',
 gn_to_bp_utils.GrabDependentValues(js_skqp, '//:libskqp_jni', 'defines',
                                    skqp_defines, None)
 
-skqp_defines.add("SK_ENABLE_DUMP_GPU")
-skqp_defines.add("SK_BUILD_FOR_SKQP")
+skqp_defines.add("GRAPHITE_TEST_UTILS")
 skqp_defines.add("SK_ALLOW_STATIC_GLOBAL_INITIALIZERS=1")
+skqp_defines.add("SK_BUILD_FOR_SKQP")
+skqp_defines.add("SK_ENABLE_DUMP_GPU")
 skqp_defines.remove("SK_USE_PERFETTO")
 
 skqp_srcs = strip_headers(skqp_srcs)

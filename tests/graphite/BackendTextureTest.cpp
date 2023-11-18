@@ -174,11 +174,11 @@ DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(ImageBackendTextureTest, reporter, context,
             BackendTexture texture = recorder->createBackendTexture(kSize, info);
             REPORTER_ASSERT(reporter, texture.isValid());
 
-            sk_sp<SkImage> image = SkImages::AdoptTextureFrom(recorder.get(),
-                                                              texture,
-                                                              kRGBA_8888_SkColorType,
-                                                              kPremul_SkAlphaType,
-                                                              /*colorSpace=*/nullptr);
+            sk_sp<SkImage> image = SkImages::WrapTexture(recorder.get(),
+                                                         texture,
+                                                         kRGBA_8888_SkColorType,
+                                                         kPremul_SkAlphaType,
+                                                         /*colorSpace=*/nullptr);
             REPORTER_ASSERT(reporter, image);
             REPORTER_ASSERT(reporter, image->hasMipmaps() == (mipmapped == Mipmapped::kYes));
 
@@ -186,11 +186,11 @@ DEF_GRAPHITE_TEST_FOR_ALL_CONTEXTS(ImageBackendTextureTest, reporter, context,
 
             // We should fail when trying to wrap the same texture in an image with a non-compatible
             // color type.
-            image = SkImages::AdoptTextureFrom(recorder.get(),
-                                               texture,
-                                               kAlpha_8_SkColorType,
-                                               kPremul_SkAlphaType,
-                                               /* colorSpace= */ nullptr);
+            image = SkImages::WrapTexture(recorder.get(),
+                                          texture,
+                                          kAlpha_8_SkColorType,
+                                          kPremul_SkAlphaType,
+                                          /* colorSpace= */ nullptr);
             REPORTER_ASSERT(reporter, !image);
 
             recorder->deleteBackendTexture(texture);
@@ -208,7 +208,8 @@ DEF_GRAPHITE_TEST_FOR_VULKAN_CONTEXT(VulkanBackendTextureMutableStateTest, repor
                            VK_IMAGE_TILING_OPTIMAL,
                            VK_IMAGE_USAGE_SAMPLED_BIT,
                            VK_SHARING_MODE_EXCLUSIVE,
-                           VK_IMAGE_ASPECT_COLOR_BIT);
+                           VK_IMAGE_ASPECT_COLOR_BIT,
+                           /*ycbcrConversionInfo*/{});
 
     BackendTexture texture({16, 16},
                            info,

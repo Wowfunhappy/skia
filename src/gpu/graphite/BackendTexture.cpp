@@ -33,7 +33,6 @@ BackendTexture& BackendTexture::operator=(const BackendTexture& that) {
 #ifdef SK_DAWN
         case BackendApi::kDawn:
             fDawnTexture = that.fDawnTexture;
-            fDawnTextureView = that.fDawnTextureView;
             break;
 #endif
 #ifdef SK_METAL
@@ -67,9 +66,6 @@ bool BackendTexture::operator==(const BackendTexture& that) const {
 #ifdef SK_DAWN
         case BackendApi::kDawn:
             if (fDawnTexture != that.fDawnTexture) {
-                return false;
-            }
-            if (fDawnTextureView != that.fDawnTextureView) {
                 return false;
             }
             break;
@@ -107,16 +103,17 @@ BackendTexture::BackendTexture(WGPUTexture texture)
         : fDimensions{static_cast<int32_t>(wgpuTextureGetWidth(texture)),
                       static_cast<int32_t>(wgpuTextureGetHeight(texture))}
         , fInfo(DawnTextureInfo(wgpu::Texture(texture)))
-        , fDawnTexture(texture)
-        , fDawnTextureView(nullptr) {}
+        , fDawnTexture(texture) {}
 
-BackendTexture::BackendTexture(SkISize dimensions,
+BackendTexture::BackendTexture(SkISize planeDimensions,
                                const DawnTextureInfo& info,
-                               WGPUTextureView textureView)
-        : fDimensions(dimensions)
-        , fInfo(info)
-        , fDawnTexture(nullptr)
-        , fDawnTextureView(textureView) {}
+                               WGPUTexture texture)
+        : fDimensions(planeDimensions), fInfo(info), fDawnTexture(texture) {
+    SkASSERT(info.fAspect == wgpu::TextureAspect::All ||
+             info.fAspect == wgpu::TextureAspect::Plane0Only ||
+             info.fAspect == wgpu::TextureAspect::Plane1Only ||
+             info.fAspect == wgpu::TextureAspect::Plane2Only);
+}
 
 WGPUTexture BackendTexture::getDawnTexturePtr() const {
     if (this->isValid() && this->backend() == BackendApi::kDawn) {
@@ -124,22 +121,15 @@ WGPUTexture BackendTexture::getDawnTexturePtr() const {
     }
     return {};
 }
-
-WGPUTextureView BackendTexture::getDawnTextureViewPtr() const {
-    if (this->isValid() && this->backend() == BackendApi::kDawn) {
-        return fDawnTextureView;
-    }
-    return {};
-}
 #endif
 
 #ifdef SK_METAL
-BackendTexture::BackendTexture(SkISize dimensions, MtlHandle mtlTexture)
+BackendTexture::BackendTexture(SkISize dimensions, CFTypeRef mtlTexture)
         : fDimensions(dimensions)
         , fInfo(MtlTextureInfo(mtlTexture))
         , fMtlTexture(mtlTexture) {}
 
-MtlHandle BackendTexture::getMtlTexture() const {
+CFTypeRef BackendTexture::getMtlTexture() const {
     if (this->isValid() && this->backend() == BackendApi::kMetal) {
         return fMtlTexture;
     }

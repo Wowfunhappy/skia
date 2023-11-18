@@ -25,6 +25,7 @@
 #include "include/effects/SkDashPathEffect.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
+#include "tools/fonts/FontToolUtils.h"
 
 static void test_nulldev(SkCanvas* canvas) {
     SkBitmap bm;
@@ -90,7 +91,7 @@ DEF_SIMPLE_GM(stroketext, canvas, 1200, 480) {
     SkPaint paint;
     paint.setAntiAlias(true);
 
-    SkFont font(ToolUtils::create_portable_typeface(), kBelowThreshold_TextSize);
+    SkFont font(ToolUtils::DefaultPortableTypeface(), kBelowThreshold_TextSize);
     draw_text_set(canvas, paint, font);
 
     canvas->translate(600, 0);
@@ -99,8 +100,8 @@ DEF_SIMPLE_GM(stroketext, canvas, 1200, 480) {
 }
 
 DEF_SIMPLE_GM_CAN_FAIL(stroketext_native, canvas, msg, 650, 420) {
-    sk_sp<SkTypeface> ttf = MakeResourceAsTypeface("fonts/Stroking.ttf");
-    sk_sp<SkTypeface> otf = MakeResourceAsTypeface("fonts/Stroking.otf");
+    sk_sp<SkTypeface> ttf = ToolUtils::CreateTypefaceFromResource("fonts/Stroking.ttf");
+    sk_sp<SkTypeface> otf = ToolUtils::CreateTypefaceFromResource("fonts/Stroking.otf");
 
     sk_sp<SkTypeface> overlap = []() -> sk_sp<SkTypeface>{
         std::unique_ptr<SkStreamAsset> variableStream(GetResourceAsStream("fonts/Variable.ttf"));
@@ -112,7 +113,7 @@ DEF_SIMPLE_GM_CAN_FAIL(stroketext_native, canvas, msg, 650, 420) {
         };
         SkFontArguments params;
         params.setVariationDesignPosition({position, std::size(position)});
-        return SkFontMgr::RefDefault()->makeFromStream(std::move(variableStream), params);
+        return ToolUtils::TestFontMgr()->makeFromStream(std::move(variableStream), params);
     }();
 
     if (!ttf && !otf && !overlap) {

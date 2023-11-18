@@ -1240,12 +1240,21 @@ void WGSLCodeGenerator::writePipelineIODeclaration(const Layout& layout,
     // https://www.w3.org/TR/WGSL/#builtin-inputs-outputs
     if (layout.fLocation >= 0) {
         this->writeUserDefinedIODecl(layout, type, name, delimiter);
-    } else if (layout.fBuiltin >= 0) {
+        return;
+    }
+    if (layout.fBuiltin >= 0) {
+        if (layout.fBuiltin == SK_POINTSIZE_BUILTIN) {
+            // WebGPU does not support the point-size builtin, but we silently replace it with a
+            // global variable when it is used, instead of reporting an error.
+            return;
+        }
         auto builtin = builtin_from_sksl_name(layout.fBuiltin);
         if (builtin.has_value()) {
             this->writeBuiltinIODecl(type, name, *builtin, delimiter);
+            return;
         }
     }
+    fContext.fErrors->error(Position(), "declaration '" + std::string(name) + "' is not supported");
 }
 
 void WGSLCodeGenerator::writeUserDefinedIODecl(const Layout& layout,
@@ -3260,12 +3269,13 @@ std::string WGSLCodeGenerator::assembleTernaryExpression(const TernaryExpression
     std::string expr;
 
     // The trivial case is when neither branch has side effects and evaluate to a scalar or vector
-    // type. This can be represented with a call to the WGSL `select` intrinsic although it doesn't
-    // support short-circuiting.
+    // type. This can be represented with a call to the WGSL `select` intrinsic. Select doesn't
+    // support short-circuiting, so we should only use it when both the true- and false-expressions
+    // are trivial to evaluate.
     if ((t.type().isScalar() || t.type().isVector()) &&
         !Analysis::HasSideEffects(*t.test()) &&
-        !Analysis::HasSideEffects(*t.ifTrue()) &&
-        !Analysis::HasSideEffects(*t.ifFalse())) {
+        Analysis::IsTrivialExpression(*t.ifTrue()) &&
+        Analysis::IsTrivialExpression(*t.ifFalse())) {
 
         bool needParens = Precedence::kTernary >= parentPrecedence;
         if (needParens) {
@@ -3849,7 +3859,7 @@ void WGSLCodeGenerator::writeStageInputStruct() {
     fIndentation++;
 
     for (const Variable* v : fPipelineInputs) {
-        if (v->interfaceBlock()) {
+        if (v->type().isInterfaceBlock()) {
             for (const Field& f : v->type().fields()) {
                 this->writePipelineIODeclaration(f.fLayout, *f.fType, f.fName, Delimiter::kComma);
             }
@@ -3886,7 +3896,7 @@ void WGSLCodeGenerator::writeStageOutputStruct() {
     bool declaredPositionBuiltin = false;
     bool requiresPointSizeBuiltin = false;
     for (const Variable* v : fPipelineOutputs) {
-        if (v->interfaceBlock()) {
+        if (v->type().isInterfaceBlock()) {
             for (const auto& f : v->type().fields()) {
                 this->writePipelineIODeclaration(f.fLayout, *f.fType, f.fName, Delimiter::kComma);
                 if (f.fLayout.fBuiltin == SK_POSITION_BUILTIN) {
@@ -3898,7 +3908,6 @@ void WGSLCodeGenerator::writeStageOutputStruct() {
                     requiresPointSizeBuiltin = true;
                 }
             }
-
         } else {
             this->writePipelineIODeclaration(v->layout(), v->type(), v->mangledName(),
                                              Delimiter::kComma);

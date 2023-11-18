@@ -20,9 +20,6 @@
 #include "src/gpu/graphite/TextureProxy.h"
 
 namespace skgpu::graphite {
-namespace {
-
-}  // namespace
 
 RasterPathAtlas::RasterPathAtlas()
     : PathAtlas(kDefaultAtlasDim, kDefaultAtlasDim) {
@@ -90,7 +87,7 @@ void RasterPathAtlas::makeMRU(Page* page) {
 }
 
 const TextureProxy* RasterPathAtlas::addRect(Recorder* recorder,
-                                             skvx::float2 atlasSize,
+                                             skvx::half2 maskSize,
                                              SkIPoint16* outPos) {
     // Look through all pages in MRU order and find the first one with room, and move that to MRU
     PageList::Iter pageIter;
@@ -104,11 +101,13 @@ const TextureProxy* RasterPathAtlas::addRect(Recorder* recorder,
         // An empty mask always fits, so just return the texture.
         // TODO: This may not be needed if we can handle clipped out bounds with inverse fills
         // another way. See PathAtlas::addShape().
-        if (!all(atlasSize)) {
+        if (!all(maskSize)) {
+            *outPos = {0, 0};
             return currPage->fTexture.get();
         }
 
-        if (!currPage->fRectanizer.addRect(atlasSize.x(), atlasSize.y(), outPos)) {
+        if (!currPage->fRectanizer.addPaddedRect(
+                maskSize.x(), maskSize.y(), kEntryPadding, outPos)) {
             continue;
         }
 
@@ -124,14 +123,13 @@ namespace {
 skgpu::UniqueKey generate_key(const Shape& shape,
                               const Transform& transform,
                               const SkStrokeRec& strokeRec,
-                              skvx::float2 atlasSize) {
+                              skvx::half2 maskSize) {
     skgpu::UniqueKey maskKey;
     {
         static const skgpu::UniqueKey::Domain kDomain = skgpu::UniqueKey::GenerateDomain();
-        skgpu::UniqueKey::Builder builder(&maskKey, kDomain, 7 + shape.keySize(),
+        skgpu::UniqueKey::Builder builder(&maskKey, kDomain, 6 + shape.keySize(),
                                           "Raster Path Mask");
-        builder[0] = atlasSize.x();
-        builder[1] = atlasSize.y();
+        builder[0] = maskSize.x() | (maskSize.y() << 16);
 
         // We require the upper left 2x2 of the matrix to match exactly for a cache hit.
         SkMatrix mat = transform.matrix().asM33();
@@ -152,10 +150,10 @@ skgpu::UniqueKey generate_key(const Shape& shape,
         SkFixed fracX = SkScalarToFixed(SkScalarFraction(tx)) & 0x0000FF00;
         SkFixed fracY = SkScalarToFixed(SkScalarFraction(ty)) & 0x0000FF00;
 #endif
-        builder[2] = SkFloat2Bits(sx);
-        builder[3] = SkFloat2Bits(sy);
-        builder[4] = SkFloat2Bits(kx);
-        builder[5] = SkFloat2Bits(ky);
+        builder[1] = SkFloat2Bits(sx);
+        builder[2] = SkFloat2Bits(sy);
+        builder[3] = SkFloat2Bits(kx);
+        builder[4] = SkFloat2Bits(ky);
         // FracX and fracY are &ed with 0x0000ff00, so need to shift one down to fill 16 bits.
         uint32_t fracBits = fracX | (fracY >> 8);
         // Distinguish between hairline and filled paths. For hairlines, we also need to include
@@ -163,8 +161,8 @@ skgpu::UniqueKey generate_key(const Shape& shape,
         // stroke-and-fill of hairlines is turned into pure fill by SkStrokeRec, so this covers
         // all cases we might see.
         uint32_t styleBits = strokeRec.isHairlineStyle() ? ((strokeRec.getCap() << 1) | 1) : 0;
-        builder[6] = fracBits | (styleBits << 16);
-        shape.writeKey(&builder[7]);
+        builder[5] = fracBits | (styleBits << 16);
+        shape.writeKey(&builder[6], /*includeInverted=*/false);
     }
     return maskKey;
 }
@@ -174,8 +172,7 @@ const TextureProxy* RasterPathAtlas::onAddShape(Recorder* recorder,
                                                 const Shape& shape,
                                                 const Transform& transform,
                                                 const SkStrokeRec& strokeRec,
-                                                skvx::float2 atlasSize,
-                                                skvx::int2 deviceOffset,
+                                                skvx::half2 maskSize,
                                                 skvx::half2* outPos) {
     skgpu::UniqueKey maskKey;
     bool hasKey = shape.hasKey();
@@ -183,7 +180,7 @@ const TextureProxy* RasterPathAtlas::onAddShape(Recorder* recorder,
         // Iterate through pagelist in MRU order and see if this shape is cached
         PageList::Iter pageIter;
         pageIter.init(fPageList, PageList::Iter::kHead_IterStart);
-        maskKey = generate_key(shape, transform, strokeRec, atlasSize);
+        maskKey = generate_key(shape, transform, strokeRec, maskSize);
         while (Page* currPage = pageIter.get()) {
             // Look up shape and use cached texture and position if found.
             skvx::half2* found = currPage->fCachedShapes.find(maskKey);
@@ -198,7 +195,7 @@ const TextureProxy* RasterPathAtlas::onAddShape(Recorder* recorder,
 
     // Try to add to Rectanizer
     SkIPoint16 iPos;
-    const TextureProxy* texProxy = this->addRect(recorder, atlasSize, &iPos);
+    const TextureProxy* texProxy = this->addRect(recorder, maskSize, &iPos);
     if (!texProxy) {
         // Reset LRU Page
         fPageList.tail()->fNeedsReset = true;
@@ -208,7 +205,7 @@ const TextureProxy* RasterPathAtlas::onAddShape(Recorder* recorder,
     // If the mask is empty, just return.
     // TODO: This may not be needed if we can handle clipped out bounds with inverse fills
     // another way. See PathAtlas::addShape().
-    if (!all(atlasSize)) {
+    if (!all(maskSize)) {
         return texProxy;
     }
 
@@ -232,8 +229,7 @@ const TextureProxy* RasterPathAtlas::onAddShape(Recorder* recorder,
     draw.fBlitterChooser = SkA8Blitter_Choose;
     draw.fDst      = mru->fPixels;
     SkRasterClip rasterClip;
-    SkIRect iAtlasBounds = SkIRect::MakeXYWH(iPos.x(), iPos.y(),
-                                             atlasSize.x(), atlasSize.y());
+    SkIRect iAtlasBounds = SkIRect::MakeXYWH(iPos.x(), iPos.y(), maskSize.x(), maskSize.y());
     rasterClip.setRect(iAtlasBounds);
     draw.fRC       = &rasterClip;
 
@@ -246,10 +242,9 @@ const TextureProxy* RasterPathAtlas::onAddShape(Recorder* recorder,
 
     SkMatrix translatedMatrix = SkMatrix(transform);
     // The atlas transform of the shape is the linear-components (scale, rotation, skew) of
-    // `localToDevice` translated by the top-left offset of `atlasBounds`, accounting for the 1
-    // pixel-wide border we added earlier, so that the shape is correctly centered.
-    translatedMatrix.postTranslate(iAtlasBounds.x() + 1 - deviceOffset.x(),
-                                   iAtlasBounds.y() + 1 - deviceOffset.y());
+    // `localToDevice` translated by the top-left offset of `atlasBounds.
+    translatedMatrix.postTranslate(iAtlasBounds.x(), iAtlasBounds.y());
+
     draw.fCTM = &translatedMatrix;
     SkPath path = shape.asPath();
     if (path.isInverseFillType()) {
@@ -258,8 +253,11 @@ const TextureProxy* RasterPathAtlas::onAddShape(Recorder* recorder,
     }
     draw.drawPathCoverage(path, paint);
 
-    // Add atlasBounds to dirtyRect for later upload
-    mru->fDirtyRect.join(iAtlasBounds);
+    // Add atlasBounds to dirtyRect for later upload, including the 1px padding applied by the
+    // rectanizer. If we didn't include this then our uploads would not include writes to the
+    // padded border, so the GPU texture might not then contain transparency even though the CPU
+    // data was cleared properly.
+    mru->fDirtyRect.join(iAtlasBounds.makeOutset(kEntryPadding,kEntryPadding));
 
     // Add to cache
     if (hasKey) {

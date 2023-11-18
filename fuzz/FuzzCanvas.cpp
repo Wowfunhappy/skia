@@ -41,6 +41,7 @@
 #include "include/svg/SkSVGCanvas.h"
 #include "include/utils/SkNullCanvas.h"
 #include "src/base/SkUTF.h"
+#include "src/core/SkFontPriv.h"
 #include "src/core/SkOSFile.h"
 #include "src/core/SkPaintPriv.h"
 #include "src/core/SkPicturePriv.h"
@@ -49,6 +50,7 @@
 #include "tools/UrlDataManager.h"
 #include "tools/debugger/DebugCanvas.h"
 #include "tools/flags/CommandLineFlags.h"
+#include "tools/fonts/FontToolUtils.h"
 
 #if defined(SK_GANESH)
 #include "include/gpu/GrDirectContext.h"
@@ -444,12 +446,11 @@ static sk_sp<SkTypeface> make_fuzz_typeface(Fuzz* fuzz) {
     if (make_fuzz_t<bool>(fuzz)) {
         return nullptr;
     }
-    auto fontMugger = SkFontMgr::RefDefault();
-    SkASSERT(fontMugger);
-    int familyCount = fontMugger->countFamilies();
+    sk_sp<SkFontMgr> mgr = ToolUtils::TestFontMgr();
+    int familyCount = mgr->countFamilies();
     int i, j;
     fuzz->nextRange(&i, 0, familyCount - 1);
-    sk_sp<SkFontStyleSet> family(fontMugger->createStyleSet(i));
+    sk_sp<SkFontStyleSet> family(mgr->createStyleSet(i));
     int styleCount = family->count();
     fuzz->nextRange(&j, 0, styleCount - 1);
     return sk_sp<SkTypeface>(family->createTypeface(j));
@@ -866,7 +867,7 @@ constexpr int kMaxGlyphCount = 30;
 static SkTDArray<uint8_t> make_fuzz_text(Fuzz* fuzz, const SkFont& font, SkTextEncoding encoding) {
     SkTDArray<uint8_t> array;
     if (SkTextEncoding::kGlyphID == encoding) {
-        int glyphRange = font.getTypefaceOrDefault()->countGlyphs();
+        int glyphRange = SkFontPriv::GetTypefaceOrDefault(font)->countGlyphs();
         if (glyphRange == 0) {
             // Some fuzzing environments have no fonts, so empty array is the best
             // we can do.

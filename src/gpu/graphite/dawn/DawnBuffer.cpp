@@ -27,10 +27,27 @@ static const char* kBufferTypeNames[kBufferTypeCount] = {
 };
 #endif
 
-sk_sp<Buffer> DawnBuffer::Make(const DawnSharedContext* sharedContext,
-                               size_t size,
-                               BufferType type,
-                               AccessPattern) {
+sk_sp<DawnBuffer> DawnBuffer::Make(const DawnSharedContext* sharedContext,
+                                   size_t size,
+                                   BufferType type,
+                                   AccessPattern accessPattern) {
+    return DawnBuffer::Make(sharedContext,
+                            size,
+                            type,
+                            accessPattern,
+#ifdef SK_DEBUG
+                            /*label=*/kBufferTypeNames[static_cast<int>(type)]
+#else
+                            /*label=*/nullptr
+#endif
+                            );
+}
+
+sk_sp<DawnBuffer> DawnBuffer::Make(const DawnSharedContext* sharedContext,
+                                   size_t size,
+                                   BufferType type,
+                                   AccessPattern,
+                                   const char* label) {
     if (size <= 0) {
         return nullptr;
     }
@@ -68,30 +85,30 @@ sk_sp<Buffer> DawnBuffer::Make(const DawnSharedContext* sharedContext,
     }
 
     wgpu::BufferDescriptor desc;
-#ifdef SK_DEBUG
-    desc.label = kBufferTypeNames[static_cast<int>(type)];
-#endif
+    desc.label = label;
     desc.usage = usage;
     desc.size  = size;
-    // For wgpu::Buffer can be mapped at creation time for the initial data uploading. we should use
-    // it for better performance?
-    desc.mappedAtCreation = false;
+    // Specifying mappedAtCreation avoids clearing the buffer on the GPU which can cause MapAsync to
+    // be very slow as it waits for GPU execution to complete.
+    desc.mappedAtCreation = SkToBool(usage & wgpu::BufferUsage::MapWrite);
 
     auto buffer = sharedContext->device().CreateBuffer(&desc);
     if (!buffer) {
         return {};
     }
 
-    return sk_sp<Buffer>(new DawnBuffer(sharedContext,
-                                        size,
-                                        std::move(buffer)));
+    return sk_sp<DawnBuffer>(new DawnBuffer(sharedContext, size, std::move(buffer)));
 }
 
-DawnBuffer::DawnBuffer(const DawnSharedContext* sharedContext,
-                       size_t size,
-                       wgpu::Buffer buffer)
-        : Buffer(sharedContext, size)
-        , fBuffer(std::move(buffer)) {}
+DawnBuffer::DawnBuffer(const DawnSharedContext* sharedContext, size_t size, wgpu::Buffer buffer)
+        : Buffer(sharedContext, size), fBuffer(std::move(buffer)) {
+    // Mapped at creation.
+    if (fBuffer && fBuffer.GetMapState() == wgpu::BufferMapState::Mapped) {
+        SkASSERT(fBuffer.GetUsage() & wgpu::BufferUsage::MapWrite);
+        fMapPtr = fBuffer.GetMappedRange();
+        SkASSERT(fMapPtr);
+    }
+}
 
 void DawnBuffer::onMap() {
     SkASSERT(fBuffer);
@@ -122,7 +139,7 @@ void DawnBuffer::onMap() {
 void DawnBuffer::onUnmap() {
     SkASSERT(fBuffer);
     SkASSERT(this->isMapped());
-    SkASSERT(fBuffer.GetUsage() & (wgpu::BufferUsage::MapRead | wgpu::BufferUsage::MapWrite));
+    SkASSERT(fBuffer.GetMapState() == wgpu::BufferMapState::Mapped);
 
     fBuffer.Unmap();
     fMapPtr = nullptr;
