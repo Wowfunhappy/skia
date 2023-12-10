@@ -313,15 +313,15 @@ public:
         const auto shape_ltr    = fDesc.fDirection == Shaper::Direction::kLTR;
         const size_t utf8_bytes = SkToSizeT(end - start);
 
-        SkASSERT(fFontMgr);
         static constexpr uint8_t kBidiLevelLTR = 0,
                                  kBidiLevelRTL = 1;
         const auto lang_iter = fDesc.fLocale
                 ? std::make_unique<SkShaper::TrivialLanguageRunIterator>(fDesc.fLocale, utf8_bytes)
                 : SkShaper::MakeStdLanguageRunIterator(start, utf8_bytes);
         const auto font_iter = SkShaper::MakeFontMgrRunIterator(
-                                    start, utf8_bytes, fFont, fFontMgr,
-                                    nullptr,
+                                    start, utf8_bytes, fFont,
+                                    fFontMgr ? fFontMgr : SkFontMgr::RefEmpty(), // used as fallback
+                                    fDesc.fFontFamily,
                                     SkFontPriv::RefTypefaceOrDefault(fFont)->fontStyle(),
                                     lang_iter.get());
         const auto bidi_iter = SkShaper::MakeBiDiRunIterator(start, utf8_bytes,

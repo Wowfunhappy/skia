@@ -12,7 +12,10 @@
 
 #include "include/core/SkRefCnt.h"
 #include "include/gpu/graphite/dawn/DawnTypes.h"
+#include "include/private/base/SkTArray.h"
+#include "src/gpu/RefCntedCallback.h"
 #include "src/gpu/graphite/Buffer.h"
+#include "src/gpu/graphite/dawn/DawnAsyncWait.h"
 #include "src/gpu/graphite/dawn/DawnSharedContext.h"
 
 namespace skgpu::graphite {
@@ -29,14 +32,20 @@ public:
                                   AccessPattern,
                                   const char* label);
 
+    bool isUnmappable() const override;
+
     const wgpu::Buffer& dawnBuffer() const { return fBuffer; }
+
+    void prepareForReturnToCache(const std::function<void()>& takeRef) override;
 
 private:
     DawnBuffer(const DawnSharedContext*,
                size_t size,
-               wgpu::Buffer);
+               wgpu::Buffer,
+               void* mapAtCreationPtr);
 
     void onMap() override;
+    void onAsyncMap(GpuFinishedProc, GpuFinishedContext) override;
     void onUnmap() override;
 
     void freeGpuData() override;
@@ -46,6 +55,8 @@ private:
     }
 
     wgpu::Buffer fBuffer;
+    SkMutex fAsyncMutex;
+    skia_private::TArray<sk_sp<RefCntedCallback>> fAsyncMapCallbacks SK_GUARDED_BY(fAsyncMutex);
 };
 
 } // namespace skgpu::graphite

@@ -5,12 +5,17 @@
  * found in the LICENSE file.
  */
 
-#include "src/gpu/dawn/DawnUtilsPriv.h"
+#include "src/gpu/graphite/dawn/DawnUtilsPriv.h"
 
 #include "include/core/SkColor.h"
 #include "include/core/SkTypes.h"
+#include "src/gpu/graphite/dawn/DawnSharedContext.h"
 
-namespace skgpu {
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+#endif  // __EMSCRIPTEN__
+
+namespace skgpu::graphite {
 
 // TODO: A lot of these values are not correct
 size_t DawnFormatBytesPerBlock(wgpu::TextureFormat format) {
@@ -62,5 +67,5 @@ uint32_t DawnFormatChannels(wgpu::TextureFormat format) {
     SkUNREACHABLE;
 }
 
-} // namespace skgpu
+} // namespace skgpu::graphite
 

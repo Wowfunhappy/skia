@@ -743,9 +743,8 @@ std::unique_ptr<SkStreamAsset> SkTypeface_Mac::onOpenStream(int* ttcIndex) const
     }
 
     // reserve memory for stream, and zero it (tables must be zero padded)
-    fStream = std::make_unique<SkMemoryStream>(totalSize);
-    char* dataStart = (char*)fStream->getMemoryBase();
-    sk_bzero(dataStart, totalSize);
+    sk_sp<SkData> streamData = SkData::MakeZeroInitialized(totalSize);
+    char* dataStart = (char*)streamData->writable_data();
     char* dataPtr = dataStart;
 
     // compute font header entries
@@ -782,6 +781,7 @@ std::unique_ptr<SkStreamAsset> SkTypeface_Mac::onOpenStream(int* ttcIndex) const
         dataPtr += (tableSize + 3) & ~3;
         ++entry;
     }
+    fStream = std::make_unique<SkMemoryStream>(std::move(streamData));
     });
     return fStream->duplicate();
 }

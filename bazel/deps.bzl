@@ -30,7 +30,7 @@ def c_plus_plus_deps(ws = "@skia"):
     new_git_repository(
         name = "dawn",
         build_file = ws + "//bazel/external/dawn:BUILD.bazel",
-        commit = "85b15b0b132e2d159b01d78c5a5d0b9e466ba71f",
+        commit = "2291a55e72cd9c81ba668dc9553adf456bd09d37",
         remote = "https://dawn.googlesource.com/dawn.git",
     )
 
@@ -168,19 +168,19 @@ def c_plus_plus_deps(ws = "@skia"):
     new_git_repository(
         name = "spirv_cross",
         build_file = ws + "//bazel/external/spirv_cross:BUILD.bazel",
-        commit = "42aac916ab5db0cbaf55c2d41f4d063f4ce3955a",
+        commit = "f349c91274b91c1a7c173f2df70ec53080076191",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/SPIRV-Cross",
     )
 
     git_repository(
         name = "spirv_headers",
-        commit = "cca08c63cefa129d082abca0302adcb81610b465",
+        commit = "1c6bb2743599e6eb6f37b2969acc0aef812e32e3",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Headers.git",
     )
 
     git_repository(
         name = "spirv_tools",
-        commit = "2a238ed24dffd84fe3ed2e60d7aa5c28e2acf45a",
+        commit = "6b4f0c9d0b7d02db5ed0b03433ae62c03bbff722",
         remote = "https://skia.googlesource.com/external/github.com/KhronosGroup/SPIRV-Tools.git",
     )
 
@@ -194,21 +194,21 @@ def c_plus_plus_deps(ws = "@skia"):
     new_git_repository(
         name = "vulkan_headers",
         build_file = ws + "//bazel/external/vulkan_headers:BUILD.bazel",
-        commit = "af4fb97d7bde80997b0f61d53bb50bd6c56b8f50",
+        commit = "41263fc5aa994b8eafaca946583bfcceca8ca419",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Headers",
     )
 
     new_git_repository(
         name = "vulkan_tools",
         build_file = ws + "//bazel/external/vulkan_tools:BUILD.bazel",
-        commit = "ae2a2dc99bc01417d2c80e81078a5672e9d31d0b",
+        commit = "7e75f4d389799129b79f90d1401f15f511796dbd",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Tools",
     )
 
     new_git_repository(
         name = "vulkan_utility_libraries",
         build_file = ws + "//bazel/external/vulkan_utility_libraries:BUILD.bazel",
-        commit = "e4ceafdd0645fc843327a11d025e6113360dff0b",
+        commit = "b89f4b8415ef6afe08a8dbb98c8487ebd59c3387",
         remote = "https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-Utility-Libraries",
     )
 
@@ -261,4 +261,23 @@ def header_based_configs():
             "no-type1/freetype/config/ftoption.h": "third_party/freetype2/include/freetype-no-type1/freetype/config/ftoption.h",
         },
     )
-    # TODO(kjlubick) add the other configurations (e.g. harfbuzz, icu)
+    maybe(
+        download_config_files,
+        name = "harfbuzz_config",
+        skia_revision = "7b730016006e6b66d24a6f94eefe8bec00ac1674",
+        files = {
+            "BUILD.bazel": "bazel/external/harfbuzz/config/BUILD.bazel",
+            "config-override.h": "third_party/harfbuzz/config-override.h",
+        },
+    )
+    maybe(
+        download_config_files,
+        name = "icu_utils",
+        skia_revision = "7b730016006e6b66d24a6f94eefe8bec00ac1674",
+        files = {
+            "BUILD.bazel": "bazel/external/icu/utils/BUILD.bazel",
+            "icu/SkLoadICU.cpp": "third_party/icu/SkLoadICU.cpp",
+            "icu/SkLoadICU.h": "third_party/icu/SkLoadICU.h",
+            "icu/make_data_cpp.py": "third_party/icu/make_data_cpp.py",
+        },
+    )
