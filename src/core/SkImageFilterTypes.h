@@ -533,6 +533,16 @@ private:
     SkMatrix fData;
 };
 
+/**
+ * Most ImageFilters can natively handle scaling and translate components in the CTM. Only some of
+ * them can handle affine (or more complex) matrices. Some may only handle translation.
+ */
+enum class MatrixCapability {
+    kTranslate,
+    kScaleTranslate,
+    kComplex,
+};
+
 // Mapping is the primary definition of the shared layer space used when evaluating an image filter
 // DAG. It encapsulates any needed decomposition of the total CTM into the parameter-to-layer matrix
 // (that filters use to map their parameters to the layer space), and the layer-to-device matrix
@@ -561,6 +571,9 @@ public:
     // invalid device matrix. Assumes 'ctm' is invertible.
     [[nodiscard]] bool decomposeCTM(const SkMatrix& ctm,
                                     const SkImageFilter* filter,
+                                    const skif::ParameterSpace<SkPoint>& representativePt);
+    [[nodiscard]] bool decomposeCTM(const SkMatrix& ctm,
+                                    MatrixCapability,
                                     const skif::ParameterSpace<SkPoint>& representativePt);
 
     // Update the mapping's parameter-to-layer matrix to be pre-concatenated with the specified
@@ -1032,6 +1045,18 @@ private:
 
 sk_sp<Backend> MakeRasterBackend(const SkSurfaceProps& surfaceProps, SkColorType colorType);
 
+// Stats for a single image filter evaluation
+struct Stats {
+    int fNumVisitedImageFilters = 0; // size of the filter dag
+    int fNumCacheHits = 0; // amount of reuse within the dag
+    int fNumOffscreenSurfaces = 0; // difference to the # of visited filters shows deferred steps
+    int fNumShaderClampedDraws = 0; // shader-emulated clamp is fairly cheap but HW tiling is best
+    int fNumShaderBasedTilingDraws = 0; // shader-emulated decal, mirror, repeat are expensive
+
+    void dumpStats() const;   // log to std out
+    void reportStats() const; // trace event counters
+};
+
 // The context contains all necessary information to describe how the image filter should be
 // computed (i.e. the current layer matrix and clip), and the color information of the output of a
 // filter DAG. For now, this is just the color space (of the original requesting device). This is
@@ -1043,12 +1068,14 @@ public:
             const Mapping& mapping,
             const LayerSpace<SkIRect>& desiredOutput,
             const FilterResult& source,
-            const SkColorSpace* colorSpace)
+            const SkColorSpace* colorSpace,
+            Stats* stats)
         : fBackend(std::move(backend))
         , fMapping(mapping)
         , fDesiredOutput(desiredOutput)
         , fSource(source)
-        , fColorSpace(sk_ref_sp(colorSpace)) {}
+        , fColorSpace(sk_ref_sp(colorSpace))
+        , fStats(stats) {}
 
     const Backend* backend() const { return fBackend.get(); }
 
@@ -1107,7 +1134,36 @@ public:
         return c;
     }
 
+
+    // Stats tracking
+    void markVisitedImageFilter() const {
+        if (fStats) {
+            fStats->fNumVisitedImageFilters++;
+        }
+    }
+    void markCacheHit() const {
+        if (fStats) {
+            fStats->fNumCacheHits++;
+        }
+    }
+    void markNewSurface() const {
+        if (fStats) {
+            fStats->fNumOffscreenSurfaces++;
+        }
+    }
+    void markShaderBasedTilingRequired(SkTileMode tileMode) const {
+        if (fStats) {
+            if (tileMode == SkTileMode::kClamp) {
+                fStats->fNumShaderClampedDraws++;
+            } else {
+                fStats->fNumShaderBasedTilingDraws++;
+            }
+        }
+    }
+
 private:
+    friend class ::FilterResultTestAccess; // For controlling Stats
+
     sk_sp<Backend> fBackend;
 
     // Properties controlling the size and coordinate space of image filtering
@@ -1117,6 +1173,8 @@ private:
     FilterResult        fSource;
     // The color space the filters are evaluated in
     sk_sp<SkColorSpace> fColorSpace;
+
+    Stats* fStats;
 };
 
 } // end namespace skif

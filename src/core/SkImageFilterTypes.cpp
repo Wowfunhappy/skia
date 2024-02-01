@@ -20,6 +20,7 @@
 #include "include/core/SkPicture.h"  // IWYU pragma: keep
 #include "include/core/SkShader.h"
 #include "include/effects/SkRuntimeEffect.h"
+#include "include/private/base/SkDebug.h"
 #include "include/private/base/SkFloatingPoint.h"
 #include "src/base/SkMathPriv.h"
 #include "src/core/SkBitmapDevice.h"
@@ -32,6 +33,7 @@
 #include "src/core/SkMatrixPriv.h"
 #include "src/core/SkRectPriv.h"
 #include "src/core/SkRuntimeEffectPriv.h"
+#include "src/core/SkTraceEvent.h"
 #include "src/effects/colorfilters/SkColorFilterBase.h"
 
 #include <algorithm>
@@ -311,6 +313,7 @@ public:
         // It is assumed the caller has already accounted for the desired output, or it's a
         // situation where the desired output shouldn't apply (e.g. this surface will be transformed
         // to align with the actual desired output via FilterResult metadata).
+        ctx.markNewSurface();
         sk_sp<SkDevice> device =
                 dstBounds.isEmpty() ? nullptr
                                     : ctx.backend()->makeDevice(SkISize(dstBounds.size()),
@@ -347,7 +350,11 @@ public:
             // Snap a subset of the device matching the expected dst bounds.
             SkIRect subset = SkIRect::MakeWH(fDstBounds.width(), fDstBounds.height());
             fCanvas->restoreToCount(0);
-            return {this->device()->snapSpecial(subset), fDstBounds.topLeft()};
+            this->device()->setImmutable();
+            auto snapped = std::make_pair(this->device()->snapSpecial(subset),
+                                          fDstBounds.topLeft());
+            fCanvas.reset(); // Only use the AutoSurface once
+            return snapped;
         } else {
             return {nullptr, {}};
         }
@@ -407,6 +414,29 @@ sk_sp<Backend> MakeRasterBackend(const SkSurfaceProps& surfaceProps, SkColorType
     return sk_make_sp<RasterBackend>(surfaceProps, colorType);
 }
 
+void Stats::dumpStats() const {
+    SkDebugf("ImageFilter Stats:\n"
+             "      # visited filters: %d\n"
+             "           # cache hits: %d\n"
+             "   # offscreen surfaces: %d\n"
+             " # shader-clamped draws: %d\n"
+             "   # shader-tiled draws: %d\n",
+             fNumVisitedImageFilters,
+             fNumCacheHits,
+             fNumOffscreenSurfaces,
+             fNumShaderClampedDraws,
+             fNumShaderBasedTilingDraws);
+}
+
+void Stats::reportStats() const {
+    TRACE_EVENT_INSTANT2("skia", "ImageFilter Graph Size", TRACE_EVENT_SCOPE_THREAD,
+                         "count", fNumVisitedImageFilters, "cache hits", fNumCacheHits);
+    TRACE_EVENT_INSTANT1("skia", "ImageFilter Surfaces", TRACE_EVENT_SCOPE_THREAD,
+                         "count", fNumOffscreenSurfaces);
+    TRACE_EVENT_INSTANT2("skia", "ImageFilter Shader Tiling", TRACE_EVENT_SCOPE_THREAD,
+                         "clamp", fNumShaderClampedDraws, "other", fNumShaderBasedTilingDraws);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Mapping
 
@@ -414,12 +444,9 @@ SkIRect RoundOut(SkRect r) { return r.makeInset(kRoundEpsilon, kRoundEpsilon).ro
 
 SkIRect RoundIn(SkRect r) { return r.makeOutset(kRoundEpsilon, kRoundEpsilon).roundIn(); }
 
-bool Mapping::decomposeCTM(const SkMatrix& ctm, const SkImageFilter* filter,
+bool Mapping::decomposeCTM(const SkMatrix& ctm, MatrixCapability capability,
                            const skif::ParameterSpace<SkPoint>& representativePt) {
     SkMatrix remainder, layer;
-    using MatrixCapability = SkImageFilter_Base::MatrixCapability;
-    MatrixCapability capability =
-            filter ? as_IFB(filter)->getCTMCapability() : MatrixCapability::kComplex;
     if (capability == MatrixCapability::kTranslate) {
         // Apply the entire CTM post-filtering
         remainder = ctm;
@@ -448,6 +475,15 @@ bool Mapping::decomposeCTM(const SkMatrix& ctm, const SkImageFilter* filter,
         fDevToLayerMatrix = invRemainder;
         return true;
     }
+}
+
+bool Mapping::decomposeCTM(const SkMatrix& ctm,
+                           const SkImageFilter* filter,
+                           const skif::ParameterSpace<SkPoint>& representativePt) {
+    return this->decomposeCTM(
+            ctm,
+            filter ? as_IFB(filter)->getCTMCapability() : MatrixCapability::kComplex,
+            representativePt);
 }
 
 bool Mapping::adjustLayerSpace(const SkMatrix& layer) {
@@ -1130,6 +1166,7 @@ void FilterResult::draw(const Context& ctx,
         sampling = {};
     }
 
+    const bool approxFitImage = !fImage->isExactFit();
     if (analysis & BoundsAnalysis::kEffectsVisible) {
         if (fTileMode == SkTileMode::kDecal) {
             // apply_decal consumes the transform, so we don't modify the canvas
@@ -1144,12 +1181,18 @@ void FilterResult::draw(const Context& ctx,
         }
         // Fill the canvas with the shader, relying on it to do the transform
         device->drawPaint(paint);
+        if (approxFitImage) {
+            ctx.markShaderBasedTilingRequired(fTileMode);
+        }
     } else {
         // src's origin is embedded in fTransform. For historical reasons, drawSpecial() does
         // not automatically use the device's current local-to-device matrix, but that's what preps
         // it to match the expected layer coordinate system.
         SkMatrix netTransform = SkMatrix::Concat(device->localToDevice(), SkMatrix(fTransform));
         device->drawSpecial(fImage.get(), netTransform, sampling, paint);
+        if (approxFitImage) {
+            ctx.markShaderBasedTilingRequired(SkTileMode::kClamp);
+        }
     }
 
     if (preserveDeviceState && (analysis & BoundsAnalysis::kLayerCropVisible)) {
@@ -1173,11 +1216,15 @@ sk_sp<SkShader> FilterResult::asShader(const Context& ctx,
     const bool currentXformIsInteger = is_nearly_integer_translation(fTransform);
     const bool nextXformIsInteger = !(flags & ShaderFlags::kNonTrivialSampling);
 
+    SkBlendMode colorFilterMode;
     SkSamplingOptions sampling = xtraSampling;
     const bool needsResolve =
-            // Deferred calculations on the input would be repeated with each sample
+            // Deferred calculations on the input would be repeated with each sample, but we allow
+            // simple color filters to skip resolving since their repeated math should be cheap.
             (flags & ShaderFlags::kSampledRepeatedly &&
-             (fColorFilter || !SkColorSpace::Equals(fImage->getColorSpace(), ctx.colorSpace()))) ||
+                    ((fColorFilter && (!fColorFilter->asAColorMode(nullptr, &colorFilterMode) ||
+                                       colorFilterMode > SkBlendMode::kLastCoeffMode)) ||
+                     !SkColorSpace::Equals(fImage->getColorSpace(), ctx.colorSpace()))) ||
             // The deferred sampling options can't be merged with the one requested
             !compatible_sampling(fSamplingOptions, currentXformIsInteger,
                                  &sampling, nextXformIsInteger) ||
@@ -1198,6 +1245,9 @@ sk_sp<SkShader> FilterResult::asShader(const Context& ctx,
         if (pixels) {
             shader = pixels->asShader(SkTileMode::kDecal, sampling,
                                       SkMatrix::Translate(origin.x(), origin.y()));
+            if (!pixels->isExactFit()) {
+                ctx.markShaderBasedTilingRequired(SkTileMode::kDecal);
+            }
         }
     } else {
         // Since we didn't need to resolve, we know the content being sampled isn't cropped by
@@ -1210,6 +1260,10 @@ sk_sp<SkShader> FilterResult::asShader(const Context& ctx,
 
         if (shader && fColorFilter) {
             shader = shader->makeWithColorFilter(fColorFilter);
+        }
+
+        if (!fImage->isExactFit()) {
+            ctx.markShaderBasedTilingRequired(fTileMode);
         }
     }
 
@@ -1379,10 +1433,16 @@ FilterResult FilterResult::rescale(const Context& ctx,
                                                      SkMatrix(fTransform)));
                 }
                 paint.setColorFilter(fColorFilter);
+                if (!fImage->isExactFit()) {
+                    ctx.markShaderBasedTilingRequired(fTileMode);
+                }
             } else {
                 // Otherwise just bilinearly downsample the origin-aligned prior step's image.
                 paint.setShader(image->asShader(tileMode, SkFilterMode::kLinear,
                                                 SkMatrix::Translate(origin.x(), origin.y())));
+                if (!image->isExactFit()) {
+                    ctx.markShaderBasedTilingRequired(tileMode);
+                }
             }
 
             surface->drawPaint(paint);

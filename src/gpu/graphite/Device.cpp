@@ -32,6 +32,7 @@
 #include "src/gpu/graphite/RendererProvider.h"
 #include "src/gpu/graphite/SharedContext.h"
 #include "src/gpu/graphite/SpecialImage_Graphite.h"
+#include "src/gpu/graphite/Surface_Graphite.h"
 #include "src/gpu/graphite/TextureProxy.h"
 #include "src/gpu/graphite/TextureUtils.h"
 #include "src/gpu/graphite/geom/BoundsManager.h"
@@ -219,6 +220,39 @@ private:
     SkSTArenaAllocWithReset<4 * sizeof(IntersectionTree)> fTreeStore;
 };
 
+namespace {
+
+sk_sp<TextureProxy> make_draw_target(const Recorder* recorder,
+                                     const SkImageInfo& ii,
+                                     Mipmapped mipmapped,
+                                     Protected isProtected,
+                                     Budgeted budgeted) {
+    if (!recorder) {
+        return nullptr;
+    }
+    return TextureProxy::Make(recorder->priv().caps(),
+                              ii.dimensions(),
+                              ii.colorType(),
+                              mipmapped,
+                              isProtected,
+                              Renderable::kYes,
+                              budgeted);
+}
+
+sk_sp<DrawContext> make_draw_context(sk_sp<TextureProxy> target,
+                                     const SkISize& dimensions,
+                                     const SkColorInfo& colorInfo,
+                                     const SkSurfaceProps& props) {
+    // We don't render to unknown or unpremul alphatypes
+    if (colorInfo.alphaType() == kUnknown_SkAlphaType ||
+        colorInfo.alphaType() == kUnpremul_SkAlphaType) {
+        return nullptr;
+    }
+    return DrawContext::Make(std::move(target), dimensions, colorInfo, props);
+}
+
+}  // anonymous namespace
+
 sk_sp<Device> Device::Make(Recorder* recorder,
                            const SkImageInfo& ii,
                            skgpu::Budgeted budgeted,
@@ -228,18 +262,13 @@ sk_sp<Device> Device::Make(Recorder* recorder,
                            bool addInitialClear) {
     SkASSERT(!(mipmapped == Mipmapped::kYes && backingFit == SkBackingFit::kApprox));
 
-    if (!recorder) {
-        return nullptr;
-    }
-
     Protected isProtected = Protected(recorder->priv().caps()->protectedSupport());
-    sk_sp<TextureProxy> target = TextureProxy::Make(
-            recorder->priv().caps(),
-            backingFit == SkBackingFit::kApprox ? GetApproxSize(ii.dimensions()) : ii.dimensions(),
-            ii.colorType(),
+    sk_sp<TextureProxy> target = make_draw_target(
+            recorder,
+            backingFit == SkBackingFit::kApprox ? ii.makeDimensions(GetApproxSize(ii.dimensions()))
+                                                : ii,
             mipmapped,
             isProtected,
-            Renderable::kYes,
             budgeted);
     if (!target) {
         return nullptr;
@@ -266,18 +295,39 @@ sk_sp<Device> Device::Make(Recorder* recorder,
     if (!recorder) {
         return nullptr;
     }
-    // We don't render to unknown or unpremul alphatypes
-    if (colorInfo.alphaType() == kUnknown_SkAlphaType ||
-        colorInfo.alphaType() == kUnpremul_SkAlphaType) {
-        return nullptr;
-    }
 
-    sk_sp<DrawContext> dc = DrawContext::Make(std::move(target), deviceSize, colorInfo, props);
+    sk_sp<DrawContext> dc = make_draw_context(std::move(target), deviceSize, colorInfo, props);
     if (!dc) {
         return nullptr;
     }
 
-    return sk_sp<Device>(new Device(recorder, std::move(dc), addInitialClear));
+    return sk_sp<Device>(
+            new Device(recorder, std::move(dc), addInitialClear, /*registerWithRecorder=*/true));
+}
+
+sk_sp<Device> Device::MakeScratch(Recorder* recorder,
+                                  const SkImageInfo& ii,
+                                  Mipmapped mipmapped,
+                                  const SkSurfaceProps& props,
+                                  bool addInitialClear) {
+    if (!recorder) {
+        return nullptr;
+    }
+
+    sk_sp<TextureProxy> target =
+            make_draw_target(recorder, ii, mipmapped, Protected::kNo, Budgeted::kYes);
+    if (!target) {
+        return nullptr;
+    }
+
+    sk_sp<DrawContext> dc =
+            make_draw_context(std::move(target), ii.dimensions(), ii.colorInfo(), props);
+    if (!dc) {
+        return nullptr;
+    }
+
+    return sk_sp<Device>(
+            new Device(recorder, std::move(dc), addInitialClear, /*registerWithRecorder=*/false));
 }
 
 // These default tuning numbers for the HybridBoundsManager were chosen from looking at performance
@@ -293,23 +343,24 @@ static constexpr int kGridCellSize = 16;
 static constexpr int kMaxBruteForceN = 64;
 static constexpr int kMaxGridSize = 32;
 
-Device::Device(Recorder* recorder, sk_sp<DrawContext> dc, bool addInitialClear)
+Device::Device(Recorder* recorder,
+               sk_sp<DrawContext> dc,
+               bool addInitialClear,
+               bool registerWithRecorder)
         : SkDevice(dc->imageInfo(), dc->surfaceProps())
         , fRecorder(recorder)
         , fDC(std::move(dc))
         , fClip(this)
-        , fColorDepthBoundsManager(
-                    std::make_unique<HybridBoundsManager>(fDC->imageInfo().dimensions(),
-                                                          kGridCellSize,
-                                                          kMaxBruteForceN,
-                                                          kMaxGridSize))
+        , fColorDepthBoundsManager(std::make_unique<HybridBoundsManager>(
+                  fDC->imageInfo().dimensions(), kGridCellSize, kMaxBruteForceN, kMaxGridSize))
         , fDisjointStencilSet(std::make_unique<IntersectionTreeSet>())
         , fCachedLocalToDevice(SkM44())
         , fCurrentDepth(DrawOrder::kClearDepth)
         , fSDFTControl(recorder->priv().caps()->getSDFTControl(false)) {
     SkASSERT(SkToBool(fDC) && SkToBool(fRecorder));
-    fRecorder->registerDevice(this);
-
+    if (registerWithRecorder) {
+        fRecorder->registerDevice(this);
+    }
     if (addInitialClear) {
         fDC->clear(SkColors::kTransparent);
     }
@@ -370,6 +421,34 @@ TextureProxyView Device::createCopy(const SkIRect* subset,
     TextureProxyView srcView = this->readSurfaceView();
     if (!srcView) {
         return {};
+    }
+
+    if (!fRecorder->priv().caps()->supportsReadPixels(srcView.proxy()->textureInfo())) {
+        if (!fRecorder->priv().caps()->isTexturable(srcView.proxy()->textureInfo())) {
+            return {};
+        }
+        // We ignore backingFit here and always make a tight texture.
+        auto size = subset ? subset->size() : this->size();
+        auto surface = SkSurfaces::RenderTarget(fRecorder,
+                                                this->imageInfo().makeDimensions(size),
+                                                mipmapped);
+
+        auto image = sk_make_sp<Image>(kNeedNewImageUniqueID,
+                                       readSurfaceView(),
+                                       this->imageInfo().colorInfo());
+        SkPaint paint;
+        paint.setBlendMode(SkBlendMode::kSrc);
+        auto pt = subset ? subset->topLeft() : SkIPoint{0, 0};
+        surface->getCanvas()->drawImage(image, -pt.x(), -pt.y(), SkFilterMode::kNearest, &paint);
+
+        auto readView = static_cast<Surface*>(surface.get())->readSurfaceView();
+        if (mipmapped == Mipmapped::kYes) {
+            if (!GenerateMipmaps(fRecorder, readView.refProxy(), this->imageInfo().colorInfo())) {
+                SKGPU_LOG_W("Device::createCopy: Failed to generate mipmaps");
+            }
+        }
+
+        return readView;
     }
 
     SkIRect srcRect = subset ? *subset : SkIRect::MakeSize(this->imageInfo().dimensions());
@@ -464,11 +543,25 @@ bool Device::onWritePixels(const SkPixmap& src, int x, int y) {
         return false;
     }
 
-    // TODO: check for readOnly or framebufferOnly target and return false if so
-
     // TODO: canvas2DFastPath?
-    // TODO: check that surface supports writePixels
-    // TODO: handle writePixels as draw if needed (e.g., canvas2DFastPath || !supportsWritePixels)
+
+    if (!fRecorder->priv().caps()->supportsWritePixels(target->textureInfo())) {
+        auto image = SkImages::RasterFromPixmap(src, nullptr, nullptr);
+        image = SkImages::TextureFromImage(fRecorder, image.get());
+        if (!image) {
+            return false;
+        }
+
+        SkPaint paint;
+        paint.setBlendMode(SkBlendMode::kSrc);
+        this->drawImageRect(image.get(),
+                            /*src=*/nullptr,
+                            SkRect::MakeXYWH(x, y, src.width(), src.height()),
+                            SkFilterMode::kNearest,
+                            paint,
+                            SkCanvas::kFast_SrcRectConstraint);
+        return true;
+    }
 
     // TODO: check for flips and either handle here or pass info to UploadTask
 
@@ -888,7 +981,16 @@ void Device::drawGeometry(const Transform& localToDevice,
         // TODO: If asADash() returns true and the base path matches the dashing fast path, then
         // that should be detected now as well. Maybe add dashPath to Device so canvas can handle it
         SkStrokeRec newStyle = style;
-        newStyle.setResScale(localToDevice.maxScaleFactor());
+        float maxScaleFactor = localToDevice.maxScaleFactor();
+        if (localToDevice.type() == Transform::Type::kPerspective) {
+            auto bounds = geometry.bounds();
+            float tl = std::get<1>(localToDevice.scaleFactors({bounds.left(), bounds.top()}));
+            float tr = std::get<1>(localToDevice.scaleFactors({bounds.right(), bounds.top()}));
+            float br = std::get<1>(localToDevice.scaleFactors({bounds.right(), bounds.bot()}));
+            float bl = std::get<1>(localToDevice.scaleFactors({bounds.left(), bounds.bot()}));
+            maxScaleFactor = std::max(std::max(tl, tr), std::max(bl, br));
+        }
+        newStyle.setResScale(maxScaleFactor);
         SkPath dst;
         if (paint.getPathEffect()->filterPath(&dst, geometry.shape().asPath(), &newStyle,
                                               nullptr, localToDevice)) {
@@ -919,7 +1021,7 @@ void Device::drawGeometry(const Transform& localToDevice,
     // TODO: The tessellating and atlas path renderers haven't implemented perspective yet, so
     // transform to device space so we draw something approximately correct (barring local coord
     // issues).
-    if (geometry.isShape() && localToDevice.type() == Transform::Type::kProjection &&
+    if (geometry.isShape() && localToDevice.type() == Transform::Type::kPerspective &&
         !is_simple_shape(geometry.shape(), style.getStyle())) {
         SkPath devicePath = geometry.shape().asPath();
         devicePath.transform(localToDevice.matrix().asM33());
@@ -1061,7 +1163,11 @@ void Device::drawGeometry(const Transform& localToDevice,
     // If a draw is not opaque, it must be drawn after the most recent draw it intersects with in
     // order to blend correctly. We always query the most recent draw (even when opaque) because it
     // also lets Device easily track whether or not there are any overlapping draws.
-    PaintParams shading{paint, std::move(primitiveBlender), dstReadReq, skipColorXform};
+    PaintParams shading{paint,
+                        std::move(primitiveBlender),
+                        sk_ref_sp(clip.shader()),
+                        dstReadReq,
+                        skipColorXform};
     const bool dependsOnDst = rendererCoverage != Coverage::kNone || paint_depends_on_dst(shading);
     if (dependsOnDst) {
         CompressedPaintersOrder prevDraw =
@@ -1153,7 +1259,7 @@ void Device::drawClipShape(const Transform& localToDevice,
 
     // Clips draws are depth-only (null PaintParams), and filled (null StrokeStyle).
     // TODO: Remove this CPU-transform once perspective is supported for all path renderers
-    if (localToDevice.type() == Transform::Type::kProjection) {
+    if (localToDevice.type() == Transform::Type::kPerspective) {
         SkPath devicePath = geometry.shape().asPath();
         devicePath.transform(localToDevice.matrix().asM33());
         fDC->recordDraw(renderer, Transform::Identity(), Geometry(Shape(devicePath)), clip, order,
@@ -1327,8 +1433,6 @@ void Device::flushPendingWorkToRecorder() {
     if (uploadTask) {
         fRecorder->priv().add(std::move(uploadTask));
     }
-    // Issue next upload flush token
-    fRecorder->priv().tokenTracker()->issueFlushToken();
 
     fClip.recordDeferredClipDraws();
 
@@ -1365,7 +1469,8 @@ bool Device::needsFlushBeforeDraw(int numNewRenderSteps, DstReadRequirement dstR
 void Device::drawSpecial(SkSpecialImage* special,
                          const SkMatrix& localToDevice,
                          const SkSamplingOptions& sampling,
-                         const SkPaint& paint) {
+                         const SkPaint& paint,
+                         SkCanvas::SrcRectConstraint constraint) {
     SkASSERT(!paint.getMaskFilter() && !paint.getImageFilter());
 
     sk_sp<SkImage> img = special->asImage();
@@ -1380,7 +1485,7 @@ void Device::drawSpecial(SkSpecialImage* special,
             sampling,
             /*src=*/SkRect::Make(special->subset()),
             /*dst=*/SkRect::MakeIWH(special->width(), special->height()),
-            /*strictSrcSubset=*/true,
+            /*strictSrcSubset=*/constraint == SkCanvas::kStrict_SrcRectConstraint,
             &paintWithShader);
     if (dst.isEmpty()) {
         return;
