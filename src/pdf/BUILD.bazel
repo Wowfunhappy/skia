@@ -1,6 +1,10 @@
 load("//bazel:flags.bzl", "bool_flag", "selects")
 load("//bazel:skia_rules.bzl", "exports_files_legacy", "skia_cc_deps", "skia_filegroup", "split_srcs_and_hdrs")
 
+package(
+    default_applicable_licenses = ["//:license"],
+)
+
 licenses(["notice"])
 
 exports_files_legacy()
@@ -105,8 +109,6 @@ selects.config_setting_group(
         ":enable_pdf_subset_harfbuzz_true",
     ],
 )
-
-# TODO(kjlubick) sfntly support
 
 skia_cc_deps(
     name = "deps",

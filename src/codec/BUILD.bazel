@@ -9,6 +9,10 @@ load(
     "split_srcs_and_hdrs",
 )
 
+package(
+    default_applicable_licenses = ["//:license"],
+)
+
 licenses(["notice"])
 
 exports_files_legacy()
@@ -102,7 +106,7 @@ split_srcs_and_hdrs(
     files = DECODE_JPEG_FILES,
 )
 
-filegroup(
+skia_filegroup(
     name = "shared_jpeg_hdrs",  # needed for both encoding and decoding
     srcs = [
         "SkJpegConstants.h",
@@ -110,7 +114,7 @@ filegroup(
     visibility = ["//src/encode:__pkg__"],
 )
 
-filegroup(
+skia_filegroup(
     name = "xmp_srcs",
     srcs = [
         "SkXmp.cpp",
@@ -325,6 +329,9 @@ skia_cc_library(
     hdrs = PRIVATE_CODEC_HEADERS,
     features = ["layering_check"],
     local_defines = ["SK_DISABLE_LEGACY_INIT_DECODERS"],
+    visibility = [
+        "//src/ports:__pkg__",
+    ],
     deps = [
         "//modules/skcms",
         "//src/base",

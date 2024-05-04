@@ -1,5 +1,9 @@
 load("//bazel:skia_rules.bzl", "exports_files_legacy", "skia_cc_library", "skia_filegroup", "split_srcs_and_hdrs")
 
+package(
+    default_applicable_licenses = ["//:license"],
+)
+
 licenses(["notice"])
 
 exports_files_legacy()
@@ -376,13 +380,6 @@ CORE_FILES = [
 split_srcs_and_hdrs(
     name = "legacy_core",
     files = CORE_FILES,
-)
-
-skia_filegroup(
-    name = "legacy_draw_looper",
-    srcs = [
-        "SkDrawLooper.cpp",
-    ],
 )
 
 skia_filegroup(
@@ -830,7 +827,6 @@ skia_cc_library(
         "//include/codec:core_hdrs",
         "//include/core:core_hdrs",
         "//include/effects:core_hdrs",
-        "//include/ports:core_hdrs",
         "//include/sksl:core_hdrs",
         "//include/utils:core_hdrs",
     ],
@@ -861,6 +857,8 @@ skia_cc_library(
     hdrs = [":core_priv_hdrs"],
     features = ["layering_check"],
     visibility = [
+        "//bench:__subpackages__",
+        "//gm:__subpackages__",
         "//modules:__subpackages__",
         "//src:__subpackages__",
         "//tools:__subpackages__",
