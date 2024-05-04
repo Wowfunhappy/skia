@@ -231,7 +231,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//include/utils/mac:public_hdrs"}},
 		{Var: "skia_utils_chromium",
 			Rules: []string{
-				"//include/docs:chromium_hdrs",
+				"//include/docs:multi_picture_document_hdrs",
 				"//src/utils:chromium_hdrs"}},
 		{Var: "skia_utils_private",
 			Rules: []string{
@@ -525,6 +525,7 @@ var gniExportDescs = []exporter.GNIExportDesc{
 				"//modules/skottie/src/layers:srcs",
 				"//modules/skottie/src/layers/shapelayer:srcs",
 				"//modules/skottie/src/text:srcs",
+				"//modules/skottie/src/text:text_shaper_srcs",
 			}},
 	}},
 	{GNI: "modules/skcms/skcms.gni", Vars: []exporter.GNIFileListExportDesc{

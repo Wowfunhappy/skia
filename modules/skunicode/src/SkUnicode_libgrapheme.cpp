@@ -215,7 +215,10 @@ public:
     }
 
     SkString toUpper(const SkString& str) override {
+        return this->toUpper(str, nullptr);
+    }
 
+    SkString toUpper(const SkString& str, const char* locale) override {
         SkString res(" ", str.size());
         grapheme_to_uppercase_utf8(str.data(), str.size(), res.data(), res.size());
         return res;
@@ -255,10 +258,10 @@ public:
         size_t lineBreak = 0;
         // first() must always go to the beginning of the string.
         fLineBreaks.emplace_back(0, SkUnicode::LineBreakType::kHardLineBreak);
-        for (size_t pos = 0; pos < utf8Units; pos += lineBreak) {
-            lineBreak = grapheme_next_line_break_utf8(utftext8 + pos, utf8Units - pos);
-            auto codePoint = utftext8[lineBreak];
-            fLineBreaks.emplace_back(lineBreak,
+        for (size_t pos = 0; pos < utf8Units;) {
+            pos += grapheme_next_line_break_utf8(utftext8 + pos, utf8Units - pos);
+            auto codePoint = utftext8[pos];
+            fLineBreaks.emplace_back(pos,
                                      fUnicode->isHardBreak(codePoint)
                                     ? SkUnicode::LineBreakType::kHardLineBreak
                                     : SkUnicode::LineBreakType::kSoftLineBreak);

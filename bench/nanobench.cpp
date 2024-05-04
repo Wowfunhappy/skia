@@ -209,6 +209,8 @@ static DEFINE_bool(splitPerfettoTracesByBenchmark, true,
                   "Create separate perfetto trace files for each benchmark?\n"
                   "Will only take effect if perfetto tracing is enabled. See --trace.");
 
+static DEFINE_bool(runtimeCPUDetection, true, "Skip runtime CPU detection and optimization");
+
 static double now_ms() { return SkTime::GetNSecs() * 1e-6; }
 
 static SkString humanize(double ms) {
@@ -314,7 +316,12 @@ struct GraphiteTarget : public Target {
     skgpu::graphite::Context* context;
     std::unique_ptr<skgpu::graphite::Recorder> recorder;
 
-    ~GraphiteTarget() override {}
+    ~GraphiteTarget() override {
+        // For Vulkan we need to release all our refs before we destroy the vulkan context which
+        // happens at the end of this destructor. Thus we need to release the surface here which
+        // holds a ref to the Graphite device
+        surface.reset();
+    }
 
     void setup() override {}
 
@@ -1346,7 +1353,9 @@ int main(int argc, char** argv) {
     cd_Documents();
 #endif
     SetupCrashHandler();
-    SkGraphics::Init();
+    if (FLAGS_runtimeCPUDetection) {
+        SkGraphics::Init();
+    }
 
     // Our benchmarks only currently decode .png or .jpg files
     SkCodecs::Register(SkPngDecoder::Decoder());

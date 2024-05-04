@@ -83,7 +83,7 @@ def compile_fn(api, checkout_root, out_dir):
   cc, cxx, ccache = None, None, None
   extra_cflags = []
   extra_ldflags = []
-  args = {'werror': 'true'}
+  args = {'werror': 'true', 'link_pool_depth':'2'}
   env = {}
 
   if os == 'Mac':
@@ -270,8 +270,7 @@ def compile_fn(api, checkout_root, out_dir):
   elif configuration != 'OptimizeForSize':
     args.update({
       'skia_use_client_icu': 'true',
-      # Enable after fixing MSVC host and xSAN host toolchains.
-      #'skia_use_libgrapheme': 'true',
+      'skia_use_libgrapheme': 'true',
     })
 
   if 'Fontations' in extra_tokens:
@@ -353,6 +352,9 @@ def compile_fn(api, checkout_root, out_dir):
         api.run(api.step, 'ccache stats-start', cmd=[ccache, '-s'])
       api.run(api.step, 'gn gen',
               cmd=[gn, 'gen', out_dir, '--args=' + gn_args])
+      if 'Fontations' in extra_tokens:
+        api.run(api.step, 'gn clean',
+              cmd=[gn, 'clean', out_dir])
       api.run(api.step, 'ninja', cmd=['ninja', '-C', out_dir])
       if ccache:
         api.run(api.step, 'ccache stats-end', cmd=[ccache, '-s'])

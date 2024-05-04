@@ -7,14 +7,13 @@
 
 #include "include/private/base/SkFeatures.h"
 #include "src/core/SkCpu.h"
-#include "src/core/SkOpts.h"
 #include "src/core/SkOptsTargets.h"
 #include "src/core/SkSwizzlePriv.h"
 
 #define SK_OPTS_TARGET SK_OPTS_TARGET_DEFAULT
 #include "src/opts/SkOpts_SetTarget.h"
 
-#include "src/opts/SkSwizzler_opts.h"  // IWYU pragma: keep
+#include "src/opts/SkSwizzler_opts.inc"  // IWYU pragma: keep
 
 #include "src/opts/SkOpts_RestoreTarget.h"
 

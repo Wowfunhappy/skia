@@ -132,10 +132,15 @@ public:
             sk_sp<SkTypeface> face = mgr->makeFromStream(std::move(stream), {});
             // Without --nativeFonts, DM will use the portable test font manager which does
             // not know how to read in fonts from bytes.
-            SkASSERTF(face, "%s was not turned into a Typeface. Did you set --nativeFonts?",
-                      file_path.c_str());
-            fFontProvider->registerTypeface(face);
+            if (face) {
+                fFontProvider->registerTypeface(face);
+            } else {
+                SkDEBUGF("%s was not turned into a Typeface. Did you set --nativeFonts?",
+                         file_path.c_str());
+            }
         }
+        SkASSERTF(fFontProvider->countFamilies(),
+                  "No font families found. Did you set --nativeFonts?");
 
         if (testOnly) {
             this->setTestFontManager(std::move(fFontProvider));
@@ -217,6 +222,18 @@ private:
     SkCanvas* canvas;
     const char* name;
 };
+
+
+static std::unique_ptr<SkUnicode> get_icu_based_unicode() {
+#if defined(SK_UNICODE_ICU_IMPLEMENTATION)
+    return SkUnicode::MakeIcuBasedUnicode();
+#endif  // defined(SK_UNICODE_ICU_IMPLEMENTATION)
+#if defined(SK_UNICODE_ICU4X_IMPLEMENTATION)
+    return SkUnicode::MakeIcu4xBasedUnicode();
+#endif
+    SkDEBUGFAIL("Cannot make SkUnicode");
+    return nullptr;
+}
 }  // namespace
 
 // Skip tests which do not find the fonts, unless the user set --paragraph_fonts in which case
@@ -3638,7 +3655,84 @@ UNIX_ONLY_TEST(SkParagraph_GetRectsForRangeStrut, reporter) {
     }
 }
 
-// Checked: NO DIFF
+UNIX_ONLY_TEST(SkParagraph_GetRectsForRangeStrutWithHeight, reporter) {
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
+    SKIP_IF_FONTS_NOT_FOUND(reporter, fontCollection)
+    const char* text = "A";
+    const size_t len = strlen(text);
+
+    StrutStyle strutStyle;
+    strutStyle.setStrutEnabled(true);
+    strutStyle.setFontFamilies({SkString("Roboto")});
+    strutStyle.setFontSize(14.0);
+    strutStyle.setHeightOverride(true);
+    strutStyle.setHeight(2.0);
+    strutStyle.setLeading(3.0);
+
+    ParagraphStyle paragraphStyle;
+    paragraphStyle.setStrutStyle(strutStyle);
+
+    TextStyle textStyle;
+    textStyle.setFontFamilies({SkString("Roboto")});
+    textStyle.setFontSize(10);
+    textStyle.setColor(SK_ColorBLACK);
+
+    ParagraphBuilderImpl builder(paragraphStyle, fontCollection);
+    builder.pushStyle(textStyle);
+    builder.addText(text, len);
+    builder.pop();
+
+    auto paragraph = builder.Build();
+    paragraph->layout(550);
+
+    auto result = paragraph->getRectsForRange(0, 1, RectHeightStyle::kStrut, RectWidthStyle::kMax);
+    REPORTER_ASSERT(reporter, result.size() == 1);
+    // Half of the strut leading: 3.0 * 14.0 / 2
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(result[0].rect.top(), 21.0, EPSILON100));
+    // Strut height 2.0 * 14.0
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(result[0].rect.height(), 28.0, EPSILON100));
+}
+
+UNIX_ONLY_TEST(SkParagraph_GetRectsForRangeStrutWithHeightAndHalfLeading, reporter) {
+    sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
+    SKIP_IF_FONTS_NOT_FOUND(reporter, fontCollection)
+    const char* text = "A";
+    const size_t len = strlen(text);
+
+    StrutStyle strutStyle;
+    strutStyle.setStrutEnabled(true);
+    strutStyle.setFontFamilies({SkString("Roboto")});
+    strutStyle.setFontSize(14.0);
+    strutStyle.setHeightOverride(true);
+    strutStyle.setHeight(2.0);
+    strutStyle.setLeading(3.0);
+    strutStyle.setHalfLeading(true);
+
+    ParagraphStyle paragraphStyle;
+    paragraphStyle.setStrutStyle(strutStyle);
+
+    TextStyle textStyle;
+    textStyle.setFontFamilies({SkString("Roboto")});
+    textStyle.setFontSize(10);
+    textStyle.setColor(SK_ColorBLACK);
+
+    ParagraphBuilderImpl builder(paragraphStyle, fontCollection);
+    builder.pushStyle(textStyle);
+    builder.addText(text, len);
+    builder.pop();
+
+    auto paragraph = builder.Build();
+    paragraph->layout(550);
+
+    // Produces the same results as halfLeading = false.
+    auto result = paragraph->getRectsForRange(0, 1, RectHeightStyle::kStrut, RectWidthStyle::kMax);
+    REPORTER_ASSERT(reporter, result.size() == 1);
+    // Half of the strut leading: 3.0 * 14.0 / 2
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(result[0].rect.top(), 21.0, EPSILON100));
+    // Strut height 2.0 * 14.0
+    REPORTER_ASSERT(reporter, SkScalarNearlyEqual(result[0].rect.height(), 28.0, EPSILON100));
+}
+
 UNIX_ONLY_TEST(SkParagraph_GetRectsForRangeStrutFallback, reporter) {
     sk_sp<ResourceFontCollection> fontCollection = sk_make_sp<ResourceFontCollection>();
     SKIP_IF_FONTS_NOT_FOUND(reporter, fontCollection)
@@ -8006,6 +8100,9 @@ UNIX_ONLY_TEST(SkParagraph_EndWithLineSeparator, reporter) {
 }
 
 UNIX_ONLY_TEST(SkParagraph_EmojiFontResolution, reporter) {
+
+    auto icu = get_icu_based_unicode();
+
     auto fontCollection = sk_make_sp<FontCollection>();
     fontCollection->setDefaultFontManager(ToolUtils::TestFontMgr(), std::vector<SkString>());
     fontCollection->enableFontFallback();
@@ -8043,10 +8140,9 @@ UNIX_ONLY_TEST(SkParagraph_EmojiFontResolution, reporter) {
     }
 }
 
-#ifdef SK_UNICODE_ICU_IMPLEMENTATION
 UNIX_ONLY_TEST(SkParagraph_EmojiRuns, reporter) {
 
-    auto icu = SkUnicode::MakeIcuBasedUnicode();
+    auto icu = get_icu_based_unicode();
 
     auto test = [&](const char* text, SkUnichar expected) {
         SkString str(text);
@@ -8110,4 +8206,3 @@ UNIX_ONLY_TEST(SkParagraph_EmojiRuns, reporter) {
     test("👋🏼", 128075); // Modifier sequence
     test("👨‍👩‍👧‍👦", 128104); // ZWJ sequence
 }
-#endif

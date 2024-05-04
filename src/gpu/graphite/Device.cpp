@@ -375,6 +375,16 @@ Device::Device(Recorder* recorder,
     if (addInitialClear) {
         fDC->clear(SkColors::kTransparent);
     }
+    if (fRecorder->priv().caps()->defaultMSAASamplesCount() > 1) {
+        if (fRecorder->priv().caps()->msaaRenderToSingleSampledSupport()) {
+            fMSAASupported = true;
+        } else {
+            TextureInfo msaaTexInfo =
+                   fRecorder->priv().caps()->getDefaultMSAATextureInfo(fDC->target()->textureInfo(),
+                                                                       Discardable::kYes);
+            fMSAASupported = msaaTexInfo.isValid();
+        }
+    }
 }
 
 Device::~Device() {
@@ -1068,6 +1078,7 @@ void Device::drawGeometry(const Transform& localToDevice,
         SkPath dst;
         if (paint.getPathEffect()->filterPath(&dst, geometry.shape().asPath(), &newStyle,
                                               nullptr, localToDevice)) {
+            dst.setIsVolatile(true);
             // Recurse using the path and new style, while disabling downstream path effect handling
             this->drawGeometry(localToDevice, Geometry(Shape(dst)), paint, newStyle,
                                flags | DrawFlags::kIgnorePathEffect, std::move(primitiveBlender),
@@ -1099,6 +1110,7 @@ void Device::drawGeometry(const Transform& localToDevice,
         !is_simple_shape(geometry.shape(), style.getStyle())) {
         SkPath devicePath = geometry.shape().asPath();
         devicePath.transform(localToDevice.matrix().asM33());
+        devicePath.setIsVolatile(true);
         this->drawGeometry(Transform::Identity(), Geometry(Shape(devicePath)), paint, style, flags,
                            std::move(primitiveBlender), skipColorXform);
         return;
@@ -1411,7 +1423,6 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
     }
 
     PathAtlas* pathAtlas = nullptr;
-    bool msaaSupported = fRecorder->priv().caps()->defaultMSAASamplesCount() > 1;
 
     // Prefer compute atlas draws if supported. This currently implicitly filters out clip draws as
     // they require MSAA. Eventually we may want to route clip shapes to the atlas as well but not
@@ -1426,7 +1437,7 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
     // TODO: enable other uses of the software path renderer
     } else if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kRaster) &&
                (strategy == PathRendererStrategy::kRasterAA ||
-                (strategy == PathRendererStrategy::kDefault && !msaaSupported))) {
+                (strategy == PathRendererStrategy::kDefault && !fMSAASupported))) {
         pathAtlas = atlasProvider->getRasterPathAtlas();
     }
 
@@ -1438,8 +1449,7 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
         //
         // If the hardware doesn't support MSAA and anti-aliasing is required, then we always render
         // paths with atlasing.
-        if (!msaaSupported || strategy == PathRendererStrategy::kComputeAnalyticAA ||
-            strategy == PathRendererStrategy::kRasterAA) {
+        if (!fMSAASupported || strategy != PathRendererStrategy::kDefault) {
             return {nullptr, pathAtlas};
         }
 
@@ -1547,6 +1557,9 @@ void Device::flushPendingWorkToRecorder() {
     fColorDepthBoundsManager->reset();
     fDisjointStencilSet->reset();
     fCurrentDepth = DrawOrder::kClearDepth;
+
+    // Any cleanup in the AtlasProvider
+    fRecorder->priv().atlasProvider()->postFlush();
 }
 
 bool Device::needsFlushBeforeDraw(int numNewRenderSteps, DstReadRequirement dstReadReq) const {
