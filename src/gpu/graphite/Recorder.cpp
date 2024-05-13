@@ -100,6 +100,7 @@ Recorder::Recorder(sk_sp<SharedContext> sharedContext, const RecorderOptions& op
         , fRootTaskList(new TaskList)
         , fUniformDataCache(new UniformDataCache)
         , fTextureDataCache(new TextureDataCache)
+        , fProxyReadCounts(new ProxyReadCountMap)
         , fUniqueID(next_id())
         , fAtlasProvider(std::make_unique<AtlasProvider>(this))
         , fTokenTracker(std::make_unique<TokenTracker>())
@@ -177,7 +178,8 @@ std::unique_ptr<Recording> Recorder::snap() {
 
     // The scratch resources only need to be tracked until prepareResources() is finished, so
     // Recorder doesn't hold a persistent manager and it can be deleted when snap() returns.
-    ScratchResourceManager scratchManager{fResourceProvider.get()};
+    ScratchResourceManager scratchManager{fResourceProvider.get(), std::move(fProxyReadCounts)};
+    fProxyReadCounts = std::make_unique<ProxyReadCountMap>();
 
     // In both the "task failed" case and the "everything is discarded" case, there's no work that
     // needs to be done in insertRecording(). However, we use nullptr as a failure signal, so
@@ -480,6 +482,11 @@ void Recorder::dumpMemoryStatistics(SkTraceMemoryDump* traceMemoryDump) const {
     // used bytes here (see Ganesh implementation).
 }
 
+void RecorderPriv::addPendingRead(const TextureProxy* proxy) {
+    ASSERT_SINGLE_OWNER_PRIV
+    fRecorder->fProxyReadCounts->increment(proxy);
+}
+
 void RecorderPriv::add(sk_sp<Task> task) {
     ASSERT_SINGLE_OWNER_PRIV
     fRecorder->fRootTaskList->add(std::move(task));
@@ -541,13 +548,15 @@ void RecorderPriv::flushTrackedDevices() {
 
 sk_sp<TextureProxy> RecorderPriv::CreateCachedProxy(Recorder* recorder,
                                                     const SkBitmap& bitmap,
+                                                    std::string_view label,
                                                     Mipmapped mipmapped) {
     SkASSERT(!bitmap.isNull());
 
     if (!recorder) {
         return nullptr;
     }
-    return recorder->priv().proxyCache()->findOrCreateCachedProxy(recorder, bitmap, mipmapped);
+    return recorder->priv().proxyCache()->findOrCreateCachedProxy(recorder, bitmap, mipmapped,
+                                                                  std::move(label));
 }
 
 size_t RecorderPriv::getResourceCacheLimit() const {

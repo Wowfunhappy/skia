@@ -97,6 +97,7 @@ sk_sp<ComputePipeline> ResourceProvider::findOrCreateComputePipeline(
 
 sk_sp<Texture> ResourceProvider::findOrCreateScratchTexture(SkISize dimensions,
                                                             const TextureInfo& info,
+                                                            std::string_view label,
                                                             skgpu::Budgeted budgeted) {
     SkASSERT(info.isValid());
 
@@ -106,11 +107,10 @@ sk_sp<Texture> ResourceProvider::findOrCreateScratchTexture(SkISize dimensions,
     // Scratch textures are not shareable
     fSharedContext->caps()->buildKeyForTexture(dimensions, info, kType, Shareable::kNo, &key);
 
-    // TODO: Update this function to take a more specific label for the scratch texture
     return this->findOrCreateTextureWithKey(dimensions,
                                             info,
                                             key,
-                                            "ScratchTexture",
+                                            std::move(label),
                                             budgeted);
 }
 
@@ -179,14 +179,14 @@ sk_sp<Texture> ResourceProvider::findOrCreateTextureWithKey(SkISize dimensions,
     return tex;
 }
 
-sk_sp<Sampler> ResourceProvider::findOrCreateCompatibleSampler(const SamplerDesc& desc) {
-    GraphiteResourceKey key = fSharedContext->caps()->makeSamplerKey(desc);
+sk_sp<Sampler> ResourceProvider::findOrCreateCompatibleSampler(const SamplerDesc& samplerDesc) {
+    GraphiteResourceKey key = fSharedContext->caps()->makeSamplerKey(samplerDesc);
 
     if (Resource* resource = fResourceCache->findAndRefResource(key, skgpu::Budgeted::kYes)) {
         return sk_sp<Sampler>(static_cast<Sampler*>(resource));
     }
 
-    sk_sp<Sampler> sampler = this->createSampler(desc);
+    sk_sp<Sampler> sampler = this->createSampler(samplerDesc);
     if (!sampler) {
         return nullptr;
     }

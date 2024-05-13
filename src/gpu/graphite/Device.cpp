@@ -182,6 +182,13 @@ bool is_simple_shape(const Shape& shape, SkStrokeRec::Style type) {
                                   SkRRectPriv::AllCornersCircular(shape.rrect()))));
 }
 
+bool use_compute_atlas_when_available(PathRendererStrategy strategy) {
+    return strategy == PathRendererStrategy::kComputeAnalyticAA ||
+           strategy == PathRendererStrategy::kComputeMSAA16 ||
+           strategy == PathRendererStrategy::kComputeMSAA8 ||
+           strategy == PathRendererStrategy::kDefault;
+}
+
 } // anonymous namespace
 
 /**
@@ -241,6 +248,7 @@ sk_sp<Device> Device::Make(Recorder* recorder,
                            SkBackingFit backingFit,
                            const SkSurfaceProps& props,
                            LoadOp initialLoadOp,
+                           std::string_view label,
                            bool registerWithRecorder) {
     SkASSERT(!(mipmapped == Mipmapped::kYes && backingFit == SkBackingFit::kApprox));
     if (!recorder) {
@@ -257,7 +265,7 @@ sk_sp<Device> Device::Make(Recorder* recorder,
 
     return Make(recorder,
                 TextureProxy::Make(caps, recorder->priv().resourceProvider(),
-                                   backingDimensions, textureInfo, budgeted),
+                                   backingDimensions, textureInfo, std::move(label), budgeted),
                 ii.dimensions(),
                 ii.colorInfo(),
                 props,
@@ -401,7 +409,8 @@ sk_sp<SkDevice> Device::createDevice(const CreateInfo& info, const SkPaint*) {
                 SkBackingFit::kExact,
 #endif
                 props,
-                initialLoadOp);
+                initialLoadOp,
+                "ChildDevice");
 }
 
 sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& ii, const SkSurfaceProps& props) {
@@ -424,7 +433,8 @@ sk_sp<Image> Device::makeImageCopy(const SkIRect& subset,
                 colorInfo.colorType(), this->target()->textureInfo());
         srcView = {sk_ref_sp(this->target()), readSwizzle};
     }
-    return Image::Copy(fRecorder, srcView, colorInfo, subset, budgeted, mipmapped, backingFit);
+    return Image::Copy(fRecorder, srcView, colorInfo, subset, budgeted, mipmapped, backingFit,
+                       "CopyDeviceTexture");
 }
 
 bool Device::onReadPixels(const SkPixmap& pm, int srcX, int srcY) {
@@ -733,8 +743,31 @@ void Device::drawRRect(const SkRRect& rr, const SkPaint& paint) {
 }
 
 void Device::drawPath(const SkPath& path, const SkPaint& paint, bool pathIsMutable) {
-    // TODO: If we do try to inspect the path, it should happen here and possibly after computing
-    // the path effect. Alternatively, all that should be handled in SkCanvas.
+    // Alternatively, we could move this analysis to SkCanvas. Also, we could consider applying the
+    // path effect, being careful about starting point and direction.
+    if (!paint.getPathEffect() && !path.isInverseFillType()) {
+        if (SkRect oval; path.isOval(&oval)) {
+            this->drawGeometry(this->localToDeviceTransform(),
+                               Geometry(Shape(SkRRect::MakeOval(oval))),
+                               paint,
+                               SkStrokeRec(paint));
+            return;
+        }
+        if (SkRRect rrect; path.isRRect(&rrect)) {
+            this->drawGeometry(this->localToDeviceTransform(),
+                               Geometry(Shape(rrect)),
+                               paint,
+                               SkStrokeRec(paint));
+            return;
+        }
+        if (SkRect rect; paint.getStyle() == SkPaint::kFill_Style && path.isRect(&rect)) {
+            this->drawGeometry(this->localToDeviceTransform(),
+                               Geometry(Shape(rect)),
+                               paint,
+                               SkStrokeRec(paint));
+            return;
+        }
+    }
     this->drawGeometry(this->localToDeviceTransform(), Geometry(Shape(path)),
                        paint, SkStrokeRec(paint));
 }
@@ -1302,9 +1335,11 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
     // Path rendering options. For now the strategy is very simple and not optimal:
     // I. Use tessellation if MSAA is required for an effect.
     // II: otherwise:
-    //    1. Always use compute AA if supported unless it was excluded by ContextOptions.
-    //    2. Use CPU raster AA if hardware MSAA is disabled or it was explicitly requested by
-    //       ContextOptions.
+    //    1. Always use compute AA if supported unless it was excluded by ContextOptions or the
+    //       compute renderer cannot render the shape efficiently yet (based on the result of
+    //       `isSuitableForAtlasing`).
+    //    2. Fall back to CPU raster AA if hardware MSAA is disabled or it was explicitly requested
+    //       via ContextOptions.
     //    3. Otherwise use tessellation.
 #if defined(GRAPHITE_TEST_UTILS)
     PathRendererStrategy strategy = fRecorder->priv().caps()->requestedPathRendererStrategy();
@@ -1313,45 +1348,44 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
 #endif
 
     PathAtlas* pathAtlas = nullptr;
+    AtlasProvider* atlasProvider = fRecorder->priv().atlasProvider();
 
     // Prefer compute atlas draws if supported. This currently implicitly filters out clip draws as
     // they require MSAA. Eventually we may want to route clip shapes to the atlas as well but not
     // if hardware MSAA is required.
-    AtlasProvider* atlasProvider = fRecorder->priv().atlasProvider();
+    Rect drawBounds = localToDevice.mapRect(shape.bounds());
     if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kCompute) &&
-        (strategy == PathRendererStrategy::kComputeAnalyticAA ||
-         strategy == PathRendererStrategy::kComputeMSAA16 ||
-         strategy == PathRendererStrategy::kComputeMSAA8 ||
-         strategy == PathRendererStrategy::kDefault)) {
-        pathAtlas = fDC->getComputePathAtlas(fRecorder);
-    // Only use CPU rendered paths when multisampling is disabled
-    // TODO: enable other uses of the software path renderer
-    } else if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kRaster) &&
-               (strategy == PathRendererStrategy::kRasterAA ||
-                (strategy == PathRendererStrategy::kDefault && !fMSAASupported))) {
-        pathAtlas = atlasProvider->getRasterPathAtlas();
-    }
+        use_compute_atlas_when_available(strategy)) {
+        PathAtlas* atlas = fDC->getComputePathAtlas(fRecorder);
+        SkASSERT(atlas);
 
-    // Use an atlas only if an MSAA technique isn't required.
-    if (!requireMSAA && pathAtlas) {
-        // Don't use a coverage mask renderer if the shape is too large for the atlas such that it
-        // cannot be efficiently rasterized. The only exception is if hardware MSAA is not supported
-        // as a fallback or one of the atlas strategies was explicitly requested.
+        // Don't use the compute renderer if it can't handle the shape efficiently.
         //
-        // If the hardware doesn't support MSAA and anti-aliasing is required, then we always render
-        // paths with atlasing.
-        if (!fMSAASupported || strategy != PathRendererStrategy::kDefault) {
-            return {nullptr, pathAtlas};
-        }
-
         // Use the conservative clip bounds for a rough estimate of the mask size (this avoids
         // having to evaluate the entire clip stack before choosing the renderer as it will have to
         // get evaluated again if we fall back to a different renderer).
-        Rect drawBounds = localToDevice.mapRect(shape.bounds());
-        drawBounds.intersect(fClip.conservativeBounds());
-        if (pathAtlas->isSuitableForAtlasing(drawBounds)) {
-            return {nullptr, pathAtlas};
+        if (atlas->isSuitableForAtlasing(drawBounds, fClip.conservativeBounds())) {
+            pathAtlas = atlas;
         }
+    }
+
+    // Fall back to CPU rendered paths when multisampling is disabled and the compute atlas is not
+    // available.
+    // TODO: enable other uses of the software path renderer
+    if (!pathAtlas && atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kRaster) &&
+        (strategy == PathRendererStrategy::kRasterAA ||
+         (strategy == PathRendererStrategy::kDefault && !fMSAASupported))) {
+        PathAtlas* atlas = atlasProvider->getRasterPathAtlas();
+        SkASSERT(atlas);
+        if (atlas->isSuitableForAtlasing(drawBounds, fClip.conservativeBounds())) {
+            pathAtlas = atlas;
+        }
+    }
+
+    if (!requireMSAA && pathAtlas) {
+        // If we got here it means that we should draw with an atlas renderer if we can and avoid
+        // resorting to one of the tessellating techniques.
+        return {nullptr, pathAtlas};
     }
 
     // If we got here, it requires tessellated path rendering or an MSAA technique applied to a
@@ -1381,7 +1415,6 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
         // would be pretty trivial to spin up.
         return {renderers->convexTessellatedWedges(), nullptr};
     } else {
-        Rect drawBounds = localToDevice.mapRect(shape.bounds());
         drawBounds.intersect(fClip.conservativeBounds());
         const bool preferWedges =
                 // If the draw bounds don't intersect with the clip stack's conservative bounds,
@@ -1564,6 +1597,13 @@ void Device::drawCoverageMask(const SkSpecialImage* mask,
         return;
     }
 
+    // Every other "Image" draw reaches the underlying texture via AddToKey/NotifyInUse, which
+    // handles notifying the image and either flushing the linked surface or attaching draw tasks
+    // from a scratch device to the current draw context. In this case, 'mask' is very likely to
+    // be linked to a scratch device, but we must perform the same notifyInUse manually here because
+    // the texture is consumed by the RenderStep and not part of the PaintParams.
+    static_cast<Image_Base*>(mask->asImage().get())->notifyInUse(fRecorder, fDC.get());
+
     // 'mask' logically has 0 coverage outside of its pixels, which is equivalent to kDecal tiling.
     // However, since we draw geometry tightly fitting 'mask', we can use the better-supported
     // kClamp tiling and behave effectively the same way.
@@ -1575,7 +1615,7 @@ void Device::drawCoverageMask(const SkSpecialImage* mask,
     TextureDataBlock tdb;
     // NOTE: CoverageMaskRenderStep controls the final sampling options; this texture data block
     // serves only to keep the mask alive so the sampling passed to add() doesn't matter.
-    tdb.add(SkFilterMode::kLinear, kClamp, maskProxyView.refProxy());
+    tdb.add(fRecorder->priv().caps(), SkFilterMode::kLinear, kClamp, maskProxyView.refProxy());
     fRecorder->priv().textureDataCache()->insert(tdb);
 
     // CoverageMaskShape() wraps a Shape when it's used as a PathAtlas, but in this case the
