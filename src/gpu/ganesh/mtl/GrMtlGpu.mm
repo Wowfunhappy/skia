@@ -10,6 +10,7 @@
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkTextureCompressionType.h"
 #include "include/gpu/GpuTypes.h"
+#include "include/gpu/ganesh/mtl/GrMtlBackendSemaphore.h"
 #include "include/private/gpu/ganesh/GrTypesPriv.h"
 #include "src/base/SkMathPriv.h"
 #include "src/base/SkRectMemcpy.h"
@@ -93,7 +94,7 @@ GrMtlGpu::GrMtlGpu(GrDirectContext* direct, const GrContextOptions& options,
         , fUniformsRingBuffer(this, 128 * 1024, 256, GrGpuBufferType::kUniform)
         , fDisconnected(false) {
     fMtlCaps.reset(new GrMtlCaps(options, fDevice));
-    this->initCapsAndCompiler(fMtlCaps);
+    this->initCaps(fMtlCaps);
 #if GR_METAL_CAPTURE_COMMANDBUFFER
     this->testingOnly_startCapture();
 #endif
@@ -1596,34 +1597,6 @@ bool GrMtlGpu::readOrTransferPixels(GrSurface* surface,
     return true;
 }
 
-[[nodiscard]] GrFence GrMtlGpu::insertFence() {
-    GrMtlCommandBuffer* cmdBuffer = this->commandBuffer();
-    // We create a semaphore and signal it within the current
-    // command buffer's completion handler.
-    dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-    cmdBuffer->addCompletedHandler(^(id <MTLCommandBuffer>commandBuffer) {
-        dispatch_semaphore_signal(semaphore);
-    });
-
-    const void* cfFence = (const void*) semaphore;
-    return (GrFence) cfFence;
-}
-
-bool GrMtlGpu::waitFence(GrFence fence) {
-    const void* cfFence = (const void*) fence;
-    dispatch_semaphore_t semaphore = (dispatch_semaphore_t)cfFence;
-
-    long result = dispatch_semaphore_wait(semaphore, 0);
-
-    return !result;
-}
-
-void GrMtlGpu::deleteFence(GrFence fence) {
-    const void* cfFence = (const void*) fence;
-    // In this case it's easier to release in CoreFoundation than depend on ARC
-    CFRelease(cfFence);
-}
-
 [[nodiscard]] std::unique_ptr<GrSemaphore> GrMtlGpu::makeSemaphore(bool /*isOwned*/) {
     SkASSERT(this->caps()->semaphoreSupport());
     return GrMtlSemaphore::Make(this);
@@ -1633,7 +1606,8 @@ std::unique_ptr<GrSemaphore> GrMtlGpu::wrapBackendSemaphore(const GrBackendSemap
                                                             GrSemaphoreWrapType /* wrapType */,
                                                             GrWrapOwnership /*ownership*/) {
     SkASSERT(this->caps()->backendSemaphoreSupport());
-    return GrMtlSemaphore::MakeWrapped(semaphore.mtlSemaphore(), semaphore.mtlValue());
+    return GrMtlSemaphore::MakeWrapped(GrBackendSemaphores::GetMtlHandle(semaphore),
+                                       GrBackendSemaphores::GetMtlValue(semaphore));
 }
 
 void GrMtlGpu::insertSemaphore(GrSemaphore* semaphore) {

@@ -116,8 +116,10 @@ DawnTexture::DawnTexture(const DawnSharedContext* sharedContext,
         , fSampleTextureView(std::move(sampleTextureView))
         , fRenderTextureView(std::move(renderTextureView)) {}
 
-std::pair<wgpu::TextureView, wgpu::TextureView> create_texture_views(
-        const wgpu::Texture& texture, const TextureInfo& info, const wgpu::TextureAspect aspect) {
+// static
+std::pair<wgpu::TextureView, wgpu::TextureView> DawnTexture::CreateTextureViews(
+        const wgpu::Texture& texture, const TextureInfo& info) {
+    const auto aspect = info.dawnTextureSpec().fAspect;
     if (aspect == wgpu::TextureAspect::All) {
         wgpu::TextureView sampleTextureView = texture.CreateView();
         wgpu::TextureView renderTextureView;
@@ -132,14 +134,20 @@ std::pair<wgpu::TextureView, wgpu::TextureView> create_texture_views(
         return {sampleTextureView, renderTextureView};
     }
 
+#if defined(__EMSCRIPTEN__)
+    SkASSERT(false);
+    return {};
+#else
     SkASSERT(aspect == wgpu::TextureAspect::Plane0Only ||
              aspect == wgpu::TextureAspect::Plane1Only ||
              aspect == wgpu::TextureAspect::Plane2Only);
     wgpu::TextureView planeTextureView;
     wgpu::TextureViewDescriptor planeViewDesc = {};
+    planeViewDesc.format = info.dawnTextureSpec().fViewFormat;
     planeViewDesc.aspect = aspect;
     planeTextureView = texture.CreateView(&planeViewDesc);
     return {planeTextureView, planeTextureView};
+#endif
 }
 
 sk_sp<Texture> DawnTexture::Make(const DawnSharedContext* sharedContext,
@@ -150,8 +158,7 @@ sk_sp<Texture> DawnTexture::Make(const DawnSharedContext* sharedContext,
     if (!texture) {
         return {};
     }
-    auto [sampleTextureView, renderTextureView] =
-            create_texture_views(texture, info, wgpu::TextureAspect::All);
+    auto [sampleTextureView, renderTextureView] = CreateTextureViews(texture, info);
     return sk_sp<Texture>(new DawnTexture(sharedContext,
                                           dimensions,
                                           info,
@@ -171,14 +178,31 @@ sk_sp<Texture> DawnTexture::MakeWrapped(const DawnSharedContext* sharedContext,
         return {};
     }
 
-    const wgpu::TextureAspect aspect = info.dawnTextureSpec().fAspect;
-    auto [sampleTextureView, renderTextureView] = create_texture_views(texture, info, aspect);
+    auto [sampleTextureView, renderTextureView] = CreateTextureViews(texture, info);
     return sk_sp<Texture>(new DawnTexture(sharedContext,
                                           dimensions,
                                           info,
                                           std::move(texture),
                                           std::move(sampleTextureView),
                                           std::move(renderTextureView),
+                                          Ownership::kWrapped,
+                                          skgpu::Budgeted::kNo));
+}
+
+sk_sp<Texture> DawnTexture::MakeWrapped(const DawnSharedContext* sharedContext,
+                                        SkISize dimensions,
+                                        const TextureInfo& info,
+                                        const wgpu::TextureView& textureView) {
+    if (!textureView) {
+        SKGPU_LOG_E("No valid texture view passed into MakeWrapped\n");
+        return {};
+    }
+    return sk_sp<Texture>(new DawnTexture(sharedContext,
+                                          dimensions,
+                                          info,
+                                          /*texture=*/nullptr,
+                                          /*sampleTextureView=*/textureView,
+                                          /*renderTextureView=*/textureView,
                                           Ownership::kWrapped,
                                           skgpu::Budgeted::kNo));
 }

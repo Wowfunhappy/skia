@@ -7,8 +7,6 @@
 
 #include "src/sksl/codegen/SkSLPipelineStageCodeGenerator.h"
 
-#if defined(SKSL_STANDALONE) || defined(SK_GANESH) || defined(SK_GRAPHITE)
-
 #include "include/core/SkSpan.h"
 #include "include/core/SkTypes.h"
 #include "include/private/base/SkTArray.h"
@@ -168,7 +166,7 @@ void PipelineStageCodeGenerator::writeLine(std::string_view s) {
 
 void PipelineStageCodeGenerator::writeChildCall(const ChildCall& c) {
     const ExpressionArray& arguments = c.arguments();
-    SkASSERT(arguments.size() >= 1);
+    SkASSERT(!arguments.empty());
     int index = 0;
     bool found = false;
     for (const ProgramElement* p : fProgram.elements()) {
@@ -229,7 +227,6 @@ void PipelineStageCodeGenerator::writeChildCall(const ChildCall& c) {
         }
     }
     this->write(sampleOutput);
-    return;
 }
 
 void PipelineStageCodeGenerator::writeFunctionCall(const FunctionCall& c) {
@@ -516,6 +513,7 @@ void PipelineStageCodeGenerator::writeExpression(const Expression& expr,
             this->writeBinaryExpression(expr.as<BinaryExpression>(), parentPrecedence);
             break;
         case Expression::Kind::kLiteral:
+        case Expression::Kind::kSetting:
             this->write(expr.description());
             break;
         case Expression::Kind::kChildCall:
@@ -559,7 +557,6 @@ void PipelineStageCodeGenerator::writeExpression(const Expression& expr,
         case Expression::Kind::kIndex:
             this->writeIndexExpression(expr.as<IndexExpression>());
             break;
-        case Expression::Kind::kSetting:
         default:
             SkDEBUGFAILF("unsupported expression: %s", expr.description().c_str());
             break;
@@ -763,7 +760,6 @@ void PipelineStageCodeGenerator::writeDoStatement(const DoStatement& d) {
     this->write(" while (");
     this->writeExpression(*d.test(), Precedence::kExpression);
     this->write(");");
-    return;
 }
 
 void PipelineStageCodeGenerator::writeForStatement(const ForStatement& f) {
@@ -818,5 +814,3 @@ void ConvertProgram(const Program& program,
 
 }  // namespace PipelineStage
 }  // namespace SkSL
-
-#endif

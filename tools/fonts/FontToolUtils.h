@@ -11,12 +11,13 @@
 #include "include/core/SkColor.h"
 #include "include/core/SkFontStyle.h"
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkString.h"
+#include "include/core/SkTypeface.h"
 
 class SkBitmap;
 class SkImage;
 class SkFont;
 class SkFontMgr;
-class SkTypeface;
 
 namespace ToolUtils {
 /**
@@ -35,15 +36,27 @@ sk_sp<SkTypeface> CreatePortableTypeface(const char* name, SkFontStyle style);
 /* Return a color emoji typeface with planets to scale if available. */
 sk_sp<SkTypeface> PlanetTypeface();
 
-/** Return a color emoji typeface if available. */
-sk_sp<SkTypeface> EmojiTypeface();
+enum class EmojiFontFormat {
+    Cbdt,
+    Sbix,
+    ColrV0,
+    Test,
+    Svg
+};
 
-/** Sample text for the emoji_typeface font. */
-constexpr const char* EmojiSampleText() {
-    return "\xF0\x9F\x98\x80"
-           " "
-           "\xE2\x99\xA2";  // 😀 ♢
-}
+struct EmojiTestSample {
+    sk_sp<SkTypeface> typeface = nullptr;
+    const char* sampleText = "";
+};
+
+/** Return a color emoji typeface if available. */
+EmojiTestSample EmojiSample();
+
+/** Return a color emoji typeface of a specific color font format if available. */
+EmojiTestSample EmojiSample(EmojiFontFormat format);
+
+/** Return a string representation of the requeste format. Useful for suffixing test names. */
+SkString NameForFontFormat(EmojiFontFormat format);
 
 /** A simple SkUserTypeface for testing. */
 sk_sp<SkTypeface> SampleUserTypeface();
@@ -74,11 +87,6 @@ sk_sp<SkTypeface> CreateTypefaceFromResource(const char* resource, int ttcIndex 
 
 // This returns a font using DefaultTypeface()
 SkFont DefaultFont();
-
-#if !defined(SK_DISABLE_LEGACY_FONTMGR_FACTORY)
-// Temporary hack to set the global for non-migrated uses of SkFontMgr::RefDefault()
-void SetDefaultFontMgr();
-#endif
 
 }  // namespace ToolUtils
 

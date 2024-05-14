@@ -90,6 +90,7 @@ tests_sources = [
   "$_tests/FontMgrFlags.cpp",
   "$_tests/FontMgrTest.cpp",
   "$_tests/FontNamesTest.cpp",
+  "$_tests/FontScanner.cpp",
   "$_tests/FontTest.cpp",
   "$_tests/FrontBufferedStreamTest.cpp",
   "$_tests/GLBackendSurfaceTest.cpp",
@@ -343,6 +344,7 @@ metal_tests_sources = [
 ]
 
 graphite_tests_sources = [
+  "$_tests/graphite/AHardwareBufferTest.cpp",
   "$_tests/graphite/BackendTextureTest.cpp",
   "$_tests/graphite/BoundsManagerTest.cpp",
   "$_tests/graphite/BufferManagerTest.cpp",
@@ -356,6 +358,7 @@ graphite_tests_sources = [
   "$_tests/graphite/ImageOriginTest.cpp",
   "$_tests/graphite/ImageProviderTest.cpp",
   "$_tests/graphite/ImageShaderTest.cpp",
+  "$_tests/graphite/ImageWrapTextureMipmapsTest.cpp",
   "$_tests/graphite/IntersectionTreeTest.cpp",
   "$_tests/graphite/KeyTest.cpp",
   "$_tests/graphite/MultisampleTest.cpp",

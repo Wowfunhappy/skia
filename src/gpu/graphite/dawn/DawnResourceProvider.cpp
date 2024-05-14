@@ -25,7 +25,7 @@ namespace {
 
 constexpr int kBufferBindingSizeAlignment = 16;
 constexpr int kMaxNumberOfCachedBufferBindGroups = 32;
-constexpr int kMaxNumberOfCachedTextureBindGroups = 256;
+constexpr int kMaxNumberOfCachedTextureBindGroups = 4096;
 
 wgpu::ShaderModule create_shader_module(const wgpu::Device& device, const char* source) {
     wgpu::ShaderModuleWGSLDescriptor wgslDesc;
@@ -194,11 +194,11 @@ wgpu::RenderPipeline DawnResourceProvider::findOrCreateBlitWithDrawPipeline(
                 std::move(vsModule),
                 std::move(fsModule),
                 /*renderPassColorFormat=*/
-                renderPassDesc.fColorAttachment.fTextureInfo.dawnTextureSpec().fFormat,
+                renderPassDesc.fColorAttachment.fTextureInfo.dawnTextureSpec().getViewFormat(),
                 /*renderPassDepthStencilFormat=*/
                 renderPassDesc.fDepthStencilAttachment.fTextureInfo.isValid()
                         ? renderPassDesc.fDepthStencilAttachment.fTextureInfo.dawnTextureSpec()
-                                  .fFormat
+                                  .getViewFormat()
                         : wgpu::TextureFormat::Undefined,
                 /*numSamples=*/renderPassDesc.fColorAttachment.fTextureInfo.numSamples());
 
@@ -212,15 +212,25 @@ wgpu::RenderPipeline DawnResourceProvider::findOrCreateBlitWithDrawPipeline(
 
 sk_sp<Texture> DawnResourceProvider::createWrappedTexture(const BackendTexture& texture) {
     // Convert to smart pointers. wgpu::Texture* constructor will increment the ref count.
-    wgpu::Texture dawnTexture = texture.getDawnTexturePtr();
-    if (!dawnTexture) {
+    wgpu::Texture dawnTexture         = texture.getDawnTexturePtr();
+    wgpu::TextureView dawnTextureView = texture.getDawnTextureViewPtr();
+    SkASSERT(!dawnTexture || !dawnTextureView);
+
+    if (!dawnTexture && !dawnTextureView) {
         return {};
     }
 
-    return DawnTexture::MakeWrapped(this->dawnSharedContext(),
-                                    texture.dimensions(),
-                                    texture.info(),
-                                    std::move(dawnTexture));
+    if (dawnTexture) {
+        return DawnTexture::MakeWrapped(this->dawnSharedContext(),
+                                        texture.dimensions(),
+                                        texture.info(),
+                                        std::move(dawnTexture));
+    } else {
+        return DawnTexture::MakeWrapped(this->dawnSharedContext(),
+                                        texture.dimensions(),
+                                        texture.info(),
+                                        std::move(dawnTextureView));
+    }
 }
 
 sk_sp<DawnTexture> DawnResourceProvider::findOrCreateDiscardableMSAALoadTexture(
@@ -252,10 +262,8 @@ sk_sp<GraphicsPipeline> DawnResourceProvider::createGraphicsPipeline(
         const RuntimeEffectDictionary* runtimeDict,
         const GraphicsPipelineDesc& pipelineDesc,
         const RenderPassDesc& renderPassDesc) {
-    SkSL::Compiler skslCompiler(fSharedContext->caps()->shaderCaps());
     return DawnGraphicsPipeline::Make(this->dawnSharedContext(),
                                       this,
-                                      &skslCompiler,
                                       runtimeDict,
                                       pipelineDesc,
                                       renderPassDesc);
@@ -303,8 +311,9 @@ void DawnResourceProvider::onDeleteBackendTexture(const BackendTexture& texture)
     SkASSERT(texture.isValid());
     SkASSERT(texture.backend() == BackendApi::kDawn);
 
-    // Automatically release the pointers in wgpu::Texture's dtor.
+    // Automatically release the pointers in wgpu::TextureView & wgpu::Texture's dtor.
     // Acquire() won't increment the ref count.
+    wgpu::TextureView::Acquire(texture.getDawnTextureViewPtr());
     wgpu::Texture::Acquire(texture.getDawnTexturePtr());
 }
 

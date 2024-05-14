@@ -32,6 +32,11 @@ public:
                                       const TextureInfo&,
                                       wgpu::Texture);
 
+    static sk_sp<Texture> MakeWrapped(const DawnSharedContext*,
+                                      SkISize dimensions,
+                                      const TextureInfo&,
+                                      const wgpu::TextureView&);
+
     ~DawnTexture() override {}
 
     const wgpu::Texture& dawnTexture() const { return fTexture; }
@@ -49,6 +54,9 @@ private:
                 skgpu::Budgeted);
 
     void freeGpuData() override;
+
+    static std::pair<wgpu::TextureView, wgpu::TextureView> CreateTextureViews(
+            const wgpu::Texture& texture, const TextureInfo& info);
 
     wgpu::Texture     fTexture;
     wgpu::TextureView fSampleTextureView;

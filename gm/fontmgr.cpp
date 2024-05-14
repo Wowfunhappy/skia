@@ -83,7 +83,7 @@ class FontMgrGM : public skiagm::GM {
 
     SkISize getISize() override { return {1536, 768}; }
 
-    void onDraw(SkCanvas* canvas) override {
+    DrawResult onDraw(SkCanvas* canvas, SkString* errorMsg) override {
         SkScalar y = 20;
         SkFont font = ToolUtils::DefaultFont();
         font.setEdging(SkFont::Edging::kSubpixelAntiAlias);
@@ -92,6 +92,10 @@ class FontMgrGM : public skiagm::GM {
 
         SkFontMgr* fm = fFM.get();
         int count = std::min(fm->countFamilies(), MAX_FAMILIES);
+        if (count == 0) {
+            *errorMsg = "No families in SkFontMgr";
+            return DrawResult::kSkip;
+        }
 
         for (int i = 0; i < count; ++i) {
             SkString familyName;
@@ -119,6 +123,7 @@ class FontMgrGM : public skiagm::GM {
             }
             y += 24;
         }
+        return DrawResult::kOk;
     }
 };
 
@@ -187,9 +192,9 @@ class FontMgrMatchGM : public skiagm::GM {
                 break;
             }
         }
-        if (nullptr == fset.get()) {
+        if (!fset || fset->count() == 0) {
             *errorMsg = "No SkFontStyleSet";
-            return DrawResult::kFail;
+            return DrawResult::kSkip;
         }
 
         canvas->translate(20, 40);
@@ -230,7 +235,7 @@ private:
         SkRect min = SkRect::MakeLTRB(SK_ScalarInfinity, SK_ScalarInfinity,
                                       SK_ScalarNegativeInfinity, SK_ScalarNegativeInfinity);
         {
-            int numGlyphs = SkFontPriv::GetTypefaceOrDefault(font)->countGlyphs();
+            int numGlyphs = font.getTypeface()->countGlyphs();
             for (int i = 0; i < numGlyphs; ++i) {
                 SkGlyphID glyphId = i;
                 SkRect cur;
@@ -298,7 +303,7 @@ private:
 
         if (labelBounds) {
             SkString name;
-            SkFontPriv::GetTypefaceOrDefault(font)->getFamilyName(&name);
+            font.getTypeface()->getFamilyName(&name);
             canvas->drawString(name, min.fLeft, min.fBottom, labelFont, SkPaint());
         }
         for (const GlyphToDraw& glyphToDraw : glyphsToDraw) {
@@ -325,7 +330,7 @@ private:
 
     SkISize getISize() override { return {1024, 850}; }
 
-    void onDraw(SkCanvas* canvas) override {
+    DrawResult onDraw(SkCanvas* canvas, SkString* errorMsg) override {
         SkFont font = ToolUtils::DefaultFont();
         font.setEdging(SkFont::Edging::kAntiAlias);
         font.setSubpixel(true);
@@ -337,6 +342,10 @@ private:
 
         SkFontMgr* fm = fFM.get();
         int count = std::min(fm->countFamilies(), 32);
+        if (count == 0) {
+            *errorMsg = "No families in SkFontMgr under test.";
+            return DrawResult::kSkip;
+        }
 
         int index = 0;
         SkScalar x = 0, y = 0;
@@ -349,7 +358,7 @@ private:
                 font.setTypeface(sk_sp<SkTypeface>(set->createTypeface(j)));
                 // Fonts with lots of glyphs are interesting, but can take a long time to find
                 // the glyphs which make up the maximum extent.
-                SkTypeface* typeface = SkFontPriv::GetTypefaceOrDefault(font);
+                SkTypeface* typeface = font.getTypeface();
                 if (typeface && 0 < typeface->countGlyphs() && typeface->countGlyphs() < 1000) {
                     SkColor color = boundsColors[index & 1];
                     SkRect drawBounds = show_bounds(canvas, font, x, y, color, fLabelBounds);
@@ -360,11 +369,12 @@ private:
                         y += 160;
                     }
                     if (y >= 700) {
-                        return;
+                        return DrawResult::kOk;
                     }
                 }
             }
         }
+        return DrawResult::kOk;
     }
 
     sk_sp<SkFontMgr> fFM;

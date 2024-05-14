@@ -20,13 +20,14 @@
 #include "include/gpu/graphite/vk/VulkanGraphiteTypes.h"
 #include "include/gpu/graphite/vk/VulkanGraphiteUtils.h"
 #include "include/gpu/vk/VulkanExtensions.h"
+#include "include/gpu/vk/VulkanMutableTextureState.h"
 #include "include/gpu/vk/VulkanTypes.h"
 #include "include/private/gpu/graphite/ContextOptionsPriv.h"
 #include "src/base/SkAutoMalloc.h"
 #include "src/gpu/graphite/vk/VulkanGraphiteUtilsPriv.h"
 #include "src/gpu/vk/VulkanInterface.h"
-#include "tools/ToolUtils.h"
 #include "tools/GpuToolUtils.h"
+#include "tools/ToolUtils.h"
 
 #ifdef VK_USE_PLATFORM_WIN32_KHR
 // windows wants to define this as CreateSemaphoreA or CreateSemaphoreW
@@ -67,7 +68,8 @@ void GraphiteVulkanWindowContext::initializeContext() {
     VkPhysicalDeviceFeatures2 features;
     if (!sk_gpu_test::CreateVkBackendContext(getInstanceProc, &backendContext, &extensions,
                                              &features, &fDebugCallback, &fPresentQueueIndex,
-                                             fCanPresentFn)) {
+                                             fCanPresentFn,
+                                             fDisplayParams.fCreateProtectedNativeBackend)) {
         sk_gpu_test::FreeVulkanFeaturesStructs(&features);
         return;
     }
@@ -293,6 +295,9 @@ bool GraphiteVulkanWindowContext::createSwapchain(int width, int height,
     VkSwapchainCreateInfoKHR swapchainCreateInfo;
     memset(&swapchainCreateInfo, 0, sizeof(VkSwapchainCreateInfoKHR));
     swapchainCreateInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    swapchainCreateInfo.flags = fDisplayParams.fCreateProtectedNativeBackend
+                                ? VK_SWAPCHAIN_CREATE_PROTECTED_BIT_KHR
+                                : 0;
     swapchainCreateInfo.surface = fSurface;
     swapchainCreateInfo.minImageCount = imageCount;
     swapchainCreateInfo.imageFormat = surfaceFormat;
@@ -346,7 +351,8 @@ bool GraphiteVulkanWindowContext::createSwapchain(int width, int height,
     return true;
 }
 
-bool GraphiteVulkanWindowContext::createBuffers(VkFormat format, VkImageUsageFlags usageFlags,
+bool GraphiteVulkanWindowContext::createBuffers(VkFormat format,
+                                                VkImageUsageFlags usageFlags,
                                                 SkColorType colorType,
                                                 VkSharingMode sharingMode) {
     fGetSwapchainImagesKHR(fDevice, fSwapchain, &fImageCount, nullptr);
@@ -365,6 +371,8 @@ bool GraphiteVulkanWindowContext::createBuffers(VkFormat format, VkImageUsageFla
         info.fFormat = format;
         info.fImageUsageFlags = usageFlags;
         info.fSharingMode = sharingMode;
+        info.fFlags = fDisplayParams.fCreateProtectedNativeBackend ? VK_IMAGE_CREATE_PROTECTED_BIT
+                                                                   : 0;
 
         skgpu::graphite::BackendTexture backendTex(this->dimensions(),
                                                    info,
@@ -372,6 +380,7 @@ bool GraphiteVulkanWindowContext::createBuffers(VkFormat format, VkImageUsageFla
                                                    fPresentQueueIndex,
                                                    fImages[i],
                                                    skgpu::VulkanAlloc());
+
         fSurfaces[i] = SkSurfaces::WrapBackendTexture(this->graphiteRecorder(),
                                                       backendTex,
                                                       colorType,
@@ -554,8 +563,8 @@ void GraphiteVulkanWindowContext::onSwapBuffers() {
 
         // set up surface for layout transition
         info.fTargetSurface = fSurfaces[backbuffer->fImageIndex].get();
-        skgpu::MutableTextureState presentState(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-                                                fPresentQueueIndex);
+        skgpu::MutableTextureState presentState = skgpu::MutableTextureStates::MakeVulkan(
+                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, fPresentQueueIndex);
         info.fTargetTextureState = &presentState;
 
         SkASSERT(fWaitSemaphore != VK_NULL_HANDLE);

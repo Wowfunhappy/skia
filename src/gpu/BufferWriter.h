@@ -11,12 +11,20 @@
 #include "include/core/SkImageInfo.h"
 #include "include/core/SkRect.h"
 #include "include/private/SkColorData.h"
+#include "include/private/base/SkAssert.h"
+#include "include/private/base/SkDebug.h"
 #include "include/private/base/SkTemplates.h"
+#include "include/private/base/SkTo.h"
 #include "src/base/SkRectMemcpy.h"
 #include "src/base/SkVx.h"
 #include "src/core/SkConvertPixels.h"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <type_traits>
+#include <utility>
 
 namespace skgpu {
 
@@ -470,6 +478,23 @@ struct TextureUploadWriter : public BufferWriter {
         this->validate(dstRowBytes * dstInfo.height());
         void* dst = SkTAddOffset<void>(fPtr, offset);
         SkAssertResult(SkConvertPixels(dstInfo, dst, dstRowBytes, srcInfo, src, srcRowBytes));
+    }
+
+    // Writes a block of image data to the upload buffer. It converts src data of RGB_888x
+    // colorType into a 3 channel RGB_888 format.
+    void writeRGBFromRGBx(size_t offset, const void* src, size_t srcRowBytes, size_t dstRowBytes,
+                          int rowPixels, int rowCount) {
+        void* dst = SkTAddOffset<void>(fPtr, offset);
+        auto* sRow = reinterpret_cast<const char*>(src);
+        auto* dRow = reinterpret_cast<char*>(dst);
+
+        for (int y = 0; y < rowCount; ++y) {
+            for (int x = 0; x < rowPixels; ++x) {
+                memcpy(dRow + 3*x, sRow+4*x, 3);
+            }
+            sRow += srcRowBytes;
+            dRow += dstRowBytes;
+        }
     }
 };
 

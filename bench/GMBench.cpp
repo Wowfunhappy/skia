@@ -21,11 +21,12 @@ const char* GMBench::onGetName() {
 }
 
 bool GMBench::isSuitableFor(Backend backend) {
-    return kNonRendering_Backend != backend;
+    return Backend::kNonRendering != backend;
 }
 
 void GMBench::onPerCanvasPreDraw(SkCanvas* canvas) {
-    if (fGM->gpuSetup(canvas) != skiagm::DrawResult::kOk) {
+    SkString msg;
+    if (fGM->gpuSetup(canvas, &msg) != skiagm::DrawResult::kOk) {
         fGpuSetupFailed = true;
     }
 

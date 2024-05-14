@@ -17,10 +17,10 @@
 #include "src/base/SkTLazy.h"
 #include "src/core/SkStrikeSpec.h"
 #include "src/core/SkTaskGroup.h"
-#include "src/core/SkTextBlobTrace.h"
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 #include "tools/fonts/FontToolUtils.h"
+#include "tools/text/SkTextBlobTrace.h"
 
 using namespace skia_private;
 
@@ -55,13 +55,13 @@ protected:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     void onDraw(int loops, SkCanvas*) override {
         size_t oldCacheLimitSize = SkGraphics::GetFontCacheLimit();
         SkGraphics::SetFontCacheLimit(fCacheSize);
-        SkFont font;
+        SkFont font = ToolUtils::DefaultFont();
         font.setEdging(SkFont::Edging::kAntiAlias);
         font.setSubpixel(true);
         font.setTypeface(ToolUtils::CreatePortableTypeface("serif", SkFontStyle::Italic()));
@@ -89,7 +89,7 @@ protected:
     }
 
     bool isSuitableFor(Backend backend) override {
-        return backend == kNonRendering_Backend;
+        return backend == Backend::kNonRendering;
     }
 
     void onDraw(int loops, SkCanvas*) override {
@@ -101,7 +101,7 @@ protected:
 
         for (int work = 0; work < loops; work++) {
             SkTaskGroup().batch(16, [&](int threadIndex) {
-                SkFont font;
+                SkFont font = ToolUtils::DefaultFont();
                 font.setEdging(SkFont::Edging::kAntiAlias);
                 font.setSubpixel(true);
                 font.setTypeface(typefaces[threadIndex % 2]);
@@ -223,7 +223,7 @@ class DiffCanvasBench : public Benchmark {
 
     const char* onGetName() override { return fBenchName.c_str(); }
 
-    bool isSuitableFor(Backend b) override { return b == kNonRendering_Backend; }
+    bool isSuitableFor(Backend b) override { return b == Backend::kNonRendering; }
 
     void onDraw(int loops, SkCanvas* modelCanvas) override {
         SkSurfaceProps props;

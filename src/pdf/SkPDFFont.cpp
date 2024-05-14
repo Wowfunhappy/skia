@@ -327,7 +327,7 @@ static void emit_subset_type0(const SkPDFFont& font, SkPDFDocument* doc) {
                     sk_sp<SkData> subsetFontData = SkPDFSubsetFont(
                             stream_to_data(std::move(fontAsset)), font.glyphUsage(),
                             doc->metadata().fSubsetter,
-                            metrics.fFontName.c_str(), ttcIndex);
+                            ttcIndex);
                     if (subsetFontData) {
                         std::unique_ptr<SkPDFDict> tmp = SkPDFMakeDict();
                         tmp->insertInt("Length1", SkToInt(subsetFontData->size()));
@@ -541,7 +541,7 @@ SkStrikeSpec make_small_strike(const SkTypeface& typeface) {
     font.setEdging(SkFont::Edging::kAlias);
     return SkStrikeSpec::MakeMask(font,
                                   SkPaint(),
-                                  SkSurfaceProps(0, kUnknown_SkPixelGeometry),
+                                  SkSurfaceProps(),
                                   SkScalerContextFlags::kFakeGammaAndBoostContrast,
                                   SkMatrix::I());
 }

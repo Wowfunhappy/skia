@@ -23,11 +23,16 @@
 #include "tools/ToolUtils.h"
 #include "tools/fonts/FontToolUtils.h"
 
+#if defined(SK_TYPEFACE_FACTORY_FONTATIONS)
+#include "include/ports/SkTypeface_fontations.h"
+#endif
+
 #include <string.h>
 
 namespace skiagm {
 
-// Copied from https://github.com/googlefonts/color-fonts#colrv1-test-font glyph descriptions markdown file.
+// Copied from https://github.com/googlefonts/color-fonts#colrv1-test-font glyph descriptions
+// markdown file.
 namespace ColrV1TestDefinitions {
 const uint32_t color_circles_palette[] = {0xf0e00, 0xf0e01};
 };
@@ -40,6 +45,7 @@ constexpr SkFontArguments::Palette::Override kColorOverridesAll[] = {
         // Randomly ordered with `shuf`.
         // Add a repeat (later overrides override earlier overrides).
         // Add three out of bounds entries (font has 12 palette entries).
+        // clang-format off
         { 6, 0xffffff00},
         { 2, 0xff76078f},
         { 4, 0xffb404c4},
@@ -55,7 +61,8 @@ constexpr SkFontArguments::Palette::Override kColorOverridesAll[] = {
         { 5, 0xffd802e2},
         {13, 0xff00ffff},
         {12, 0xff00ffff},
-        {-1, 0xff00ff00},
+        {static_cast<uint16_t>(-1), 0xff00ff00},
+        // clang-format on
 };
 
 constexpr SkFontArguments::Palette::Override kColorOverridesOne[] = {
@@ -69,12 +76,15 @@ constexpr SkFontArguments::Palette kOnePaletteOverride{
 constexpr SkFontArguments::Palette kAllPaletteOverride{
         0, kColorOverridesAll, std::size(kColorOverridesAll)};
 
+sk_sp<SkTypeface> MakeTypefaceFromResource(const char* resource, const SkFontArguments& args) {
+    return ToolUtils::TestFontMgr()->makeFromStream(GetResourceAsStream(resource), args);
+}
+
 }  // namespace
 
 class FontPaletteGM : public GM {
 public:
-    FontPaletteGM(const char* test_name,
-                  const SkFontArguments::Palette& paletteOverride)
+    FontPaletteGM(const char* test_name, const SkFontArguments::Palette& paletteOverride)
             : fName(test_name), fPalette(paletteOverride) {}
 
 protected:
@@ -86,12 +96,11 @@ protected:
         SkFontArguments paletteArguments;
         paletteArguments.setPalette(fPalette);
 
-        fTypefaceDefault = ToolUtils::CreateTypefaceFromResource(kColrCpalTestFontPath);
+        fTypefaceDefault = MakeTypefaceFromResource(kColrCpalTestFontPath, SkFontArguments());
         fTypefaceCloned =
                 fTypefaceDefault ? fTypefaceDefault->makeClone(paletteArguments) : nullptr;
 
-        fTypefaceFromStream = ToolUtils::TestFontMgr()->makeFromStream(
-                GetResourceAsStream(kColrCpalTestFontPath), paletteArguments);
+        fTypefaceFromStream = MakeTypefaceFromResource(kColrCpalTestFontPath, paletteArguments);
     }
 
     SkString getName() const override {
@@ -115,7 +124,7 @@ protected:
         SkFontMetrics metrics;
         SkScalar y = 0;
         SkScalar textSize = 200;
-        for (auto& typeface : { fTypefaceFromStream, fTypefaceCloned} ) {
+        for (auto& typeface : {fTypefaceFromStream, fTypefaceCloned}) {
             SkFont defaultFont(fTypefaceDefault);
             SkFont paletteFont(typeface);
             defaultFont.setSize(textSize);

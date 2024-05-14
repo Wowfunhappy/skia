@@ -326,14 +326,11 @@ public:
     // Ensure that non-RSXForm runs are passed to onDrawGlyphRunList.
     void drawGlyphRunList(SkCanvas*,
                           const sktext::GlyphRunList& glyphRunList,
-                          const SkPaint& initialPaint,
-                          const SkPaint& drawingPaint);
+                          const SkPaint& paint);
     // Slug handling routines.
     virtual sk_sp<sktext::gpu::Slug> convertGlyphRunListToSlug(
-            const sktext::GlyphRunList& glyphRunList,
-            const SkPaint& initialPaint,
-            const SkPaint& drawingPaint);
-    virtual void drawSlug(SkCanvas*, const sktext::gpu::Slug* slug, const SkPaint& drawingPaint);
+            const sktext::GlyphRunList& glyphRunList, const SkPaint& paint);
+    virtual void drawSlug(SkCanvas*, const sktext::gpu::Slug* slug, const SkPaint& paint);
 
     virtual void drawPaint(const SkPaint& paint) = 0;
     virtual void drawPoints(SkCanvas::PointMode mode, size_t count,
@@ -367,6 +364,9 @@ public:
     virtual void drawImageRect(const SkImage*, const SkRect* src, const SkRect& dst,
                                const SkSamplingOptions&, const SkPaint&,
                                SkCanvas::SrcRectConstraint) = 0;
+    // Return true if canvas calls to drawImage or drawImageRect should try to
+    // be drawn in a tiled way.
+    virtual bool shouldDrawAsTiledImageRect() const { return false; }
     virtual bool drawAsTiledImageRect(SkCanvas*,
                                       const SkImage*,
                                       const SkRect* src,
@@ -440,9 +440,15 @@ public:
     /**
      * Draw the special image's subset to this device, subject to the given matrix transform instead
      * of the device's current local to device matrix.
+     *
+     * If 'constraint' is kFast, the rendered geometry of the image still reflects the extent of
+     * the SkSpecialImage's subset, but it's assumed that the pixel data beyond the subset is valid
+     * (e.g. SkSpecialImage::makeSubset() was called to crop a larger image).
      */
     virtual void drawSpecial(SkSpecialImage*, const SkMatrix& localToDevice,
-                             const SkSamplingOptions&, const SkPaint&);
+                             const SkSamplingOptions&, const SkPaint&,
+                             SkCanvas::SrcRectConstraint constraint =
+                                    SkCanvas::kStrict_SrcRectConstraint);
 
     /**
      * Draw the special image's subset to this device, treating its alpha channel as coverage for
@@ -527,13 +533,11 @@ private:
     // Only called with glyphRunLists that do not contain RSXForm.
     virtual void onDrawGlyphRunList(SkCanvas*,
                                     const sktext::GlyphRunList&,
-                                    const SkPaint& initialPaint,
-                                    const SkPaint& drawingPaint) = 0;
+                                    const SkPaint& paint) = 0;
 
     void simplifyGlyphRunRSXFormAndRedraw(SkCanvas*,
                                           const sktext::GlyphRunList&,
-                                          const SkPaint& initialPaint,
-                                          const SkPaint& drawingPaint);
+                                          const SkPaint& paint);
 
     const SkImageInfo    fInfo;
     const SkSurfaceProps fSurfaceProps;
@@ -602,8 +606,7 @@ protected:
     void drawMesh(const SkMesh&, sk_sp<SkBlender>, const SkPaint&) override {}
 
     void drawSlug(SkCanvas*, const sktext::gpu::Slug*, const SkPaint&) override {}
-    void onDrawGlyphRunList(
-            SkCanvas*, const sktext::GlyphRunList&, const SkPaint&, const SkPaint&) override {}
+    void onDrawGlyphRunList(SkCanvas*, const sktext::GlyphRunList&, const SkPaint&) override {}
 
     bool isNoPixelsDevice() const override { return true; }
 
