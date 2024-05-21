@@ -210,7 +210,7 @@ wgpu::RenderPipeline DawnResourceProvider::findOrCreateBlitWithDrawPipeline(
     return pipeline;
 }
 
-sk_sp<Texture> DawnResourceProvider::createWrappedTexture(const BackendTexture& texture) {
+sk_sp<Texture> DawnResourceProvider::onCreateWrappedTexture(const BackendTexture& texture) {
     // Convert to smart pointers. wgpu::Texture* constructor will increment the ref count.
     wgpu::Texture dawnTexture         = texture.getDawnTexturePtr();
     wgpu::TextureView dawnTextureView = texture.getDawnTextureViewPtr();
@@ -224,14 +224,12 @@ sk_sp<Texture> DawnResourceProvider::createWrappedTexture(const BackendTexture& 
         return DawnTexture::MakeWrapped(this->dawnSharedContext(),
                                         texture.dimensions(),
                                         texture.info(),
-                                        std::move(dawnTexture),
-                                        "WrappedTexture");
+                                        std::move(dawnTexture));
     } else {
         return DawnTexture::MakeWrapped(this->dawnSharedContext(),
                                         texture.dimensions(),
                                         texture.info(),
-                                        std::move(dawnTextureView),
-                                        "WrappedTextureView");
+                                        std::move(dawnTextureView));
     }
 }
 
@@ -278,24 +276,17 @@ sk_sp<ComputePipeline> DawnResourceProvider::createComputePipeline(
 
 sk_sp<Texture> DawnResourceProvider::createTexture(SkISize dimensions,
                                                    const TextureInfo& info,
-                                                   std::string_view label,
                                                    skgpu::Budgeted budgeted) {
     return DawnTexture::Make(this->dawnSharedContext(),
                              dimensions,
                              info,
-                             std::move(label),
                              budgeted);
 }
 
 sk_sp<Buffer> DawnResourceProvider::createBuffer(size_t size,
                                                  BufferType type,
-                                                 AccessPattern accessPattern,
-                                                 std::string_view label) {
-    return DawnBuffer::Make(this->dawnSharedContext(),
-                            size,
-                            type,
-                            accessPattern,
-                            std::move(label));
+                                                 AccessPattern accessPattern) {
+    return DawnBuffer::Make(this->dawnSharedContext(), size, type, accessPattern);
 }
 
 sk_sp<Sampler> DawnResourceProvider::createSampler(const SamplerDesc& samplerDesc) {

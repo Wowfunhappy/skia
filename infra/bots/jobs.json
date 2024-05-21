@@ -43,6 +43,7 @@
   {"name": "BazelTest-external_client-use_ganesh_vulkan-default-linux_x64"},
   {"name": "BazelTest-external_client-use_skresources-default-linux_x64"},
   {"name": "BazelTest-external_client-write_text_to_png-default-linux_x64"},
+  {"name": "BazelTest-external_client-write_to_pdf-default-linux_x64"},
   {"name": "BazelTest-cpu_tests-all_tests-cpu_only_debug_rbe-linux_x64",
     "cq_config": {"experimental": true}
   },
@@ -171,7 +172,9 @@
   {"name": "Build-Debian10-EMCC-asmjs-Debug-PathKit"},
   {"name": "Build-Debian10-EMCC-asmjs-Release-PathKit"},
   {"name": "Build-Debian10-EMCC-wasm-Debug-CanvasKit"},
-  {"name": "Build-Debian10-EMCC-wasm-Debug-CanvasKit_WebGPU"},
+  {"name": "Build-Debian10-EMCC-wasm-Debug-CanvasKit_WebGPU",
+    "cq_config": {}
+  },
   {"name": "Build-Debian10-EMCC-wasm-Debug-CanvasKit_CPU"},
   {"name": "Build-Debian10-EMCC-wasm-Debug-PathKit"},
   {"name": "Build-Debian10-EMCC-wasm-Release-CanvasKit"},

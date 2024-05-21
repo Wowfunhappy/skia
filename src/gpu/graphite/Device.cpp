@@ -324,9 +324,7 @@ static constexpr int kMaxGridSize = 32;
 
 Device::Device(Recorder* recorder, sk_sp<DrawContext> dc)
         : SkDevice(dc->imageInfo(), dc->surfaceProps())
-        SkDEBUGCODE(, fPreRecorderSentinel(reinterpret_cast<intptr_t>(recorder) - 1))
         , fRecorder(recorder)
-        SkDEBUGCODE(, fPostRecorderSentinel(reinterpret_cast<intptr_t>(recorder) + 1))
         , fDC(std::move(dc))
         , fClip(this)
         , fColorDepthBoundsManager(std::make_unique<HybridBoundsManager>(
@@ -399,18 +397,21 @@ sk_sp<SkDevice> Device::createDevice(const CreateInfo& info, const SkPaint*) {
     // Skia's convention is to only clear a device if it is non-opaque.
     LoadOp initialLoadOp = info.fInfo.isOpaque() ? LoadOp::kDiscard : LoadOp::kClear;
 
+    std::string label = this->target()->label();
+    if (label.empty()) {
+        label = "ChildDevice";
+    } else {
+        label += "_ChildDevice";
+    }
+
     return Make(fRecorder,
                 info.fInfo,
                 skgpu::Budgeted::kYes,
                 Mipmapped::kNo,
-#if defined(GRAPHITE_USE_APPROX_FIT_FOR_FILTERS)
                 SkBackingFit::kApprox,
-#else
-                SkBackingFit::kExact,
-#endif
                 props,
                 initialLoadOp,
-                "ChildDevice");
+                label);
 }
 
 sk_sp<SkSurface> Device::makeSurface(const SkImageInfo& ii, const SkSurfaceProps& props) {
@@ -433,8 +434,15 @@ sk_sp<Image> Device::makeImageCopy(const SkIRect& subset,
                 colorInfo.colorType(), this->target()->textureInfo());
         srcView = {sk_ref_sp(this->target()), readSwizzle};
     }
+    std::string label = this->target()->label();
+    if (label.empty()) {
+        label = "CopyDeviceTexture";
+    } else {
+        label += "_DeviceCopy";
+    }
+
     return Image::Copy(fRecorder, srcView, colorInfo, subset, budgeted, mipmapped, backingFit,
-                       "CopyDeviceTexture");
+                       label);
 }
 
 bool Device::onReadPixels(const SkPixmap& pm, int srcX, int srcY) {
@@ -942,6 +950,10 @@ void Device::drawAtlasSubRun(const sktext::gpu::AtlasSubRun* subRun,
                 subRunPaint.setColor(SK_ColorWHITE);
                 subRunPaint.setAlphaf(paint.getAlphaf());
             }
+
+            bool useGammaCorrectDistanceTable =
+                    this->imageInfo().colorSpace() &&
+                    this->imageInfo().colorSpace()->gammaIsLinear();
             this->drawGeometry(localToDevice,
                                Geometry(SubRunData(subRun,
                                                    subRunStorage,
@@ -949,6 +961,8 @@ void Device::drawAtlasSubRun(const sktext::gpu::AtlasSubRun* subRun,
                                                    this->localToDeviceTransform().inverse(),
                                                    subRunCursor,
                                                    glyphsRegenerated,
+                                                   SkPaintPriv::ComputeLuminanceColor(subRunPaint),
+                                                   useGammaCorrectDistanceTable,
                                                    fRecorder,
                                                    rendererData)),
                                subRunPaint,
@@ -1353,7 +1367,7 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
     // Prefer compute atlas draws if supported. This currently implicitly filters out clip draws as
     // they require MSAA. Eventually we may want to route clip shapes to the atlas as well but not
     // if hardware MSAA is required.
-    Rect drawBounds = localToDevice.mapRect(shape.bounds());
+    std::optional<Rect> drawBounds;
     if (atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kCompute) &&
         use_compute_atlas_when_available(strategy)) {
         PathAtlas* atlas = fDC->getComputePathAtlas(fRecorder);
@@ -1364,7 +1378,8 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
         // Use the conservative clip bounds for a rough estimate of the mask size (this avoids
         // having to evaluate the entire clip stack before choosing the renderer as it will have to
         // get evaluated again if we fall back to a different renderer).
-        if (atlas->isSuitableForAtlasing(drawBounds, fClip.conservativeBounds())) {
+        drawBounds = localToDevice.mapRect(shape.bounds());
+        if (atlas->isSuitableForAtlasing(*drawBounds, fClip.conservativeBounds())) {
             pathAtlas = atlas;
         }
     }
@@ -1375,11 +1390,9 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
     if (!pathAtlas && atlasProvider->isAvailable(AtlasProvider::PathAtlasFlags::kRaster) &&
         (strategy == PathRendererStrategy::kRasterAA ||
          (strategy == PathRendererStrategy::kDefault && !fMSAASupported))) {
-        PathAtlas* atlas = atlasProvider->getRasterPathAtlas();
-        SkASSERT(atlas);
-        if (atlas->isSuitableForAtlasing(drawBounds, fClip.conservativeBounds())) {
-            pathAtlas = atlas;
-        }
+        // NOTE: RasterPathAtlas doesn't implement `PathAtlas::isSuitableForAtlasing` as it doesn't
+        // reject paths (unlike ComputePathAtlas).
+        pathAtlas = atlasProvider->getRasterPathAtlas();
     }
 
     if (!requireMSAA && pathAtlas) {
@@ -1415,17 +1428,20 @@ std::pair<const Renderer*, PathAtlas*> Device::chooseRenderer(const Transform& l
         // would be pretty trivial to spin up.
         return {renderers->convexTessellatedWedges(), nullptr};
     } else {
-        drawBounds.intersect(fClip.conservativeBounds());
+        if (!drawBounds.has_value()) {
+            drawBounds = localToDevice.mapRect(shape.bounds());
+        }
+        drawBounds->intersect(fClip.conservativeBounds());
         const bool preferWedges =
                 // If the draw bounds don't intersect with the clip stack's conservative bounds,
                 // we'll be drawing a very small area at most, accounting for coverage, so just
                 // stick with drawing wedges in that case.
-                drawBounds.isEmptyNegativeOrNaN() ||
+                drawBounds->isEmptyNegativeOrNaN() ||
 
                 // TODO: Combine this heuristic with what is used in PathStencilCoverOp to choose
                 // between wedges curves consistently in Graphite and Ganesh.
                 (shape.isPath() && shape.path().countVerbs() < 50) ||
-                drawBounds.area() <= (256 * 256);
+                drawBounds->area() <= (256 * 256);
 
         if (preferWedges) {
             return {renderers->stencilTessellatedWedges(shape.fillType()), nullptr};
@@ -1440,29 +1456,12 @@ sk_sp<Task> Device::lastDrawTask() const {
     return fLastTask;
 }
 
-void Device::flushPendingWorkToRecorder(Recorder* recorder) {
+void Device::flushPendingWorkToRecorder() {
     TRACE_EVENT0("skia.gpu", TRACE_FUNC);
-
-    // Confirm sentinels match the original values set from fRecorder
-    SkDEBUGCODE(intptr_t expected = reinterpret_cast<intptr_t>(recorder ? recorder : fRecorder);)
-    SkASSERT(fPreRecorderSentinel == expected - 1);
-    SkASSERT(fPostRecorderSentinel == expected + 1);
-
-    SkASSERT(recorder == nullptr || recorder == fRecorder);
-    if (recorder && recorder != fRecorder) {
-        // TODO(b/333073673): This should not happen but if the Device were corrupted exit now
-        // to avoid further access of Device's state.
-        return;
-    }
 
     // If this is a scratch device being flushed, it should only be flushing into the expected
     // next recording from when the Device was first created.
     SkASSERT(fRecorder);
-    // TODO(b/333073673):
-    // The only time flushPendingWorkToRecorder() is called with a non-null Recorder is from
-    // flushTrackedDevices(), so the scoped recording ID of the device should be 0 or it means a
-    // non-tracked device got added to the recorder or something has stomped the heap.
-    SkASSERT(!recorder || fScopedRecordingID == 0);
     SkASSERT(fScopedRecordingID == 0 || fScopedRecordingID == fRecorder->priv().nextRecordingID());
 
     // TODO(b/330864257):  flushPendingWorkToRecorder() can be recursively called if this Device
