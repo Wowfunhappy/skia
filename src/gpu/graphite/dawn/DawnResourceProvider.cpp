@@ -162,7 +162,7 @@ DawnResourceProvider::~DawnResourceProvider() = default;
 wgpu::RenderPipeline DawnResourceProvider::findOrCreateBlitWithDrawPipeline(
         const RenderPassDesc& renderPassDesc) {
     uint64_t renderPassKey =
-            this->dawnSharedContext()->dawnCaps()->getRenderPassDescKey(renderPassDesc);
+            this->dawnSharedContext()->dawnCaps()->getRenderPassDescKeyForPipeline(renderPassDesc);
     wgpu::RenderPipeline pipeline = fBlitWithDrawPipelines[renderPassKey];
     if (!pipeline) {
         static constexpr char kVertexShaderText[] = R"(
@@ -426,6 +426,18 @@ const wgpu::Buffer& DawnResourceProvider::getOrCreateNullBuffer() {
     }
 
     return fNullBuffer;
+}
+
+const sk_sp<DawnBuffer>& DawnResourceProvider::getOrCreateIntrinsicConstantBuffer() {
+    if (!fIntrinsicConstantBuffer) {
+        fIntrinsicConstantBuffer = findOrCreateDawnBuffer(sizeof(float[4]),
+                                                          BufferType::kUniform,
+                                                          AccessPattern::kGpuOnly,
+                                                          "IntrinsicConstantBuffer");
+        SkASSERT(fIntrinsicConstantBuffer);
+    }
+
+    return fIntrinsicConstantBuffer;
 }
 
 const wgpu::BindGroup& DawnResourceProvider::findOrCreateUniformBuffersBindGroup(
